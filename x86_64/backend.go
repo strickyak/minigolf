@@ -1,0 +1,304 @@
+package x86_64
+
+import (
+	"bytes"
+	"fmt"
+	"minigo/ir"
+	"strings"
+)
+
+type Backend struct {
+	buf         bytes.Buffer
+	dataBuf     bytes.Buffer
+	stackOffset int
+	slots       map[int]int
+	paramSlots  map[string]int
+	fmtCount    int
+}
+
+func New() *Backend {
+	return &Backend{
+		slots:      make(map[int]int),
+		paramSlots: make(map[string]int),
+	}
+}
+
+func (b *Backend) Generate(program *ir.Program) string {
+	b.buf.WriteString(".intel_syntax noprefix\n")
+	b.buf.WriteString(".text\n")
+
+	if len(program.Globals) > 0 {
+		b.dataBuf.WriteString(".data\n")
+		for _, g := range program.Globals {
+			b.dataBuf.WriteString(fmt.Sprintf("\t.globl v_%s\n", g.Name))
+			b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
+			b.dataBuf.WriteString("\t.quad 0\n")
+		}
+	}
+
+	for _, f := range program.Functions {
+		b.emitFunc(f)
+	}
+
+	b.buf.WriteString("\n\t.globl main\n")
+	b.buf.WriteString("\t.globl _main\n")
+	b.buf.WriteString("main:\n")
+	b.buf.WriteString("_main:\n")
+	b.buf.WriteString("\tpush rbp\n")
+	b.buf.WriteString("\tmov rbp, rsp\n")
+	b.buf.WriteString("\tand rsp, -16\n")
+	b.buf.WriteString("\tcall f_main\n")
+	b.buf.WriteString("\txor rax, rax\n")
+	b.buf.WriteString("\tmov rsp, rbp\n")
+	b.buf.WriteString("\tpop rbp\n")
+	b.buf.WriteString("\tret\n")
+
+	b.buf.WriteString("\n# GNU/Linux stack compliance\n")
+	b.buf.WriteString(".section .note.GNU-stack,\"\",@progbits\n")
+
+	return b.dataBuf.String() + "\n" + b.buf.String()
+}
+
+func (b *Backend) getSlot(id int) int {
+	if offset, ok := b.slots[id]; ok {
+		return offset
+	}
+	b.stackOffset += 8
+	b.slots[id] = b.stackOffset
+	return b.stackOffset
+}
+
+func (b *Backend) emitFunc(f *ir.Function) {
+	b.buf.WriteString(fmt.Sprintf("\n\t.globl f_%s\n", f.Name))
+	b.buf.WriteString(fmt.Sprintf("f_%s:\n", f.Name))
+	b.buf.WriteString("\tpush rbp\n")
+	b.buf.WriteString("\tmov rbp, rsp\n")
+
+	b.stackOffset = 0
+	b.slots = make(map[int]int)
+	b.paramSlots = make(map[string]int)
+
+	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+	for i, p := range f.Parameters {
+		b.stackOffset += 8
+		b.paramSlots[p.Name] = b.stackOffset
+		if i < len(regs) {
+			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], %s\n", b.stackOffset, regs[i]))
+		}
+	}
+
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			if instr.Type() != ir.TypeVoid && instr.Type() != ir.TypeUnknown {
+				b.getSlot(instr.GetID())
+			}
+		}
+	}
+
+	stackSize := (b.stackOffset + 15) &^ 15
+	if stackSize > 0 {
+		b.buf.WriteString(fmt.Sprintf("\tsub rsp, %d\n", stackSize))
+	}
+
+	for _, blk := range f.Blocks {
+		b.buf.WriteString(fmt.Sprintf(".Lb%d:\n", blk.ID))
+
+		for _, instr := range blk.Instructions {
+			if _, isPhi := instr.(*ir.Phi); isPhi {
+				continue
+			}
+			if _, isTerm := instr.(ir.Terminator); isTerm {
+				continue
+			}
+			b.emitInstr(instr)
+		}
+
+		switch term := blk.Terminator.(type) {
+		case *ir.Jump:
+			b.emitPhiAssignments(blk, term.Target)
+			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d\n", term.Target.ID))
+		case *ir.Branch:
+			b.loadVal(term.Condition, "rax")
+			b.buf.WriteString("\ttest rax, rax\n")
+			b.buf.WriteString(fmt.Sprintf("\tjnz .Lb%d_true\n", blk.ID))
+			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d_false\n", blk.ID))
+
+			b.buf.WriteString(fmt.Sprintf(".Lb%d_true:\n", blk.ID))
+			b.emitPhiAssignments(blk, term.TrueBlock)
+			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d\n", term.TrueBlock.ID))
+
+			b.buf.WriteString(fmt.Sprintf(".Lb%d_false:\n", blk.ID))
+			b.emitPhiAssignments(blk, term.FalseBlock)
+			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d\n", term.FalseBlock.ID))
+
+		case *ir.Return:
+			if term.Val != nil {
+				b.loadVal(term.Val, "rax")
+			}
+			b.buf.WriteString("\tmov rsp, rbp\n")
+			b.buf.WriteString("\tpop rbp\n")
+			b.buf.WriteString("\tret\n")
+		}
+	}
+}
+
+func (b *Backend) loadVal(val ir.Value, reg string) {
+	switch v := val.(type) {
+	case *ir.Parameter:
+		b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [rbp - %d]\n", reg, b.paramSlots[v.Name]))
+	case *ir.ConstWord:
+		b.buf.WriteString(fmt.Sprintf("\tmov %s, %d\n", reg, v.Val))
+	case *ir.ConstByte:
+		b.buf.WriteString(fmt.Sprintf("\tmov %s, %d\n", reg, v.Val))
+	case ir.Instruction:
+		b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [rbp - %d]\n", reg, b.slots[v.GetID()]))
+	}
+}
+
+func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
+	for _, instr := range to.Instructions {
+		if phi, ok := instr.(*ir.Phi); ok {
+			for _, edge := range phi.Edges {
+				if edge.Block == from {
+					b.loadVal(edge.Value, "rax")
+					if phi.Type() == ir.TypeByte {
+						b.buf.WriteString("\tmovzx rax, al\n")
+					}
+					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", b.slots[phi.GetID()]))
+				}
+			}
+		}
+	}
+}
+
+func (b *Backend) emitInstr(instr ir.Instruction) {
+	id := instr.GetID()
+	offset := b.slots[id]
+
+	switch i := instr.(type) {
+	case *ir.ConstByte, *ir.ConstWord:
+		b.loadVal(i, "rax")
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.Load:
+		b.buf.WriteString(fmt.Sprintf("\tmov rax, qword ptr [rip + v_%s]\n", i.Global.Name))
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.Store:
+		b.loadVal(i.Val, "rax")
+		if i.Global.Typ == ir.TypeByte {
+			b.buf.WriteString("\tmovzx rax, al\n")
+		}
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rip + v_%s], rax\n", i.Global.Name))
+	case *ir.BinaryOp:
+		b.loadVal(i.Left, "rax")
+		b.loadVal(i.Right, "rcx")
+		switch i.Op {
+		case "add":
+			b.buf.WriteString("\tadd rax, rcx\n")
+		case "sub":
+			b.buf.WriteString("\tsub rax, rcx\n")
+		case "mul":
+			b.buf.WriteString("\timul rax, rcx\n")
+		case "div":
+			b.buf.WriteString("\txor rdx, rdx\n\tdiv rcx\n")
+		case "mod":
+			b.buf.WriteString("\txor rdx, rdx\n\tdiv rcx\n\tmov rax, rdx\n")
+		case "and":
+			b.buf.WriteString("\tand rax, rcx\n")
+		case "or":
+			b.buf.WriteString("\tor rax, rcx\n")
+		case "xor":
+			b.buf.WriteString("\txor rax, rcx\n")
+		case "shl":
+			b.buf.WriteString("\tshl rax, cl\n")
+		case "shr":
+			b.buf.WriteString("\tshr rax, cl\n")
+		}
+		if i.Typ == ir.TypeByte {
+			b.buf.WriteString("\tmovzx rax, al\n")
+		}
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.Compare:
+		b.loadVal(i.Left, "rax")
+		b.loadVal(i.Right, "rcx")
+		b.buf.WriteString("\tcmp rax, rcx\n")
+		switch i.Op {
+		case "eq":
+			b.buf.WriteString("\tsete al\n")
+		case "neq":
+			b.buf.WriteString("\tsetne al\n")
+		case "lt":
+			b.buf.WriteString("\tsetb al\n")
+		case "lte":
+			b.buf.WriteString("\tsetbe al\n")
+		case "gt":
+			b.buf.WriteString("\tseta al\n")
+		case "gte":
+			b.buf.WriteString("\tsetae al\n")
+		}
+		b.buf.WriteString("\tmovzx rax, al\n")
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.Call:
+		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+		for idx, arg := range i.Args {
+			if idx < len(regs) {
+				b.loadVal(arg, regs[idx])
+			}
+		}
+		b.buf.WriteString(fmt.Sprintf("\tcall f_%s\n", i.Func.Name))
+		if i.Typ == ir.TypeByte {
+			b.buf.WriteString("\tmovzx rax, al\n")
+		}
+		if i.Typ != ir.TypeVoid {
+			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+		}
+	case *ir.BuiltinCall:
+		if i.Name == "print" || i.Name == "println" {
+			b.emitPrint(i.Name == "println", i.Args)
+		}
+	case *ir.Cast:
+		b.loadVal(i.Operand, "rax")
+		if i.Op == "trunc" {
+			b.buf.WriteString("\tmovzx rax, al\n")
+		}
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	}
+}
+
+func (b *Backend) emitPrint(newline bool, args []ir.Value) {
+	b.fmtCount++
+	fmtLabel := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+
+	formatStrs := []string{}
+	var dataArgs []ir.Value
+
+	for _, arg := range args {
+		if strLit, ok := arg.(*ir.StringLiteral); ok {
+			formatStrs = append(formatStrs, strLit.Value)
+		} else {
+			formatStrs = append(formatStrs, "%llu")
+			dataArgs = append(dataArgs, arg)
+		}
+	}
+
+	format := strings.Join(formatStrs, " ")
+	if newline {
+		format += "\\n"
+	}
+
+	if b.dataBuf.Len() == 0 {
+		b.dataBuf.WriteString(".data\n")
+	}
+	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"%s\"\n", fmtLabel, format))
+
+	b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", fmtLabel))
+
+	regs := []string{"rsi", "rdx", "rcx", "r8", "r9"}
+	for idx, arg := range dataArgs {
+		if idx < len(regs) {
+			b.loadVal(arg, regs[idx])
+		}
+	}
+
+	b.buf.WriteString("\txor eax, eax\n")
+	b.buf.WriteString("\tcall printf\n")
+}

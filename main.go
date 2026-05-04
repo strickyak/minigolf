@@ -13,6 +13,7 @@ import (
 	"minigo/parser"
 	"minigo/semantic"
 	"minigo/transpiler"
+	"minigo/x86_64"
 )
 
 func main() {
@@ -143,6 +144,26 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Printf("Successfully compiled via CBE to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=x86_64 : Generate X86_64 assembly from IR and exit cleanly
+	if *archFlag == "x86_64" || *archFlag == "x86-64" {
+		builder := ir.NewBuilder()
+		irProg := builder.Build(program)
+		
+		backend := x86_64.New()
+		asmCode := backend.Generate(irProg)
+		
+		header := fmt.Sprintf("/*\n * Starting whole-program compilation (X86_64 Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+		
+		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing X86_64 output: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Printf("Successfully compiled via X86_64 to: %s", *outFlag)
 		os.Exit(0)
 	}
 

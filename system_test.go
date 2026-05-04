@@ -64,17 +64,22 @@ func cleanOutput(out string) []string {
 
 func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	tmpDir := t.TempDir()
-	cFile := filepath.Join(tmpDir, "out.c")
+	
+	ext := ".c"
+	if backend == "x86_64" {
+		ext = ".s"
+	}
+	srcFile := filepath.Join(tmpDir, "out"+ext)
 	exeFile := filepath.Join(tmpDir, "out.exe")
 
 	// Compile demo file using minigo
-	cmd := exec.Command("go", "run", "main.go", "-m="+backend, "-o", cFile, sourceFile)
+	cmd := exec.Command("go", "run", "main.go", "-m="+backend, "-o", srcFile, sourceFile)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile with minigo -m=%s: %v\nOutput: %s", backend, err, out)
 	}
 
-	// Compile generated C code with gcc
-	cmd = exec.Command("gcc", "-o", exeFile, cFile)
+	// Compile generated code with gcc
+	cmd = exec.Command("gcc", "-o", exeFile, srcFile)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile C code with gcc for backend %s: %v\nOutput: %s", backend, err, out)
 	}
@@ -119,4 +124,12 @@ func TestSystemTrianglesByte_C(t *testing.T) {
 
 func TestSystemTrianglesByte_CBE(t *testing.T) {
 	testBackend(t, "CBE", "demo/triangles_byte.go", expectedOutputByte)
+}
+
+func TestSystemTriangles_x86_64(t *testing.T) {
+	testBackend(t, "x86_64", "demo/triangles.go", expectedOutput)
+}
+
+func TestSystemTrianglesByte_x86_64(t *testing.T) {
+	testBackend(t, "x86_64", "demo/triangles_byte.go", expectedOutputByte)
 }
