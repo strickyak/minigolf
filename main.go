@@ -14,12 +14,15 @@ import (
 	"minigo/semantic"
 	"minigo/transpiler"
 	"minigo/x86_64"
+	"minigo/m6809"
 )
 
 func main() {
 	// Define command-line flags
 	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, x86_64, z80, 6502)")
 	outFlag := flag.String("o", "", "Output object file name")
+	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
+	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
 
 	// Custom usage message
 	flag.Usage = func() {
@@ -164,6 +167,26 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Printf("Successfully compiled via X86_64 to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=6809 : Generate M6809 assembly from IR and exit cleanly
+	if *archFlag == "6809" || *archFlag == "m6809" {
+		builder := ir.NewBuilder()
+		irProg := builder.Build(program)
+		
+		backend := m6809.New(*framePointerFlag, *globalsAtYFlag)
+		asmCode := backend.Generate(irProg)
+		
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+		
+		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing 6809 output: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Printf("Successfully compiled via 6809 to: %s", *outFlag)
 		os.Exit(0)
 	}
 

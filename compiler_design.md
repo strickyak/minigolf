@@ -118,6 +118,17 @@ The primary focus for target architecture is the **Motorola 6809** and the **Hit
 *   **Motorola 6809:** An advanced 8-bit processor with powerful 16-bit capabilities (e.g., D, X, Y, U, S registers). The `byte` and `word` types map cleanly to its register set and instruction semantics.
 *   **Hitachi 6309:** A compatible but enhanced version of the 6809. The compiler will optionally leverage its additional registers (e.g., W, V, Q) and extra instructions (like hardware division, extended math, and block moves) to produce highly optimized machine code.
 
+#### 6809 Calling Convention & ABI
+To seamlessly link with existing C libraries built by `gcc` v4.6.4 (targeting `lwasm`), the backend strictly adheres to the GCC 6809 ABI:
+*   **Parameter Passing**: Arguments are evaluated and pushed to the hardware stack `S` in reverse order (right-to-left). However, the *first* `word`-sized argument is intercepted and passed in the `X` register, and the *first* `byte`-sized argument is passed in the `B` register.
+*   **Varargs**: When a function accepts variadic arguments (like `printf`), the last named variable prior to `...` *must* be pushed onto the stack instead of its usual register, ensuring the `va_list` library can compute physical memory offsets linearly.
+*   **Return Values**: Single return values are returned cleanly in hardware registers: `word`-sized values in `X` and `byte`-sized values in `B`.
+
+#### 6809 Stack Management (S and U Registers)
+The 6809 backend utilizes a strict dual-register stack model to map infinite SSA variables to physical memory while conforming to the ABI constraints:
+*   **Hardware Stack (`S`)**: Exclusively reserved for passing parameters to external function calls and handling `jsr`/`rts` return addresses. During mathematical expression evaluation, it serves as a temporary scratchpad (e.g., operands are dynamically pushed via `std ,--s` and instantly consumed via `addd ,s++`).
+*   **User/Frame Stack (`U`)**: Re-assigned as the local function frame pointer. Upon entry, the compiler issues `pshs u` and `tfr s,u` to establish a fixed memory frame. Every SSA instruction dynamically receives a 2-byte local stack slot accessed via negative frame offsets (`-offset,u`). To unify parameter reads and eliminate register tracking complexities, ABI parameters arriving natively in `X` and `B` are immediately copied down into local `U` slots during the function prologue.
+
 ### 7.2 Testing and Debugging Target: x86_64
 For practical debugging, testing, and rapid development, the compiler will include a backend for **64-bit x86_64**. 
 *   This allows the compiler's output to be executed and verified natively on modern development machines.
