@@ -1,0 +1,122 @@
+package main_test
+
+import (
+	"bytes"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+const expectedOutput = `Triangle number 1 is 1
+Triangle number 2 is 3
+Triangle number 3 is 6
+Triangle number 4 is 10
+Triangle number 5 is 15
+Triangle number 6 is 21
+Triangle number 7 is 28
+Triangle number 8 is 36
+Triangle number 9 is 45
+Triangle number 10 is 55`
+
+const expectedOutputByte = `Triangle number 1 is 1
+Triangle number 2 is 3
+Triangle number 3 is 6
+Triangle number 4 is 10
+Triangle number 5 is 15
+Triangle number 6 is 21
+Triangle number 7 is 28
+Triangle number 8 is 36
+Triangle number 9 is 45
+Triangle number 10 is 55
+Triangle number 11 is 66
+Triangle number 12 is 78
+Triangle number 13 is 91
+Triangle number 14 is 105
+Triangle number 15 is 120
+Triangle number 16 is 136
+Triangle number 17 is 153
+Triangle number 18 is 171
+Triangle number 19 is 190
+Triangle number 20 is 210
+Triangle number 21 is 231
+Triangle number 22 is 253
+Triangle number 23 is 20
+Triangle number 24 is 44
+Triangle number 25 is 69
+Triangle number 26 is 95
+Triangle number 27 is 122
+Triangle number 28 is 150
+Triangle number 29 is 179
+Triangle number 30 is 209`
+
+func cleanOutput(out string) []string {
+	lines := strings.Split(out, "\n")
+	var result []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
+	tmpDir := t.TempDir()
+	cFile := filepath.Join(tmpDir, "out.c")
+	exeFile := filepath.Join(tmpDir, "out.exe")
+
+	// Compile demo file using minigo
+	cmd := exec.Command("go", "run", "main.go", "-m="+backend, "-o", cFile, sourceFile)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile with minigo -m=%s: %v\nOutput: %s", backend, err, out)
+	}
+
+	// Compile generated C code with gcc
+	cmd = exec.Command("gcc", "-o", exeFile, cFile)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to compile C code with gcc for backend %s: %v\nOutput: %s", backend, err, out)
+	}
+
+	// Run the executable
+	cmd = exec.Command(exeFile)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to run executable for backend %s: %v", backend, err)
+	}
+
+	actualLines := cleanOutput(stdout.String())
+	expectedLines := cleanOutput(expectedStr)
+
+	if len(actualLines) < len(expectedLines) {
+		t.Fatalf("Backend %s output too short. Expected at least %d lines, got %d", backend, len(expectedLines), len(actualLines))
+	}
+
+	// Truncate actual lines to length of expected lines (since triangles_byte limit is 100 but we only check first 30)
+	actualLines = actualLines[:len(expectedLines)]
+
+	actual := strings.Join(actualLines, "\n")
+	expected := strings.Join(expectedLines, "\n")
+
+	if actual != expected {
+		t.Errorf("Backend %s output mismatch.\nExpected:\n%s\n\nActual Prefix:\n%s", backend, expected, actual)
+	}
+}
+
+func TestSystemTriangles_C(t *testing.T) {
+	testBackend(t, "C", "demo/triangles.go", expectedOutput)
+}
+
+func TestSystemTriangles_CBE(t *testing.T) {
+	testBackend(t, "CBE", "demo/triangles.go", expectedOutput)
+}
+
+func TestSystemTrianglesByte_C(t *testing.T) {
+	testBackend(t, "C", "demo/triangles_byte.go", expectedOutputByte)
+}
+
+func TestSystemTrianglesByte_CBE(t *testing.T) {
+	testBackend(t, "CBE", "demo/triangles_byte.go", expectedOutputByte)
+}
