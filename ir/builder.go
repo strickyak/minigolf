@@ -134,8 +134,29 @@ func (b *Builder) writeVariable(variable string, block *BasicBlock, value Value)
 	}
 	b.currentDef[block][variable] = value
 	if value.Type() != TypeUnknown {
-		b.varTypes[variable] = value.Type()
+		if _, exists := b.varTypes[variable]; !exists {
+			b.varTypes[variable] = value.Type()
+		}
 	}
+}
+
+func (b *Builder) coerceType(val Value, targetType Type) Value {
+	if val.Type() == targetType || val.Type() == TypeUnknown {
+		return val
+	}
+	if val.Type() == TypeWord && targetType == TypeByte {
+		if cw, ok := val.(*ConstWord); ok {
+			return b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: uint8(cw.Val)})
+		}
+		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: val})
+	}
+	if val.Type() == TypeByte && targetType == TypeWord {
+		if cb, ok := val.(*ConstByte); ok {
+			return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(cb.Val)})
+		}
+		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: val})
+	}
+	return val
 }
 
 func (b *Builder) readVariable(variable string, block *BasicBlock) Value {
@@ -198,9 +219,11 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 		case *ast.VarStatement:
 			typ := TypeWord
 			if s.ValueType != nil && s.ValueType.Value == "byte" { typ = TypeByte }
+			b.varTypes[s.Name.Value] = typ
 			var val Value
 			if s.Value != nil {
 				val = b.buildExpr(s.Value)
+				val = b.coerceType(val, typ)
 			} else {
 				if typ == TypeByte {
 					val = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0})
@@ -213,8 +236,15 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			for i, name := range s.Names {
 				val := b.buildExpr(s.Values[i])
 				if g, ok := b.globals[name.Value]; ok {
+					val = b.coerceType(val, g.Typ)
 					b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val})
 				} else {
+					targetType, exists := b.varTypes[name.Value]
+					if !exists {
+						targetType = val.Type()
+						b.varTypes[name.Value] = targetType
+					}
+					val = b.coerceType(val, targetType)
 					b.writeVariable(name.Value, b.currentBlock, val)
 				}
 			}
