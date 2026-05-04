@@ -1,8 +1,8 @@
-# Design Document: Optimizing SSA Compiler for MiniGo
+# Design Document: Optimizing SSA Compiler for MiniGolf
 
 ## 1. Introduction and Goals
 
-This document outlines the design of an optimizing compiler for a simplified, Go-like language (referred to as "MiniGo"). The compiler is built around a Static Single Assignment (SSA) intermediate representation to facilitate robust and efficient optimization passes.
+This document outlines the design of an optimizing compiler for a simplified, Go-like language (referred to as "MiniGolf" - MINIature GO Language, Fun!). The compiler is built around a Static Single Assignment (SSA) intermediate representation to facilitate robust and efficient optimization passes.
 
 **Implementation Language:** The compiler will be written in **Go version 1.25**.
 
@@ -128,6 +128,12 @@ To seamlessly link with existing C libraries built by `gcc` v4.6.4 (targeting `l
 The 6809 backend utilizes a strict dual-register stack model to map infinite SSA variables to physical memory while conforming to the ABI constraints:
 *   **Hardware Stack (`S`)**: Exclusively reserved for passing parameters to external function calls and handling `jsr`/`rts` return addresses. During mathematical expression evaluation, it serves as a temporary scratchpad (e.g., operands are dynamically pushed via `std ,--s` and instantly consumed via `addd ,s++`).
 *   **User/Frame Stack (`U`)**: Re-assigned as the local function frame pointer. Upon entry, the compiler issues `pshs u` and `tfr s,u` to establish a fixed memory frame. Every SSA instruction dynamically receives a 2-byte local stack slot accessed via negative frame offsets (`-offset,u`). To unify parameter reads and eliminate register tracking complexities, ABI parameters arriving natively in `X` and `B` are immediately copied down into local `U` slots during the function prologue.
+
+#### 6809 Execution Mode Flags
+To support deployment across advanced operating systems (such as Microware OS-9 or NitrOS-9) and to provide deep flexibility over register allocation, the M6809 backend supports three target-specific mode flags:
+*   **`-frame-pointer=bool` (default `false`)**: Toggles the use of the `U` register as a dedicated local frame pointer. When `false`, the compiler dynamically tracks physical byte-pushes against the hardware `S` stack to emit differential frame queries, completely freeing `U` for usage within the local basic-block register allocator.
+*   **`-globals-at-y=bool` (default `false`)**: When enabled, the backend maps all global variable references as contiguous relative offsets against the `Y` register (`N,y`), avoiding hardcoded `.data`/`.bss` locations. The system masks `Y` out of standard register allocation workflows, allowing it to act securely as a constant local bounds pointer.
+*   **`-pic=bool` (default `false`)**: Triggers strict Position Independent Code generation. Formats all standard procedural leaps (`jsr`) into relative branching vectors (`lbsr`). Systematically captures string configurations and read-only elements, nesting them purely within the continuous `.code` execution section to ensure `leax fmt,pcr` addressing logic natively bypasses OS partition disconnects.
 
 ### 7.2 Testing and Debugging Target: x86_64
 For practical debugging, testing, and rapid development, the compiler will include a backend for **64-bit x86_64**. 
