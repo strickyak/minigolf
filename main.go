@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"minigo/ast"
+	"minigo/ir"
 	"minigo/lexer"
 	"minigo/parser"
 	"minigo/semantic"
@@ -106,6 +107,24 @@ func main() {
 		os.Exit(1)
 	}
 	
+	// Flag -m=ir : emit SSA IR and exit cleanly
+	if *archFlag == "ir" || *archFlag == "IR" {
+		builder := ir.NewBuilder()
+		irProg := builder.Build(program)
+		irCode := ir.PrintProgram(irProg)
+		
+		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + irCode
+		
+		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing IR output: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Printf("Successfully compiled to IR: %s", *outFlag)
+		os.Exit(0)
+	}
+
 	// Flag -m=C : transpile AST to C and exit cleanly
 	if *archFlag == "C" || *archFlag == "c" || *archFlag == "c99" || *archFlag == "C99" {
 		tr := transpiler.New()

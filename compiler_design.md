@@ -70,15 +70,19 @@ The core of the optimization pipeline relies on an SSA representation where ever
 
 ### 4.2 Key Instruction Types
 
-*   **Phi Nodes (`Phi`):** Selects a value based on the incoming control flow edge. Essential for resolving assignments in loops and conditional branches.
-*   **Arithmetic/Logic:** `Add`, `Sub`, `Mul`, `Div`, `Mod`, `And`, `Or`, `Xor`, `Shl`, `Shr`. These are strongly typed (e.g., `Add_Word`, `Add_Byte`).
-*   **Control Flow (Terminators):**
-    *   `Jump`: Unconditional branch to another block.
-    *   `Branch`: Conditional branch based on a boolean/byte value (`Branch(cond, true_block, false_block)`).
-    *   `Return`: Exits the function, optionally yielding a value.
-*   **Type Conversion:**
-    *   `ZeroExt`: Extends a `byte` to a `word` by padding the most significant bits with zeros.
-    *   `Truncate`: Truncates a `word` to a `byte` by discarding the upper 8 bits.
+The IR operations are strictly defined as Go structs implementing the `Instruction` interface:
+
+*   **Constants**: `ConstByte`, `ConstWord`
+*   **Memory Operations**: `Load`, `Store` (used strictly for global variables, as locals are mapped directly to SSA values).
+*   **Arithmetic/Logic (`BinaryOp`, `UnaryOp`)**: Supported opcodes include `add`, `sub`, `mul`, `div`, `mod`, `and`, `or`, `xor`, `shl`, `shr`, `not`, `neg`.
+*   **Comparisons (`Compare`)**: `eq`, `neq`, `lt`, `lte`, `gt`, `gte`. These always yield a `byte` (0 for false, 1 for true).
+*   **SSA Primitives**: `Phi` (selects value based on predecessor block).
+*   **Function Calls**: `Call` (user-defined functions), `BuiltinCall` (`print`, `println`).
+*   **Conversions (`Cast`)**: `zero_ext` (byte to word), `trunc` (word to byte).
+*   **Terminators**: 
+    *   `Jump`: Unconditional branch to a single target block.
+    *   `Branch`: Conditional branch evaluated on a condition value.
+    *   `Return`: Returns execution to caller, yielding an optional value.
 
 ## 5. Type System Details (Byte and Word)
 
