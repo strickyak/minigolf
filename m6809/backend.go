@@ -10,9 +10,11 @@ import (
 type Backend struct {
 	useFramePointer bool
 	globalsAtY      bool
+	picMode         bool
 	frameOffset     int
 	buf             bytes.Buffer
 	dataBuf         bytes.Buffer
+	rodataBuf       bytes.Buffer
 	stackSize       int
 	pushedBytes     int
 	slots           map[int]int
@@ -25,7 +27,7 @@ type Backend struct {
 	lblCount        int
 }
 
-func New(useFramePointer bool, globalsAtY bool) *Backend {
+func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 	frameOff := 0
 	if useFramePointer {
 		frameOff = 2
@@ -33,6 +35,7 @@ func New(useFramePointer bool, globalsAtY bool) *Backend {
 	return &Backend{
 		useFramePointer: useFramePointer,
 		globalsAtY:      globalsAtY,
+		picMode:         picMode,
 		frameOffset:     frameOff,
 		slots:           make(map[int]int),
 		paramSlots:      make(map[string]int),
@@ -164,11 +167,15 @@ func (b *Backend) Generate(program *ir.Program) string {
 
 	b.buf.WriteString("\n\texport _main\n")
 	b.buf.WriteString("_main:\n")
-	b.buf.WriteString("\tjsr f_main\n")
+	if b.picMode {
+		b.buf.WriteString("\tlbsr f_main\n")
+	} else {
+		b.buf.WriteString("\tjsr f_main\n")
+	}
 	b.buf.WriteString("\tldx #0\n")
 	b.buf.WriteString("\trts\n")
 
-	return b.buf.String() + "\n" + b.dataBuf.String()
+	return b.buf.String() + "\n" + b.rodataBuf.String() + "\n" + b.dataBuf.String()
 }
 
 func (b *Backend) emitFunc(f *ir.Function) {
@@ -435,7 +442,12 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.loadVal(firstByteArg)
 		}
 
-		b.buf.WriteString(fmt.Sprintf("\tjsr f_%s\n", i.Func.Name))
+		if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tlbsr f_%s\n", i.Func.Name))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tjsr f_%s\n", i.Func.Name))
+		}
+
 		if pushedBytes > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", pushedBytes))
 			b.popBytes(pushedBytes)
@@ -484,10 +496,14 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		format += "\\n"
 	}
 
-	if b.dataBuf.Len() == 0 {
-		b.dataBuf.WriteString("\tsection data\n")
+	if b.picMode {
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"%s\"\n", fmtLabel, format))
+	} else {
+		if b.dataBuf.Len() == 0 {
+			b.dataBuf.WriteString("\tsection data\n")
+		}
+		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"%s\"\n", fmtLabel, format))
 	}
-	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"%s\"\n", fmtLabel, format))
 
 	for i := len(dataArgs) - 1; i >= 0; i-- {
 		b.loadVal(dataArgs[i])
@@ -498,7 +514,12 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	b.buf.WriteString("\tstx ,--s\n")
 	b.pushBytes(2)
 
-	b.buf.WriteString("\tjsr _printf\n")
+	if b.picMode {
+		b.buf.WriteString("\tlbsr _printf\n")
+	} else {
+		b.buf.WriteString("\tjsr _printf\n")
+	}
+	
 	cleanup := 2 + len(dataArgs)*2
 	b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", cleanup))
 	b.popBytes(cleanup)

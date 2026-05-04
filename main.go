@@ -23,6 +23,7 @@ func main() {
 	outFlag := flag.String("o", "", "Output object file name")
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
+	picFlag := flag.Bool("pic", false, "Generate position-independent code (PIC) using relative branches and localized PCR data segments")
 
 	// Custom usage message
 	flag.Usage = func() {
@@ -175,7 +176,7 @@ func main() {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 		
-		backend := m6809.New(*framePointerFlag, *globalsAtYFlag)
+		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)
 		asmCode := backend.Generate(irProg)
 		
 		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
