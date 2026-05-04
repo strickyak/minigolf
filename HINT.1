@@ -1,0 +1,5 @@
+set -x
+
+go run ./. -m C -o /tmp/a.c   demo/triangles.go
+
+( cd /tmp && gcc -o a a.c && ./a )
