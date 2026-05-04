@@ -56,7 +56,7 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 	t.buf.WriteString("#include <stdint.h>\n\n")
 
 	t.buf.WriteString("typedef uint8_t byte;\n")
-	t.buf.WriteString("typedef uint16_t word;\n\n")
+	t.buf.WriteString("typedef uintptr_t word;\n\n")
 
 	// Second pass: Forward declarations for types and functions
 	t.buf.WriteString("// Forward declarations\n")
@@ -249,8 +249,8 @@ func (t *Transpiler) emitPrint(newline bool, args []ast.Expression) string {
 		if strLit, ok := arg.(*ast.StringLiteral); ok {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
-			formatStrs = append(formatStrs, "%u")
-			argStrs = append(argStrs, t.emitExprStr(arg))
+			formatStrs = append(formatStrs, "%llu")
+			argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)(%s)", t.emitExprStr(arg)))
 		}
 	}
 

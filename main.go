@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"minigo/ast"
+	"minigo/cbe"
 	"minigo/ir"
 	"minigo/lexer"
 	"minigo/parser"
@@ -122,6 +123,26 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Printf("Successfully compiled to IR: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=cbe : Generate C from IR and exit cleanly
+	if *archFlag == "cbe" || *archFlag == "CBE" {
+		builder := ir.NewBuilder()
+		irProg := builder.Build(program)
+		
+		backend := cbe.New()
+		cCode := backend.Generate(irProg)
+		
+		header := fmt.Sprintf("/*\n * Starting whole-program compilation (CBE Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + cCode
+		
+		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing CBE output: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Printf("Successfully compiled via CBE to: %s", *outFlag)
 		os.Exit(0)
 	}
 

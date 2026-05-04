@@ -30,7 +30,7 @@ The language supports exactly six outer statement types, just like in Go:
 6.  `func`: Declares functions.
 
 **Data Types & Literals:**
-*   **Primitive Integers:** Exactly two numeric types: `byte` (unsigned 8-bit) and `word` (unsigned 16-bit).
+*   **Primitive Integers:** Exactly two numeric types: `byte` (unsigned 8-bit) and `word` (unsigned pointer-sized integer, equivalent to `uintptr`).
 *   **Strings:** ASCII string literals are supported strictly for testing and bootstrapping. No string operations (like concatenation) are defined; they can only be passed to built-in print functions.
 
 **Function-Level Statements:**
