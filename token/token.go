@@ -50,6 +50,9 @@ const (
 	LBRACE = "{"
 	RBRACE = "}"
 
+	LBRACKET = "["
+	RBRACKET = "]"
+
 	// Keywords
 	PACKAGE = "PACKAGE"
 	IMPORT  = "IMPORT"

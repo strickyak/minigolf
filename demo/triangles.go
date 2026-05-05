@@ -1,14 +1,1 @@
-package main
-
-const limit = 10
-
-func main() {
-	var count word = 1
-	var sum word = 0
-	
-	for count <= limit {
-		sum = sum + count
-		println("Triangle number", count, "is", sum)
-		count = count + 1
-	}
-}
+// File moved to demos/triangles.golf

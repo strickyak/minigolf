@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"fmt"
 	"minigo/ast"
 )
 
@@ -35,13 +36,34 @@ func NewBuilder() *Builder {
 	}
 }
 
+func astToIRType(expr ast.Expression) Type {
+	if expr == nil {
+		return TypeWord
+	}
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		if e.Value == "byte" {
+			return TypeByte
+		} else if e.Value == "word" {
+			return TypeWord
+		}
+		return Type(e.Value)
+	case *ast.ArrayType:
+		lenStr := "0"
+		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
+			lenStr = fmt.Sprintf("%d", il.Value)
+		}
+		return Type(fmt.Sprintf("[%s]%s", lenStr, astToIRType(e.Elt)))
+	}
+	return TypeWord
+}
+
 func (b *Builder) Build(astProg *ast.Program) *Program {
 	// First pass: register all globals, constants, and function signatures
 	for _, stmt := range astProg.Statements {
 		switch s := stmt.(type) {
 		case *ast.VarStatement:
-			typ := TypeWord
-			if s.ValueType != nil && s.ValueType.Value == "byte" { typ = TypeByte }
+			typ := astToIRType(s.ValueType)
 			g := &Global{Name: s.Name.Value, Typ: typ}
 			b.globals[g.Name] = g
 			b.Program.Globals = append(b.Program.Globals, g)
@@ -51,16 +73,13 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			}
 		case *ast.FuncStatement:
 			f := &Function{Name: s.Name.Value}
-			if s.ReturnType != nil && s.ReturnType.Value == "byte" {
-				f.ReturnType = TypeByte
-			} else if s.ReturnType != nil && s.ReturnType.Value == "word" {
-				f.ReturnType = TypeWord
+			if s.ReturnType != nil {
+				f.ReturnType = astToIRType(s.ReturnType)
 			} else {
 				f.ReturnType = TypeVoid
 			}
 			for i, p := range s.Parameters {
-				typ := TypeWord
-				if p.Type.Value == "byte" { typ = TypeByte }
+				typ := astToIRType(p.Type)
 				f.Parameters = append(f.Parameters, &Parameter{ID: i, Name: p.Name.Value, Typ: typ})
 			}
 			b.funcs[f.Name] = f
@@ -217,8 +236,7 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 	for _, stmt := range blockAst.Statements {
 		switch s := stmt.(type) {
 		case *ast.VarStatement:
-			typ := TypeWord
-			if s.ValueType != nil && s.ValueType.Value == "byte" { typ = TypeByte }
+			typ := astToIRType(s.ValueType)
 			b.varTypes[s.Name.Value] = typ
 			var val Value
 			if s.Value != nil {
@@ -227,26 +245,17 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			} else {
 				if typ == TypeByte {
 					val = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0})
-				} else {
+				} else if typ == TypeWord {
 					val = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0})
+				} else {
+					val = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}})
 				}
 			}
 			b.writeVariable(s.Name.Value, b.currentBlock, val)
 		case *ast.AssignStatement:
-			for i, name := range s.Names {
+			for i, nameExpr := range s.Names {
 				val := b.buildExpr(s.Values[i])
-				if g, ok := b.globals[name.Value]; ok {
-					val = b.coerceType(val, g.Typ)
-					b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val})
-				} else {
-					targetType, exists := b.varTypes[name.Value]
-					if !exists {
-						targetType = val.Type()
-						b.varTypes[name.Value] = targetType
-					}
-					val = b.coerceType(val, targetType)
-					b.writeVariable(name.Value, b.currentBlock, val)
-				}
+				b.assignToExpr(nameExpr, val)
 			}
 		case *ast.ExpressionStatement:
 			b.buildExpr(s.Expression)
@@ -339,6 +348,22 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			}
 		}
 		return b.readVariable(e.Value, b.currentBlock)
+	case *ast.IndexExpression:
+		arr := b.buildExpr(e.Left)
+		idx := b.buildExpr(e.Index)
+		// type of elt:
+		var eltType Type = TypeUnknown
+		if arr != nil && string(arr.Type()) != "" && string(arr.Type())[0] == '[' {
+			// e.g. "[3]byte" -> "byte"
+			s := string(arr.Type())
+			for i, c := range s {
+				if c == ']' {
+					eltType = Type(s[i+1:])
+					break
+				}
+			}
+		}
+		return b.addInstr(&ExtractElement{BaseInstruction: BaseInstruction{Typ: eltType}, Array: arr, Index: idx})
 	case *ast.StringLiteral:
 		return &StringLiteral{Value: e.Value}
 	case *ast.InfixExpression:
@@ -384,4 +409,26 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		}
 	}
 	return nil
+}
+
+func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
+	if ident, ok := lhs.(*ast.Identifier); ok {
+		if g, ok := b.globals[ident.Value]; ok {
+			val = b.coerceType(val, g.Typ)
+			b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val})
+		} else {
+			targetType, exists := b.varTypes[ident.Value]
+			if !exists {
+				targetType = val.Type()
+				b.varTypes[ident.Value] = targetType
+			}
+			val = b.coerceType(val, targetType)
+			b.writeVariable(ident.Value, b.currentBlock, val)
+		}
+	} else if idxExpr, ok := lhs.(*ast.IndexExpression); ok {
+		arr := b.buildExpr(idxExpr.Left)
+		idx := b.buildExpr(idxExpr.Index)
+		newArr := b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: arr.Type()}, Array: arr, Index: idx, Val: val})
+		b.assignToExpr(idxExpr.Left, newArr)
+	}
 }

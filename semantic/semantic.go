@@ -59,6 +59,24 @@ func New() *Analyzer {
 	}
 }
 
+func exprToString(expr ast.Expression) string {
+	if expr == nil {
+		return ""
+	}
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return e.Value
+	case *ast.ArrayType:
+		lenStr := "0"
+		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
+			lenStr = fmt.Sprintf("%d", il.Value)
+		}
+		return fmt.Sprintf("[%s]%s", lenStr, exprToString(e.Elt))
+	default:
+		return expr.TokenLiteral()
+	}
+}
+
 func (a *Analyzer) Errors() []string {
 	return a.errors
 }
@@ -79,7 +97,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 		case *ast.VarStatement:
 			typ := "word" // default
 			if s.ValueType != nil {
-				typ = s.ValueType.Value
+				typ = exprToString(s.ValueType)
 			}
 			a.globalScope.Define(s.Name.Value, typ)
 		case *ast.ConstStatement:
@@ -107,7 +125,7 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	defer func() { a.currentScope = a.currentScope.parent }()
 
 	for _, p := range s.Parameters {
-		a.currentScope.Define(p.Name.Value, p.Type.Value)
+		a.currentScope.Define(p.Name.Value, exprToString(p.Type))
 	}
 
 	a.analyzeBlock(s.Body)
@@ -119,18 +137,24 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 		case *ast.VarStatement:
 			typ := "word"
 			if s.ValueType != nil {
-				typ = s.ValueType.Value
+				typ = exprToString(s.ValueType)
 			}
 			a.currentScope.Define(s.Name.Value, typ)
 		case *ast.AssignStatement:
 			if s.Token.Literal == ":=" {
-				for _, name := range s.Names {
-					a.currentScope.Define(name.Value, "word") // default
+				for _, nameExpr := range s.Names {
+					if name, ok := nameExpr.(*ast.Identifier); ok {
+						a.currentScope.Define(name.Value, "word") // default
+					}
 				}
 			} else {
-				for _, name := range s.Names {
-					if _, ok := a.currentScope.Resolve(name.Value); !ok {
-						a.errors = append(a.errors, fmt.Sprintf("undefined variable: %s", name.Value))
+				for _, nameExpr := range s.Names {
+					if name, ok := nameExpr.(*ast.Identifier); ok {
+						if _, ok := a.currentScope.Resolve(name.Value); !ok {
+							a.errors = append(a.errors, fmt.Sprintf("undefined variable: %s", name.Value))
+						}
+					} else if idx, ok := nameExpr.(*ast.IndexExpression); ok {
+						a.analyzeExpression(idx) // arrays assignment a[i] = v
 					}
 				}
 			}
@@ -173,5 +197,8 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		for _, arg := range e.Arguments {
 			a.analyzeExpression(arg)
 		}
+	case *ast.IndexExpression:
+		a.analyzeExpression(e.Left)
+		a.analyzeExpression(e.Index)
 	}
 }

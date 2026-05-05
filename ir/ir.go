@@ -2,26 +2,19 @@ package ir
 
 import "fmt"
 
-// Type represents a primitive type in the IR.
-type Type int
+// Type represents a primitive or composite type in the IR.
+type Type string
 
 const (
-	TypeUnknown Type = iota
-	TypeByte
-	TypeWord
-	TypeVoid
+	TypeUnknown Type = ""
+	TypeByte    Type = "byte"
+	TypeWord    Type = "word"
+	TypeVoid    Type = "void"
 )
 
 func (t Type) String() string {
-	switch t {
-	case TypeByte:
-		return "byte"
-	case TypeWord:
-		return "word"
-	case TypeVoid:
-		return "void"
-	}
-	return "unknown"
+	if t == "" { return "unknown" }
+	return string(t)
 }
 
 // Value is an interface for anything that can be an operand.
@@ -158,6 +151,28 @@ type UnaryOp struct {
 	Operand Value
 }
 func (i *UnaryOp) Opcode() string { return i.Op }
+
+// --- Array Operations ---
+
+type ExtractElement struct {
+	BaseInstruction
+	Array Value
+	Index Value
+}
+func (i *ExtractElement) Opcode() string { return "extract" }
+
+type InsertElement struct {
+	BaseInstruction
+	Array Value
+	Index Value
+	Val   Value
+}
+func (i *InsertElement) Opcode() string { return "insert" }
+
+type ZeroInit struct {
+	BaseInstruction
+}
+func (i *ZeroInit) Opcode() string { return "zeroinit" }
 
 // --- SSA Primitives ---
 

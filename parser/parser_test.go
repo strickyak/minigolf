@@ -126,7 +126,7 @@ func TestAssignStatement(t *testing.T) {
 	if !ok {
 		t.Fatalf("stmt 0 is not AssignStatement")
 	}
-	if len(assign1.Names) != 1 || assign1.Names[0].Value != "x" {
+	if len(assign1.Names) != 1 || assign1.Names[0].(*ast.Identifier).Value != "x" {
 		t.Errorf("assign1 name is not x")
 	}
 	if len(assign1.Values) != 1 {
@@ -138,7 +138,7 @@ func TestAssignStatement(t *testing.T) {
 	if !ok {
 		t.Fatalf("stmt 1 is not AssignStatement")
 	}
-	if len(assign2.Names) != 2 || assign2.Names[0].Value != "x" || assign2.Names[1].Value != "y" {
+	if len(assign2.Names) != 2 || assign2.Names[0].(*ast.Identifier).Value != "x" || assign2.Names[1].(*ast.Identifier).Value != "y" {
 		t.Errorf("assign2 names incorrect")
 	}
 	if len(assign2.Values) != 2 {
@@ -150,7 +150,7 @@ func TestAssignStatement(t *testing.T) {
 	if !ok {
 		t.Fatalf("stmt 2 is not AssignStatement")
 	}
-	if len(assign3.Names) != 1 || assign3.Names[0].Value != "z" {
+	if len(assign3.Names) != 1 || assign3.Names[0].(*ast.Identifier).Value != "z" {
 		t.Errorf("assign3 name is not z")
 	}
 	if assign3.Token.Literal != ":=" {

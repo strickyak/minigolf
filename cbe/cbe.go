@@ -8,23 +8,43 @@ import (
 )
 
 type CBE struct {
-	buf bytes.Buffer
+	buf        bytes.Buffer
+	typedefBuf bytes.Buffer
+	arrayTypes map[string]bool
 }
 
 func New() *CBE {
-	return &CBE{}
+	return &CBE{
+		arrayTypes: make(map[string]bool),
+	}
+}
+
+func (c *CBE) mapType(typ string) string {
+	if typ == "byte" || typ == "word" || typ == "void" || typ == "unknown" {
+		return typ
+	}
+	if strings.HasPrefix(typ, "[") {
+		idx := strings.Index(typ, "]")
+		if idx == -1 { return "word" }
+		lenStr := typ[1:idx]
+		eltType := typ[idx+1:]
+		
+		eltName := c.mapType(eltType)
+		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, eltName)
+		
+		if !c.arrayTypes[typeName] {
+			c.arrayTypes[typeName] = true
+			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s data[%s]; } %s;\n", eltName, lenStr, typeName))
+		}
+		return typeName
+	}
+	return "word"
 }
 
 func (c *CBE) Generate(program *ir.Program) string {
-	c.buf.WriteString("#include <stdio.h>\n")
-	c.buf.WriteString("#include <stdint.h>\n\n")
-
-	c.buf.WriteString("typedef uint8_t byte;\n")
-	c.buf.WriteString("typedef uintptr_t word;\n\n")
-
 	// Globals
 	for _, g := range program.Globals {
-		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", g.Typ, g.Name))
+		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(string(g.Typ)), g.Name))
 	}
 	if len(program.Globals) > 0 {
 		c.buf.WriteString("\n")
@@ -47,18 +67,28 @@ func (c *CBE) Generate(program *ir.Program) string {
 	c.buf.WriteString("\treturn 0;\n")
 	c.buf.WriteString("}\n")
 
-	return c.buf.String()
+	var finalBuf bytes.Buffer
+	finalBuf.WriteString("#include <stdio.h>\n")
+	finalBuf.WriteString("#include <stdint.h>\n\n")
+	finalBuf.WriteString("typedef uint8_t byte;\n")
+	finalBuf.WriteString("typedef uintptr_t word;\n\n")
+
+	finalBuf.WriteString(c.typedefBuf.String())
+	finalBuf.WriteString("\n")
+	finalBuf.WriteString(c.buf.String())
+
+	return finalBuf.String()
 }
 
 func (c *CBE) emitFuncSignature(f *ir.Function, isForward bool) {
 	retType := "void"
 	if f.ReturnType != ir.TypeVoid {
-		retType = f.ReturnType.String()
+		retType = c.mapType(string(f.ReturnType))
 	}
 
 	var params []string
 	for _, p := range f.Parameters {
-		params = append(params, fmt.Sprintf("%s v_%s", p.Typ, p.Name))
+		params = append(params, fmt.Sprintf("%s v_%s", c.mapType(string(p.Typ)), p.Name))
 	}
 
 	c.buf.WriteString(fmt.Sprintf("%s f_%s(%s)", retType, f.Name, strings.Join(params, ", ")))
@@ -76,7 +106,7 @@ func (c *CBE) emitFunc(f *ir.Function) {
 	for _, b := range f.Blocks {
 		for _, instr := range b.Instructions {
 			if instr.Type() != ir.TypeVoid && instr.Type() != ir.TypeUnknown {
-				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", instr.Type(), instr.GetID()))
+				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", c.mapType(string(instr.Type())), instr.GetID()))
 			}
 		}
 	}
@@ -92,6 +122,12 @@ func (c *CBE) emitFunc(f *ir.Function) {
 			}
 			if _, isTerm := instr.(ir.Terminator); isTerm {
 				continue // Handled below
+			}
+
+			if ins, ok := instr.(*ir.InsertElement); ok {
+				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", ins.GetID(), c.formatVal(ins.Array)))
+				c.buf.WriteString(fmt.Sprintf("\tv%d.data[%s] = %s;\n", ins.GetID(), c.formatVal(ins.Index), c.formatVal(ins.Val)))
+				continue
 			}
 
 			c.buf.WriteString("\t")
@@ -210,6 +246,10 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		} else if i.Op == "zero_ext" {
 			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
 		}
+	case *ir.ZeroInit:
+		return fmt.Sprintf("(%s){0}", c.mapType(string(i.Typ)))
+	case *ir.ExtractElement:
+		return fmt.Sprintf("(%s).data[%s]", c.formatVal(i.Array), c.formatVal(i.Index))
 	}
 	return "/* unsupported instruction */"
 }

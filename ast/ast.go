@@ -63,7 +63,7 @@ func (s *ConstStatement) TokenLiteral() string { return s.Token.Literal }
 type TypeStatement struct {
 	Token    token.Token // The 'type' token
 	Name     *Identifier
-	BaseType *Identifier // 'byte' or 'word'
+	BaseType Expression // 'byte' or 'word' or array
 }
 
 func (s *TypeStatement) statementNode()       {}
@@ -72,7 +72,7 @@ func (s *TypeStatement) TokenLiteral() string { return s.Token.Literal }
 type VarStatement struct {
 	Token     token.Token // The 'var' token
 	Name      *Identifier
-	ValueType *Identifier // Optional, e.g. 'byte' or 'word'
+	ValueType Expression  // Optional, e.g. 'byte' or 'word'
 	Value     Expression  // Optional
 }
 
@@ -83,17 +83,16 @@ type FuncStatement struct {
 	Token      token.Token // The 'func' token
 	Name       *Identifier
 	Parameters []*Parameter
-	ReturnType *Identifier // Optional
+	ReturnType Expression // Optional
 	Body       *BlockStatement
 }
 
 func (s *FuncStatement) statementNode()       {}
 func (s *FuncStatement) TokenLiteral() string { return s.Token.Literal }
 
-// Parameter represents a single parameter in a function declaration.
 type Parameter struct {
 	Name *Identifier
-	Type *Identifier
+	Type Expression
 }
 
 // ============================================================================
@@ -109,10 +108,10 @@ func (s *BlockStatement) statementNode()       {}
 func (s *BlockStatement) TokenLiteral() string { return s.Token.Literal }
 
 // AssignStatement handles `x = 5`, `x, y = 1, 2`, and `x := 5`
-// Because we have no pointers or arrays, the left-hand side is strictly identifiers.
+// Left-hand side is expressions (Identifiers or IndexExpressions).
 type AssignStatement struct {
 	Token  token.Token // The '=' or ':=' token
-	Names  []*Identifier
+	Names  []Expression
 	Values []Expression
 }
 
@@ -211,3 +210,21 @@ type CallExpression struct {
 
 func (e *CallExpression) expressionNode()      {}
 func (e *CallExpression) TokenLiteral() string { return e.Token.Literal }
+
+type ArrayType struct {
+	Token  token.Token // The '[' token
+	Length Expression
+	Elt    Expression
+}
+
+func (e *ArrayType) expressionNode()      {}
+func (e *ArrayType) TokenLiteral() string { return e.Token.Literal }
+
+type IndexExpression struct {
+	Token token.Token // The '[' token
+	Left  Expression
+	Index Expression
+}
+
+func (e *IndexExpression) expressionNode()      {}
+func (e *IndexExpression) TokenLiteral() string { return e.Token.Literal }

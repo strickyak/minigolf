@@ -4,8 +4,33 @@ import (
 	"bytes"
 	"fmt"
 	"minigo/ir"
+	"strconv"
 	"strings"
 )
+
+func getTypeSize(typ string) int {
+	if typ == "byte" { return 1 }
+	if typ == "word" { return 8 }
+	if strings.HasPrefix(typ, "[") {
+		idx := strings.Index(typ, "]")
+		if idx != -1 {
+			length, _ := strconv.Atoi(typ[1:idx])
+			eltSize := getTypeSize(typ[idx+1:])
+			return length * eltSize
+		}
+	}
+	return 8
+}
+
+func getEltSize(arrType string) int {
+	if strings.HasPrefix(arrType, "[") {
+		idx := strings.Index(arrType, "]")
+		if idx != -1 {
+			return getTypeSize(arrType[idx+1:])
+		}
+	}
+	return 8
+}
 
 type Backend struct {
 	buf         bytes.Buffer
@@ -32,7 +57,8 @@ func (b *Backend) Generate(program *ir.Program) string {
 		for _, g := range program.Globals {
 			b.dataBuf.WriteString(fmt.Sprintf("\t.globl v_%s\n", g.Name))
 			b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
-			b.dataBuf.WriteString("\t.quad 0\n")
+			size := getTypeSize(string(g.Typ))
+			b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", size))
 		}
 	}
 
@@ -59,11 +85,16 @@ func (b *Backend) Generate(program *ir.Program) string {
 	return b.dataBuf.String() + "\n" + b.buf.String()
 }
 
-func (b *Backend) getSlot(id int) int {
+func (b *Backend) getSlot(id int, typ string) int {
 	if offset, ok := b.slots[id]; ok {
 		return offset
 	}
-	b.stackOffset += 8
+	size := getTypeSize(typ)
+	aligned := (size + 7) &^ 7
+	if aligned < 8 {
+		aligned = 8
+	}
+	b.stackOffset += aligned
 	b.slots[id] = b.stackOffset
 	return b.stackOffset
 }
@@ -80,9 +111,12 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	for i, p := range f.Parameters {
-		b.stackOffset += 8
+		size := getTypeSize(string(p.Typ))
+		aligned := (size + 7) &^ 7
+		if aligned < 8 { aligned = 8 }
+		b.stackOffset += aligned
 		b.paramSlots[p.Name] = b.stackOffset
-		if i < len(regs) {
+		if i < len(regs) && size <= 8 {
 			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], %s\n", b.stackOffset, regs[i]))
 		}
 	}
@@ -90,7 +124,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
 			if instr.Type() != ir.TypeVoid && instr.Type() != ir.TypeUnknown {
-				b.getSlot(instr.GetID())
+				b.getSlot(instr.GetID(), string(instr.Type()))
 			}
 		}
 	}
@@ -155,16 +189,62 @@ func (b *Backend) loadVal(val ir.Value, reg string) {
 	}
 }
 
+func (b *Backend) getAddr(val ir.Value) string {
+	switch v := val.(type) {
+	case *ir.Parameter:
+		return fmt.Sprintf("rbp - %d", b.paramSlots[v.Name])
+	case ir.Instruction:
+		return fmt.Sprintf("rbp - %d", b.slots[v.GetID()])
+	case *ir.Global:
+		return fmt.Sprintf("rip + v_%s", v.Name)
+	}
+	return ""
+}
+
+func (b *Backend) emitMemCopy(destAddr, srcAddr string, size int) {
+	if size == 1 {
+		b.buf.WriteString(fmt.Sprintf("\tmov al, byte ptr [%s]\n", srcAddr))
+		b.buf.WriteString(fmt.Sprintf("\tmov byte ptr [%s], al\n", destAddr))
+	} else if size <= 8 {
+		b.buf.WriteString(fmt.Sprintf("\tmov rax, qword ptr [%s]\n", srcAddr))
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [%s], rax\n", destAddr))
+	} else {
+		b.buf.WriteString(fmt.Sprintf("\tlea rdi, [%s]\n", destAddr))
+		b.buf.WriteString(fmt.Sprintf("\tlea rsi, [%s]\n", srcAddr))
+		b.buf.WriteString(fmt.Sprintf("\tmov rcx, %d\n", size))
+		b.buf.WriteString("\trep movsb\n")
+	}
+}
+
+func (b *Backend) storeToAddr(destAddr string, val ir.Value, size int) {
+	srcAddr := b.getAddr(val)
+	if srcAddr == "" {
+		b.loadVal(val, "rax")
+		if size == 1 {
+			b.buf.WriteString(fmt.Sprintf("\tmov byte ptr [%s], al\n", destAddr))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [%s], rax\n", destAddr))
+		}
+	} else {
+		b.emitMemCopy(destAddr, srcAddr, size)
+	}
+}
+
 func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 	for _, instr := range to.Instructions {
 		if phi, ok := instr.(*ir.Phi); ok {
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
-					b.loadVal(edge.Value, "rax")
-					if phi.Type() == ir.TypeByte {
-						b.buf.WriteString("\tmovzx rax, al\n")
+					size := getTypeSize(string(phi.Typ))
+					if size <= 8 {
+						b.loadVal(edge.Value, "rax")
+						if phi.Type() == ir.TypeByte {
+							b.buf.WriteString("\tmovzx rax, al\n")
+						}
+						b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", b.slots[phi.GetID()]))
+					} else {
+						b.emitMemCopy(fmt.Sprintf("rbp - %d", b.slots[phi.GetID()]), b.getAddr(edge.Value), size)
 					}
-					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", b.slots[phi.GetID()]))
 				}
 			}
 		}
@@ -180,14 +260,54 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i, "rax")
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.Load:
-		b.buf.WriteString(fmt.Sprintf("\tmov rax, qword ptr [rip + v_%s]\n", i.Global.Name))
-		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+		size := getTypeSize(string(i.Global.Typ))
+		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), fmt.Sprintf("rip + v_%s", i.Global.Name), size)
 	case *ir.Store:
-		b.loadVal(i.Val, "rax")
-		if i.Global.Typ == ir.TypeByte {
-			b.buf.WriteString("\tmovzx rax, al\n")
+		size := getTypeSize(string(i.Global.Typ))
+		b.storeToAddr(fmt.Sprintf("rip + v_%s", i.Global.Name), i.Val, size)
+	case *ir.ZeroInit:
+		size := getTypeSize(string(i.Typ))
+		b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rbp - %d]\n", offset))
+		b.buf.WriteString("\txor al, al\n")
+		b.buf.WriteString(fmt.Sprintf("\tmov rcx, %d\n", size))
+		b.buf.WriteString("\trep stosb\n")
+	case *ir.ExtractElement:
+		eltSize := getTypeSize(string(i.Typ))
+		arrayAddr := b.getAddr(i.Array)
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], 0\n", offset))
+		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
+			byteOffset := int(cIdx.Val) * eltSize
+			b.buf.WriteString(fmt.Sprintf("\tlea rcx, [%s]\n", arrayAddr))
+			b.buf.WriteString(fmt.Sprintf("\tadd rcx, %d\n", byteOffset))
+			b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), "rcx", eltSize)
+		} else {
+			b.loadVal(i.Index, "rax")
+			if eltSize > 1 {
+				b.buf.WriteString(fmt.Sprintf("\timul rax, %d\n", eltSize))
+			}
+			b.buf.WriteString(fmt.Sprintf("\tlea rcx, [%s]\n", arrayAddr))
+			b.buf.WriteString("\tadd rcx, rax\n")
+			b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), "rcx", eltSize)
 		}
-		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rip + v_%s], rax\n", i.Global.Name))
+	case *ir.InsertElement:
+		arraySize := getTypeSize(string(i.Array.Type()))
+		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), b.getAddr(i.Array), arraySize)
+		
+		eltSize := getEltSize(string(i.Array.Type()))
+		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
+			byteOffset := int(cIdx.Val) * eltSize
+			b.buf.WriteString(fmt.Sprintf("\tlea rcx, [rbp - %d]\n", offset))
+			b.buf.WriteString(fmt.Sprintf("\tadd rcx, %d\n", byteOffset))
+			b.storeToAddr("rcx", i.Val, eltSize)
+		} else {
+			b.loadVal(i.Index, "rax")
+			if eltSize > 1 {
+				b.buf.WriteString(fmt.Sprintf("\timul rax, %d\n", eltSize))
+			}
+			b.buf.WriteString(fmt.Sprintf("\tlea rcx, [rbp - %d]\n", offset))
+			b.buf.WriteString("\tadd rcx, rax\n")
+			b.storeToAddr("rcx", i.Val, eltSize)
+		}
 	case *ir.BinaryOp:
 		b.loadVal(i.Left, "rax")
 		b.loadVal(i.Right, "rcx")

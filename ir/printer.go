@@ -40,6 +40,12 @@ func PrintProgram(p *Program) string {
 					for _, edge := range i.Edges {
 						args = append(args, fmt.Sprintf("[b%d: %s]", edge.Block.ID, edge.Value.String()))
 					}
+				case *ExtractElement:
+					args = append(args, i.Array.String(), i.Index.String())
+				case *InsertElement:
+					args = append(args, i.Array.String(), i.Index.String(), i.Val.String())
+				case *ZeroInit:
+					// no args
 				case *Call:
 					args = append(args, "@"+i.Func.Name)
 					for _, a := range i.Args { args = append(args, a.String()) }

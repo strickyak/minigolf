@@ -111,25 +111,40 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 }
 
 func TestSystemTriangles_C(t *testing.T) {
-	testBackend(t, "C", "demo/triangles.go", expectedOutput)
+	testBackend(t, "C", "demos/triangles.golf", expectedOutput)
 }
 
 func TestSystemTriangles_CBE(t *testing.T) {
-	testBackend(t, "CBE", "demo/triangles.go", expectedOutput)
+	testBackend(t, "CBE", "demos/triangles.golf", expectedOutput)
 }
 
 func TestSystemTrianglesByte_C(t *testing.T) {
-	testBackend(t, "C", "demo/triangles_byte.go", expectedOutputByte)
+	testBackend(t, "C", "demos/triangles_byte.golf", expectedOutputByte)
 }
 
 func TestSystemTrianglesByte_CBE(t *testing.T) {
-	testBackend(t, "CBE", "demo/triangles_byte.go", expectedOutputByte)
+	testBackend(t, "CBE", "demos/triangles_byte.golf", expectedOutputByte)
 }
 
 func TestSystemTriangles_x86_64(t *testing.T) {
-	testBackend(t, "x86_64", "demo/triangles.go", expectedOutput)
+	testBackend(t, "x86_64", "demos/triangles.golf", expectedOutput)
 }
 
 func TestSystemTrianglesByte_x86_64(t *testing.T) {
-	testBackend(t, "x86_64", "demo/triangles_byte.go", expectedOutputByte)
+	testBackend(t, "x86_64", "demos/triangles_byte.golf", expectedOutputByte)
+}
+
+func TestSystemArray_C(t *testing.T) {
+	expected := "10\n20\n30"
+	testBackend(t, "C", "tests/test_array.golf", expected)
+}
+
+func TestSystemArray_CBE(t *testing.T) {
+	expected := "10\n20\n30"
+	testBackend(t, "CBE", "tests/test_array.golf", expected)
+}
+
+func TestSystemArray_x86_64(t *testing.T) {
+	expected := "10\n20\n30"
+	testBackend(t, "x86_64", "tests/test_array.golf", expected)
 }
