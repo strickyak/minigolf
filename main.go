@@ -15,6 +15,7 @@ import (
 	"minigo/transpiler"
 	"minigo/x86_64"
 	"minigo/m6809"
+	"strings"
 )
 
 func main() {
@@ -113,8 +114,10 @@ func main() {
 		os.Exit(1)
 	}
 	
+	*archFlag = strings.ToUpper(*archFlag)
+
 	// Flag -m=ir : emit SSA IR and exit cleanly
-	if *archFlag == "ir" || *archFlag == "IR" {
+	if *archFlag == "IR" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 		irCode := ir.PrintProgram(irProg)
@@ -132,7 +135,7 @@ func main() {
 	}
 
 	// Flag -m=cbe : Generate C from IR and exit cleanly
-	if *archFlag == "cbe" || *archFlag == "CBE" {
+	if *archFlag == "CBE" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 		
@@ -152,7 +155,7 @@ func main() {
 	}
 
 	// Flag -m=x86_64 : Generate X86_64 assembly from IR and exit cleanly
-	if *archFlag == "x86_64" || *archFlag == "x86-64" {
+	if *archFlag == "X86_64" || *archFlag == "X86-64" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 		
@@ -172,7 +175,7 @@ func main() {
 	}
 
 	// Flag -m=6809 : Generate M6809 assembly from IR and exit cleanly
-	if *archFlag == "6809" || *archFlag == "m6809" {
+	if *archFlag == "6809" || *archFlag == "M6809" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 		
@@ -192,7 +195,7 @@ func main() {
 	}
 
 	// Flag -m=C : transpile AST to C and exit cleanly
-	if *archFlag == "C" || *archFlag == "c" || *archFlag == "c99" || *archFlag == "C99" {
+	if *archFlag == "C" || *archFlag == "C99" {
 		tr := transpiler.New()
 		cCode := tr.Transpile(program)
 		
