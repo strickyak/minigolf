@@ -44,6 +44,10 @@ func PrintProgram(p *Program) string {
 					args = append(args, i.Array.String(), i.Index.String())
 				case *InsertElement:
 					args = append(args, i.Array.String(), i.Index.String(), i.Val.String())
+				case *ExtractField:
+					args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex))
+				case *InsertField:
+					args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex), i.Val.String())
 				case *ZeroInit:
 					// no args
 				case *Call:

@@ -1,0 +1,25 @@
+package main
+
+type Point struct {
+    x byte;
+    y word;
+}
+
+type Rect struct {
+    p1 Point;
+    p2 Point;
+}
+
+var globalRect Rect
+
+func main() {
+    globalRect.p1.x = 10
+    globalRect.p1.y = 20
+    globalRect.p2.x = 30
+    
+    var localRect Rect = globalRect
+    
+    println(localRect.p1.x)
+    println(localRect.p1.y)
+    println(localRect.p2.x)
+}

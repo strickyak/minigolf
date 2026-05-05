@@ -72,6 +72,13 @@ func exprToString(expr ast.Expression) string {
 			lenStr = fmt.Sprintf("%d", il.Value)
 		}
 		return fmt.Sprintf("[%s]%s", lenStr, exprToString(e.Elt))
+	case *ast.StructType:
+		res := "struct{"
+		for _, f := range e.Fields {
+			res += exprToString(f.Type) + ";"
+		}
+		res += "}"
+		return res
 	default:
 		return expr.TokenLiteral()
 	}
@@ -200,5 +207,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	case *ast.IndexExpression:
 		a.analyzeExpression(e.Left)
 		a.analyzeExpression(e.Index)
+	case *ast.SelectorExpression:
+		a.analyzeExpression(e.Left)
 	}
 }

@@ -1,4 +1,4 @@
-set -x
+set -ex
 T=/tmp/run-6809.tmp
 
 rm -rf $T

@@ -8,31 +8,82 @@ import (
 	"strings"
 )
 
-func getTypeSize(typ string) int {
+func (b *Backend) getTypeSize(typ string) int {
 	if typ == "byte" { return 1 }
 	if typ == "word" { return 8 }
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
 			length, _ := strconv.Atoi(typ[1:idx])
-			eltSize := getTypeSize(typ[idx+1:])
+			eltSize := b.getTypeSize(typ[idx+1:])
 			return length * eltSize
 		}
 	}
+	if b.program != nil {
+		if def, ok := b.program.TypeDefs[typ]; ok {
+			typ = def
+		}
+	}
+	if strings.HasPrefix(typ, "struct{") {
+		content := typ[7 : len(typ)-1]
+		size := 0
+		depth := 0
+		start := 0
+		for i := 0; i < len(content); i++ {
+			if content[i] == '{' {
+				depth++
+			} else if content[i] == '}' {
+				depth--
+			} else if content[i] == ';' && depth == 0 {
+				size += b.getTypeSize(content[start:i])
+				start = i + 1
+			}
+		}
+		return size
+	}
 	return 8
 }
 
-func getEltSize(arrType string) int {
+func (b *Backend) getEltSize(arrType string) int {
 	if strings.HasPrefix(arrType, "[") {
 		idx := strings.Index(arrType, "]")
 		if idx != -1 {
-			return getTypeSize(arrType[idx+1:])
+			return b.getTypeSize(arrType[idx+1:])
 		}
 	}
 	return 8
 }
 
+func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int, int) {
+	if def, ok := b.program.TypeDefs[structName]; ok {
+		content := def[7 : len(def)-1]
+		byteOffset := 0
+		depth := 0
+		start := 0
+		fIdx := 0
+		for idx := 0; idx < len(content); idx++ {
+			if content[idx] == '{' {
+				depth++
+			} else if content[idx] == '}' {
+				depth--
+			} else if content[idx] == ';' && depth == 0 {
+				fTyp := content[start:idx]
+				sz := b.getTypeSize(fTyp)
+				if fIdx < fieldIndex {
+					byteOffset += sz
+				} else if fIdx == fieldIndex {
+					return byteOffset, sz
+				}
+				fIdx++
+				start = idx + 1
+			}
+		}
+	}
+	return 0, 8
+}
+
 type Backend struct {
+	program     *ir.Program
 	buf         bytes.Buffer
 	dataBuf     bytes.Buffer
 	stackOffset int
@@ -49,6 +100,7 @@ func New() *Backend {
 }
 
 func (b *Backend) Generate(program *ir.Program) string {
+	b.program = program
 	b.buf.WriteString(".intel_syntax noprefix\n")
 	b.buf.WriteString(".text\n")
 
@@ -57,7 +109,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 		for _, g := range program.Globals {
 			b.dataBuf.WriteString(fmt.Sprintf("\t.globl v_%s\n", g.Name))
 			b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
-			size := getTypeSize(string(g.Typ))
+			size := b.getTypeSize(string(g.Typ))
 			b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", size))
 		}
 	}
@@ -89,7 +141,7 @@ func (b *Backend) getSlot(id int, typ string) int {
 	if offset, ok := b.slots[id]; ok {
 		return offset
 	}
-	size := getTypeSize(typ)
+	size := b.getTypeSize(typ)
 	aligned := (size + 7) &^ 7
 	if aligned < 8 {
 		aligned = 8
@@ -111,7 +163,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	for i, p := range f.Parameters {
-		size := getTypeSize(string(p.Typ))
+		size := b.getTypeSize(string(p.Typ))
 		aligned := (size + 7) &^ 7
 		if aligned < 8 { aligned = 8 }
 		b.stackOffset += aligned
@@ -235,7 +287,7 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 		if phi, ok := instr.(*ir.Phi); ok {
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
-					size := getTypeSize(string(phi.Typ))
+					size := b.getTypeSize(string(phi.Typ))
 					if size <= 8 {
 						b.loadVal(edge.Value, "rax")
 						if phi.Type() == ir.TypeByte {
@@ -260,19 +312,19 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i, "rax")
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.Load:
-		size := getTypeSize(string(i.Global.Typ))
+		size := b.getTypeSize(string(i.Global.Typ))
 		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), fmt.Sprintf("rip + v_%s", i.Global.Name), size)
 	case *ir.Store:
-		size := getTypeSize(string(i.Global.Typ))
+		size := b.getTypeSize(string(i.Global.Typ))
 		b.storeToAddr(fmt.Sprintf("rip + v_%s", i.Global.Name), i.Val, size)
 	case *ir.ZeroInit:
-		size := getTypeSize(string(i.Typ))
+		size := b.getTypeSize(string(i.Typ))
 		b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rbp - %d]\n", offset))
 		b.buf.WriteString("\txor al, al\n")
 		b.buf.WriteString(fmt.Sprintf("\tmov rcx, %d\n", size))
 		b.buf.WriteString("\trep stosb\n")
 	case *ir.ExtractElement:
-		eltSize := getTypeSize(string(i.Typ))
+		eltSize := b.getTypeSize(string(i.Typ))
 		arrayAddr := b.getAddr(i.Array)
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], 0\n", offset))
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
@@ -290,10 +342,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), "rcx", eltSize)
 		}
 	case *ir.InsertElement:
-		arraySize := getTypeSize(string(i.Array.Type()))
+		arraySize := b.getTypeSize(string(i.Array.Type()))
 		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), b.getAddr(i.Array), arraySize)
 		
-		eltSize := getEltSize(string(i.Array.Type()))
+		eltSize := b.getEltSize(string(i.Array.Type()))
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
 			byteOffset := int(cIdx.Val) * eltSize
 			b.buf.WriteString(fmt.Sprintf("\tlea rcx, [rbp - %d]\n", offset))
@@ -308,6 +360,25 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tadd rcx, rax\n")
 			b.storeToAddr("rcx", i.Val, eltSize)
 		}
+	case *ir.ExtractField:
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(string(i.Struct.Type()), i.FieldIndex)
+		structAddr := b.getAddr(i.Struct)
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], 0\n", offset))
+		b.buf.WriteString(fmt.Sprintf("\tlea rcx, [%s]\n", structAddr))
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tadd rcx, %d\n", byteOffset))
+		}
+		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), "rcx", fieldSize)
+	case *ir.InsertField:
+		structSize := b.getTypeSize(string(i.Struct.Type()))
+		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), b.getAddr(i.Struct), structSize)
+		
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(string(i.Struct.Type()), i.FieldIndex)
+		b.buf.WriteString(fmt.Sprintf("\tlea rcx, [rbp - %d]\n", offset))
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tadd rcx, %d\n", byteOffset))
+		}
+		b.storeToAddr("rcx", i.Val, fieldSize)
 	case *ir.BinaryOp:
 		b.loadVal(i.Left, "rax")
 		b.loadVal(i.Right, "rcx")

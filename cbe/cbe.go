@@ -38,10 +38,36 @@ func (c *CBE) mapType(typ string) string {
 		}
 		return typeName
 	}
-	return "word"
+	// Assume it's a named struct type if it reaches here
+	return typ
 }
 
 func (c *CBE) Generate(program *ir.Program) string {
+	// Struct types
+	for _, name := range program.TypeDefOrder {
+		typStr := program.TypeDefs[name]
+		if strings.HasPrefix(typStr, "struct{") {
+			content := typStr[7 : len(typStr)-1]
+			c.typedefBuf.WriteString("typedef struct { ")
+			depth := 0
+			start := 0
+			fIdx := 0
+			for i := 0; i < len(content); i++ {
+				if content[i] == '{' {
+					depth++
+				} else if content[i] == '}' {
+					depth--
+				} else if content[i] == ';' && depth == 0 {
+					fTyp := content[start:i]
+					c.typedefBuf.WriteString(fmt.Sprintf("%s f%d; ", c.mapType(fTyp), fIdx))
+					fIdx++
+					start = i + 1
+				}
+			}
+			c.typedefBuf.WriteString(fmt.Sprintf("} %s;\n", name))
+		}
+	}
+
 	// Globals
 	for _, g := range program.Globals {
 		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(string(g.Typ)), g.Name))
@@ -127,6 +153,12 @@ func (c *CBE) emitFunc(f *ir.Function) {
 			if ins, ok := instr.(*ir.InsertElement); ok {
 				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", ins.GetID(), c.formatVal(ins.Array)))
 				c.buf.WriteString(fmt.Sprintf("\tv%d.data[%s] = %s;\n", ins.GetID(), c.formatVal(ins.Index), c.formatVal(ins.Val)))
+				continue
+			}
+			
+			if ins, ok := instr.(*ir.InsertField); ok {
+				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", ins.GetID(), c.formatVal(ins.Struct)))
+				c.buf.WriteString(fmt.Sprintf("\tv%d.f%d = %s;\n", ins.GetID(), ins.FieldIndex, c.formatVal(ins.Val)))
 				continue
 			}
 
@@ -250,6 +282,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(%s){0}", c.mapType(string(i.Typ)))
 	case *ir.ExtractElement:
 		return fmt.Sprintf("(%s).data[%s]", c.formatVal(i.Array), c.formatVal(i.Index))
+	case *ir.ExtractField:
+		return fmt.Sprintf("(%s).f%d", c.formatVal(i.Struct), i.FieldIndex)
 	}
 	return "/* unsupported instruction */"
 }

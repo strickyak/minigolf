@@ -84,12 +84,12 @@ func TestVarStatements(t *testing.T) {
 		if tt.expectedValueType != "" {
 			if varStmt.ValueType == nil {
 				t.Errorf("varStmt.ValueType is nil, expected %s", tt.expectedValueType)
-			} else if varStmt.ValueType.Value != tt.expectedValueType {
-				t.Errorf("varStmt.ValueType.Value not '%s'. got=%s", tt.expectedValueType, varStmt.ValueType.Value)
+			} else if varStmt.ValueType.TokenLiteral() != tt.expectedValueType {
+				t.Errorf("varStmt.ValueType.TokenLiteral() not '%s'. got=%s", tt.expectedValueType, varStmt.ValueType.TokenLiteral())
 			}
 		} else {
 			if varStmt.ValueType != nil {
-				t.Errorf("varStmt.ValueType is not nil, got %s", varStmt.ValueType.Value)
+				t.Errorf("varStmt.ValueType is not nil, got %s", varStmt.ValueType.TokenLiteral())
 			}
 		}
 	}

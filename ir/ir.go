@@ -1,6 +1,10 @@
 package ir
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // Type represents a primitive or composite type in the IR.
 type Type string
@@ -11,6 +15,48 @@ const (
 	TypeWord    Type = "word"
 	TypeVoid    Type = "void"
 )
+
+func GetTypeSize(typ string) int {
+	if typ == "byte" { return 1 }
+	if typ == "word" { return 2 }
+	if strings.HasPrefix(typ, "[") {
+		idx := strings.Index(typ, "]")
+		if idx != -1 {
+			length, _ := strconv.Atoi(typ[1:idx])
+			eltSize := GetTypeSize(typ[idx+1:])
+			return length * eltSize
+		}
+	}
+	if strings.HasPrefix(typ, "struct{") {
+		content := typ[7 : len(typ)-1]
+		size := 0
+		depth := 0
+		start := 0
+		for i := 0; i < len(content); i++ {
+			if content[i] == '{' {
+				depth++
+			} else if content[i] == '}' {
+				depth--
+			} else if content[i] == ';' && depth == 0 {
+				fTyp := content[start:i]
+				size += GetTypeSize(fTyp)
+				start = i + 1
+			}
+		}
+		return size
+	}
+	return 2
+}
+
+func GetEltSize(arrType string) int {
+	if strings.HasPrefix(arrType, "[") {
+		idx := strings.Index(arrType, "]")
+		if idx != -1 {
+			return GetTypeSize(arrType[idx+1:])
+		}
+	}
+	return 2
+}
 
 func (t Type) String() string {
 	if t == "" { return "unknown" }
@@ -25,8 +71,10 @@ type Value interface {
 
 // Program represents the entire compilation unit in SSA form.
 type Program struct {
-	Globals   []*Global
-	Functions []*Function
+	Globals      []*Global
+	Functions    []*Function
+	TypeDefs     map[string]string
+	TypeDefOrder []string
 }
 
 // Function represents a single function in SSA form.
@@ -168,6 +216,23 @@ type InsertElement struct {
 	Val   Value
 }
 func (i *InsertElement) Opcode() string { return "insert" }
+
+// --- Struct Operations ---
+
+type ExtractField struct {
+	BaseInstruction
+	Struct Value
+	FieldIndex int
+}
+func (i *ExtractField) Opcode() string { return "extract_field" }
+
+type InsertField struct {
+	BaseInstruction
+	Struct Value
+	FieldIndex int
+	Val    Value
+}
+func (i *InsertField) Opcode() string { return "insert_field" }
 
 type ZeroInit struct {
 	BaseInstruction

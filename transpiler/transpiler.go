@@ -83,7 +83,7 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 			if s.Value != nil {
 				t.buf.WriteString(fmt.Sprintf(" = %s", t.emitExprStr(s.Value)))
 			} else {
-				if strings.HasPrefix(valType, "t_arr_") {
+				if strings.HasPrefix(valType, "t_arr_") || strings.HasPrefix(valType, "t_"+t.pkgName+"_") {
 					t.buf.WriteString(" = {0}")
 				} else {
 					t.buf.WriteString(" = 0")
@@ -146,6 +146,12 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 			t.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s data[%s]; } %s;\n", eltName, lenStr, typeName))
 		}
 		return typeName
+	case *ast.StructType:
+		var fields []string
+		for _, f := range e.Fields {
+			fields = append(fields, fmt.Sprintf("%s %s", t.mapType(f.Type), f.Name.Value))
+		}
+		return fmt.Sprintf("struct { %s; }", strings.Join(fields, "; "))
 	}
 	return "word"
 }
@@ -187,7 +193,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		if s.Value != nil {
 			t.buf.WriteString(fmt.Sprintf(" = %s", t.emitExprStr(s.Value)))
 		} else {
-			if strings.HasPrefix(valType, "t_arr_") {
+			if strings.HasPrefix(valType, "t_arr_") || strings.HasPrefix(valType, "t_"+t.pkgName+"_") {
 				t.buf.WriteString(" = {0}")
 			} else {
 				t.buf.WriteString(" = 0")
@@ -273,6 +279,8 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 		return fmt.Sprintf("(%s %s %s)", t.emitExprStr(e.Left), e.Operator, t.emitExprStr(e.Right))
 	case *ast.IndexExpression:
 		return fmt.Sprintf("(%s).data[%s]", t.emitExprStr(e.Left), t.emitExprStr(e.Index))
+	case *ast.SelectorExpression:
+		return fmt.Sprintf("(%s).%s", t.emitExprStr(e.Left), e.Right.Value)
 	case *ast.CallExpression:
 		if ident, ok := e.Function.(*ast.Identifier); ok {
 			if ident.Value == "print" || ident.Value == "println" {

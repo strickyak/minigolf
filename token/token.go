@@ -42,6 +42,7 @@ const (
 
 	// Delimiters
 	COMMA     = ","
+	DOT       = "."
 	SEMICOLON = ";"
 	COLON     = ":"
 
@@ -58,6 +59,7 @@ const (
 	IMPORT  = "IMPORT"
 	CONST   = "CONST"
 	TYPE    = "TYPE"
+	STRUCT  = "STRUCT"
 	VAR     = "VAR"
 	FUNC    = "FUNC"
 	IF      = "IF"
@@ -71,6 +73,7 @@ var keywords = map[string]TokenType{
 	"import":  IMPORT,
 	"const":   CONST,
 	"type":    TYPE,
+	"struct":  STRUCT,
 	"var":     VAR,
 	"func":    FUNC,
 	"if":      IF,

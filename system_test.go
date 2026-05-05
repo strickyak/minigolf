@@ -148,3 +148,18 @@ func TestSystemArray_x86_64(t *testing.T) {
 	expected := "10\n20\n30"
 	testBackend(t, "x86_64", "tests/test_array.golf", expected)
 }
+
+func TestSystemStruct_C(t *testing.T) {
+	expected := "10\n20\n30"
+	testBackend(t, "C", "tests/test_struct.golf", expected)
+}
+
+func TestSystemStruct_CBE(t *testing.T) {
+	expected := "10\n20\n30"
+	testBackend(t, "CBE", "tests/test_struct.golf", expected)
+}
+
+func TestSystemStruct_x86_64(t *testing.T) {
+	expected := "10\n20\n30"
+	testBackend(t, "x86_64", "tests/test_struct.golf", expected)
+}

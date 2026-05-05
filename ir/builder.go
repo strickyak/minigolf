@@ -21,11 +21,12 @@ type Builder struct {
 	funcs   map[string]*Function
 	consts  map[string]Value
 	varTypes map[string]Type
+	typeDefsAST map[string]*ast.StructType
 }
 
 func NewBuilder() *Builder {
 	return &Builder{
-		Program: &Program{},
+		Program: &Program{TypeDefs: make(map[string]string)},
 		currentDef: make(map[*BasicBlock]map[string]Value),
 		sealedBlocks: make(map[*BasicBlock]bool),
 		incompletePhis: make(map[*BasicBlock]map[string]*Phi),
@@ -33,6 +34,7 @@ func NewBuilder() *Builder {
 		funcs: make(map[string]*Function),
 		consts: make(map[string]Value),
 		varTypes: make(map[string]Type),
+		typeDefsAST: make(map[string]*ast.StructType),
 	}
 }
 
@@ -59,6 +61,22 @@ func astToIRType(expr ast.Expression) Type {
 }
 
 func (b *Builder) Build(astProg *ast.Program) *Program {
+	// Pass 0: register struct types
+	for _, stmt := range astProg.Statements {
+		if s, ok := stmt.(*ast.TypeStatement); ok {
+			if st, ok := s.BaseType.(*ast.StructType); ok {
+				b.typeDefsAST[s.Name.Value] = st
+				res := "struct{"
+				for _, f := range st.Fields {
+					res += string(astToIRType(f.Type)) + ";"
+				}
+				res += "}"
+				b.Program.TypeDefs[s.Name.Value] = res
+				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, s.Name.Value)
+			}
+		}
+	}
+
 	// First pass: register all globals, constants, and function signatures
 	for _, stmt := range astProg.Statements {
 		switch s := stmt.(type) {
@@ -364,6 +382,30 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			}
 		}
 		return b.addInstr(&ExtractElement{BaseInstruction: BaseInstruction{Typ: eltType}, Array: arr, Index: idx})
+	case *ast.SelectorExpression:
+		strct := b.buildExpr(e.Left)
+		fieldName := e.Right.Value
+		
+		structName := string(strct.Type())
+		st, ok := b.typeDefsAST[structName]
+		if !ok {
+			panic("Selector on unknown struct type: " + structName)
+		}
+		
+		fieldIdx := -1
+		var fieldType Type
+		for i, f := range st.Fields {
+			if f.Name.Value == fieldName {
+				fieldIdx = i
+				fieldType = astToIRType(f.Type)
+				break
+			}
+		}
+		if fieldIdx == -1 {
+			panic("Field not found: " + fieldName)
+		}
+		
+		return b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: fieldType}, Struct: strct, FieldIndex: fieldIdx})
 	case *ast.StringLiteral:
 		return &StringLiteral{Value: e.Value}
 	case *ast.InfixExpression:
@@ -430,5 +472,19 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 		idx := b.buildExpr(idxExpr.Index)
 		newArr := b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: arr.Type()}, Array: arr, Index: idx, Val: val})
 		b.assignToExpr(idxExpr.Left, newArr)
+	} else if selExpr, ok := lhs.(*ast.SelectorExpression); ok {
+		strct := b.buildExpr(selExpr.Left)
+		fieldName := selExpr.Right.Value
+		structName := string(strct.Type())
+		st := b.typeDefsAST[structName]
+		fieldIdx := -1
+		for i, f := range st.Fields {
+			if f.Name.Value == fieldName {
+				fieldIdx = i
+				break
+			}
+		}
+		newStrct := b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: strct.Type()}, Struct: strct, FieldIndex: fieldIdx, Val: val})
+		b.assignToExpr(selExpr.Left, newStrct)
 	}
 }

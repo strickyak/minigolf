@@ -39,6 +39,7 @@ var precedences = map[token.TokenType]int{
 	token.RSHIFT:   PRODUCT,
 	token.LPAREN:   CALL,
 	token.LBRACKET: INDEX,
+	token.DOT:      INDEX,
 }
 
 type Parser struct {
@@ -72,6 +73,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseArrayType)
+	p.registerPrefix(token.STRUCT, p.parseStructType)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
 	p.registerInfix(token.PLUS, p.parseInfixExpression)
@@ -92,6 +94,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerInfix(token.RSHIFT, p.parseInfixExpression)
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
 	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
+	p.registerInfix(token.DOT, p.parseSelectorExpression)
 
 	// Read two tokens, so curToken and peekToken are both set
 	p.nextToken()
@@ -640,6 +643,50 @@ func (p *Parser) parseArrayType() ast.Expression {
 	arrayType.Elt = p.parseExpression(LOWEST)
 
 	return arrayType
+}
+
+func (p *Parser) parseStructType() ast.Expression {
+	structType := &ast.StructType{Token: p.curToken}
+
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+
+	p.nextToken()
+
+	for !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
+		field := &ast.Field{}
+		
+		if !p.curTokenIs(token.IDENT) {
+			p.errors = append(p.errors, fmt.Sprintf("expected field name to be IDENT, got %s", p.curToken.Type))
+			return nil
+		}
+		field.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+		p.nextToken() // move to type
+
+		field.Type = p.parseExpression(LOWEST)
+		structType.Fields = append(structType.Fields, field)
+
+		if p.peekTokenIs(token.SEMICOLON) {
+			p.nextToken() // Consume semicolon
+		}
+		p.nextToken() // move to next field or RBRACE
+	}
+
+	return structType
+}
+
+func (p *Parser) parseSelectorExpression(left ast.Expression) ast.Expression {
+	exp := &ast.SelectorExpression{Token: p.curToken, Left: left}
+
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+
+	exp.Right = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	return exp
 }
 
 func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {

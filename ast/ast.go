@@ -220,6 +220,28 @@ type ArrayType struct {
 func (e *ArrayType) expressionNode()      {}
 func (e *ArrayType) TokenLiteral() string { return e.Token.Literal }
 
+type StructType struct {
+	Token  token.Token // The 'struct' token
+	Fields []*Field
+}
+
+type Field struct {
+	Name *Identifier
+	Type Expression
+}
+
+func (s *StructType) expressionNode()      {}
+func (s *StructType) TokenLiteral() string { return s.Token.Literal }
+
+type SelectorExpression struct {
+	Token token.Token // The '.' token
+	Left  Expression
+	Right *Identifier
+}
+
+func (s *SelectorExpression) expressionNode()      {}
+func (s *SelectorExpression) TokenLiteral() string { return s.Token.Literal }
+
 type IndexExpression struct {
 	Token token.Token // The '[' token
 	Left  Expression

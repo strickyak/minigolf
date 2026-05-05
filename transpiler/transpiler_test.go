@@ -52,15 +52,15 @@ func TestTranspiler(t *testing.T) {
 	
 	expectedSubstrings := []string{
 		"typedef uint8_t byte;",
-		"typedef uint16_t word;",
+		"typedef uintptr_t word;",
 		"typedef word t_main_index;",
 		"word f_main_sum(word v_a, word v_b);",
 		"void f_main_main();",
 		"#define v_main_limit 10",
 		"byte v_main_count = 0;",
 		"while ((v_x < v_main_limit))",
-		"printf(\"hello world %u\", v_x);",
-		"printf(\"sum is %u\\n\", f_main_sum(v_x, ((word)(v_y))));",
+		"printf(\"hello world %llu\", (unsigned long long)(v_x));",
+		"printf(\"sum is %llu\\n\", (unsigned long long)(f_main_sum(v_x, ((word)(v_y)))));",
 		"int main() {",
 		"\tf_main_main();",
 		"\treturn 0;",
