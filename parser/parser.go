@@ -71,6 +71,8 @@ func New(tokens []token.Token) *Parser {
 	p.registerPrefix(token.STRING, p.parseStringLiteral)
 	p.registerPrefix(token.BANG, p.parsePrefixExpression)
 	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
+	p.registerPrefix(token.BIT_AND, p.parsePrefixExpression)
+	p.registerPrefix(token.ASTERISK, p.parsePointerType)
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseArrayType)
 	p.registerPrefix(token.STRUCT, p.parseStructType)
@@ -174,6 +176,8 @@ func (p *Parser) parseTopLevelStatement() ast.Statement {
 		return p.parseVarStatement()
 	case token.FUNC:
 		return p.parseFuncStatement()
+	case token.SEMICOLON:
+		return nil
 	default:
 		msg := fmt.Sprintf("unexpected top-level token: %s at line %d", p.curToken.Type, p.curToken.Line)
 		p.errors = append(p.errors, msg)
@@ -259,7 +263,7 @@ func (p *Parser) parseVarStatement() *ast.VarStatement {
 	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
-	if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) {
+	if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) {
 		p.nextToken()
 		stmt.ValueType = p.parseExpression(LOWEST)
 	}
@@ -358,6 +362,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseIfStatement()
 	case token.FOR:
 		return p.parseForStatement()
+	case token.SEMICOLON:
+		return nil
 	default:
 		return p.parseExpressionOrAssignStatement()
 	}
@@ -561,6 +567,13 @@ func (p *Parser) parsePrefixExpression() ast.Expression {
 	expression.Right = p.parseExpression(PREFIX)
 
 	return expression
+}
+
+func (p *Parser) parsePointerType() ast.Expression {
+	node := &ast.PointerType{Token: p.curToken}
+	p.nextToken()
+	node.Elt = p.parseExpression(PREFIX)
+	return node
 }
 
 func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {

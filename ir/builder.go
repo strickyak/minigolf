@@ -3,6 +3,7 @@ package ir
 import (
 	"fmt"
 	"minigo/ast"
+    "strings"
 )
 
 type Builder struct {
@@ -44,18 +45,22 @@ func astToIRType(expr ast.Expression) Type {
 	}
 	switch e := expr.(type) {
 	case *ast.Identifier:
-		if e.Value == "byte" {
+		switch e.Value {
+		case "byte":
 			return TypeByte
-		} else if e.Value == "word" {
+		case "word":
 			return TypeWord
+		default:
+			return Type(e.Value)
 		}
-		return Type(e.Value)
 	case *ast.ArrayType:
 		lenStr := "0"
 		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
 			lenStr = fmt.Sprintf("%d", il.Value)
 		}
 		return Type(fmt.Sprintf("[%s]%s", lenStr, astToIRType(e.Elt)))
+	case *ast.PointerType:
+		return Type("*" + string(astToIRType(e.Elt)))
 	}
 	return TypeWord
 }
@@ -261,11 +266,12 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 				val = b.buildExpr(s.Value)
 				val = b.coerceType(val, typ)
 			} else {
-				if typ == TypeByte {
+				switch typ {
+				case TypeByte:
 					val = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0})
-				} else if typ == TypeWord {
+				case TypeWord:
 					val = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0})
-				} else {
+				default:
 					val = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}})
 				}
 			}
@@ -387,6 +393,12 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		fieldName := e.Right.Value
 		
 		structName := string(strct.Type())
+		isPointer := false
+		if strings.HasPrefix(structName, "*") {
+			isPointer = true
+			structName = structName[1:]
+		}
+		
 		st, ok := b.typeDefsAST[structName]
 		if !ok {
 			panic("Selector on unknown struct type: " + structName)
@@ -405,6 +417,9 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			panic("Field not found: " + fieldName)
 		}
 		
+		if isPointer {
+			return b.addInstr(&ExtractFieldPtr{BaseInstruction: BaseInstruction{Typ: fieldType}, Ptr: strct, FieldIndex: fieldIdx})
+		}
 		return b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: fieldType}, Struct: strct, FieldIndex: fieldIdx})
 	case *ast.StringLiteral:
 		return &StringLiteral{Value: e.Value}
@@ -449,6 +464,22 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			f := b.funcs[ident.Value]
 			return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args})
 		}
+	case *ast.PointerType:
+		ptrVal := b.buildExpr(e.Elt)
+		typ := string(ptrVal.Type())
+		if strings.HasPrefix(typ, "*") {
+			typ = typ[1:]
+		}
+		return b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: Type(typ)}, Ptr: ptrVal})
+	case *ast.PrefixExpression:
+		if e.Operator == "&" {
+			if ident, ok := e.Right.(*ast.Identifier); ok {
+				if g, ok := b.globals[ident.Value]; ok {
+					return b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g})
+				}
+				panic("Taking address of local variable not supported yet")
+			}
+		}
 	}
 	return nil
 }
@@ -476,6 +507,11 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 		strct := b.buildExpr(selExpr.Left)
 		fieldName := selExpr.Right.Value
 		structName := string(strct.Type())
+		isPointer := false
+		if strings.HasPrefix(structName, "*") {
+			isPointer = true
+			structName = structName[1:]
+		}
 		st := b.typeDefsAST[structName]
 		fieldIdx := -1
 		for i, f := range st.Fields {
@@ -484,7 +520,15 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 				break
 			}
 		}
+		if isPointer {
+			b.addInstr(&InsertFieldPtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: strct, FieldIndex: fieldIdx, Val: val})
+			return
+		}
 		newStrct := b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: strct.Type()}, Struct: strct, FieldIndex: fieldIdx, Val: val})
 		b.assignToExpr(selExpr.Left, newStrct)
+	} else if ptrExpr, ok := lhs.(*ast.PointerType); ok {
+		ptrVal := b.buildExpr(ptrExpr.Elt)
+		b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: ptrVal, Val: val})
+		return
 	}
 }

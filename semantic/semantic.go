@@ -79,6 +79,8 @@ func exprToString(expr ast.Expression) string {
 		}
 		res += "}"
 		return res
+	case *ast.PointerType:
+		return "*" + exprToString(e.Elt)
 	default:
 		return expr.TokenLiteral()
 	}

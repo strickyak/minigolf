@@ -250,3 +250,11 @@ type IndexExpression struct {
 
 func (e *IndexExpression) expressionNode()      {}
 func (e *IndexExpression) TokenLiteral() string { return e.Token.Literal }
+
+type PointerType struct {
+	Token token.Token // The '*' token
+	Elt   Expression
+}
+
+func (pt *PointerType) expressionNode()      {}
+func (pt *PointerType) TokenLiteral() string { return pt.Token.Literal }

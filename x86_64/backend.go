@@ -379,6 +379,33 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tadd rcx, %d\n", byteOffset))
 		}
 		b.storeToAddr("rcx", i.Val, fieldSize)
+	case *ir.AddressOfGlobal:
+		b.buf.WriteString(fmt.Sprintf("\tlea rax, [v_%s]\n", i.Global.Name))
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.ExtractFieldPtr:
+		structName := strings.TrimPrefix(string(i.Ptr.Type()), "*")
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], 0\n", offset))
+		b.loadVal(i.Ptr, "rcx")
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tadd rcx, %d\n", byteOffset))
+		}
+		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), "rcx", fieldSize)
+	case *ir.InsertFieldPtr:
+		structName := strings.TrimPrefix(string(i.Ptr.Type()), "*")
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		b.loadVal(i.Ptr, "rcx")
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tadd rcx, %d\n", byteOffset))
+		}
+		b.storeToAddr("rcx", i.Val, fieldSize)
+	case *ir.LoadPtr:
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], 0\n", offset))
+		b.loadVal(i.Ptr, "rcx")
+		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), "rcx", b.getTypeSize(string(i.Typ)))
+	case *ir.StorePtr:
+		b.loadVal(i.Ptr, "rcx")
+		b.storeToAddr("rcx", i.Val, b.getTypeSize(string(i.Val.Type())))
 	case *ir.BinaryOp:
 		b.loadVal(i.Left, "rax")
 		b.loadVal(i.Right, "rcx")

@@ -23,6 +23,9 @@ func (c *CBE) mapType(typ string) string {
 	if typ == "byte" || typ == "word" || typ == "void" || typ == "unknown" {
 		return typ
 	}
+	if strings.HasPrefix(typ, "*") {
+		return c.mapType(typ[1:]) + "*"
+	}
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx == -1 { return "word" }
@@ -161,6 +164,21 @@ func (c *CBE) emitFunc(f *ir.Function) {
 				c.buf.WriteString(fmt.Sprintf("\tv%d.f%d = %s;\n", ins.GetID(), ins.FieldIndex, c.formatVal(ins.Val)))
 				continue
 			}
+			
+			if ins, ok := instr.(*ir.InsertFieldPtr); ok {
+				structTyp := string(ins.Ptr.Type())
+				if strings.HasPrefix(structTyp, "*") {
+					structTyp = structTyp[1:]
+				}
+				cTyp := c.mapType(structTyp)
+				c.buf.WriteString(fmt.Sprintf("\t(((%s*)%s)->f%d) = %s;\n", cTyp, c.formatVal(ins.Ptr), ins.FieldIndex, c.formatVal(ins.Val)))
+				continue
+			}
+			
+			if stPtr, ok := instr.(*ir.StorePtr); ok {
+				c.buf.WriteString(fmt.Sprintf("\t(*((%s*)%s)) = %s;\n", c.mapType(string(stPtr.Val.Type())), c.formatVal(stPtr.Ptr), c.formatVal(stPtr.Val)))
+				continue
+			}
 
 			c.buf.WriteString("\t")
 			if instr.Type() != ir.TypeVoid && instr.Type() != ir.TypeUnknown {
@@ -284,6 +302,18 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(%s).data[%s]", c.formatVal(i.Array), c.formatVal(i.Index))
 	case *ir.ExtractField:
 		return fmt.Sprintf("(%s).f%d", c.formatVal(i.Struct), i.FieldIndex)
+	case *ir.AddressOfGlobal:
+		return fmt.Sprintf("((word)&v_%s)", i.Global.Name)
+	case *ir.LoadPtr:
+		return fmt.Sprintf("(*((%s*)%s))", c.mapType(string(i.Typ)), c.formatVal(i.Ptr))
+	case *ir.ExtractFieldPtr:
+		// We cast the word back to a pointer of the appropriate struct type, then access the field.
+		structTyp := string(i.Ptr.Type())
+		if strings.HasPrefix(structTyp, "*") {
+			structTyp = structTyp[1:] // e.g. "*Rect" -> "Rect"
+		}
+		cTyp := c.mapType(structTyp)
+		return fmt.Sprintf("(((%s*)%s)->f%d)", cTyp, c.formatVal(i.Ptr), i.FieldIndex)
 	}
 	return "/* unsupported instruction */"
 }

@@ -1,4 +1,4 @@
-set -ex
+set -x
 
 nicename() {
     echo -n $* | tr -c 'A-Za-z0-9' _
@@ -9,13 +9,14 @@ do
     for mode in C CBE
     do
         go run main.go  -o /tmp/c.c -m $mode "$src"
-        ( cd /tmp && gcc c.c && ./a.out ) > /tmp/$(nicename $src-$mode).out 2> /tmp/$(nicename $src-$mode).err
+        n=$(nicename $src $mode)
+        ( cd /tmp && gcc c.c && ./a.out ) > /tmp/$n.out 2> /tmp/$n.err
         echo ==================================================
-        wc /tmp/$(nicename $src-$mode).err
-        cat -n /tmp/$(nicename $src-$mode).err
+        wc /tmp/$n.err
+        cat -n /tmp/$n.err
         echo ..................................................
-        wc /tmp/$(nicename $src-$mode).out
-        cat -n /tmp/$(nicename $src-$mode).out
+        wc /tmp/$n.out
+        cat -n /tmp/$n.out
         echo ================================================== YAK
     done
 done

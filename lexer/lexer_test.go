@@ -82,24 +82,29 @@ func main() {
 	}{
 		{token.PACKAGE, "package"},
 		{token.IDENT, "main"},
+		{token.SEMICOLON, ";"},
 
 		{token.IMPORT, "import"},
 		{token.STRING, "fmt"},
+		{token.SEMICOLON, ";"},
 
 		{token.CONST, "const"},
 		{token.IDENT, "myConst"},
 		{token.ASSIGN, "="},
 		{token.INT, "10"},
+		{token.SEMICOLON, ";"},
 
 		{token.TYPE, "type"},
 		{token.IDENT, "myWord"},
 		{token.IDENT, "word"},
+		{token.SEMICOLON, ";"},
 
 		{token.VAR, "var"},
 		{token.IDENT, "globalVar"},
 		{token.IDENT, "byte"},
 		{token.ASSIGN, "="},
 		{token.INT, "5"},
+		{token.SEMICOLON, ";"},
 
 		{token.FUNC, "func"},
 		{token.IDENT, "main"},
@@ -112,6 +117,7 @@ func main() {
 		{token.IDENT, "word"},
 		{token.ASSIGN, "="},
 		{token.INT, "5"},
+		{token.SEMICOLON, ";"},
 
 		{token.IDENT, "y"},
 		{token.DECLARE, ":="},
@@ -119,6 +125,7 @@ func main() {
 		{token.LPAREN, "("},
 		{token.INT, "10"},
 		{token.RPAREN, ")"},
+		{token.SEMICOLON, ";"},
 
 		{token.IF, "if"},
 		{token.IDENT, "x"},
@@ -127,6 +134,7 @@ func main() {
 		{token.LBRACE, "{"},
 
 		{token.RETURN, "return"},
+		{token.SEMICOLON, ";"},
 
 		{token.RBRACE, "}"},
 		{token.ELSE, "else"},
@@ -137,8 +145,10 @@ func main() {
 		{token.IDENT, "y"},
 		{token.PLUS, "+"},
 		{token.INT, "1"},
+		{token.SEMICOLON, ";"},
 
 		{token.RBRACE, "}"},
+		{token.SEMICOLON, ";"},
 
 		{token.FOR, "for"},
 		{token.IDENT, "x"},
@@ -151,8 +161,10 @@ func main() {
 		{token.IDENT, "x"},
 		{token.PLUS, "+"},
 		{token.INT, "1"},
+		{token.SEMICOLON, ";"},
 
 		{token.RBRACE, "}"},
+		{token.SEMICOLON, ";"},
 
 		{token.IDENT, "print"},
 		{token.LPAREN, "("},
@@ -160,13 +172,16 @@ func main() {
 		{token.COMMA, ","},
 		{token.IDENT, "x"},
 		{token.RPAREN, ")"},
+		{token.SEMICOLON, ";"},
 
 		{token.IDENT, "println"},
 		{token.LPAREN, "("},
 		{token.IDENT, "y"},
 		{token.RPAREN, ")"},
+		{token.SEMICOLON, ";"},
 
 		{token.RBRACE, "}"},
+		{token.SEMICOLON, ";"},
 		{token.EOF, ""},
 	}
 
@@ -203,9 +218,11 @@ func TestLexerLineAndColumn(t *testing.T) {
 		{token.IDENT, 1, 5},
 		{token.ASSIGN, 1, 7},
 		{token.INT, 1, 9},
+		{token.SEMICOLON, 1, 10},
 		{token.IDENT, 2, 1},
 		{token.ASSIGN, 2, 3},
 		{token.INT, 2, 5},
+		{token.SEMICOLON, 2, 6},
 		{token.EOF, 2, 6},
 	}
 	

@@ -768,6 +768,149 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString("\tpuls u\n")
 			}
 		}
+	case *ir.AddressOfGlobal:
+		b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
+	case *ir.ExtractFieldPtr:
+		b.flushRegisters()
+		structName := string(i.Ptr.Type())
+		if strings.HasPrefix(structName, "*") {
+			structName = structName[1:]
+		}
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		
+		destStr := b.memAccess(offset)
+		b.loadVal(i.Ptr)
+		b.buf.WriteString("\ttfr d,y\n")
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
+		}
+		
+		if fieldSize == 1 {
+			b.buf.WriteString("\tldb ,y\n")
+			b.buf.WriteString("\tclra\n")
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+		} else if fieldSize == 2 {
+			b.buf.WriteString("\tldd ,y\n")
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+		} else {
+			b.emitLoadAddr("x", destStr)
+			b.buf.WriteString("\tpshs u\n")
+			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
+			lbl := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+			b.buf.WriteString("\tlda ,y+\n")
+			b.buf.WriteString("\tsta ,x+\n")
+			b.buf.WriteString("\tleau -1,u\n")
+			b.buf.WriteString("\tcmpu #0\n")
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl))
+			b.buf.WriteString("\tpuls u\n")
+		}
+	case *ir.InsertFieldPtr:
+		b.flushRegisters()
+		structName := string(i.Ptr.Type())
+		if strings.HasPrefix(structName, "*") {
+			structName = structName[1:]
+		}
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		b.loadVal(i.Ptr)
+		b.buf.WriteString("\ttfr d,x\n")
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
+		}
+		
+		if cVal, ok := i.Val.(*ir.ConstWord); ok {
+			if fieldSize == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", cVal.Val&0xFF))
+				b.buf.WriteString("\tstb ,x\n")
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", cVal.Val))
+				b.buf.WriteString("\tstd ,x\n")
+			}
+		} else {
+			valStr := b.getAddrStr(i.Val)
+			if fieldSize == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s+1\n", valStr))
+				b.buf.WriteString("\tstb ,x\n")
+			} else if fieldSize == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
+				b.buf.WriteString("\tstd ,x\n")
+			} else {
+				b.emitLoadAddr("y", valStr)
+				b.buf.WriteString("\tpshs u\n")
+				b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
+				lbl2 := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("%s:\n", lbl2))
+				b.buf.WriteString("\tlda ,y+\n")
+				b.buf.WriteString("\tsta ,x+\n")
+				b.buf.WriteString("\tleau -1,u\n")
+				b.buf.WriteString("\tcmpu #0\n")
+				b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl2))
+				b.buf.WriteString("\tpuls u\n")
+			}
+		}
+	case *ir.LoadPtr:
+		b.flushRegisters()
+		destStr := b.memAccess(offset)
+		b.loadVal(i.Ptr)
+		b.buf.WriteString("\ttfr d,y\n")
+		fieldSize := b.getTypeSize(string(i.Typ))
+		if fieldSize == 1 {
+			b.buf.WriteString("\tldb ,y\n")
+			b.buf.WriteString("\tclra\n")
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+		} else if fieldSize == 2 {
+			b.buf.WriteString("\tldd ,y\n")
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+		} else {
+			b.emitLoadAddr("x", destStr)
+			b.buf.WriteString("\tpshs u\n")
+			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
+			lbl := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+			b.buf.WriteString("\tlda ,y+\n")
+			b.buf.WriteString("\tsta ,x+\n")
+			b.buf.WriteString("\tleau -1,u\n")
+			b.buf.WriteString("\tcmpu #0\n")
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl))
+			b.buf.WriteString("\tpuls u\n")
+		}
+	case *ir.StorePtr:
+		b.flushRegisters()
+		fieldSize := b.getTypeSize(string(i.Val.Type()))
+		b.loadVal(i.Ptr)
+		b.buf.WriteString("\ttfr d,x\n")
+		
+		if cVal, ok := i.Val.(*ir.ConstWord); ok {
+			if fieldSize == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", cVal.Val&0xFF))
+				b.buf.WriteString("\tstb ,x\n")
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", cVal.Val))
+				b.buf.WriteString("\tstd ,x\n")
+			}
+		} else {
+			valStr := b.getAddrStr(i.Val)
+			if fieldSize == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s+1\n", valStr))
+				b.buf.WriteString("\tstb ,x\n")
+			} else if fieldSize == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
+				b.buf.WriteString("\tstd ,x\n")
+			} else {
+				b.emitLoadAddr("y", valStr)
+				b.buf.WriteString("\tpshs u\n")
+				b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
+				lbl2 := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("%s:\n", lbl2))
+				b.buf.WriteString("\tlda ,y+\n")
+				b.buf.WriteString("\tsta ,x+\n")
+				b.buf.WriteString("\tleau -1,u\n")
+				b.buf.WriteString("\tcmpu #0\n")
+				b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl2))
+				b.buf.WriteString("\tpuls u\n")
+			}
+		}
 	case *ir.BinaryOp:
 		b.loadVal(i.Right)
 		b.buf.WriteString("\tstd ,--s\n")

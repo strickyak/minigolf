@@ -234,6 +234,40 @@ type InsertField struct {
 }
 func (i *InsertField) Opcode() string { return "insert_field" }
 
+type AddressOfGlobal struct {
+	BaseInstruction
+	Global *Global
+}
+func (i *AddressOfGlobal) Opcode() string { return "addrof" }
+
+type ExtractFieldPtr struct {
+	BaseInstruction
+	Ptr        Value
+	FieldIndex int
+}
+func (i *ExtractFieldPtr) Opcode() string { return "extract_field_ptr" }
+
+type InsertFieldPtr struct {
+	BaseInstruction
+	Ptr        Value
+	FieldIndex int
+	Val        Value
+}
+func (i *InsertFieldPtr) Opcode() string { return "insert_field_ptr" }
+
+type LoadPtr struct {
+	BaseInstruction
+	Ptr Value
+}
+func (i *LoadPtr) Opcode() string { return "load_ptr" }
+
+type StorePtr struct {
+	BaseInstruction
+	Ptr Value
+	Val Value
+}
+func (i *StorePtr) Opcode() string { return "store_ptr" }
+
 type ZeroInit struct {
 	BaseInstruction
 }

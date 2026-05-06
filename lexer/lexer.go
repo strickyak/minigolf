@@ -235,14 +235,26 @@ func (l *Lexer) skipMultiLineComment() {
 	}
 }
 
-// Lex consumes the entire input string and returns a slice of all tokens.
-// This takes advantage of the "big memory" assumption, avoiding streams.
 func Lex(input string) []token.Token {
 	l := New(input)
 	var tokens []token.Token
+	var prev token.Token
+
 	for {
 		tok := l.nextToken()
+
+		// Automatic Semicolon Insertion (ASI)
+		if len(tokens) > 0 {
+			if tok.Line > prev.Line || tok.Type == token.EOF {
+				if prev.Type == token.IDENT || prev.Type == token.INT || prev.Type == token.STRING ||
+					prev.Type == token.RETURN || prev.Type == token.RPAREN || prev.Type == token.RBRACE || prev.Type == token.RBRACKET {
+					tokens = append(tokens, token.Token{Type: token.SEMICOLON, Literal: ";", Line: prev.Line, Column: prev.Column + len(prev.Literal)})
+				}
+			}
+		}
+
 		tokens = append(tokens, tok)
+		prev = tok
 		if tok.Type == token.EOF {
 			break
 		}
