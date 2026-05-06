@@ -1,0 +1,31 @@
+package main
+
+type Point struct {
+	x byte
+	y byte
+}
+
+// In MiniGo, we achieve multiple-returns by returning a struct!
+type PointParts struct {
+	x byte
+	y byte
+}
+
+func (p *Point) Decompose() PointParts {
+	var res PointParts
+	res.x = p.x
+	res.y = p.y
+	return res
+}
+
+func main() {
+	var p Point
+	p.x = 42
+	p.y = 99
+	
+	var parts PointParts
+	parts = p.Decompose()
+	
+	println(parts.x)
+	println(parts.y)
+}

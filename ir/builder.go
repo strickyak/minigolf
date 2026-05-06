@@ -104,8 +104,14 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 				funcName = baseType + "_" + funcName
 			}
 			f := &Function{Name: funcName}
-			if s.ReturnType != nil {
-				f.ReturnType = astToIRType(s.ReturnType)
+			if len(s.ReturnTypes) == 1 {
+				f.ReturnType = astToIRType(s.ReturnTypes[0])
+			} else if len(s.ReturnTypes) > 1 {
+				var fields []string
+				for _, rt := range s.ReturnTypes {
+					fields = append(fields, string(astToIRType(rt)))
+				}
+				f.ReturnType = Type(fmt.Sprintf("struct{%s;}", strings.Join(fields, ";")))
 			} else {
 				f.ReturnType = TypeVoid
 			}
@@ -298,13 +304,35 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			}
 			b.writeVariable(s.Name.Value, b.currentBlock, val)
 		case *ast.AssignStatement:
-			for i, nameExpr := range s.Names {
-				b.addInstr(&SourceMarker{
-					BaseInstruction: BaseInstruction{Typ: TypeVoid},
-					Comment: fmt.Sprintf("Line %d: Assignment LHS: %s", s.Token.Line, nameExpr.TokenLiteral()),
-				})
-				val := b.buildExpr(s.Values[i])
-				b.assignToExpr(nameExpr, val)
+			if len(s.Names) > 1 && len(s.Values) == 1 {
+				tupleVal := b.buildExpr(s.Values[0])
+				typStr := string(tupleVal.Type())
+				if strings.HasPrefix(typStr, "struct{") {
+					content := typStr[7 : len(typStr)-1]
+					fields := strings.Split(content, ";")
+					for i, nameExpr := range s.Names {
+						if i >= len(fields) || fields[i] == "" { break }
+						fieldTyp := Type(strings.TrimSpace(fields[i]))
+						b.addInstr(&SourceMarker{
+							BaseInstruction: BaseInstruction{Typ: TypeVoid},
+							Comment: fmt.Sprintf("Line %d: Assignment Tuple Unpack LHS: %s", s.Token.Line, nameExpr.TokenLiteral()),
+						})
+						ext := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: fieldTyp}, Struct: tupleVal, FieldIndex: i})
+						b.assignToExpr(nameExpr, ext)
+					}
+				}
+			} else {
+				var vals []Value
+				for _, valExpr := range s.Values {
+					vals = append(vals, b.buildExpr(valExpr))
+				}
+				for i, nameExpr := range s.Names {
+					b.addInstr(&SourceMarker{
+						BaseInstruction: BaseInstruction{Typ: TypeVoid},
+						Comment: fmt.Sprintf("Line %d: Assignment LHS: %s", s.Token.Line, nameExpr.TokenLiteral()),
+					})
+					b.assignToExpr(nameExpr, vals[i])
+				}
 			}
 		case *ast.ExpressionStatement:
 			b.addInstr(&SourceMarker{
@@ -391,8 +419,18 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 				Comment: fmt.Sprintf("Line %d: Return statement", s.Token.Line),
 			})
 			var val Value
-			if s.ReturnValue != nil {
-				val = b.buildExpr(s.ReturnValue)
+			if len(s.ReturnValues) == 1 {
+				val = b.buildExpr(s.ReturnValues[0])
+				if f := b.currentFunc; f != nil && len(f.ReturnType) > 0 {
+					val = b.coerceType(val, f.ReturnType)
+				}
+			} else if len(s.ReturnValues) > 1 {
+				structTyp := b.currentFunc.ReturnType
+				val = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: structTyp}})
+				for i, rv := range s.ReturnValues {
+					fieldVal := b.buildExpr(rv)
+					val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: structTyp}, Struct: val, FieldIndex: i, Val: fieldVal})
+				}
 			}
 			b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Val: val})
 		}

@@ -55,28 +55,34 @@ func (b *Backend) getEltSize(arrType string) int {
 }
 
 func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int, int) {
+	content := ""
 	if def, ok := b.program.TypeDefs[structName]; ok {
-		content := def[7 : len(def)-1]
-		byteOffset := 0
-		depth := 0
-		start := 0
-		fIdx := 0
-		for idx := 0; idx < len(content); idx++ {
-			if content[idx] == '{' {
-				depth++
-			} else if content[idx] == '}' {
-				depth--
-			} else if content[idx] == ';' && depth == 0 {
-				fTyp := content[start:idx]
-				sz := b.getTypeSize(fTyp)
-				if fIdx < fieldIndex {
-					byteOffset += sz
-				} else if fIdx == fieldIndex {
-					return byteOffset, sz
-				}
-				fIdx++
-				start = idx + 1
+		content = def[7 : len(def)-1]
+	} else if strings.HasPrefix(structName, "struct{") {
+		content = structName[7 : len(structName)-1]
+	} else {
+		return 0, 2
+	}
+	
+	byteOffset := 0
+	depth := 0
+	start := 0
+	fIdx := 0
+	for idx := 0; idx < len(content); idx++ {
+		if content[idx] == '{' {
+			depth++
+		} else if content[idx] == '}' {
+			depth--
+		} else if content[idx] == ';' && depth == 0 {
+			fTyp := content[start:idx]
+			sz := b.getTypeSize(fTyp)
+			if fIdx < fieldIndex {
+				byteOffset += sz
+			} else if fIdx == fieldIndex {
+				return byteOffset, sz
 			}
+			fIdx++
+			start = idx + 1
 		}
 	}
 	return 0, 2
@@ -868,14 +874,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,y\n")
 		fieldSize := b.getTypeSize(string(i.Typ))
-		if fieldSize == 1 {
+		switch fieldSize {
+		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else if fieldSize == 2 {
+		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else {
+		default:
 			b.emitLoadAddr("x", destStr)
 			b.buf.WriteString("\tpshs u\n")
 			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
@@ -909,13 +916,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 		} else {
 			valStr := b.getAddrStr(i.Val)
-			if fieldSize == 1 {
+			switch fieldSize {
+			case 1:
 				b.buf.WriteString(fmt.Sprintf("\tldb %s+1\n", valStr))
 				b.buf.WriteString("\tstb ,x\t\t; store byte via pointer\n")
-			} else if fieldSize == 2 {
+			case 2:
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
 				b.buf.WriteString("\tstd ,x\t\t; store word via pointer\n")
-			} else {
+			default:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tpshs u\n")
 				b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
@@ -1035,9 +1043,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.popBytes(pushedBytes)
 		}
 
-		if i.Typ == ir.TypeWord {
+		switch i.Typ {
+		case ir.TypeWord:
 			b.buf.WriteString("\ttfr x,d\n")
-		} else if i.Typ == ir.TypeByte {
+		case ir.TypeByte:
 			b.buf.WriteString("\tclra\n")
 		}
 		if i.Typ != ir.TypeVoid {

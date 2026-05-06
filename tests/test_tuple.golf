@@ -1,0 +1,15 @@
+package main
+
+func f()(word,byte) { return 1000, 42 }
+
+func main() {
+	var w word
+	var b byte
+	w, b = f()
+	println(w)
+	println(b)
+
+	w2, b2 := f()
+	println(w2)
+	println(b2)
+}

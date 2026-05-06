@@ -41,6 +41,36 @@ func (c *CBE) mapType(typ string) string {
 		}
 		return typeName
 	}
+	if strings.HasPrefix(typ, "struct{") {
+		content := typ[7 : len(typ)-1]
+		typeName := "t_tuple_" + strings.ReplaceAll(content, ";", "_")
+		typeName = strings.ReplaceAll(typeName, "*", "ptr_")
+		typeName = strings.ReplaceAll(typeName, "[", "arr_")
+		typeName = strings.ReplaceAll(typeName, "]", "_")
+		
+		if !c.arrayTypes[typeName] {
+			c.arrayTypes[typeName] = true
+			
+			var fields string
+			depth := 0
+			start := 0
+			fIdx := 0
+			for i := 0; i < len(content); i++ {
+				if content[i] == '{' {
+					depth++
+				} else if content[i] == '}' {
+					depth--
+				} else if content[i] == ';' && depth == 0 {
+					fieldType := content[start:i]
+					fields += fmt.Sprintf("%s f%d; ", c.mapType(fieldType), fIdx)
+					start = i + 1
+					fIdx++
+				}
+			}
+			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s} %s;\n", fields, typeName))
+		}
+		return typeName
+	}
 	// Assume it's a named struct type if it reaches here
 	return typ
 }
@@ -51,7 +81,7 @@ func (c *CBE) Generate(program *ir.Program) string {
 		typStr := program.TypeDefs[name]
 		if strings.HasPrefix(typStr, "struct{") {
 			content := typStr[7 : len(typStr)-1]
-			c.typedefBuf.WriteString("typedef struct { ")
+			var fields string
 			depth := 0
 			start := 0
 			fIdx := 0
@@ -62,12 +92,12 @@ func (c *CBE) Generate(program *ir.Program) string {
 					depth--
 				} else if content[i] == ';' && depth == 0 {
 					fTyp := content[start:i]
-					c.typedefBuf.WriteString(fmt.Sprintf("%s f%d; ", c.mapType(fTyp), fIdx))
+					fields += fmt.Sprintf("%s f%d; ", c.mapType(fTyp), fIdx)
 					fIdx++
 					start = i + 1
 				}
 			}
-			c.typedefBuf.WriteString(fmt.Sprintf("} %s;\n", name))
+			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s} %s;\n", fields, name))
 		}
 	}
 
@@ -299,9 +329,10 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			return c.emitPrint(i.Name == "println", i.Args)
 		}
 	case *ir.Cast:
-		if i.Op == "trunc" {
+		switch i.Op {
+		case "trunc":
 			return fmt.Sprintf("(byte)(%s)", c.formatVal(i.Operand))
-		} else if i.Op == "zero_ext" {
+		case "zero_ext":
 			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
 		}
 	case *ir.ZeroInit:

@@ -311,9 +311,21 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 	stmt.Parameters = p.parseFunctionParameters()
 
 	// Optional return type
-	if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) {
+	if p.peekTokenIs(token.LPAREN) {
+		p.nextToken() // '('
+		for !p.peekTokenIs(token.RPAREN) {
+			p.nextToken()
+			stmt.ReturnTypes = append(stmt.ReturnTypes, p.parseExpression(LOWEST))
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken()
+			}
+		}
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+	} else if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) {
 		p.nextToken()
-		stmt.ReturnType = p.parseExpression(LOWEST)
+		stmt.ReturnTypes = []ast.Expression{p.parseExpression(LOWEST)}
 	}
 
 	if !p.expectPeek(token.LBRACE) {
@@ -436,7 +448,13 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	}
 
 	p.nextToken()
-	stmt.ReturnValue = p.parseExpression(LOWEST)
+	stmt.ReturnValues = append(stmt.ReturnValues, p.parseExpression(LOWEST))
+
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // skip comma
+		p.nextToken() // go to next expression
+		stmt.ReturnValues = append(stmt.ReturnValues, p.parseExpression(LOWEST))
+	}
 
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()

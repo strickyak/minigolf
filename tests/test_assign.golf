@@ -1,0 +1,80 @@
+package main
+
+type Point struct {
+	x byte
+	y byte
+}
+
+type Vec struct {
+	a [3]byte
+}
+
+func swapPoint(p Point) Point {
+	var res Point
+	res.x = p.y
+	res.y = p.x
+	return res
+}
+
+func getZeroVec() Vec {
+	var v Vec
+	v.a[0] = 0
+	v.a[1] = 0
+	v.a[2] = 0
+	return v
+}
+
+func passArray(arr [2]word) [2]word {
+	var res [2]word
+	res[0] = arr[1]
+	res[1] = arr[0]
+	return res
+}
+
+func main() {
+	var p1 Point
+	p1.x = 10
+	p1.y = 20
+	var p2 Point
+	p2 = p1
+	println(p2.x) // 10
+	println(p2.y) // 20
+
+	var a1 [2]byte
+	a1[0] = 5
+	a1[1] = 15
+	var a2 [2]byte
+	a2 = a1
+	println(a2[0]) // 5
+	println(a2[1]) // 15
+
+	var x byte
+	var y byte
+	x = 1
+	y = 2
+	x, y = y, x
+	println(x) // 2
+	println(y) // 1
+
+	var p3 Point
+	p3 = swapPoint(p2)
+	println(p3.x) // 20
+	println(p3.y) // 10
+
+	var v1 Vec
+	v1 = getZeroVec()
+	v1.a[1] = 100
+	var v2 Vec
+	v2 = v1
+	println(v2.a[0]) // 0
+	println(v2.a[1]) // 100
+	println(v2.a[2]) // 0
+
+	var arr1 [2]word
+	arr1[0] = 1000
+	arr1[1] = 2000
+	var arr2 [2]word
+	arr2 = passArray(arr1)
+	println(arr2[0]) // 2000
+	println(arr2[1]) // 1000
+}

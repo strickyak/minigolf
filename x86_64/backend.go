@@ -55,28 +55,34 @@ func (b *Backend) getEltSize(arrType string) int {
 }
 
 func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int, int) {
+	content := ""
 	if def, ok := b.program.TypeDefs[structName]; ok {
-		content := def[7 : len(def)-1]
-		byteOffset := 0
-		depth := 0
-		start := 0
-		fIdx := 0
-		for idx := 0; idx < len(content); idx++ {
-			if content[idx] == '{' {
-				depth++
-			} else if content[idx] == '}' {
-				depth--
-			} else if content[idx] == ';' && depth == 0 {
-				fTyp := content[start:idx]
-				sz := b.getTypeSize(fTyp)
-				if fIdx < fieldIndex {
-					byteOffset += sz
-				} else if fIdx == fieldIndex {
-					return byteOffset, sz
-				}
-				fIdx++
-				start = idx + 1
+		content = def[7 : len(def)-1]
+	} else if strings.HasPrefix(structName, "struct{") {
+		content = structName[7 : len(structName)-1]
+	} else {
+		return 0, 8
+	}
+	
+	byteOffset := 0
+	depth := 0
+	start := 0
+	fIdx := 0
+	for idx := 0; idx < len(content); idx++ {
+		if content[idx] == '{' {
+			depth++
+		} else if content[idx] == '}' {
+			depth--
+		} else if content[idx] == ';' && depth == 0 {
+			fTyp := content[start:idx]
+			sz := b.getTypeSize(fTyp)
+			if fIdx < fieldIndex {
+				byteOffset += sz
+			} else if fIdx == fieldIndex {
+				return byteOffset, sz
 			}
+			fIdx++
+			start = idx + 1
 		}
 	}
 	return 0, 8
@@ -162,14 +168,20 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.paramSlots = make(map[string]int)
 
 	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-	for i, p := range f.Parameters {
+	regsIdx := 0
+	for _, p := range f.Parameters {
 		size := b.getTypeSize(string(p.Typ))
 		aligned := (size + 7) &^ 7
 		if aligned < 8 { aligned = 8 }
 		b.stackOffset += aligned
 		b.paramSlots[p.Name] = b.stackOffset
-		if i < len(regs) && size <= 8 {
-			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], %s\n", b.stackOffset, regs[i]))
+		if regsIdx < len(regs) {
+			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], %s\n", b.stackOffset, regs[regsIdx]))
+			regsIdx++
+			if size > 8 && regsIdx < len(regs) {
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + 8], %s\n", b.stackOffset, regs[regsIdx]))
+				regsIdx++
+			}
 		}
 	}
 
@@ -219,7 +231,15 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 		case *ir.Return:
 			if term.Val != nil {
+				size := b.getTypeSize(string(term.Val.Type()))
+				if size > 16 {
+					panic("Unsupported: large value return")
+				}
 				b.loadVal(term.Val, "rax")
+				if size > 8 {
+					addr := b.getAddr(term.Val)
+					b.buf.WriteString(fmt.Sprintf("\tmov rdx, qword ptr [%s + 8]\n", addr))
+				}
 			}
 			b.buf.WriteString("\tmov rsp, rbp\n")
 			b.buf.WriteString("\tpop rbp\n")
@@ -469,9 +489,17 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.Call:
 		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-		for idx, arg := range i.Args {
-			if idx < len(regs) {
-				b.loadVal(arg, regs[idx])
+		regsIdx := 0
+		for _, arg := range i.Args {
+			size := b.getTypeSize(string(arg.Type()))
+			if regsIdx < len(regs) {
+				b.loadVal(arg, regs[regsIdx])
+				regsIdx++
+				if size > 8 && regsIdx < len(regs) {
+					addr := b.getAddr(arg)
+					b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s + 8]\n", regs[regsIdx], addr))
+					regsIdx++
+				}
 			}
 		}
 		b.buf.WriteString(fmt.Sprintf("\tcall f_%s\n", i.Func.Name))
@@ -479,7 +507,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tmovzx rax, al\n")
 		}
 		if i.Typ != ir.TypeVoid {
+			size := b.getTypeSize(string(i.Typ))
+			if size > 16 {
+				panic("Unsupported: large value return")
+			}
 			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+			if size > 8 {
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + 8], rdx\n", offset))
+			}
 		}
 	case *ir.BuiltinCall:
 		if i.Name == "print" || i.Name == "println" {

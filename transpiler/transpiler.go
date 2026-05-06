@@ -17,12 +17,15 @@ type Transpiler struct {
 	globals       map[string]string
 	arrayTypes    map[string]bool
 	funcTypes     map[string]string
+	funcRetTypes  map[string][]string
+	currentFunc   *ast.FuncStatement
 }
 
 func New() *Transpiler {
 	return &Transpiler{
-		globals:   make(map[string]string),
-		funcTypes: make(map[string]string),
+		globals:      make(map[string]string),
+		funcTypes:    make(map[string]string),
+		funcRetTypes: make(map[string][]string),
 	}
 }
 
@@ -124,8 +127,30 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 			forwardBuf.WriteString(fmt.Sprintf("typedef %s t_%s_%s;\n", base, t.pkgName, s.Name.Value))
 		case *ast.FuncStatement:
 			retType := "void"
-			if s.ReturnType != nil {
-				retType = t.mapType(s.ReturnType)
+			if len(s.ReturnTypes) == 1 {
+				retType = t.mapType(s.ReturnTypes[0])
+			} else if len(s.ReturnTypes) > 1 {
+				var fields []string
+				var retTypes []string
+				for i, rt := range s.ReturnTypes {
+					mapped := t.mapType(rt)
+					fields = append(fields, fmt.Sprintf("%s f%d", mapped, i))
+					retTypes = append(retTypes, mapped)
+				}
+				funcName := s.Name.Value
+				if s.Receiver != nil {
+					recvType := t.mapType(s.Receiver.Type)
+					baseType := recvType
+					baseType = strings.TrimSuffix(baseType, "*")
+					if strings.HasPrefix(baseType, "t_"+t.pkgName+"_") {
+						baseType = baseType[len("t_"+t.pkgName+"_"):]
+					}
+					funcName = baseType + "_" + funcName
+				}
+				structName := fmt.Sprintf("f_%s_%s_returns", t.pkgName, funcName)
+				retType = fmt.Sprintf("struct %s", structName)
+				forwardBuf.WriteString(fmt.Sprintf("%s { %s; };\n", retType, strings.Join(fields, "; ")))
+				t.funcRetTypes[s.Name.Value] = retTypes
 			}
 			t.funcTypes[s.Name.Value] = retType
 			forwardBuf.WriteString(t.emitFuncSignatureStr(s, true))
@@ -224,8 +249,10 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 
 func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) string {
 	retType := "void"
-	if s.ReturnType != nil {
-		retType = t.mapType(s.ReturnType)
+	if rt, ok := t.funcTypes[s.Name.Value]; ok {
+		retType = rt
+	} else if len(s.ReturnTypes) == 1 {
+		retType = t.mapType(s.ReturnTypes[0])
 	}
 
 	var params []string
@@ -234,9 +261,7 @@ func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) 
 	if s.Receiver != nil {
 		recvType := t.mapType(s.Receiver.Type)
 		baseType := recvType
-		if strings.HasSuffix(baseType, "*") {
-			baseType = baseType[:len(baseType)-1]
-		}
+		baseType = strings.TrimSuffix(baseType, "*")
 		if strings.HasPrefix(baseType, "t_"+t.pkgName+"_") {
 			baseType = baseType[len("t_"+t.pkgName+"_"):]
 		}
@@ -286,11 +311,14 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		}
 		t.buf.WriteString(";\n")
 	case *ast.FuncStatement:
+		prevFunc := t.currentFunc
+		t.currentFunc = s
 		t.pushScope()
 		t.buf.WriteString(t.emitFuncSignatureStr(s, false))
 		t.emitStatement(s.Body)
 		t.popScope()
 		t.buf.WriteString("\n")
+		t.currentFunc = prevFunc
 	case *ast.BlockStatement:
 		t.buf.WriteString("{\n")
 		t.pushScope()
@@ -301,25 +329,82 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		t.popScope()
 		t.buf.WriteString("}\n")
 	case *ast.AssignStatement:
-		// Handle parallel assignment by splitting them
-		for i, nameExpr := range s.Names {
-			val := t.emitExprStr(s.Values[i])
-			if s.Token.Literal == ":=" {
-				if ident, ok := nameExpr.(*ast.Identifier); ok {
-					ctype := t.typeOf(s.Values[i])
-					t.addLocal(ident.Value, ctype)
-					t.buf.WriteString(fmt.Sprintf("%s v_%s = %s;\n", ctype, ident.Value, val))
-				}
-			} else {
-				if ident, ok := nameExpr.(*ast.Identifier); ok {
-					if t.isLocal(ident.Value) {
-						t.buf.WriteString(fmt.Sprintf("v_%s = %s;\n", ident.Value, val))
-					} else {
-						t.buf.WriteString(fmt.Sprintf("v_%s_%s = %s;\n", t.pkgName, ident.Value, val))
+		if len(s.Names) > 1 && len(s.Values) > 1 {
+			for i := range s.Values {
+				ctype := t.typeOf(s.Values[i])
+				t.buf.WriteString(fmt.Sprintf("%s tmp_val_%p_%d = %s;\n", ctype, s, i, t.emitExprStr(s.Values[i])))
+			}
+			for i, nameExpr := range s.Names {
+				if s.Token.Literal == ":=" {
+					if ident, ok := nameExpr.(*ast.Identifier); ok {
+						ctype := t.typeOf(s.Values[i])
+						t.addLocal(ident.Value, ctype)
+						t.buf.WriteString(fmt.Sprintf("%s v_%s = tmp_val_%p_%d;\n", ctype, ident.Value, s, i))
 					}
 				} else {
-					// It's an IndexExpression
-					t.buf.WriteString(fmt.Sprintf("%s = %s;\n", t.emitExprStr(nameExpr), val))
+					if ident, ok := nameExpr.(*ast.Identifier); ok {
+						if t.isLocal(ident.Value) {
+							t.buf.WriteString(fmt.Sprintf("v_%s = tmp_val_%p_%d;\n", ident.Value, s, i))
+						} else {
+							t.buf.WriteString(fmt.Sprintf("v_%s_%s = tmp_val_%p_%d;\n", t.pkgName, ident.Value, s, i))
+						}
+					} else {
+						t.buf.WriteString(fmt.Sprintf("%s = tmp_val_%p_%d;\n", t.emitExprStr(nameExpr), s, i))
+					}
+				}
+			}
+		} else if len(s.Names) > 1 && len(s.Values) == 1 {
+			tmpName := fmt.Sprintf("tmp_tuple_%p", s)
+			ctype := t.typeOf(s.Values[0])
+			t.buf.WriteString(fmt.Sprintf("%s %s = %s;\n", ctype, tmpName, t.emitExprStr(s.Values[0])))
+			var fieldTypes []string
+			if callExpr, ok := s.Values[0].(*ast.CallExpression); ok {
+				if ident, ok := callExpr.Function.(*ast.Identifier); ok {
+					fieldTypes = t.funcRetTypes[ident.Value]
+				}
+			}
+			for i, nameExpr := range s.Names {
+				fType := "word"
+				if i < len(fieldTypes) {
+					fType = fieldTypes[i]
+				}
+				if s.Token.Literal == ":=" {
+					if ident, ok := nameExpr.(*ast.Identifier); ok {
+						t.addLocal(ident.Value, fType)
+						t.buf.WriteString(fmt.Sprintf("%s v_%s = %s.f%d;\n", fType, ident.Value, tmpName, i))
+					}
+				} else {
+					if ident, ok := nameExpr.(*ast.Identifier); ok {
+						if t.isLocal(ident.Value) {
+							t.buf.WriteString(fmt.Sprintf("v_%s = %s.f%d;\n", ident.Value, tmpName, i))
+						} else {
+							t.buf.WriteString(fmt.Sprintf("v_%s_%s = %s.f%d;\n", t.pkgName, ident.Value, tmpName, i))
+						}
+					} else {
+						t.buf.WriteString(fmt.Sprintf("%s = %s.f%d;\n", t.emitExprStr(nameExpr), tmpName, i))
+					}
+				}
+			}
+		} else {
+			// Single assignment
+			for i, nameExpr := range s.Names {
+				val := t.emitExprStr(s.Values[i])
+				if s.Token.Literal == ":=" {
+					if ident, ok := nameExpr.(*ast.Identifier); ok {
+						ctype := t.typeOf(s.Values[i])
+						t.addLocal(ident.Value, ctype)
+						t.buf.WriteString(fmt.Sprintf("%s v_%s = %s;\n", ctype, ident.Value, val))
+					}
+				} else {
+					if ident, ok := nameExpr.(*ast.Identifier); ok {
+						if t.isLocal(ident.Value) {
+							t.buf.WriteString(fmt.Sprintf("v_%s = %s;\n", ident.Value, val))
+						} else {
+							t.buf.WriteString(fmt.Sprintf("v_%s_%s = %s;\n", t.pkgName, ident.Value, val))
+						}
+					} else {
+						t.buf.WriteString(fmt.Sprintf("%s = %s;\n", t.emitExprStr(nameExpr), val))
+					}
 				}
 			}
 		}
@@ -334,8 +419,15 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		t.buf.WriteString(fmt.Sprintf("while (%s) ", t.emitExprStr(s.Condition)))
 		t.emitStatement(s.Body)
 	case *ast.ReturnStatement:
-		if s.ReturnValue != nil {
-			t.buf.WriteString(fmt.Sprintf("return %s;\n", t.emitExprStr(s.ReturnValue)))
+		if len(s.ReturnValues) == 1 {
+			t.buf.WriteString(fmt.Sprintf("return %s;\n", t.emitExprStr(s.ReturnValues[0])))
+		} else if len(s.ReturnValues) > 1 {
+			structTyp := t.funcTypes[t.currentFunc.Name.Value]
+			var vals []string
+			for _, rv := range s.ReturnValues {
+				vals = append(vals, t.emitExprStr(rv))
+			}
+			t.buf.WriteString(fmt.Sprintf("return (%s){ %s };\n", structTyp, strings.Join(vals, ", ")))
 		} else {
 			t.buf.WriteString("return;\n")
 		}

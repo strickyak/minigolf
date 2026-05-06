@@ -108,9 +108,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			if s.Receiver != nil {
 				recvTyp := exprToString(s.Receiver.Type)
 				baseType := recvTyp
-				if strings.HasPrefix(baseType, "*") {
-					baseType = baseType[1:]
-				}
+				baseType = strings.TrimPrefix(baseType, "*")
 				funcName = baseType + "_" + funcName
 			}
 			a.globalScope.Define(funcName, "func")
@@ -196,8 +194,8 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			a.analyzeExpression(s.Condition)
 			a.analyzeBlock(s.Body)
 		case *ast.ReturnStatement:
-			if s.ReturnValue != nil {
-				a.analyzeExpression(s.ReturnValue)
+			for _, rv := range s.ReturnValues {
+				a.analyzeExpression(rv)
 			}
 		case *ast.ExpressionStatement:
 			a.analyzeExpression(s.Expression)

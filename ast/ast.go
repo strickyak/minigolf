@@ -84,7 +84,7 @@ type FuncStatement struct {
 	Name       *Identifier
 	Receiver   *Parameter // Optional
 	Parameters []*Parameter
-	ReturnType Expression // Optional
+	ReturnTypes []Expression // Optional
 	Body       *BlockStatement
 }
 
@@ -140,7 +140,7 @@ func (s *ForStatement) TokenLiteral() string { return s.Token.Literal }
 
 type ReturnStatement struct {
 	Token       token.Token // The 'return' token
-	ReturnValue Expression  // Optional
+	ReturnValues []Expression  // Optional
 }
 
 func (s *ReturnStatement) statementNode()       {}
