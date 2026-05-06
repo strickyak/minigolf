@@ -229,6 +229,25 @@ func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) 
 	}
 
 	var params []string
+	
+	funcName := s.Name.Value
+	if s.Receiver != nil {
+		recvType := t.mapType(s.Receiver.Type)
+		baseType := recvType
+		if strings.HasSuffix(baseType, "*") {
+			baseType = baseType[:len(baseType)-1]
+		}
+		if strings.HasPrefix(baseType, "t_"+t.pkgName+"_") {
+			baseType = baseType[len("t_"+t.pkgName+"_"):]
+		}
+		funcName = baseType + "_" + funcName
+		
+		if !isForward {
+			t.addLocal(s.Receiver.Name.Value, recvType)
+		}
+		params = append(params, fmt.Sprintf("%s v_%s", recvType, s.Receiver.Name.Value))
+	}
+
 	for _, p := range s.Parameters {
 		if !isForward {
 			t.addLocal(p.Name.Value, t.mapType(p.Type))
@@ -236,7 +255,7 @@ func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) 
 		params = append(params, fmt.Sprintf("%s v_%s", t.mapType(p.Type), p.Name.Value))
 	}
 
-	res := fmt.Sprintf("%s f_%s_%s(%s)", retType, t.pkgName, s.Name.Value, strings.Join(params, ", "))
+	res := fmt.Sprintf("%s f_%s_%s(%s)", retType, t.pkgName, funcName, strings.Join(params, ", "))
 	if isForward {
 		res += ";\n"
 	} else {
@@ -349,8 +368,36 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 	case *ast.IndexExpression:
 		return fmt.Sprintf("(%s).data[%s]", t.emitExprStr(e.Left), t.emitExprStr(e.Index))
 	case *ast.SelectorExpression:
+		if strings.HasSuffix(t.typeOf(e.Left), "*") {
+			return fmt.Sprintf("(%s)->%s", t.emitExprStr(e.Left), e.Right.Value)
+		}
 		return fmt.Sprintf("(%s).%s", t.emitExprStr(e.Left), e.Right.Value)
 	case *ast.CallExpression:
+		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+			receiverType := t.typeOf(sel.Left)
+			baseType := receiverType
+			isPtr := false
+			if strings.HasSuffix(baseType, "*") {
+				baseType = baseType[:len(baseType)-1]
+				isPtr = true
+			}
+			if strings.HasPrefix(baseType, "t_"+t.pkgName+"_") {
+				baseType = baseType[len("t_"+t.pkgName+"_"):]
+			}
+			funcName := baseType + "_" + sel.Right.Value
+			
+			receiverStr := t.emitExprStr(sel.Left)
+			if !isPtr {
+				receiverStr = "(&" + receiverStr + ")"
+			}
+			
+			args := []string{receiverStr}
+			for _, arg := range e.Arguments {
+				args = append(args, t.emitExprStr(arg))
+			}
+			return fmt.Sprintf("f_%s_%s(%s)", t.pkgName, funcName, strings.Join(args, ", "))
+		}
+
 		if ident, ok := e.Function.(*ast.Identifier); ok {
 			if ident.Value == "print" || ident.Value == "println" {
 				return t.emitPrint(ident.Value == "println", e.Arguments)

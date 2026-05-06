@@ -95,15 +95,31 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 				b.consts[s.Name.Value] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}
 			}
 		case *ast.FuncStatement:
-			f := &Function{Name: s.Name.Value}
+			funcName := s.Name.Value
+			var receiverTyp Type
+			if s.Receiver != nil {
+				receiverTyp = astToIRType(s.Receiver.Type)
+				baseType := string(receiverTyp)
+				if strings.HasPrefix(baseType, "*") {
+					baseType = baseType[1:]
+				}
+				funcName = baseType + "_" + funcName
+			}
+			f := &Function{Name: funcName}
 			if s.ReturnType != nil {
 				f.ReturnType = astToIRType(s.ReturnType)
 			} else {
 				f.ReturnType = TypeVoid
 			}
-			for i, p := range s.Parameters {
+			paramIdx := 0
+			if s.Receiver != nil {
+				f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: s.Receiver.Name.Value, Typ: receiverTyp})
+				paramIdx++
+			}
+			for _, p := range s.Parameters {
 				typ := astToIRType(p.Type)
-				f.Parameters = append(f.Parameters, &Parameter{ID: i, Name: p.Name.Value, Typ: typ})
+				f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
+				paramIdx++
 			}
 			b.funcs[f.Name] = f
 			b.Program.Functions = append(b.Program.Functions, f)
@@ -121,7 +137,16 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 }
 
 func (b *Builder) buildFunc(s *ast.FuncStatement) {
-	b.currentFunc = b.funcs[s.Name.Value]
+	funcName := s.Name.Value
+	if s.Receiver != nil {
+		receiverTyp := astToIRType(s.Receiver.Type)
+		baseType := string(receiverTyp)
+		if strings.HasPrefix(baseType, "*") {
+			baseType = baseType[1:]
+		}
+		funcName = baseType + "_" + funcName
+	}
+	b.currentFunc = b.funcs[funcName]
 	b.nextValueID = 1
 	b.nextBlockID = 1
 	b.currentDef = make(map[*BasicBlock]map[string]Value)
@@ -278,12 +303,24 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			b.writeVariable(s.Name.Value, b.currentBlock, val)
 		case *ast.AssignStatement:
 			for i, nameExpr := range s.Names {
+				b.addInstr(&SourceMarker{
+					BaseInstruction: BaseInstruction{Typ: TypeVoid},
+					Comment: fmt.Sprintf("Line %d: Assignment LHS: %s", s.Token.Line, nameExpr.TokenLiteral()),
+				})
 				val := b.buildExpr(s.Values[i])
 				b.assignToExpr(nameExpr, val)
 			}
 		case *ast.ExpressionStatement:
+			b.addInstr(&SourceMarker{
+				BaseInstruction: BaseInstruction{Typ: TypeVoid},
+				Comment: fmt.Sprintf("Line %d: Expression: %s", s.Token.Line, s.Token.Literal),
+			})
 			b.buildExpr(s.Expression)
 		case *ast.IfStatement:
+			b.addInstr(&SourceMarker{
+				BaseInstruction: BaseInstruction{Typ: TypeVoid},
+				Comment: fmt.Sprintf("Line %d: If statement", s.Token.Line),
+			})
 			cond := b.buildExpr(s.Condition)
 			trueBlk := b.newBlock()
 			endBlk := b.newBlock()
@@ -322,6 +359,10 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			b.currentBlock = endBlk
 			
 		case *ast.ForStatement:
+			b.addInstr(&SourceMarker{
+				BaseInstruction: BaseInstruction{Typ: TypeVoid},
+				Comment: fmt.Sprintf("Line %d: For statement loop header", s.Token.Line),
+			})
 			headerBlk := b.newBlock()
 			bodyBlk := b.newBlock()
 			endBlk := b.newBlock()
@@ -349,6 +390,10 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			b.currentBlock = endBlk
 			
 		case *ast.ReturnStatement:
+			b.addInstr(&SourceMarker{
+				BaseInstruction: BaseInstruction{Typ: TypeVoid},
+				Comment: fmt.Sprintf("Line %d: Return statement", s.Token.Line),
+			})
 			var val Value
 			if s.ReturnValue != nil {
 				val = b.buildExpr(s.ReturnValue)
@@ -440,6 +485,38 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		case ">=": return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "gte", Left: left, Right: right})
 		}
 	case *ast.CallExpression:
+		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+			leftVal := b.buildExpr(sel.Left)
+			structTyp := string(leftVal.Type())
+			isPtr := strings.HasPrefix(structTyp, "*")
+			baseType := structTyp
+			if isPtr {
+				baseType = baseType[1:]
+			}
+			funcName := baseType + "_" + sel.Right.Value
+			if f, exists := b.funcs[funcName]; exists {
+				var receiverVal Value
+				if isPtr {
+					receiverVal = leftVal
+				} else {
+					if ident, ok := sel.Left.(*ast.Identifier); ok {
+						if g, ok := b.globals[ident.Value]; ok {
+							receiverVal = b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Global: g})
+						} else {
+							receiverVal = leftVal
+						}
+					} else {
+						receiverVal = leftVal
+					}
+				}
+				args := []Value{receiverVal}
+				for _, arg := range e.Arguments {
+					args = append(args, b.buildExpr(arg))
+				}
+				return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args})
+			}
+		}
+
 		if ident, ok := e.Function.(*ast.Identifier); ok {
 			if ident.Value == "print" || ident.Value == "println" {
 				args := []Value{}

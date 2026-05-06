@@ -82,6 +82,7 @@ func (s *VarStatement) TokenLiteral() string { return s.Token.Literal }
 type FuncStatement struct {
 	Token      token.Token // The 'func' token
 	Name       *Identifier
+	Receiver   *Parameter // Optional
 	Parameters []*Parameter
 	ReturnType Expression // Optional
 	Body       *BlockStatement

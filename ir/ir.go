@@ -127,6 +127,8 @@ type Instruction interface {
 	Opcode() string
 	SetID(int)
 	GetID() int
+	GetComment() string
+	SetComment(c string)
 }
 
 // Terminator represents an instruction that safely ends a BasicBlock.
@@ -137,14 +139,17 @@ type Terminator interface {
 
 // BaseInstruction provides common Instruction fields.
 type BaseInstruction struct {
-	ID  int
-	Typ Type
+	ID      int
+	Typ     Type
+	Comment string
 }
 
 func (b *BaseInstruction) Type() Type       { return b.Typ }
 func (b *BaseInstruction) String() string   { return fmt.Sprintf("v%d", b.ID) }
 func (b *BaseInstruction) SetID(id int)     { b.ID = id }
 func (b *BaseInstruction) GetID() int       { return b.ID }
+func (b *BaseInstruction) GetComment() string { return b.Comment }
+func (b *BaseInstruction) SetComment(c string) { b.Comment = c }
 
 // --- Constant Instructions ---
 
@@ -272,6 +277,12 @@ type ZeroInit struct {
 	BaseInstruction
 }
 func (i *ZeroInit) Opcode() string { return "zeroinit" }
+
+type SourceMarker struct {
+	BaseInstruction
+	Comment string
+}
+func (i *SourceMarker) Opcode() string { return "source_marker" }
 
 // --- SSA Primitives ---
 

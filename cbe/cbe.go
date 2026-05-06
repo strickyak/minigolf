@@ -174,6 +174,11 @@ func (c *CBE) emitFunc(f *ir.Function) {
 				c.buf.WriteString(fmt.Sprintf("\t(*%s) = %s;\n", c.formatVal(stPtr.Ptr), c.formatVal(stPtr.Val)))
 				continue
 			}
+			
+			if sm, ok := instr.(*ir.SourceMarker); ok {
+				c.buf.WriteString(fmt.Sprintf("\t/* %s */\n", sm.Comment))
+				continue
+			}
 
 			c.buf.WriteString("\t")
 			if instr.Type() != ir.TypeVoid && instr.Type() != ir.TypeUnknown {

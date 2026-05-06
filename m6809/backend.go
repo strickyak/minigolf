@@ -470,6 +470,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	offset := b.slots[id]
 
 	switch i := instr.(type) {
+	case *ir.SourceMarker:
+		b.buf.WriteString(fmt.Sprintf("\t; %s\n", i.Comment))
 	case *ir.ConstByte, *ir.ConstWord:
 		b.loadVal(i)
 		b.storeResult(id)

@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"fmt"
+	"strings"
 	"minigo/ast"
 )
 
@@ -99,10 +100,20 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				a.hasMainPackage = true
 			}
 		case *ast.FuncStatement:
-			if s.Name.Value == "main" {
+			if s.Name.Value == "main" && s.Receiver == nil {
 				a.hasMainFunc = true
 			}
-			a.globalScope.Define(s.Name.Value, "func")
+			
+			funcName := s.Name.Value
+			if s.Receiver != nil {
+				recvTyp := exprToString(s.Receiver.Type)
+				baseType := recvTyp
+				if strings.HasPrefix(baseType, "*") {
+					baseType = baseType[1:]
+				}
+				funcName = baseType + "_" + funcName
+			}
+			a.globalScope.Define(funcName, "func")
 		case *ast.VarStatement:
 			typ := "word" // default
 			if s.ValueType != nil {
@@ -132,6 +143,10 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	a.currentScope = NewScope(a.currentScope)
 	defer func() { a.currentScope = a.currentScope.parent }()
+
+	if s.Receiver != nil {
+		a.currentScope.Define(s.Receiver.Name.Value, exprToString(s.Receiver.Type))
+	}
 
 	for _, p := range s.Parameters {
 		a.currentScope.Define(p.Name.Value, exprToString(p.Type))

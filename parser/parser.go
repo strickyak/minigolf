@@ -284,6 +284,21 @@ func (p *Parser) parseVarStatement() *ast.VarStatement {
 func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 	stmt := &ast.FuncStatement{Token: p.curToken}
 
+	if p.peekTokenIs(token.LPAREN) {
+		p.nextToken() // move to '('
+		p.nextToken() // move to receiver name
+		
+		receiver := &ast.Parameter{}
+		receiver.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		p.nextToken() // move to type (e.g. '*')
+		receiver.Type = p.parseExpression(LOWEST)
+		stmt.Receiver = receiver
+
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+	}
+
 	if !p.expectPeek(token.IDENT) {
 		return nil
 	}
