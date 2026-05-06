@@ -2,6 +2,8 @@ package main_test
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -134,32 +136,27 @@ func TestSystemTrianglesByte_x86_64(t *testing.T) {
 	testBackend(t, "x86_64", "demos/triangles_byte.golf", expectedOutputByte)
 }
 
-func TestSystemArray_C(t *testing.T) {
-	expected := "10\n20\n30"
-	testBackend(t, "C", "tests/test_array.golf", expected)
-}
-
-func TestSystemArray_CBE(t *testing.T) {
-	expected := "10\n20\n30"
-	testBackend(t, "CBE", "tests/test_array.golf", expected)
-}
-
-func TestSystemArray_x86_64(t *testing.T) {
-	expected := "10\n20\n30"
-	testBackend(t, "x86_64", "tests/test_array.golf", expected)
-}
-
-func TestSystemStruct_C(t *testing.T) {
-	expected := "10\n20\n30"
-	testBackend(t, "C", "tests/test_struct.golf", expected)
-}
-
-func TestSystemStruct_CBE(t *testing.T) {
-	expected := "10\n20\n30"
-	testBackend(t, "CBE", "tests/test_struct.golf", expected)
-}
-
-func TestSystemStruct_x86_64(t *testing.T) {
-	expected := "10\n20\n30"
-	testBackend(t, "x86_64", "tests/test_struct.golf", expected)
+func TestSystemAllGolfFiles(t *testing.T) {
+	files, err := filepath.Glob("tests/*.golf")
+	if err != nil {
+		t.Fatalf("Failed to glob tests/*.golf: %v", err)
+	}
+	
+	backends := []string{"C", "CBE", "x86_64"}
+	
+	for _, file := range files {
+		wantFile := strings.TrimSuffix(file, ".golf") + ".want"
+		wantBytes, err := os.ReadFile(wantFile)
+		if err != nil {
+			t.Fatalf("Failed to read want file %s: %v", wantFile, err)
+		}
+		expectedStr := string(wantBytes)
+		
+		for _, backend := range backends {
+			testName := fmt.Sprintf("%s_%s", filepath.Base(file), backend)
+			t.Run(testName, func(t *testing.T) {
+				testBackend(t, backend, file, expectedStr)
+			})
+		}
+	}
 }

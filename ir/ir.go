@@ -245,6 +245,12 @@ type AddressOfGlobal struct {
 }
 func (i *AddressOfGlobal) Opcode() string { return "addrof" }
 
+type AddressOfLocal struct {
+	BaseInstruction
+	Local Value
+}
+func (i *AddressOfLocal) Opcode() string { return "addrof_local" }
+
 type ExtractFieldPtr struct {
 	BaseInstruction
 	Ptr        Value

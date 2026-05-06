@@ -282,8 +282,16 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(-%s)", c.formatVal(i.Operand))
 	case *ir.Call:
 		var args []string
-		for _, arg := range i.Args {
-			args = append(args, c.formatVal(arg))
+		for idx, arg := range i.Args {
+			argStr := c.formatVal(arg)
+			if idx < len(i.Func.Parameters) {
+				expectedTyp := string(i.Func.Parameters[idx].Typ)
+				argTyp := string(arg.Type())
+				if strings.HasPrefix(expectedTyp, "*") && !strings.HasPrefix(argTyp, "*") {
+					argStr = "(&" + argStr + ")"
+				}
+			}
+			args = append(args, argStr)
 		}
 		return fmt.Sprintf("f_%s(%s)", i.Func.Name, strings.Join(args, ", "))
 	case *ir.BuiltinCall:
@@ -304,6 +312,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(%s).f%d", c.formatVal(i.Struct), i.FieldIndex)
 	case *ir.AddressOfGlobal:
 		return fmt.Sprintf("(&v_%s)", i.Global.Name)
+	case *ir.AddressOfLocal:
+		return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
 	case *ir.LoadPtr:
 		return fmt.Sprintf("(*%s)", c.formatVal(i.Ptr))
 	case *ir.ExtractFieldPtr:

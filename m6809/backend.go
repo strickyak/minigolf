@@ -336,12 +336,13 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	stackArgOffset := 2
 	for _, p := range f.Parameters {
-		if p == firstWord {
+		switch p {
+		case firstWord:
 			b.buf.WriteString(fmt.Sprintf("\tstx %s\n", b.memAccess(b.paramSlots[p.Name])))
-		} else if p == firstByte {
+		case firstByte:
 			b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
-		} else {
+		default:
 			// Array passing as arguments in 6809 not fully supported yet if > 2 bytes
 			size := b.getTypeSize(string(p.Typ))
 			if size <= 2 {
@@ -355,7 +356,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	for _, blk := range f.Blocks {
-		b.buf.WriteString(fmt.Sprintf(".Lb%d:\n", blk.ID))
+		b.buf.WriteString(fmt.Sprintf(".L_%s_b%d:\n", f.Name, blk.ID))
 
 		b.activeRegs = map[string]int{}
 		b.valInReg = map[int]string{}
@@ -376,20 +377,20 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		switch term := blk.Terminator.(type) {
 		case *ir.Jump:
 			b.emitPhiAssignments(blk, term.Target)
-			b.buf.WriteString(fmt.Sprintf("\tlbra .Lb%d\n", term.Target.ID))
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", f.Name, term.Target.ID))
 		case *ir.Branch:
 			b.loadVal(term.Condition)
 			b.buf.WriteString("\tcmpd #0\n")
-			b.buf.WriteString(fmt.Sprintf("\tbne .Lb%d_true\n", blk.ID))
-			b.buf.WriteString(fmt.Sprintf("\tlbra .Lb%d_false\n", blk.ID))
+			b.buf.WriteString(fmt.Sprintf("\tbne .L_%s_b%d_true\n", f.Name, blk.ID))
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d_false\n", f.Name, blk.ID))
 
-			b.buf.WriteString(fmt.Sprintf(".Lb%d_true:\n", blk.ID))
+			b.buf.WriteString(fmt.Sprintf(".L_%s_b%d_true:\n", f.Name, blk.ID))
 			b.emitPhiAssignments(blk, term.TrueBlock)
-			b.buf.WriteString(fmt.Sprintf("\tlbra .Lb%d\n", term.TrueBlock.ID))
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", f.Name, term.TrueBlock.ID))
 
-			b.buf.WriteString(fmt.Sprintf(".Lb%d_false:\n", blk.ID))
+			b.buf.WriteString(fmt.Sprintf(".L_%s_b%d_false:\n", f.Name, blk.ID))
 			b.emitPhiAssignments(blk, term.FalseBlock)
-			b.buf.WriteString(fmt.Sprintf("\tlbra .Lb%d\n", term.FalseBlock.ID))
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", f.Name, term.FalseBlock.ID))
 
 		case *ir.Return:
 			if term.Val != nil {
@@ -489,14 +490,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 
 		b.emitLoadAddr("y", srcStr)
-		if size == 1 {
+		switch size {
+		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else if size == 2 {
+		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else {
+		default:
 			b.emitLoadAddr("x", destStr)
 			b.buf.WriteString("\tpshs u\n")
 			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", size))
@@ -536,15 +538,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tstb ,x\n")
 		} else {
 			valStr := b.getAddrStr(i.Val)
-			if size == 1 {
+			switch size {
+			case 1:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tldb 1,y\n")
 				b.buf.WriteString("\tstb ,x\n")
-			} else if size == 2 {
+			case 2:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tldd ,y\n")
 				b.buf.WriteString("\tstd ,x\n")
-			} else {
+			default:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tpshs u\n")
 				b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", size))
@@ -594,14 +597,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			panic("Dynamic array indexing not yet implemented for 6809")
 		}
 
-		if eltSize == 1 {
+		switch eltSize {
+		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else if eltSize == 2 {
+		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else {
+		default:
 			b.emitLoadAddr("x", destStr)
 			b.buf.WriteString("\tpshs u\n")
 			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", eltSize))
@@ -657,15 +661,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tstb ,x\n")
 		} else {
 			valStr := b.getAddrStr(i.Val)
-			if eltSize == 1 {
+			switch eltSize {
+			case 1:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tldb 1,y\n")
 				b.buf.WriteString("\tstb ,x\n")
-			} else if eltSize == 2 {
+			case 2:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tldd ,y\n")
 				b.buf.WriteString("\tstd ,x\n")
-			} else {
+			default:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tpshs u\n")
 				b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", eltSize))
@@ -690,14 +695,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 		}
 
-		if fieldSize == 1 {
+		switch fieldSize {
+		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else if fieldSize == 2 {
+		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else {
+		default:
 			b.emitLoadAddr("x", destStr)
 			b.buf.WriteString("\tpshs u\n")
 			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
@@ -748,15 +754,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tstb ,x\n")
 		} else {
 			valStr := b.getAddrStr(i.Val)
-			if fieldSize == 1 {
+			switch fieldSize {
+			case 1:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tldb 1,y\n")
 				b.buf.WriteString("\tstb ,x\n")
-			} else if fieldSize == 2 {
+			case 2:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tldd ,y\n")
 				b.buf.WriteString("\tstd ,x\n")
-			} else {
+			default:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tpshs u\n")
 				b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
@@ -773,12 +780,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.AddressOfGlobal:
 		b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
+	case *ir.AddressOfLocal:
+		localInstr := i.Local.(ir.Instruction)
+		localOffset := b.slots[localInstr.GetID()]
+		b.buf.WriteString(fmt.Sprintf("\tleax %d,s\n", localOffset))
+		b.buf.WriteString("\ttfr x,d\n")
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
 	case *ir.ExtractFieldPtr:
 		b.flushRegisters()
 		structName := string(i.Ptr.Type())
-		if strings.HasPrefix(structName, "*") {
-			structName = structName[1:]
-		}
+		structName = strings.TrimPrefix(structName, "*")
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
 		
 		destStr := b.memAccess(offset)
@@ -788,14 +799,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 		}
 		
-		if fieldSize == 1 {
+		switch fieldSize {
+		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else if fieldSize == 2 {
+		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
-		} else {
+		default:
 			b.emitLoadAddr("x", destStr)
 			b.buf.WriteString("\tpshs u\n")
 			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))
@@ -811,9 +823,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.InsertFieldPtr:
 		b.flushRegisters()
 		structName := string(i.Ptr.Type())
-		if strings.HasPrefix(structName, "*") {
-			structName = structName[1:]
-		}
+		structName = strings.TrimPrefix(structName, "*")
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,x\n")
@@ -831,13 +841,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 		} else {
 			valStr := b.getAddrStr(i.Val)
-			if fieldSize == 1 {
+			switch fieldSize {
+			case 1:
 				b.buf.WriteString(fmt.Sprintf("\tldb %s+1\n", valStr))
 				b.buf.WriteString("\tstb ,x\n")
-			} else if fieldSize == 2 {
+			case 2:
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
 				b.buf.WriteString("\tstd ,x\n")
-			} else {
+			default:
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tpshs u\n")
 				b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", fieldSize))

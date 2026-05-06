@@ -100,9 +100,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			if s.Receiver != nil {
 				receiverTyp = astToIRType(s.Receiver.Type)
 				baseType := string(receiverTyp)
-				if strings.HasPrefix(baseType, "*") {
-					baseType = baseType[1:]
-				}
+				baseType = strings.TrimPrefix(baseType, "*")
 				funcName = baseType + "_" + funcName
 			}
 			f := &Function{Name: funcName}
@@ -141,9 +139,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	if s.Receiver != nil {
 		receiverTyp := astToIRType(s.Receiver.Type)
 		baseType := string(receiverTyp)
-		if strings.HasPrefix(baseType, "*") {
-			baseType = baseType[1:]
-		}
+		baseType = strings.TrimPrefix(baseType, "*")
 		funcName = baseType + "_" + funcName
 	}
 	b.currentFunc = b.funcs[funcName]
@@ -503,10 +499,10 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 						if g, ok := b.globals[ident.Value]; ok {
 							receiverVal = b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Global: g})
 						} else {
-							receiverVal = leftVal
+							receiverVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Local: leftVal})
 						}
 					} else {
-						receiverVal = leftVal
+						receiverVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Local: leftVal})
 					}
 				}
 				args := []Value{receiverVal}
@@ -544,9 +540,7 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 	case *ast.PointerType:
 		ptrVal := b.buildExpr(e.Elt)
 		typ := string(ptrVal.Type())
-		if strings.HasPrefix(typ, "*") {
-			typ = typ[1:]
-		}
+		typ = strings.TrimPrefix(typ, "*")
 		return b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: Type(typ)}, Ptr: ptrVal})
 	case *ast.PrefixExpression:
 		if e.Operator == "&" {

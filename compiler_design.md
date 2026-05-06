@@ -31,7 +31,14 @@ The language supports exactly six outer statement types, just like in Go:
 
 **Data Types & Literals:**
 *   **Primitive Integers:** Exactly two numeric types: `byte` (unsigned 8-bit) and `word` (unsigned pointer-sized integer, equivalent to `uintptr`).
+*   **Composite Types:** Structs (e.g., `type Apple struct { worms byte }`) and fixed-size arrays (e.g., `[10]byte`).
+*   **Pointers:** Pointers to primitives and structs (e.g., `*Apple`), generated via the address-of operator `&` and dereferenced automatically or manually.
 *   **Strings:** ASCII string literals are supported strictly for testing and bootstrapping. No string operations (like concatenation) are defined; they can only be passed to built-in print functions.
+
+**Methods:**
+The language provides Go-style method declarations on user-defined pointer types.
+*   `func (a *Apple) NumWorms() byte { return a.worms }`
+*   Methods are statically dispatched at compile time. The receiver (`a`) acts as an implicit first parameter.
 
 **Function-Level Statements:**
 Inside functions, the following statements are permitted:
@@ -73,12 +80,14 @@ The core of the optimization pipeline relies on an SSA representation where ever
 The IR operations are strictly defined as Go structs implementing the `Instruction` interface:
 
 *   **Constants**: `ConstByte`, `ConstWord`
-*   **Memory Operations**: `Load`, `Store` (used strictly for global variables, as locals are mapped directly to SSA values).
+*   **Memory Operations**: `Load`, `Store` (used for globals). `AddressOfGlobal`, `AddressOfLocal` (taking addresses). `LoadPtr`, `StorePtr` (dereferencing pointers).
+*   **Struct & Array Operations**: `ExtractElement`, `InsertElement` (arrays). `ExtractField`, `InsertField` (struct values). `ExtractFieldPtr`, `InsertFieldPtr` (struct pointers).
 *   **Arithmetic/Logic (`BinaryOp`, `UnaryOp`)**: Supported opcodes include `add`, `sub`, `mul`, `div`, `mod`, `and`, `or`, `xor`, `shl`, `shr`, `not`, `neg`.
 *   **Comparisons (`Compare`)**: `eq`, `neq`, `lt`, `lte`, `gt`, `gte`. These always yield a `byte` (0 for false, 1 for true).
 *   **SSA Primitives**: `Phi` (selects value based on predecessor block).
 *   **Function Calls**: `Call` (user-defined functions), `BuiltinCall` (`print`, `println`).
 *   **Conversions (`Cast`)**: `zero_ext` (byte to word), `trunc` (word to byte).
+*   **Metadata**: `SourceMarker` (embeds source code line numbers and statement context for debugging comments).
 *   **Terminators**: 
     *   `Jump`: Unconditional branch to a single target block.
     *   `Branch`: Conditional branch evaluated on a condition value.
@@ -135,12 +144,16 @@ To support deployment across advanced operating systems (such as Microware OS-9 
 *   **`-globals-at-y=bool` (default `false`)**: When enabled, the backend maps all global variable references as contiguous relative offsets against the `Y` register (`N,y`), avoiding hardcoded `.data`/`.bss` locations. The system masks `Y` out of standard register allocation workflows, allowing it to act securely as a constant local bounds pointer.
 *   **`-pic=bool` (default `false`)**: Triggers strict Position Independent Code generation. Formats all standard procedural leaps (`jsr`) into relative branching vectors (`lbsr`). Systematically captures string configurations and read-only elements, nesting them purely within the continuous `.code` execution section to ensure `leax fmt,pcr` addressing logic natively bypasses OS partition disconnects.
 
-### 7.2 Testing and Debugging Target: x86_64
-For practical debugging, testing, and rapid development, the compiler will include a backend for **64-bit x86_64**. 
-*   This allows the compiler's output to be executed and verified natively on modern development machines.
-*   `byte` and `word` values will map to the 8-bit and 16-bit portions of x86 registers (e.g., `al`, `ax`), or be zero-extended into wider registers. Care will be taken to ensure strict truncation and overflow semantics are preserved during computations.
+### 7.2 The C Transpiler and CBE Backend
+To bootstrap the language and provide a highly portable compilation path, the system includes two C generators:
+*   **C Transpiler (`-m=C`)**: Transpiles the parsed AST directly into equivalent high-level C code. This circumvents the SSA IR entirely, generating readable C structs, pointers, and variables that closely mirror the original MiniGolf source code. 
+*   **CBE (C Backend from SSA, `-m=CBE`)**: Translates the optimized, lowered SSA IR pipeline into C code. Variables are emitted as flat `v1`, `v2`, `v3` SSA variables alongside explicit block labels (`.Lb1`) and `goto` jumps.
 
-### 7.3 Future Architectures
-The backend interface will be abstracted to support adding other targets later. This includes:
-*   Other classic 8-bit architectures like the **Zilog Z80** and **MOS Technology 6502**.
-*   Standard modern targets if broader applicability is desired.
+### 7.3 Testing and Debugging Target: x86_64
+For practical debugging, testing, and rapid development, the compiler includes a native machine code backend for **64-bit x86_64**. 
+*   This allows the compiler's output to be executed and verified natively on modern Linux development machines.
+*   `byte` and `word` values map cleanly to the 8-bit and 64-bit portions of x86 registers. 
+
+### 7.4 Metadata and Debugging Observability
+To assist users in verifying the compiler pipeline, the IR builder injects `SourceMarker` pseudo-instructions into the AST traversal. 
+These markers propagate through the optimization phases down to the backends (X86_64, M6809, and CBE), emitting human-readable comments in the final assembly or C output (e.g., `; line 15: AssignStatement`). This makes correlating the machine code back to the original `.golf` script trivial.

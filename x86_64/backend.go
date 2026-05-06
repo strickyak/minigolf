@@ -187,7 +187,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	for _, blk := range f.Blocks {
-		b.buf.WriteString(fmt.Sprintf(".Lb%d:\n", blk.ID))
+		b.buf.WriteString(fmt.Sprintf(".L_%s_b%d:\n", f.Name, blk.ID))
 
 		for _, instr := range blk.Instructions {
 			if _, isPhi := instr.(*ir.Phi); isPhi {
@@ -202,20 +202,20 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		switch term := blk.Terminator.(type) {
 		case *ir.Jump:
 			b.emitPhiAssignments(blk, term.Target)
-			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d\n", term.Target.ID))
+			b.buf.WriteString(fmt.Sprintf("\tjmp .L_%s_b%d\n", f.Name, term.Target.ID))
 		case *ir.Branch:
 			b.loadVal(term.Condition, "rax")
 			b.buf.WriteString("\ttest rax, rax\n")
-			b.buf.WriteString(fmt.Sprintf("\tjnz .Lb%d_true\n", blk.ID))
-			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d_false\n", blk.ID))
+			b.buf.WriteString(fmt.Sprintf("\tjnz .L_%s_b%d_true\n", f.Name, blk.ID))
+			b.buf.WriteString(fmt.Sprintf("\tjmp .L_%s_b%d_false\n", f.Name, blk.ID))
 
-			b.buf.WriteString(fmt.Sprintf(".Lb%d_true:\n", blk.ID))
+			b.buf.WriteString(fmt.Sprintf(".L_%s_b%d_true:\n", f.Name, blk.ID))
 			b.emitPhiAssignments(blk, term.TrueBlock)
-			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d\n", term.TrueBlock.ID))
+			b.buf.WriteString(fmt.Sprintf("\tjmp .L_%s_b%d\n", f.Name, term.TrueBlock.ID))
 
-			b.buf.WriteString(fmt.Sprintf(".Lb%d_false:\n", blk.ID))
+			b.buf.WriteString(fmt.Sprintf(".L_%s_b%d_false:\n", f.Name, blk.ID))
 			b.emitPhiAssignments(blk, term.FalseBlock)
-			b.buf.WriteString(fmt.Sprintf("\tjmp .Lb%d\n", term.FalseBlock.ID))
+			b.buf.WriteString(fmt.Sprintf("\tjmp .L_%s_b%d\n", f.Name, term.FalseBlock.ID))
 
 		case *ir.Return:
 			if term.Val != nil {
@@ -383,6 +383,11 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.storeToAddr("rcx", i.Val, fieldSize)
 	case *ir.AddressOfGlobal:
 		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + v_%s]\n", i.Global.Name))
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.AddressOfLocal:
+		localInstr := i.Local.(ir.Instruction)
+		localOffset := b.slots[localInstr.GetID()]
+		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rbp - %d]\n", localOffset))
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.ExtractFieldPtr:
 		structName := strings.TrimPrefix(string(i.Ptr.Type()), "*")
