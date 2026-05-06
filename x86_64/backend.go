@@ -380,7 +380,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 		b.storeToAddr("rcx", i.Val, fieldSize)
 	case *ir.AddressOfGlobal:
-		b.buf.WriteString(fmt.Sprintf("\tlea rax, [v_%s]\n", i.Global.Name))
+		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + v_%s]\n", i.Global.Name))
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.ExtractFieldPtr:
 		structName := strings.TrimPrefix(string(i.Ptr.Type()), "*")
@@ -404,8 +404,13 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i.Ptr, "rcx")
 		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), "rcx", b.getTypeSize(string(i.Typ)))
 	case *ir.StorePtr:
+		ptrType := string(i.Ptr.Type())
+		pointeeType := "word"
+		if strings.HasPrefix(ptrType, "*") {
+			pointeeType = ptrType[1:]
+		}
 		b.loadVal(i.Ptr, "rcx")
-		b.storeToAddr("rcx", i.Val, b.getTypeSize(string(i.Val.Type())))
+		b.storeToAddr("rcx", i.Val, b.getTypeSize(pointeeType))
 	case *ir.BinaryOp:
 		b.loadVal(i.Left, "rax")
 		b.loadVal(i.Right, "rcx")
@@ -518,5 +523,5 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	}
 
 	b.buf.WriteString("\txor eax, eax\n")
-	b.buf.WriteString("\tcall printf\n")
+	b.buf.WriteString("\tcall printf@PLT\n")
 }

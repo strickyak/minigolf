@@ -166,17 +166,12 @@ func (c *CBE) emitFunc(f *ir.Function) {
 			}
 			
 			if ins, ok := instr.(*ir.InsertFieldPtr); ok {
-				structTyp := string(ins.Ptr.Type())
-				if strings.HasPrefix(structTyp, "*") {
-					structTyp = structTyp[1:]
-				}
-				cTyp := c.mapType(structTyp)
-				c.buf.WriteString(fmt.Sprintf("\t(((%s*)%s)->f%d) = %s;\n", cTyp, c.formatVal(ins.Ptr), ins.FieldIndex, c.formatVal(ins.Val)))
+				c.buf.WriteString(fmt.Sprintf("\t(%s->f%d) = %s;\n", c.formatVal(ins.Ptr), ins.FieldIndex, c.formatVal(ins.Val)))
 				continue
 			}
 			
 			if stPtr, ok := instr.(*ir.StorePtr); ok {
-				c.buf.WriteString(fmt.Sprintf("\t(*((%s*)%s)) = %s;\n", c.mapType(string(stPtr.Val.Type())), c.formatVal(stPtr.Ptr), c.formatVal(stPtr.Val)))
+				c.buf.WriteString(fmt.Sprintf("\t(*%s) = %s;\n", c.formatVal(stPtr.Ptr), c.formatVal(stPtr.Val)))
 				continue
 			}
 
@@ -303,17 +298,11 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 	case *ir.ExtractField:
 		return fmt.Sprintf("(%s).f%d", c.formatVal(i.Struct), i.FieldIndex)
 	case *ir.AddressOfGlobal:
-		return fmt.Sprintf("((word)&v_%s)", i.Global.Name)
+		return fmt.Sprintf("(&v_%s)", i.Global.Name)
 	case *ir.LoadPtr:
-		return fmt.Sprintf("(*((%s*)%s))", c.mapType(string(i.Typ)), c.formatVal(i.Ptr))
+		return fmt.Sprintf("(*%s)", c.formatVal(i.Ptr))
 	case *ir.ExtractFieldPtr:
-		// We cast the word back to a pointer of the appropriate struct type, then access the field.
-		structTyp := string(i.Ptr.Type())
-		if strings.HasPrefix(structTyp, "*") {
-			structTyp = structTyp[1:] // e.g. "*Rect" -> "Rect"
-		}
-		cTyp := c.mapType(structTyp)
-		return fmt.Sprintf("(((%s*)%s)->f%d)", cTyp, c.formatVal(i.Ptr), i.FieldIndex)
+		return fmt.Sprintf("(%s->f%d)", c.formatVal(i.Ptr), i.FieldIndex)
 	}
 	return "/* unsupported instruction */"
 }

@@ -877,26 +877,31 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.StorePtr:
 		b.flushRegisters()
-		fieldSize := b.getTypeSize(string(i.Val.Type()))
+		ptrType := string(i.Ptr.Type())
+		pointeeType := "word"
+		if strings.HasPrefix(ptrType, "*") {
+			pointeeType = ptrType[1:]
+		}
+		fieldSize := b.getTypeSize(pointeeType)
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,x\n")
 		
 		if cVal, ok := i.Val.(*ir.ConstWord); ok {
 			if fieldSize == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", cVal.Val&0xFF))
-				b.buf.WriteString("\tstb ,x\n")
+				b.buf.WriteString("\tstb ,x\t\t; store byte via pointer\n")
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", cVal.Val))
-				b.buf.WriteString("\tstd ,x\n")
+				b.buf.WriteString("\tstd ,x\t\t; store word via pointer\n")
 			}
 		} else {
 			valStr := b.getAddrStr(i.Val)
 			if fieldSize == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb %s+1\n", valStr))
-				b.buf.WriteString("\tstb ,x\n")
+				b.buf.WriteString("\tstb ,x\t\t; store byte via pointer\n")
 			} else if fieldSize == 2 {
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
-				b.buf.WriteString("\tstd ,x\n")
+				b.buf.WriteString("\tstd ,x\t\t; store word via pointer\n")
 			} else {
 				b.emitLoadAddr("y", valStr)
 				b.buf.WriteString("\tpshs u\n")
