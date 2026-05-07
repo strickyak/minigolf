@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+func str(a fmt.Stringer) string {
+    if a == nil {
+        return "nil"
+    }
+    return a.String()
+}
+
 // PrintProgram generates a human-readable string representation of the SSA IR.
 func PrintProgram(p *Program) string {
 	var buf bytes.Buffer
@@ -34,7 +41,7 @@ func PrintProgram(p *Program) string {
 				case *Load: args = append(args, i.Global.String())
 				case *Store: args = append(args, i.Global.String(), i.Val.String())
 				case *BinaryOp: args = append(args, i.Left.String(), i.Right.String())
-				case *Compare: args = append(args, i.Left.String(), i.Right.String())
+				case *Compare: args = append(args, str(i.Left), str(i.Right))
 				case *UnaryOp: args = append(args, i.Operand.String())
 				case *Phi:
 					for _, edge := range i.Edges {
@@ -64,7 +71,7 @@ func PrintProgram(p *Program) string {
 				
                 comment := instr.GetComment()
                 if comment != "" {
-                    comment = "  ; " + comment
+                    comment = "\t\t; " + comment
                 }
 				if instr.Type() != TypeVoid && instr.Type() != TypeUnknown {
 					buf.WriteString(fmt.Sprintf("  %s:%s = %s %s%s\n", instr.String(), instr.Type(), op, strings.Join(args, ", "),comment))

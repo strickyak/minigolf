@@ -291,6 +291,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		case "xor": opStr = "^"
 		case "shl": opStr = "<<"
 		case "shr": opStr = ">>"
+        default: opStr = "UNKNOWN_BINARY_OP(" + i.Op + ")"
 		}
 		return fmt.Sprintf("(%s %s %s)", c.formatVal(i.Left), opStr, c.formatVal(i.Right))
 	case *ir.Compare:
@@ -302,6 +303,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		case "lte": opStr = "<="
 		case "gt": opStr = ">"
 		case "gte": opStr = ">="
+        default: opStr = "UNKNOWN_COMPARE_OP(" + i.Op + ")"
 		}
 		// Cast to byte to ensure strictly byte-level boolean properties
 		return fmt.Sprintf("(byte)(%s %s %s)", c.formatVal(i.Left), opStr, c.formatVal(i.Right))

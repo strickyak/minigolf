@@ -5,6 +5,7 @@ import "minigo/token"
 // Node is the base interface for all AST nodes.
 type Node interface {
 	TokenLiteral() string
+	GetToken() *token.Token
 }
 
 // Statement is the interface for all statement nodes.
@@ -24,6 +25,12 @@ type Program struct {
 	Statements []Statement
 }
 
+func (p *Program) GetToken() *token.Token {
+	if len(p.Statements) > 0 {
+		return p.Statements[0].GetToken()
+	}
+    return nil
+}
 func (p *Program) TokenLiteral() string {
 	if len(p.Statements) > 0 {
 		return p.Statements[0].TokenLiteral()
@@ -42,6 +49,7 @@ type PackageStatement struct {
 
 func (s *PackageStatement) statementNode()       {}
 func (s *PackageStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *PackageStatement) GetToken() *token.Token { return &s.Token }
 
 type ImportStatement struct {
 	Token token.Token // The 'import' token
@@ -50,6 +58,7 @@ type ImportStatement struct {
 
 func (s *ImportStatement) statementNode()       {}
 func (s *ImportStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ImportStatement) GetToken() *token.Token { return &s.Token }
 
 type ConstStatement struct {
 	Token token.Token // The 'const' token
@@ -59,6 +68,7 @@ type ConstStatement struct {
 
 func (s *ConstStatement) statementNode()       {}
 func (s *ConstStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ConstStatement) GetToken() *token.Token { return &s.Token }
 
 type TypeStatement struct {
 	Token    token.Token // The 'type' token
@@ -68,6 +78,7 @@ type TypeStatement struct {
 
 func (s *TypeStatement) statementNode()       {}
 func (s *TypeStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *TypeStatement) GetToken() *token.Token { return &s.Token }
 
 type VarStatement struct {
 	Token     token.Token // The 'var' token
@@ -78,6 +89,7 @@ type VarStatement struct {
 
 func (s *VarStatement) statementNode()       {}
 func (s *VarStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *VarStatement) GetToken() *token.Token { return &s.Token }
 
 type FuncStatement struct {
 	Token      token.Token // The 'func' token
@@ -90,6 +102,7 @@ type FuncStatement struct {
 
 func (s *FuncStatement) statementNode()       {}
 func (s *FuncStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *FuncStatement) GetToken() *token.Token { return &s.Token }
 
 type Parameter struct {
 	Name *Identifier
@@ -107,6 +120,7 @@ type BlockStatement struct {
 
 func (s *BlockStatement) statementNode()       {}
 func (s *BlockStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *BlockStatement) GetToken() *token.Token { return &s.Token }
 
 // AssignStatement handles `x = 5`, `x, y = 1, 2`, and `x := 5`
 // Left-hand side is expressions (Identifiers or IndexExpressions).
@@ -118,6 +132,7 @@ type AssignStatement struct {
 
 func (s *AssignStatement) statementNode()       {}
 func (s *AssignStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *AssignStatement) GetToken() *token.Token { return &s.Token }
 
 type IfStatement struct {
 	Token       token.Token // The 'if' token
@@ -128,6 +143,7 @@ type IfStatement struct {
 
 func (s *IfStatement) statementNode()       {}
 func (s *IfStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *IfStatement) GetToken() *token.Token { return &s.Token }
 
 type ForStatement struct {
 	Token     token.Token // The 'for' token
@@ -137,6 +153,7 @@ type ForStatement struct {
 
 func (s *ForStatement) statementNode()       {}
 func (s *ForStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ForStatement) GetToken() *token.Token { return &s.Token }
 
 type For3Statement struct {
 	Token     token.Token // The 'for' token
@@ -148,6 +165,7 @@ type For3Statement struct {
 
 func (s *For3Statement) statementNode()       {}
 func (s *For3Statement) TokenLiteral() string { return s.Token.Literal }
+func (s *For3Statement) GetToken() *token.Token { return &s.Token }
 
 type IncDecStatement struct {
 	Token token.Token // The '++' or '--' token
@@ -156,6 +174,7 @@ type IncDecStatement struct {
 
 func (s *IncDecStatement) statementNode()       {}
 func (s *IncDecStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *IncDecStatement) GetToken() *token.Token { return &s.Token }
 
 type ForRangeStatement struct {
 	Token      token.Token // The 'for' token
@@ -167,6 +186,7 @@ type ForRangeStatement struct {
 
 func (s *ForRangeStatement) statementNode()       {}
 func (s *ForRangeStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ForRangeStatement) GetToken() *token.Token { return &s.Token }
 
 type ReturnStatement struct {
 	Token       token.Token // The 'return' token
@@ -175,6 +195,7 @@ type ReturnStatement struct {
 
 func (s *ReturnStatement) statementNode()       {}
 func (s *ReturnStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ReturnStatement) GetToken() *token.Token { return &s.Token }
 
 // ExpressionStatement allows expressions (like function calls: `print(x)`) to stand alone
 type ExpressionStatement struct {
@@ -184,6 +205,7 @@ type ExpressionStatement struct {
 
 func (s *ExpressionStatement) statementNode()       {}
 func (s *ExpressionStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ExpressionStatement) GetToken() *token.Token { return &s.Token }
 
 // ============================================================================
 // Expressions
@@ -196,6 +218,7 @@ type Identifier struct {
 
 func (e *Identifier) expressionNode()      {}
 func (e *Identifier) TokenLiteral() string { return e.Token.Literal }
+func (e *Identifier) GetToken() *token.Token { return &e.Token }
 
 type IntegerLiteral struct {
 	Token token.Token // The token.INT token
@@ -204,6 +227,7 @@ type IntegerLiteral struct {
 
 func (e *IntegerLiteral) expressionNode()      {}
 func (e *IntegerLiteral) TokenLiteral() string { return e.Token.Literal }
+func (e *IntegerLiteral) GetToken() *token.Token { return &e.Token }
 
 type StringLiteral struct {
 	Token token.Token
@@ -212,6 +236,7 @@ type StringLiteral struct {
 
 func (e *StringLiteral) expressionNode()      {}
 func (e *StringLiteral) TokenLiteral() string { return e.Token.Literal }
+func (e *StringLiteral) GetToken() *token.Token { return &e.Token }
 
 type PrefixExpression struct {
 	Token    token.Token // The prefix token, e.g., '!' or '-'
@@ -221,6 +246,7 @@ type PrefixExpression struct {
 
 func (e *PrefixExpression) expressionNode()      {}
 func (e *PrefixExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *PrefixExpression) GetToken() *token.Token { return &e.Token }
 
 type InfixExpression struct {
 	Token    token.Token // The operator token, e.g., '+', '<'
@@ -231,6 +257,7 @@ type InfixExpression struct {
 
 func (e *InfixExpression) expressionNode()      {}
 func (e *InfixExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *InfixExpression) GetToken() *token.Token { return &e.Token }
 
 // CallExpression handles both function calls and type casts (e.g. `byte(10)`)
 type CallExpression struct {
@@ -241,6 +268,7 @@ type CallExpression struct {
 
 func (e *CallExpression) expressionNode()      {}
 func (e *CallExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *CallExpression) GetToken() *token.Token { return &e.Token }
 
 type ArrayType struct {
 	Token  token.Token // The '[' token
@@ -250,6 +278,7 @@ type ArrayType struct {
 
 func (e *ArrayType) expressionNode()      {}
 func (e *ArrayType) TokenLiteral() string { return e.Token.Literal }
+func (e *ArrayType) GetToken() *token.Token { return &e.Token }
 
 type StructType struct {
 	Token  token.Token // The 'struct' token
@@ -263,6 +292,7 @@ type Field struct {
 
 func (s *StructType) expressionNode()      {}
 func (s *StructType) TokenLiteral() string { return s.Token.Literal }
+func (s *StructType) GetToken() *token.Token { return &s.Token }
 
 type SelectorExpression struct {
 	Token token.Token // The '.' token
@@ -272,6 +302,7 @@ type SelectorExpression struct {
 
 func (s *SelectorExpression) expressionNode()      {}
 func (s *SelectorExpression) TokenLiteral() string { return s.Token.Literal }
+func (s *SelectorExpression) GetToken() *token.Token { return &s.Token }
 
 type RangeExpression struct {
 	Token token.Token // The 'range' token
@@ -280,6 +311,7 @@ type RangeExpression struct {
 
 func (e *RangeExpression) expressionNode()      {}
 func (e *RangeExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *RangeExpression) GetToken() *token.Token { return &e.Token }
 
 type IndexExpression struct {
 	Token token.Token // The '[' token
@@ -289,6 +321,7 @@ type IndexExpression struct {
 
 func (e *IndexExpression) expressionNode()      {}
 func (e *IndexExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *IndexExpression) GetToken() *token.Token { return &e.Token }
 
 type PointerType struct {
 	Token token.Token // The '*' token
@@ -297,3 +330,4 @@ type PointerType struct {
 
 func (pt *PointerType) expressionNode()      {}
 func (pt *PointerType) TokenLiteral() string { return pt.Token.Literal }
+func (pt *PointerType) GetToken() *token.Token { return &pt.Token }

@@ -3,6 +3,7 @@ package m6809
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"minigo/ir"
 	"strconv"
 	"strings"
@@ -965,6 +966,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case "xor":
 			b.buf.WriteString("\teora 0,s\n\teorb 1,s\n\tleas 2,s\n")
 			b.popBytes(2)
+        default:
+            log.Panicf("Unknown BinaryOp in M6809: %q", i.Op)
 		}
 		if i.Typ == ir.TypeByte {
 			b.buf.WriteString("\tclra\n")
@@ -994,6 +997,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue))
 		case "gte":
 			b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue))
+        default:
+            log.Panicf("Unknown Compare Op in M6809: %q", i.Op)
 		}
 		b.buf.WriteString("\tclrb\n\tbra " + lblEnd + "\n")
 		b.buf.WriteString(lblTrue + ":\n\tldb #1\n")

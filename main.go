@@ -65,7 +65,7 @@ func main() {
 	defer logFile.Close()
 
 	// Configure a dedicated logger
-	logger := log.New(logFile, "minigo: ", log.Ltime|log.Lshortfile)
+	logger := log.New(logFile, "minigo: ", log.Lshortfile)
 
 	logger.Printf("Starting whole-program compilation")
 	logger.Printf("Target architecture: %s", *archFlag)
