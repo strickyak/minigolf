@@ -1,5 +1,5 @@
 set -ex
-T=/tmp/run-6809.tmp
+T=/tmp/run-6809.$(echo "$1" | tr -c A-Za-z0-9 _).tmp
 
 rm -rf $T
 mkdir -p $T
@@ -54,11 +54,15 @@ HERE
 
 /home/strick/modoc/coco-shelf/gomar/gomar \
     --loadm 'main.decb' \
-    --entry 0x7F00 \
-    -t 1 \
+    --entry=0x7F00 \
+    -t=1 \
+    -n=1 \
     -raw_hyper_print=1 \
     | tee _out
 Z=$?
+
+sleep 2
+
 case $Z in
     0) : okay ;;
     *) echo "EXITED STATUS $Z" >&2 ; exit $Z ;;

@@ -25,7 +25,7 @@ func TestPackageStatement(t *testing.T) {
 	input := `package main`
 	tokens := lexer.Lex(input, "<test>")
 	p := New(tokens)
-	program := p.ParseProgram()
+	program := p.ParseProgram("")
 	checkParserErrors(t, p)
 
 	if program == nil {
@@ -53,7 +53,7 @@ func TestVarStatements(t *testing.T) {
 	`
 	tokens := lexer.Lex(input, "<test>")
 	p := New(tokens)
-	program := p.ParseProgram()
+	program := p.ParseProgram("")
 	checkParserErrors(t, p)
 
 	if len(program.Statements) != 3 {
@@ -105,7 +105,7 @@ func TestAssignStatement(t *testing.T) {
 	`
 	tokens := lexer.Lex(input, "<test>")
 	p := New(tokens)
-	program := p.ParseProgram()
+	program := p.ParseProgram("")
 	checkParserErrors(t, p)
 
 	if len(program.Statements) != 1 {
@@ -241,7 +241,7 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 		input := "func test() { " + tt.input + " }"
 		tokens := lexer.Lex(input, "<test>")
 		p := New(tokens)
-		program := p.ParseProgram()
+		program := p.ParseProgram("")
 		checkParserErrors(t, p)
 
 		funcStmt := program.Statements[0].(*ast.FuncStatement)

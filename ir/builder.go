@@ -668,7 +668,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 }
 
 func (b *Builder) buildExpr(expr ast.Expression) Value {
-	log.Printf("Builder.buildExpr: expr (%T)%v", expr, expr)
+	// log.Printf("Builder.buildExpr: expr (%T)%v", expr, expr)
 
 	switch e := expr.(type) {
 	case *ast.IntegerLiteral:
@@ -737,26 +737,11 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		return &StringLiteral{Value: e.Value}
 
 	case *ast.InfixExpression:
-		log.Printf("ast.InfixExpression: e.Left=(%T)%v e.Right=(%T)%v", e.Left, e.Left, e.Right, e.Right)
+		// log.Printf("ast.InfixExpression: e.Left=(%T)%v e.Right=(%T)%v", e.Left, e.Left, e.Right, e.Right)
 		left := b.buildExpr(e.Left)
 		right := b.buildExpr(e.Right)
-
-		// ltype := left.Type()
-		// rtype := right.Type()
-
-		/*
-		   log.Printf("---- Left: %v      Right: %v ----", left, right)
-		   log.Printf("==== LeftType: %v   OP: %v   RightType: %v ====", ltype, e.Operator, right.Type())
-		   if _, ok := e.Left.(*ast.IntegerLiteral); !ok {
-		       if _, ok := e.Right.(*ast.IntegerLiteral); !ok {
-		           if ltype != rtype {
-		               log.Panicf("Operator %v mismatched types: left=%q right=%q", e.Operator, ltype, rtype)
-		           }
-		       }
-		   }
-		*/
-
 		typ := b.commonTypeOfValues(expr, left, e.Operator, right)
+
 		switch e.Operator {
 		case "&":
 			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "and", Left: left, Right: right}, expr)

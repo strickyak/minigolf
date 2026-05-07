@@ -112,6 +112,7 @@ type Backend struct {
 	freeRegs        []string
 	fmtCount        int
 	lblCount        int
+	retSlot         int
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -368,28 +369,49 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	stackArgOffset := 2
+	retSize := b.getTypeSize(string(f.ReturnType))
+	b.retSlot = -1
+	b.buf.WriteString("\t; --- Function parameters ---\n")
+	if retSize > 2 {
+		aligned := retSize
+		if aligned%2 != 0 { aligned++ }
+		b.retSlot = stackArgOffset
+		b.buf.WriteString(fmt.Sprintf("\t; Return value: size=%d, stack_offset=%d\n", retSize, stackArgOffset))
+		stackArgOffset += aligned
+	}
+
+	if firstWord != nil {
+		b.buf.WriteString(fmt.Sprintf("\t; Param %s passed in X\n", firstWord.Name))
+		b.buf.WriteString(fmt.Sprintf("\tstx %s\n", b.memAccess(b.paramSlots[firstWord.Name])))
+	}
+	if firstByte != nil {
+		b.buf.WriteString(fmt.Sprintf("\t; Param %s passed in B\n", firstByte.Name))
+		b.buf.WriteString("\tclra\n")
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[firstByte.Name])))
+	}
+
 	for _, p := range f.Parameters {
-		switch p {
-		case firstWord:
-			b.buf.WriteString(fmt.Sprintf("\tstx %s\n", b.memAccess(b.paramSlots[p.Name])))
-		case firstByte:
-			b.buf.WriteString("\tclra\n")
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
-		default:
-			// Array passing as arguments in 6809 not fully supported yet if > 2 bytes
-			size := b.getTypeSize(string(p.Typ))
-			if size <= 2 {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(stackArgOffset)))
-				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
-			}
-			aligned := size
-			if aligned < 2 {
-				aligned = 2
-			} else if aligned%2 != 0 {
-				aligned++
-			}
-			stackArgOffset += aligned
+		size := b.getTypeSize(string(p.Typ))
+		if p == firstWord || p == firstByte {
+			continue
 		}
+		
+		aligned := size
+		if aligned < 2 {
+			aligned = 2
+		} else if aligned%2 != 0 {
+			aligned++
+		}
+		b.buf.WriteString(fmt.Sprintf("\t; Param %s: size=%d, stack_offset=%d\n", p.Name, size, stackArgOffset))
+		if size <= 2 {
+			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(stackArgOffset)))
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tleay %s\n", b.memAccess(stackArgOffset)))
+			b.emitLoadAddr("x", b.memAccess(b.paramSlots[p.Name]))
+			b.emitCopyYX(size)
+		}
+		stackArgOffset += aligned
 	}
 
 	for _, blk := range f.Blocks {
@@ -431,9 +453,18 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 		case *ir.Return:
 			if term.Val != nil {
-				b.loadVal(term.Val)
-				if term.Val.Type() == ir.TypeWord {
-					b.buf.WriteString("\ttfr d,x\n")
+				retSize := b.getTypeSize(string(term.Val.Type()))
+				if retSize <= 2 {
+					b.loadVal(term.Val)
+					if term.Val.Type() == ir.TypeWord {
+						b.buf.WriteString("\ttfr d,x\n")
+					}
+				} else {
+					if b.retSlot > 0 {
+						b.emitLoadAddr("y", b.getAddrStr(term.Val))
+						b.emitLoadAddr("x", b.memAccess(b.retSlot))
+						b.emitCopyYX(retSize)
+					}
 				}
 			}
 			if b.useFramePointer {
@@ -507,6 +538,19 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 			}
 		}
 	}
+}
+
+func (b *Backend) emitCopyYX(size int) {
+	b.buf.WriteString("\tpshs u\n")
+	b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", size))
+	lbl := b.nextLabel()
+	b.buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+	b.buf.WriteString("\tldb ,y+\n")
+	b.buf.WriteString("\tstb ,x+\n")
+	b.buf.WriteString("\tleau -1,u\n")
+	b.buf.WriteString("\tcmpu #0\n")
+	b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl))
+	b.buf.WriteString("\tpuls u\n")
 }
 
 func (b *Backend) emitInstr(instr ir.Instruction) {
@@ -869,7 +913,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.AddressOfLocal:
 		localInstr := i.Local.(ir.Instruction)
 		localOffset := b.slots[localInstr.GetID()]
-		b.buf.WriteString(fmt.Sprintf("\tleax %d,s\n", localOffset))
+		b.emitLoadAddr("x", b.memAccess(localOffset))
 		b.buf.WriteString("\ttfr x,d\n")
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
 	case *ir.ExtractFieldPtr:
@@ -929,7 +973,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			valStr := b.getAddrStr(i.Val)
 			switch fieldSize {
 			case 1:
-				b.buf.WriteString(fmt.Sprintf("\tldb %s+1\n", valStr))
+				b.buf.WriteString(fmt.Sprintf("\tldb 1+%s\n", valStr))
 				b.buf.WriteString("\tstb ,x\n")
 			case 2:
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
@@ -1017,6 +1061,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString("\tpuls u\n")
 			}
 		}
+
 	case *ir.BinaryOp:
 		b.loadVal(i.Right)
 		b.buf.WriteString("\tstd ,--s\n")
@@ -1049,6 +1094,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tclra\n")
 		}
 		b.storeResult(id)
+
 	case *ir.Compare:
 		b.loadVal(i.Right)
 		b.buf.WriteString("\tstd ,--s\n")
@@ -1080,6 +1126,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(lblTrue + ":\n\tldb #1\n")
 		b.buf.WriteString(lblEnd + ":\n\tclra\n")
 		b.storeResult(id)
+
 	case *ir.Call:
 		b.flushRegisters()
 		var firstWordArg ir.Value
@@ -1088,31 +1135,59 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		var firstByteIdx = -1
 
 		for idx, arg := range i.Args {
-			if arg.Type() == ir.TypeWord && firstWordArg == nil {
+			expectedTyp := i.Func.Parameters[idx].Typ
+			if expectedTyp == ir.TypeWord && firstWordArg == nil {
 				firstWordArg = arg
 				firstWordIdx = idx
-			} else if arg.Type() == ir.TypeByte && firstByteArg == nil {
+			} else if expectedTyp == ir.TypeByte && firstByteArg == nil {
 				firstByteArg = arg
 				firstByteIdx = idx
 			}
 		}
 
 		var pushedBytes int
+		b.buf.WriteString("\t; --- Setup call arguments ---\n")
 		for idx := len(i.Args) - 1; idx >= 0; idx-- {
 			if idx == firstWordIdx || idx == firstByteIdx {
 				continue
 			}
-			b.loadVal(i.Args[idx])
-			b.buf.WriteString("\tstd ,--s\n")
-			b.pushBytes(2)
-			pushedBytes += 2
+			argSize := b.getTypeSize(string(i.Args[idx].Type()))
+			aligned := argSize
+			if aligned < 2 { aligned = 2 } else if aligned%2 != 0 { aligned++ }
+			
+			b.buf.WriteString(fmt.Sprintf("\t; Push arg %d: size=%d\n", idx, argSize))
+			if argSize <= 2 {
+				b.loadVal(i.Args[idx])
+				b.buf.WriteString("\tstd ,--s\n")
+				b.pushBytes(aligned)
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
+				b.pushBytes(aligned)
+				addr := b.getAddrStr(i.Args[idx])
+				b.emitLoadAddr("y", addr)
+				b.buf.WriteString("\tleax ,s\n")
+				b.emitCopyYX(argSize)
+			}
+			pushedBytes += aligned
+		}
+
+		retSize := b.getTypeSize(string(i.Func.ReturnType))
+		if retSize > 2 {
+			aligned := retSize
+			if aligned%2 != 0 { aligned++ }
+			b.buf.WriteString(fmt.Sprintf("\t; Allocate space for return value: size=%d\n", retSize))
+			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
+			b.pushBytes(aligned)
+			pushedBytes += aligned
 		}
 
 		if firstWordArg != nil {
+			b.buf.WriteString(fmt.Sprintf("\t; Load arg %d into X\n", firstWordIdx))
 			b.loadVal(firstWordArg)
 			b.buf.WriteString("\ttfr d,x\n")
 		}
 		if firstByteArg != nil {
+			b.buf.WriteString(fmt.Sprintf("\t; Load arg %d into B\n", firstByteIdx))
 			b.loadVal(firstByteArg)
 		}
 
@@ -1120,6 +1195,13 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tlbsr f_%s\n", i.Func.Name))
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tjsr f_%s\n", i.Func.Name))
+		}
+
+		if retSize > 2 {
+			dest := b.getAddrStr(i)
+			b.emitLoadAddr("x", dest)
+			b.buf.WriteString("\tleay ,s\n")
+			b.emitCopyYX(retSize)
 		}
 
 		if pushedBytes > 0 {
@@ -1133,14 +1215,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case ir.TypeByte:
 			b.buf.WriteString("\tclra\n")
 		}
-		if i.Typ != ir.TypeVoid {
+		if i.Typ != ir.TypeVoid && retSize <= 2 {
 			b.storeResult(id)
 		}
+
 	case *ir.BuiltinCall:
 		b.flushRegisters()
 		if i.Name == "print" || i.Name == "println" {
 			b.emitPrint(i.Name == "println", i.Args)
 		}
+
 	case *ir.Cast:
 		b.loadVal(i.Operand)
 		if i.Op == "trunc" {

@@ -37,7 +37,7 @@ func TestTranspiler(t *testing.T) {
 
 	tokens := lexer.Lex(input, "<test>")
 	p := parser.New(tokens)
-	program := p.ParseProgram()
+	program := p.ParseProgram("")
 
 	if len(p.Errors()) > 0 {
 		t.Fatalf("Parser errors: %v", p.Errors())

@@ -18,6 +18,56 @@ import (
 	"strings"
 )
 
+// Define a custom type that is a slice of strings
+type repeatedFlag []string
+
+// String is the method to format the flag's value, part of the flag.Value interface.
+// The output of this method is used in diagnostics.
+func (f *repeatedFlag) String() string {
+	return strings.Join(*f, ", ")
+}
+
+// Set is called by the flag package each time the flag is seen on the command line.
+func (f *repeatedFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
+func ParseSourceFiles(sourceFiles []string) *ast.Program {
+	var program *ast.Program
+	for _, filename := range sourceFiles {
+		content, err := os.ReadFile(filename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filename, err)
+			os.Exit(1)
+		}
+
+		tokens := lexer.Lex(string(content), filename)
+		p := parser.New(tokens)
+
+        overridePackage := ""
+        if len(sourceFiles) == 1 {
+            overridePackage = "main"
+        }
+		fileProgram := p.ParseProgram(overridePackage)
+
+		if len(p.Errors()) > 0 {
+			fmt.Fprintf(os.Stderr, "Parser errors in %s:\n", filename)
+			for _, e := range p.Errors() {
+				fmt.Fprintf(os.Stderr, "\t%s\n", e)
+			}
+			os.Exit(1)
+		}
+
+		if program == nil {
+			program = fileProgram
+		} else {
+			program.Statements = append(program.Statements, fileProgram.Statements...)
+		}
+	}
+    return program
+}
+
 func main() {
 	// Define command-line flags
 	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, x86_64, z80, 6502)")
@@ -25,6 +75,9 @@ func main() {
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
 	picFlag := flag.Bool("pic", false, "Generate position-independent code (PIC) using relative branches and localized PCR data segments")
+
+    var includeDirs repeatedFlag
+	flag.Var(&includeDirs, "I", "directory to be searched")
 
 	// Custom usage message
 	flag.Usage = func() {
@@ -70,40 +123,16 @@ func main() {
 	logger.Printf("Starting whole-program compilation")
 	logger.Printf("Target architecture: %s", *archFlag)
 	logger.Printf("Output object file: %s", *outFlag)
+    logger.Printf("Include path: %v", includeDirs)
 	logger.Printf("Source files: %v", sourceFiles)
 
 	// =========================================================================
 	// Compilation Pipeline
 	// =========================================================================
 	// 1 & 2. Parse all source files into a single flat namespace AST
-	var program *ast.Program
-	for _, filename := range sourceFiles {
-		content, err := os.ReadFile(filename)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filename, err)
-			os.Exit(1)
-		}
-
-		tokens := lexer.Lex(string(content), filename)
-		p := parser.New(tokens)
-		fileProgram := p.ParseProgram()
-
-		if len(p.Errors()) > 0 {
-			fmt.Fprintf(os.Stderr, "Parser errors in %s:\n", filename)
-			for _, e := range p.Errors() {
-				fmt.Fprintf(os.Stderr, "\t%s\n", e)
-			}
-			os.Exit(1)
-		}
-
-		if program == nil {
-			program = fileProgram
-		} else {
-			program.Statements = append(program.Statements, fileProgram.Statements...)
-		}
-	}
-
 	// 3. Perform semantic analysis & type checking.
+    program := ParseSourceFiles(sourceFiles)
+
 	analyzer := semantic.New()
 	analyzer.Analyze(program)
 	if len(analyzer.Errors()) > 0 {

@@ -148,12 +148,12 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 // Top-Level Statements Parsing
 // ============================================================================
 
-func (p *Parser) ParseProgram() *ast.Program {
+func (p *Parser) ParseProgram(overridePackage string) *ast.Program {
 	program := &ast.Program{}
 	program.Statements = []ast.Statement{}
 
 	for p.curToken.Type != token.EOF {
-		stmt := p.parseTopLevelStatement()
+		stmt := p.parseTopLevelStatement(overridePackage)
 		if stmt != nil {
 			program.Statements = append(program.Statements, stmt)
 		}
@@ -163,10 +163,10 @@ func (p *Parser) ParseProgram() *ast.Program {
 	return program
 }
 
-func (p *Parser) parseTopLevelStatement() ast.Statement {
+func (p *Parser) parseTopLevelStatement(overridePackage string) ast.Statement {
 	switch p.curToken.Type {
 	case token.PACKAGE:
-		return p.parsePackageStatement()
+		return p.parsePackageStatement(overridePackage)
 	case token.IMPORT:
 		return p.parseImportStatement()
 	case token.CONST:
@@ -186,13 +186,20 @@ func (p *Parser) parseTopLevelStatement() ast.Statement {
 	}
 }
 
-func (p *Parser) parsePackageStatement() *ast.PackageStatement {
+func (p *Parser) parsePackageStatement(overridePackage string) *ast.PackageStatement {
 	stmt := &ast.PackageStatement{Token: p.curToken}
 
 	if !p.expectPeek(token.IDENT) {
 		return nil
 	}
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+    pkg := p.curToken.Literal
+    if overridePackage != "" {
+        // The Identifier may have Token and Value fields
+        // that don't match up.  Let's hope Value gets used.
+        pkg = overridePackage
+    }
+	stmt.Name = &ast.Identifier{Token: p.curToken, Value: pkg}
 
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()
