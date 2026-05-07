@@ -38,7 +38,7 @@ func TestTranspiler(t *testing.T) {
 	tokens := lexer.Lex(input, "<test>")
 	p := parser.New(tokens)
 	program := p.ParseProgram()
-	
+
 	if len(p.Errors()) > 0 {
 		t.Fatalf("Parser errors: %v", p.Errors())
 	}
@@ -49,7 +49,7 @@ func TestTranspiler(t *testing.T) {
 	if len(output) == 0 {
 		t.Fatalf("Transpiler returned empty string")
 	}
-	
+
 	expectedSubstrings := []string{
 		"typedef uint8_t byte;",
 		"typedef uintptr_t word;",

@@ -29,7 +29,7 @@ func (p *Program) GetToken() *token.Token {
 	if len(p.Statements) > 0 {
 		return p.Statements[0].GetToken()
 	}
-    return nil
+	return nil
 }
 func (p *Program) TokenLiteral() string {
 	if len(p.Statements) > 0 {
@@ -47,8 +47,8 @@ type PackageStatement struct {
 	Name  *Identifier
 }
 
-func (s *PackageStatement) statementNode()       {}
-func (s *PackageStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *PackageStatement) statementNode()         {}
+func (s *PackageStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *PackageStatement) GetToken() *token.Token { return &s.Token }
 
 type ImportStatement struct {
@@ -56,8 +56,8 @@ type ImportStatement struct {
 	Path  *StringLiteral
 }
 
-func (s *ImportStatement) statementNode()       {}
-func (s *ImportStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ImportStatement) statementNode()         {}
+func (s *ImportStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ImportStatement) GetToken() *token.Token { return &s.Token }
 
 type ConstStatement struct {
@@ -66,8 +66,8 @@ type ConstStatement struct {
 	Value Expression
 }
 
-func (s *ConstStatement) statementNode()       {}
-func (s *ConstStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ConstStatement) statementNode()         {}
+func (s *ConstStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ConstStatement) GetToken() *token.Token { return &s.Token }
 
 type TypeStatement struct {
@@ -76,32 +76,32 @@ type TypeStatement struct {
 	BaseType Expression // 'byte' or 'word' or array
 }
 
-func (s *TypeStatement) statementNode()       {}
-func (s *TypeStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *TypeStatement) statementNode()         {}
+func (s *TypeStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *TypeStatement) GetToken() *token.Token { return &s.Token }
 
 type VarStatement struct {
 	Token     token.Token // The 'var' token
 	Name      *Identifier
-	ValueType Expression  // Optional, e.g. 'byte' or 'word'
-	Value     Expression  // Optional
+	ValueType Expression // Optional, e.g. 'byte' or 'word'
+	Value     Expression // Optional
 }
 
-func (s *VarStatement) statementNode()       {}
-func (s *VarStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *VarStatement) statementNode()         {}
+func (s *VarStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *VarStatement) GetToken() *token.Token { return &s.Token }
 
 type FuncStatement struct {
-	Token      token.Token // The 'func' token
-	Name       *Identifier
-	Receiver   *Parameter // Optional
-	Parameters []*Parameter
+	Token       token.Token // The 'func' token
+	Name        *Identifier
+	Receiver    *Parameter // Optional
+	Parameters  []*Parameter
 	ReturnTypes []Expression // Optional
-	Body       *BlockStatement
+	Body        *BlockStatement
 }
 
-func (s *FuncStatement) statementNode()       {}
-func (s *FuncStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *FuncStatement) statementNode()         {}
+func (s *FuncStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *FuncStatement) GetToken() *token.Token { return &s.Token }
 
 type Parameter struct {
@@ -118,8 +118,8 @@ type BlockStatement struct {
 	Statements []Statement
 }
 
-func (s *BlockStatement) statementNode()       {}
-func (s *BlockStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *BlockStatement) statementNode()         {}
+func (s *BlockStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *BlockStatement) GetToken() *token.Token { return &s.Token }
 
 // AssignStatement handles `x = 5`, `x, y = 1, 2`, and `x := 5`
@@ -130,8 +130,8 @@ type AssignStatement struct {
 	Values []Expression
 }
 
-func (s *AssignStatement) statementNode()       {}
-func (s *AssignStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *AssignStatement) statementNode()         {}
+func (s *AssignStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *AssignStatement) GetToken() *token.Token { return &s.Token }
 
 type IfStatement struct {
@@ -141,8 +141,8 @@ type IfStatement struct {
 	Alternative *BlockStatement // Optional 'else' block
 }
 
-func (s *IfStatement) statementNode()       {}
-func (s *IfStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *IfStatement) statementNode()         {}
+func (s *IfStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *IfStatement) GetToken() *token.Token { return &s.Token }
 
 type ForStatement struct {
@@ -151,8 +151,8 @@ type ForStatement struct {
 	Body      *BlockStatement
 }
 
-func (s *ForStatement) statementNode()       {}
-func (s *ForStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ForStatement) statementNode()         {}
+func (s *ForStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ForStatement) GetToken() *token.Token { return &s.Token }
 
 type For3Statement struct {
@@ -163,8 +163,8 @@ type For3Statement struct {
 	Body      *BlockStatement
 }
 
-func (s *For3Statement) statementNode()       {}
-func (s *For3Statement) TokenLiteral() string { return s.Token.Literal }
+func (s *For3Statement) statementNode()         {}
+func (s *For3Statement) TokenLiteral() string   { return s.Token.Literal }
 func (s *For3Statement) GetToken() *token.Token { return &s.Token }
 
 type IncDecStatement struct {
@@ -172,8 +172,8 @@ type IncDecStatement struct {
 	Name  Expression  // The identifier or expression being modified
 }
 
-func (s *IncDecStatement) statementNode()       {}
-func (s *IncDecStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *IncDecStatement) statementNode()         {}
+func (s *IncDecStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *IncDecStatement) GetToken() *token.Token { return &s.Token }
 
 type ForRangeStatement struct {
@@ -184,17 +184,17 @@ type ForRangeStatement struct {
 	Body       *BlockStatement
 }
 
-func (s *ForRangeStatement) statementNode()       {}
-func (s *ForRangeStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ForRangeStatement) statementNode()         {}
+func (s *ForRangeStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ForRangeStatement) GetToken() *token.Token { return &s.Token }
 
 type ReturnStatement struct {
-	Token       token.Token // The 'return' token
-	ReturnValues []Expression  // Optional
+	Token        token.Token  // The 'return' token
+	ReturnValues []Expression // Optional
 }
 
-func (s *ReturnStatement) statementNode()       {}
-func (s *ReturnStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ReturnStatement) statementNode()         {}
+func (s *ReturnStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ReturnStatement) GetToken() *token.Token { return &s.Token }
 
 // ExpressionStatement allows expressions (like function calls: `print(x)`) to stand alone
@@ -203,8 +203,8 @@ type ExpressionStatement struct {
 	Expression Expression
 }
 
-func (s *ExpressionStatement) statementNode()       {}
-func (s *ExpressionStatement) TokenLiteral() string { return s.Token.Literal }
+func (s *ExpressionStatement) statementNode()         {}
+func (s *ExpressionStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ExpressionStatement) GetToken() *token.Token { return &s.Token }
 
 // ============================================================================
@@ -216,8 +216,8 @@ type Identifier struct {
 	Value string
 }
 
-func (e *Identifier) expressionNode()      {}
-func (e *Identifier) TokenLiteral() string { return e.Token.Literal }
+func (e *Identifier) expressionNode()        {}
+func (e *Identifier) TokenLiteral() string   { return e.Token.Literal }
 func (e *Identifier) GetToken() *token.Token { return &e.Token }
 
 type IntegerLiteral struct {
@@ -225,8 +225,8 @@ type IntegerLiteral struct {
 	Value int64       // Parsed as int64, semantic analysis will enforce byte/word limits
 }
 
-func (e *IntegerLiteral) expressionNode()      {}
-func (e *IntegerLiteral) TokenLiteral() string { return e.Token.Literal }
+func (e *IntegerLiteral) expressionNode()        {}
+func (e *IntegerLiteral) TokenLiteral() string   { return e.Token.Literal }
 func (e *IntegerLiteral) GetToken() *token.Token { return &e.Token }
 
 type StringLiteral struct {
@@ -234,8 +234,8 @@ type StringLiteral struct {
 	Value string
 }
 
-func (e *StringLiteral) expressionNode()      {}
-func (e *StringLiteral) TokenLiteral() string { return e.Token.Literal }
+func (e *StringLiteral) expressionNode()        {}
+func (e *StringLiteral) TokenLiteral() string   { return e.Token.Literal }
 func (e *StringLiteral) GetToken() *token.Token { return &e.Token }
 
 type PrefixExpression struct {
@@ -244,8 +244,8 @@ type PrefixExpression struct {
 	Right    Expression
 }
 
-func (e *PrefixExpression) expressionNode()      {}
-func (e *PrefixExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *PrefixExpression) expressionNode()        {}
+func (e *PrefixExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *PrefixExpression) GetToken() *token.Token { return &e.Token }
 
 type InfixExpression struct {
@@ -255,8 +255,8 @@ type InfixExpression struct {
 	Right    Expression
 }
 
-func (e *InfixExpression) expressionNode()      {}
-func (e *InfixExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *InfixExpression) expressionNode()        {}
+func (e *InfixExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *InfixExpression) GetToken() *token.Token { return &e.Token }
 
 // CallExpression handles both function calls and type casts (e.g. `byte(10)`)
@@ -266,8 +266,8 @@ type CallExpression struct {
 	Arguments []Expression
 }
 
-func (e *CallExpression) expressionNode()      {}
-func (e *CallExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *CallExpression) expressionNode()        {}
+func (e *CallExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *CallExpression) GetToken() *token.Token { return &e.Token }
 
 type ArrayType struct {
@@ -276,8 +276,8 @@ type ArrayType struct {
 	Elt    Expression
 }
 
-func (e *ArrayType) expressionNode()      {}
-func (e *ArrayType) TokenLiteral() string { return e.Token.Literal }
+func (e *ArrayType) expressionNode()        {}
+func (e *ArrayType) TokenLiteral() string   { return e.Token.Literal }
 func (e *ArrayType) GetToken() *token.Token { return &e.Token }
 
 type StructType struct {
@@ -290,8 +290,8 @@ type Field struct {
 	Type Expression
 }
 
-func (s *StructType) expressionNode()      {}
-func (s *StructType) TokenLiteral() string { return s.Token.Literal }
+func (s *StructType) expressionNode()        {}
+func (s *StructType) TokenLiteral() string   { return s.Token.Literal }
 func (s *StructType) GetToken() *token.Token { return &s.Token }
 
 type SelectorExpression struct {
@@ -300,8 +300,8 @@ type SelectorExpression struct {
 	Right *Identifier
 }
 
-func (s *SelectorExpression) expressionNode()      {}
-func (s *SelectorExpression) TokenLiteral() string { return s.Token.Literal }
+func (s *SelectorExpression) expressionNode()        {}
+func (s *SelectorExpression) TokenLiteral() string   { return s.Token.Literal }
 func (s *SelectorExpression) GetToken() *token.Token { return &s.Token }
 
 type RangeExpression struct {
@@ -309,8 +309,8 @@ type RangeExpression struct {
 	Value Expression
 }
 
-func (e *RangeExpression) expressionNode()      {}
-func (e *RangeExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *RangeExpression) expressionNode()        {}
+func (e *RangeExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *RangeExpression) GetToken() *token.Token { return &e.Token }
 
 type IndexExpression struct {
@@ -319,8 +319,8 @@ type IndexExpression struct {
 	Index Expression
 }
 
-func (e *IndexExpression) expressionNode()      {}
-func (e *IndexExpression) TokenLiteral() string { return e.Token.Literal }
+func (e *IndexExpression) expressionNode()        {}
+func (e *IndexExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *IndexExpression) GetToken() *token.Token { return &e.Token }
 
 type PointerType struct {
@@ -328,6 +328,6 @@ type PointerType struct {
 	Elt   Expression
 }
 
-func (pt *PointerType) expressionNode()      {}
-func (pt *PointerType) TokenLiteral() string { return pt.Token.Literal }
+func (pt *PointerType) expressionNode()        {}
+func (pt *PointerType) TokenLiteral() string   { return pt.Token.Literal }
 func (pt *PointerType) GetToken() *token.Token { return &pt.Token }

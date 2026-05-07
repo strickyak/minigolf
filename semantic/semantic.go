@@ -2,8 +2,8 @@ package semantic
 
 import (
 	"fmt"
-	"strings"
 	"minigo/ast"
+	"strings"
 )
 
 type Symbol struct {
@@ -38,9 +38,9 @@ func (s *Scope) Resolve(name string) (Symbol, bool) {
 }
 
 type Analyzer struct {
-	errors []string
-	globalScope *Scope
-	currentScope *Scope
+	errors         []string
+	globalScope    *Scope
+	currentScope   *Scope
 	hasMainPackage bool
 	hasMainFunc    bool
 }
@@ -54,8 +54,8 @@ func New() *Analyzer {
 	global.Define("word", "type")
 
 	return &Analyzer{
-		errors: []string{},
-		globalScope: global,
+		errors:       []string{},
+		globalScope:  global,
 		currentScope: global,
 	}
 }
@@ -103,7 +103,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			if s.Name.Value == "main" && s.Receiver == nil {
 				a.hasMainFunc = true
 			}
-			
+
 			funcName := s.Name.Value
 			if s.Receiver != nil {
 				recvTyp := exprToString(s.Receiver.Type)

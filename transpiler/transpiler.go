@@ -10,15 +10,15 @@ import (
 
 // Transpiler walks the AST and emits C99 code
 type Transpiler struct {
-	pkgName       string
-	buf           bytes.Buffer
-	typedefBuf    bytes.Buffer
-	locals        []map[string]string
-	globals       map[string]string
-	arrayTypes    map[string]bool
-	funcTypes     map[string]string
-	funcRetTypes  map[string][]string
-	currentFunc   *ast.FuncStatement
+	pkgName      string
+	buf          bytes.Buffer
+	typedefBuf   bytes.Buffer
+	locals       []map[string]string
+	globals      map[string]string
+	arrayTypes   map[string]bool
+	funcTypes    map[string]string
+	funcRetTypes map[string][]string
+	currentFunc  *ast.FuncStatement
 }
 
 func New() *Transpiler {
@@ -229,7 +229,7 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		}
 		eltName := t.mapType(e.Elt)
 		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, eltName)
-		
+
 		if !t.arrayTypes[typeName] {
 			t.arrayTypes[typeName] = true
 			t.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s data[%s]; } %s;\n", eltName, lenStr, typeName))
@@ -256,7 +256,7 @@ func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) 
 	}
 
 	var params []string
-	
+
 	funcName := s.Name.Value
 	if s.Receiver != nil {
 		recvType := t.mapType(s.Receiver.Type)
@@ -266,7 +266,7 @@ func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) 
 			baseType = baseType[len("t_"+t.pkgName+"_"):]
 		}
 		funcName = baseType + "_" + funcName
-		
+
 		if !isForward {
 			t.addLocal(s.Receiver.Name.Value, recvType)
 		}
@@ -414,7 +414,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		if s.Token.Literal == "--" {
 			op = "--"
 		}
-		
+
 		if ident, ok := s.Name.(*ast.Identifier); ok {
 			if t.isLocal(ident.Value) {
 				t.buf.WriteString(fmt.Sprintf("v_%s%s;\n", ident.Value, op))
@@ -465,7 +465,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		t.pushScope()
 		limitVal := t.emitExprStr(s.RangeValue)
 		ctype := t.typeOf(s.RangeValue)
-		
+
 		ident, ok := s.Key.(*ast.Identifier)
 		var loopVar string
 		if ok {
@@ -554,12 +554,12 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				baseType = baseType[len("t_"+t.pkgName+"_"):]
 			}
 			funcName := baseType + "_" + sel.Right.Value
-			
+
 			receiverStr := t.emitExprStr(sel.Left)
 			if !isPtr {
 				receiverStr = "(&" + receiverStr + ")"
 			}
-			
+
 			args := []string{receiverStr}
 			for _, arg := range e.Arguments {
 				args = append(args, t.emitExprStr(arg))
@@ -575,7 +575,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				// C-style cast
 				return fmt.Sprintf("((%s)(%s))", ident.Value, t.emitExprStr(e.Arguments[0]))
 			}
-			
+
 			// Normal function call
 			args := []string{}
 			for _, arg := range e.Arguments {

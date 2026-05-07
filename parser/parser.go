@@ -193,7 +193,7 @@ func (p *Parser) parsePackageStatement() *ast.PackageStatement {
 		return nil
 	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-	
+
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()
 	}
@@ -288,7 +288,7 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 	if p.peekTokenIs(token.LPAREN) {
 		p.nextToken() // move to '('
 		p.nextToken() // move to receiver name
-		
+
 		receiver := &ast.Parameter{}
 		receiver.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 		p.nextToken() // move to type (e.g. '*')
@@ -351,7 +351,7 @@ func (p *Parser) parseFunctionParameters() []*ast.Parameter {
 	// Parse first parameter
 	param := &ast.Parameter{}
 	param.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-	
+
 	p.nextToken()
 	param.Type = p.parseExpression(LOWEST)
 	parameters = append(parameters, param)
@@ -363,7 +363,7 @@ func (p *Parser) parseFunctionParameters() []*ast.Parameter {
 
 		param := &ast.Parameter{}
 		param.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-		
+
 		p.nextToken()
 		param.Type = p.parseExpression(LOWEST)
 		parameters = append(parameters, param)
@@ -400,7 +400,7 @@ func (p *Parser) parseStatement() ast.Statement {
 func (p *Parser) parseExpressionOrAssignStatement() ast.Statement {
 	startToken := p.curToken
 	var lefts []ast.Expression
-	
+
 	lefts = append(lefts, p.parseExpression(LOWEST))
 
 	for p.peekTokenIs(token.COMMA) {
@@ -455,7 +455,7 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 		p.nextToken()
 		return stmt
 	}
-	
+
 	if p.peekTokenIs(token.RBRACE) {
 		return stmt
 	}
@@ -545,7 +545,7 @@ func (p *Parser) parseForStatement() ast.Statement {
 				return nil
 			}
 		}
-		
+
 		p.nextToken() // Skip second semicolon
 
 		if !p.curTokenIs(token.LBRACE) {
@@ -563,7 +563,7 @@ func (p *Parser) parseForStatement() ast.Statement {
 	if exprStmt, ok := firstStmt.(*ast.ExpressionStatement); ok {
 		stmt.Condition = exprStmt.Expression
 	}
-	
+
 	if !p.expectPeek(token.LBRACE) {
 		return nil
 	}
@@ -779,7 +779,7 @@ func (p *Parser) parseStructType() ast.Expression {
 
 	for !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
 		field := &ast.Field{}
-		
+
 		if !p.curTokenIs(token.IDENT) {
 			p.errors = append(p.errors, fmt.Sprintf("expected field name to be IDENT, got %s", p.curToken.Type))
 			return nil

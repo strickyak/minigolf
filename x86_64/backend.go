@@ -9,8 +9,12 @@ import (
 )
 
 func (b *Backend) getTypeSize(typ string) int {
-	if typ == "byte" { return 1 }
-	if typ == "word" { return 8 }
+	if typ == "byte" {
+		return 1
+	}
+	if typ == "word" {
+		return 8
+	}
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
@@ -63,7 +67,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 	} else {
 		return 0, 8
 	}
-	
+
 	byteOffset := 0
 	depth := 0
 	start := 0
@@ -172,7 +176,9 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	for _, p := range f.Parameters {
 		size := b.getTypeSize(string(p.Typ))
 		aligned := (size + 7) &^ 7
-		if aligned < 8 { aligned = 8 }
+		if aligned < 8 {
+			aligned = 8
+		}
 		b.stackOffset += aligned
 		b.paramSlots[p.Name] = b.stackOffset
 		if regsIdx < len(regs) {
@@ -366,7 +372,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.InsertElement:
 		arraySize := b.getTypeSize(string(i.Array.Type()))
 		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), b.getAddr(i.Array), arraySize)
-		
+
 		eltSize := b.getEltSize(string(i.Array.Type()))
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
 			byteOffset := int(cIdx.Val) * eltSize
@@ -394,7 +400,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.InsertField:
 		structSize := b.getTypeSize(string(i.Struct.Type()))
 		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), b.getAddr(i.Struct), structSize)
-		
+
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(string(i.Struct.Type()), i.FieldIndex)
 		b.buf.WriteString(fmt.Sprintf("\tlea rcx, [rbp - %d]\n", offset))
 		if byteOffset > 0 {

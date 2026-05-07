@@ -10,8 +10,12 @@ import (
 )
 
 func (b *Backend) getTypeSize(typ string) int {
-	if typ == "byte" { return 1 }
-	if typ == "word" { return 2 }
+	if typ == "byte" {
+		return 1
+	}
+	if typ == "word" {
+		return 2
+	}
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
@@ -64,7 +68,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 	} else {
 		return 0, 2
 	}
-	
+
 	byteOffset := 0
 	depth := 0
 	start := 0
@@ -143,9 +147,15 @@ func (b *Backend) flushRegisters() {
 	}
 	b.buf.WriteString("\t; flush registers\n")
 	for reg, id := range b.activeRegs {
-		if reg == "X" { b.buf.WriteString("\ttfr x,d\n") }
-		if reg == "Y" { b.buf.WriteString("\ttfr y,d\n") }
-		if reg == "U" { b.buf.WriteString("\ttfr u,d\n") }
+		if reg == "X" {
+			b.buf.WriteString("\ttfr x,d\n")
+		}
+		if reg == "Y" {
+			b.buf.WriteString("\ttfr y,d\n")
+		}
+		if reg == "U" {
+			b.buf.WriteString("\ttfr u,d\n")
+		}
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[id])))
 	}
 	b.activeRegs = map[string]int{}
@@ -173,9 +183,15 @@ func (b *Backend) allocateReg(id int) string {
 	b.buf.WriteString(fmt.Sprintf("\t; spilling %s (val %d) to stack\n", regToSpill, spilledId))
 	b.buf.WriteString("\tpshs d\n")
 	b.pushBytes(2)
-	if regToSpill == "X" { b.buf.WriteString("\ttfr x,d\n") }
-	if regToSpill == "Y" { b.buf.WriteString("\ttfr y,d\n") }
-	if regToSpill == "U" { b.buf.WriteString("\ttfr u,d\n") }
+	if regToSpill == "X" {
+		b.buf.WriteString("\ttfr x,d\n")
+	}
+	if regToSpill == "Y" {
+		b.buf.WriteString("\ttfr y,d\n")
+	}
+	if regToSpill == "U" {
+		b.buf.WriteString("\ttfr u,d\n")
+	}
 	b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[spilledId])))
 	b.buf.WriteString("\tpuls d\n")
 	b.popBytes(2)
@@ -188,9 +204,15 @@ func (b *Backend) allocateReg(id int) string {
 
 func (b *Backend) storeResult(id int) {
 	reg := b.allocateReg(id)
-	if reg == "X" { b.buf.WriteString("\ttfr d,x\n") }
-	if reg == "Y" { b.buf.WriteString("\ttfr d,y\n") }
-	if reg == "U" { b.buf.WriteString("\ttfr d,u\n") }
+	if reg == "X" {
+		b.buf.WriteString("\ttfr d,x\n")
+	}
+	if reg == "Y" {
+		b.buf.WriteString("\ttfr d,y\n")
+	}
+	if reg == "U" {
+		b.buf.WriteString("\ttfr d,u\n")
+	}
 }
 
 func (b *Backend) nextLabel() string {
@@ -247,7 +269,7 @@ func (b *Backend) getSlot(id int, typ string) int {
 	aligned := size
 	if aligned < 2 {
 		aligned = 2
-	} else if aligned % 2 != 0 {
+	} else if aligned%2 != 0 {
 		aligned++
 	}
 	b.stackSize += aligned
@@ -319,7 +341,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	for _, p := range f.Parameters {
 		size := b.getTypeSize(string(p.Typ))
 		aligned := size
-		if aligned < 2 { aligned = 2 } else if aligned % 2 != 0 { aligned++ }
+		if aligned < 2 {
+			aligned = 2
+		} else if aligned%2 != 0 {
+			aligned++
+		}
 		b.stackSize += aligned
 		b.paramSlots[p.Name] = -(b.frameOffset + b.stackSize)
 	}
@@ -357,7 +383,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
 			}
 			aligned := size
-			if aligned < 2 { aligned = 2 } else if aligned % 2 != 0 { aligned++ }
+			if aligned < 2 {
+				aligned = 2
+			} else if aligned%2 != 0 {
+				aligned++
+			}
 			stackArgOffset += aligned
 		}
 	}
@@ -429,9 +459,15 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n\tclra\n", v.Val&0xFF))
 	case ir.Instruction:
 		if reg, ok := b.valInReg[v.GetID()]; ok {
-			if reg == "X" { b.buf.WriteString("\ttfr x,d\n") }
-			if reg == "Y" { b.buf.WriteString("\ttfr y,d\n") }
-			if reg == "U" { b.buf.WriteString("\ttfr u,d\n") }
+			if reg == "X" {
+				b.buf.WriteString("\ttfr x,d\n")
+			}
+			if reg == "Y" {
+				b.buf.WriteString("\ttfr y,d\n")
+			}
+			if reg == "U" {
+				b.buf.WriteString("\ttfr u,d\n")
+			}
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.slots[v.GetID()])))
 		}
@@ -572,7 +608,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.flushRegisters()
 		size := b.getTypeSize(string(i.Typ))
 		destStr := b.memAccess(offset)
-        fmt.Fprintf(&b.buf, "\t\t; ZeroInit size=%d dest=%v\n", size, destStr)
+		fmt.Fprintf(&b.buf, "\t\t; ZeroInit size=%d dest=%v\n", size, destStr)
 
 		if size == 1 || size == 2 {
 			b.buf.WriteString("\tclra\n\tclrb\n")
@@ -595,7 +631,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		eltSize := b.getEltSize(string(i.Array.Type()))
 		arrayStr := b.getAddrStr(i.Array)
 		destStr := b.memAccess(offset)
-        fmt.Fprintf(&b.buf, "\t\t; ExtractElement size=%d array=%v dest=%v\n", eltSize, arrayStr, destStr)
+		fmt.Fprintf(&b.buf, "\t\t; ExtractElement size=%d array=%v dest=%v\n", eltSize, arrayStr, destStr)
 
 		b.emitLoadAddr("y", arrayStr)
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
@@ -633,7 +669,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		arraySize := b.getTypeSize(string(i.Array.Type()))
 		arrayStr := b.getAddrStr(i.Array)
 		destStr := b.memAccess(offset)
-		
+
 		b.emitLoadAddr("y", arrayStr)
 		b.emitLoadAddr("x", destStr)
 		b.buf.WriteString("\tpshs u\n")
@@ -731,7 +767,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		structSize := b.getTypeSize(string(i.Struct.Type()))
 		structStr := b.getAddrStr(i.Struct)
 		destStr := b.memAccess(offset)
-		
+
 		b.emitLoadAddr("y", structStr)
 		b.emitLoadAddr("x", destStr)
 		b.buf.WriteString("\tpshs u\n")
@@ -801,14 +837,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		structName := string(i.Ptr.Type())
 		structName = strings.TrimPrefix(structName, "*")
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
-		
+
 		destStr := b.memAccess(offset)
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,y\n")
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 		}
-		
+
 		switch fieldSize {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
@@ -840,7 +876,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
 		}
-		
+
 		if cVal, ok := i.Val.(*ir.ConstWord); ok {
 			if fieldSize == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", cVal.Val&0xFF))
@@ -909,7 +945,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		fieldSize := b.getTypeSize(pointeeType)
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,x\n")
-		
+
 		if cVal, ok := i.Val.(*ir.ConstWord); ok {
 			if fieldSize == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", cVal.Val&0xFF))
@@ -966,8 +1002,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case "xor":
 			b.buf.WriteString("\teora 0,s\n\teorb 1,s\n\tleas 2,s\n")
 			b.popBytes(2)
-        default:
-            log.Panicf("Unknown BinaryOp in M6809: %q", i.Op)
+		default:
+			log.Panicf("Unknown BinaryOp in M6809: %q", i.Op)
 		}
 		if i.Typ == ir.TypeByte {
 			b.buf.WriteString("\tclra\n")
@@ -997,8 +1033,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue))
 		case "gte":
 			b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue))
-        default:
-            log.Panicf("Unknown Compare Op in M6809: %q", i.Op)
+		default:
+			log.Panicf("Unknown Compare Op in M6809: %q", i.Op)
 		}
 		b.buf.WriteString("\tclrb\n\tbra " + lblEnd + "\n")
 		b.buf.WriteString(lblTrue + ":\n\tldb #1\n")
@@ -1124,7 +1160,7 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	} else {
 		b.buf.WriteString("\tjsr _printf\n")
 	}
-	
+
 	cleanup := 2 + len(dataArgs)*2
 	b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", cleanup))
 	b.popBytes(cleanup)

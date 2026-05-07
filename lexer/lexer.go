@@ -11,11 +11,11 @@ type Lexer struct {
 	ch           byte // current char under examination
 	line         int
 	column       int
-    filename    string
+	filename     string
 }
 
 func New(input string, filename string) *Lexer {
-    l := &Lexer{input: input, line: 1, column: 0, filename: filename}
+	l := &Lexer{input: input, line: 1, column: 0, filename: filename}
 	l.readChar()
 	return l
 }
@@ -176,7 +176,7 @@ func (l *Lexer) nextToken() token.Token {
 }
 
 func (l *Lexer) newToken(tokenType token.TokenType, ch byte, line, col int) token.Token {
-    return token.Token{Type: tokenType, Literal: string(ch), Line: line, Column: col, Filename: l.filename}
+	return token.Token{Type: tokenType, Literal: string(ch), Line: line, Column: col, Filename: l.filename}
 }
 
 func (l *Lexer) readIdentifier() string {

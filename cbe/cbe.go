@@ -28,13 +28,15 @@ func (c *CBE) mapType(typ string) string {
 	}
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
-		if idx == -1 { return "word" }
+		if idx == -1 {
+			return "word"
+		}
 		lenStr := typ[1:idx]
 		eltType := typ[idx+1:]
-		
+
 		eltName := c.mapType(eltType)
 		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, eltName)
-		
+
 		if !c.arrayTypes[typeName] {
 			c.arrayTypes[typeName] = true
 			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s data[%s]; } %s;\n", eltName, lenStr, typeName))
@@ -47,10 +49,10 @@ func (c *CBE) mapType(typ string) string {
 		typeName = strings.ReplaceAll(typeName, "*", "ptr_")
 		typeName = strings.ReplaceAll(typeName, "[", "arr_")
 		typeName = strings.ReplaceAll(typeName, "]", "_")
-		
+
 		if !c.arrayTypes[typeName] {
 			c.arrayTypes[typeName] = true
-			
+
 			var fields string
 			depth := 0
 			start := 0
@@ -188,23 +190,23 @@ func (c *CBE) emitFunc(f *ir.Function) {
 				c.buf.WriteString(fmt.Sprintf("\tv%d.data[%s] = %s;\n", ins.GetID(), c.formatVal(ins.Index), c.formatVal(ins.Val)))
 				continue
 			}
-			
+
 			if ins, ok := instr.(*ir.InsertField); ok {
 				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", ins.GetID(), c.formatVal(ins.Struct)))
 				c.buf.WriteString(fmt.Sprintf("\tv%d.f%d = %s;\n", ins.GetID(), ins.FieldIndex, c.formatVal(ins.Val)))
 				continue
 			}
-			
+
 			if ins, ok := instr.(*ir.InsertFieldPtr); ok {
 				c.buf.WriteString(fmt.Sprintf("\t(%s->f%d) = %s;\n", c.formatVal(ins.Ptr), ins.FieldIndex, c.formatVal(ins.Val)))
 				continue
 			}
-			
+
 			if stPtr, ok := instr.(*ir.StorePtr); ok {
 				c.buf.WriteString(fmt.Sprintf("\t(*%s) = %s;\n", c.formatVal(stPtr.Ptr), c.formatVal(stPtr.Val)))
 				continue
 			}
-			
+
 			if sm, ok := instr.(*ir.SourceMarker); ok {
 				c.buf.WriteString(fmt.Sprintf("\t/* %s */\n", sm.Comment))
 				continue
@@ -281,29 +283,47 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 	case *ir.BinaryOp:
 		var opStr string
 		switch i.Op {
-		case "add": opStr = "+"
-		case "sub": opStr = "-"
-		case "mul": opStr = "*"
-		case "div": opStr = "/"
-		case "mod": opStr = "%"
-		case "and": opStr = "&"
-		case "or":  opStr = "|"
-		case "xor": opStr = "^"
-		case "shl": opStr = "<<"
-		case "shr": opStr = ">>"
-        default: opStr = "UNKNOWN_BINARY_OP(" + i.Op + ")"
+		case "add":
+			opStr = "+"
+		case "sub":
+			opStr = "-"
+		case "mul":
+			opStr = "*"
+		case "div":
+			opStr = "/"
+		case "mod":
+			opStr = "%"
+		case "and":
+			opStr = "&"
+		case "or":
+			opStr = "|"
+		case "xor":
+			opStr = "^"
+		case "shl":
+			opStr = "<<"
+		case "shr":
+			opStr = ">>"
+		default:
+			opStr = "UNKNOWN_BINARY_OP(" + i.Op + ")"
 		}
 		return fmt.Sprintf("(%s %s %s)", c.formatVal(i.Left), opStr, c.formatVal(i.Right))
 	case *ir.Compare:
 		var opStr string
 		switch i.Op {
-		case "eq": opStr = "=="
-		case "neq": opStr = "!="
-		case "lt": opStr = "<"
-		case "lte": opStr = "<="
-		case "gt": opStr = ">"
-		case "gte": opStr = ">="
-        default: opStr = "UNKNOWN_COMPARE_OP(" + i.Op + ")"
+		case "eq":
+			opStr = "=="
+		case "neq":
+			opStr = "!="
+		case "lt":
+			opStr = "<"
+		case "lte":
+			opStr = "<="
+		case "gt":
+			opStr = ">"
+		case "gte":
+			opStr = ">="
+		default:
+			opStr = "UNKNOWN_COMPARE_OP(" + i.Op + ")"
 		}
 		// Cast to byte to ensure strictly byte-level boolean properties
 		return fmt.Sprintf("(byte)(%s %s %s)", c.formatVal(i.Left), opStr, c.formatVal(i.Right))

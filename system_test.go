@@ -66,7 +66,7 @@ func cleanOutput(out string) []string {
 
 func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	tmpDir := t.TempDir()
-	
+
 	ext := ".c"
 	if backend == "x86_64" {
 		ext = ".s"
@@ -141,9 +141,9 @@ func TestSystemAllGolfFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to glob tests/*.golf: %v", err)
 	}
-	
+
 	backends := []string{"C", "CBE", "x86_64"}
-	
+
 	for _, file := range files {
 		wantFile := strings.TrimSuffix(file, ".golf") + ".want"
 		wantBytes, err := os.ReadFile(wantFile)
@@ -151,7 +151,7 @@ func TestSystemAllGolfFiles(t *testing.T) {
 			t.Fatalf("Failed to read want file %s: %v", wantFile, err)
 		}
 		expectedStr := string(wantBytes)
-		
+
 		for _, backend := range backends {
 			testName := fmt.Sprintf("%s_%s", filepath.Base(file), backend)
 			t.Run(testName, func(t *testing.T) {

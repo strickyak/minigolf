@@ -246,7 +246,7 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 
 		funcStmt := program.Statements[0].(*ast.FuncStatement)
 		stmt := funcStmt.Body.Statements[0].(*ast.ExpressionStatement)
-		
+
 		actual := ASTString(stmt)
 		if actual != tt.expected {
 			t.Errorf("expected=%q, got=%q", tt.expected, actual)

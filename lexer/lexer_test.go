@@ -208,7 +208,7 @@ func main() {
 
 func TestLexerLineAndColumn(t *testing.T) {
 	input := "var x = 1\ny = 2"
-	
+
 	tests := []struct {
 		expectedType token.TokenType
 		expectedLine int
@@ -225,7 +225,7 @@ func TestLexerLineAndColumn(t *testing.T) {
 		{token.SEMICOLON, 2, 6},
 		{token.EOF, 2, 6},
 	}
-	
+
 	tokens := Lex(input, "<test>")
 
 	if len(tokens) != len(tests) {
@@ -244,7 +244,7 @@ func TestLexerLineAndColumn(t *testing.T) {
 			t.Fatalf("tests[%d] - line wrong for %q. expected=%d, got=%d",
 				i, tok.Literal, tt.expectedLine, tok.Line)
 		}
-		
+
 		if tok.Column != tt.expectedCol {
 			t.Fatalf("tests[%d] - column wrong for %q. expected=%d, got=%d",
 				i, tok.Literal, tt.expectedCol, tok.Column)

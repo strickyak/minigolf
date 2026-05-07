@@ -10,11 +10,11 @@ import (
 	"minigo/cbe"
 	"minigo/ir"
 	"minigo/lexer"
+	"minigo/m6809"
 	"minigo/parser"
 	"minigo/semantic"
 	"minigo/transpiler"
 	"minigo/x86_64"
-	"minigo/m6809"
 	"strings"
 )
 
@@ -83,11 +83,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filename, err)
 			os.Exit(1)
 		}
-		
+
 		tokens := lexer.Lex(string(content), filename)
 		p := parser.New(tokens)
 		fileProgram := p.ParseProgram()
-		
+
 		if len(p.Errors()) > 0 {
 			fmt.Fprintf(os.Stderr, "Parser errors in %s:\n", filename)
 			for _, e := range p.Errors() {
@@ -95,7 +95,7 @@ func main() {
 			}
 			os.Exit(1)
 		}
-		
+
 		if program == nil {
 			program = fileProgram
 		} else {
@@ -113,7 +113,7 @@ func main() {
 		}
 		os.Exit(1)
 	}
-	
+
 	*archFlag = strings.ToUpper(*archFlag)
 
 	// Flag -m=ir : emit SSA IR and exit cleanly
@@ -121,10 +121,10 @@ func main() {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 		irCode := ir.PrintProgram(irProg)
-		
+
 		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + irCode
-		
+
 		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing IR output: %v\n", err)
@@ -138,13 +138,13 @@ func main() {
 	if *archFlag == "CBE" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
-		
+
 		backend := cbe.New()
 		cCode := backend.Generate(irProg)
-		
+
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation (CBE Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + cCode
-		
+
 		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing CBE output: %v\n", err)
@@ -158,13 +158,13 @@ func main() {
 	if *archFlag == "X86_64" || *archFlag == "X86-64" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
-		
+
 		backend := x86_64.New()
 		asmCode := backend.Generate(irProg)
-		
+
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation (X86_64 Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + asmCode
-		
+
 		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing X86_64 output: %v\n", err)
@@ -178,13 +178,13 @@ func main() {
 	if *archFlag == "6809" || *archFlag == "M6809" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
-		
+
 		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)
 		asmCode := backend.Generate(irProg)
-		
+
 		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + asmCode
-		
+
 		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing 6809 output: %v\n", err)
@@ -198,10 +198,10 @@ func main() {
 	if *archFlag == "C" || *archFlag == "C99" {
 		tr := transpiler.New()
 		cCode := tr.Transpile(program)
-		
+
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + cCode
-		
+
 		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing C output: %v\n", err)

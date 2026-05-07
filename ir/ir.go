@@ -17,8 +17,12 @@ const (
 )
 
 func GetTypeSize(typ string) int {
-	if typ == "byte" { return 1 }
-	if typ == "word" { return 2 }
+	if typ == "byte" {
+		return 1
+	}
+	if typ == "word" {
+		return 2
+	}
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
@@ -59,7 +63,9 @@ func GetEltSize(arrType string) int {
 }
 
 func (t Type) String() string {
-	if t == "" { return "unknown" }
+	if t == "" {
+		return "unknown"
+	}
 	return string(t)
 }
 
@@ -92,8 +98,8 @@ type Parameter struct {
 	Typ  Type
 }
 
-func (p *Parameter) Type() Type       { return p.Typ }
-func (p *Parameter) String() string   { return fmt.Sprintf("p%d", p.ID) }
+func (p *Parameter) Type() Type     { return p.Typ }
+func (p *Parameter) String() string { return fmt.Sprintf("p%d", p.ID) }
 
 // BasicBlock is a sequence of non-branching instructions ending in a terminator.
 type BasicBlock struct {
@@ -110,16 +116,16 @@ type Global struct {
 	Typ  Type
 }
 
-func (g *Global) Type() Type       { return g.Typ }
-func (g *Global) String() string   { return fmt.Sprintf("@%s", g.Name) }
+func (g *Global) Type() Type     { return g.Typ }
+func (g *Global) String() string { return fmt.Sprintf("@%s", g.Name) }
 
 // StringLiteral represents a string constant (mostly for print builtins).
 type StringLiteral struct {
 	Value string
 }
 
-func (s *StringLiteral) Type() Type       { return TypeUnknown }
-func (s *StringLiteral) String() string   { return fmt.Sprintf("%q", s.Value) }
+func (s *StringLiteral) Type() Type     { return TypeUnknown }
+func (s *StringLiteral) String() string { return fmt.Sprintf("%q", s.Value) }
 
 // Instruction is the interface for all SSA operations.
 type Instruction interface {
@@ -144,11 +150,11 @@ type BaseInstruction struct {
 	Comment string
 }
 
-func (b *BaseInstruction) Type() Type       { return b.Typ }
-func (b *BaseInstruction) String() string   { return fmt.Sprintf("v%d", b.ID) }
-func (b *BaseInstruction) SetID(id int)     { b.ID = id }
-func (b *BaseInstruction) GetID() int       { return b.ID }
-func (b *BaseInstruction) GetComment() string { return b.Comment }
+func (b *BaseInstruction) Type() Type          { return b.Typ }
+func (b *BaseInstruction) String() string      { return fmt.Sprintf("v%d", b.ID) }
+func (b *BaseInstruction) SetID(id int)        { b.ID = id }
+func (b *BaseInstruction) GetID() int          { return b.ID }
+func (b *BaseInstruction) GetComment() string  { return b.Comment }
 func (b *BaseInstruction) SetComment(c string) { b.Comment = c }
 
 // --- Constant Instructions ---
@@ -157,12 +163,14 @@ type ConstByte struct {
 	BaseInstruction
 	Val uint8
 }
+
 func (i *ConstByte) Opcode() string { return "const_byte" }
 
 type ConstWord struct {
 	BaseInstruction
 	Val uint64
 }
+
 func (i *ConstWord) Opcode() string { return "const_word" }
 
 // --- Memory Operations ---
@@ -171,6 +179,7 @@ type Load struct {
 	BaseInstruction
 	Global *Global
 }
+
 func (i *Load) Opcode() string { return "load" }
 
 type Store struct {
@@ -178,6 +187,7 @@ type Store struct {
 	Global *Global
 	Val    Value
 }
+
 func (i *Store) Opcode() string { return "store" }
 
 // --- Arithmetic & Logic Operations ---
@@ -188,14 +198,16 @@ type BinaryOp struct {
 	Left  Value
 	Right Value
 }
+
 func (i *BinaryOp) Opcode() string { return i.Op }
 
 type Compare struct {
-	BaseInstruction // Comparison returns a byte (0 or 1)
-	Op    string // "eq", "neq", "lt", "lte", "gt", "gte"
-	Left  Value
-	Right Value
+	BaseInstruction        // Comparison returns a byte (0 or 1)
+	Op              string // "eq", "neq", "lt", "lte", "gt", "gte"
+	Left            Value
+	Right           Value
 }
+
 func (i *Compare) Opcode() string { return i.Op }
 
 type UnaryOp struct {
@@ -203,6 +215,7 @@ type UnaryOp struct {
 	Op      string // "not", "neg"
 	Operand Value
 }
+
 func (i *UnaryOp) Opcode() string { return i.Op }
 
 // --- Array Operations ---
@@ -212,6 +225,7 @@ type ExtractElement struct {
 	Array Value
 	Index Value
 }
+
 func (i *ExtractElement) Opcode() string { return "extract" }
 
 type InsertElement struct {
@@ -220,35 +234,40 @@ type InsertElement struct {
 	Index Value
 	Val   Value
 }
+
 func (i *InsertElement) Opcode() string { return "insert" }
 
 // --- Struct Operations ---
 
 type ExtractField struct {
 	BaseInstruction
-	Struct Value
+	Struct     Value
 	FieldIndex int
 }
+
 func (i *ExtractField) Opcode() string { return "extract_field" }
 
 type InsertField struct {
 	BaseInstruction
-	Struct Value
+	Struct     Value
 	FieldIndex int
-	Val    Value
+	Val        Value
 }
+
 func (i *InsertField) Opcode() string { return "insert_field" }
 
 type AddressOfGlobal struct {
 	BaseInstruction
 	Global *Global
 }
+
 func (i *AddressOfGlobal) Opcode() string { return "addrof" }
 
 type AddressOfLocal struct {
 	BaseInstruction
 	Local Value
 }
+
 func (i *AddressOfLocal) Opcode() string { return "addrof_local" }
 
 type ExtractFieldPtr struct {
@@ -256,6 +275,7 @@ type ExtractFieldPtr struct {
 	Ptr        Value
 	FieldIndex int
 }
+
 func (i *ExtractFieldPtr) Opcode() string { return "extract_field_ptr" }
 
 type InsertFieldPtr struct {
@@ -264,12 +284,14 @@ type InsertFieldPtr struct {
 	FieldIndex int
 	Val        Value
 }
+
 func (i *InsertFieldPtr) Opcode() string { return "insert_field_ptr" }
 
 type LoadPtr struct {
 	BaseInstruction
 	Ptr Value
 }
+
 func (i *LoadPtr) Opcode() string { return "load_ptr" }
 
 type StorePtr struct {
@@ -277,17 +299,20 @@ type StorePtr struct {
 	Ptr Value
 	Val Value
 }
+
 func (i *StorePtr) Opcode() string { return "store_ptr" }
 
 type ZeroInit struct {
 	BaseInstruction
 }
+
 func (i *ZeroInit) Opcode() string { return "zeroinit" }
 
 type SourceMarker struct {
 	BaseInstruction
 	Comment string
 }
+
 func (i *SourceMarker) Opcode() string { return "source_marker" }
 
 // --- SSA Primitives ---
@@ -300,6 +325,7 @@ type PhiEdge struct {
 	Block *BasicBlock
 	Value Value
 }
+
 func (i *Phi) Opcode() string { return "phi" }
 
 // --- Function Calls ---
@@ -309,6 +335,7 @@ type Call struct {
 	Func *Function
 	Args []Value
 }
+
 func (i *Call) Opcode() string { return "call" }
 
 type BuiltinCall struct {
@@ -316,6 +343,7 @@ type BuiltinCall struct {
 	Name string // "print", "println"
 	Args []Value
 }
+
 func (i *BuiltinCall) Opcode() string { return "builtin_" + i.Name }
 
 // --- Type Conversions ---
@@ -325,6 +353,7 @@ type Cast struct {
 	Op      string // "zero_ext", "trunc"
 	Operand Value
 }
+
 func (i *Cast) Opcode() string { return i.Op }
 
 // --- Terminators ---
@@ -333,8 +362,9 @@ type Jump struct {
 	BaseInstruction
 	Target *BasicBlock
 }
+
 func (i *Jump) Opcode() string { return "jmp" }
-func (i *Jump) IsTerminator() {}
+func (i *Jump) IsTerminator()  {}
 
 type Branch struct {
 	BaseInstruction
@@ -342,12 +372,14 @@ type Branch struct {
 	TrueBlock  *BasicBlock
 	FalseBlock *BasicBlock
 }
+
 func (i *Branch) Opcode() string { return "br" }
-func (i *Branch) IsTerminator() {}
+func (i *Branch) IsTerminator()  {}
 
 type Return struct {
 	BaseInstruction
 	Val Value // nil if void
 }
+
 func (i *Return) Opcode() string { return "ret" }
-func (i *Return) IsTerminator() {}
+func (i *Return) IsTerminator()  {}
