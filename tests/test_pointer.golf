@@ -4,10 +4,10 @@ var apple word
 var banana byte
 
 func main() {
-    ap := &apple
-    bp := &banana
-    *ap = 10
-    *bp = 20
-    println(apple)
-    println(banana)
+	ap := &apple
+	bp := &banana
+	*ap = 10
+	*bp = 20
+	println(apple)
+	println(banana)
 }

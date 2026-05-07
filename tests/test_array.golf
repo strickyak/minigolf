@@ -4,23 +4,23 @@ var a [3]byte
 var b [3][3]byte
 
 func main() {
-    a[0] = 10
-    a[1] = 20
-    b[1][2] = 30
-    
-    var c [3]byte = a
-    
-    println(c[0])
-    println(c[1])
-    println(b[1][2])
+	a[0] = 10
+	a[1] = 20
+	b[1][2] = 30
 
-    for i := range(byte(3)) {
-        a[i] = i+1
-    }
-    for i := range(byte(3)) {
-        a[i] = a[i] * (i+1)
-    }
-    for i := range(byte(3)) {
-        println(a[i])
-    }
+	var c [3]byte = a
+
+	println(c[0])
+	println(c[1])
+	println(b[1][2])
+
+	for i := range byte(3) {
+		a[i] = i + 1
+	}
+	for i := range byte(3) {
+		a[i] = a[i] * (i + 1)
+	}
+	for i := range byte(3) {
+		println(a[i])
+	}
 }

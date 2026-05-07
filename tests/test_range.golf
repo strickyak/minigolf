@@ -4,7 +4,7 @@ func main() {
 	for i := range byte(5) {
 		println(word(i))
 	}
-	
+
 	n := word(10)
 	for n = range 3 {
 		println(n)

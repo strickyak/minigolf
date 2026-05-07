@@ -22,10 +22,10 @@ func main() {
 	var p Point
 	p.x = 42
 	p.y = 99
-	
+
 	var parts PointParts
 	parts = p.Decompose()
-	
+
 	println(parts.x)
 	println(parts.y)
 }

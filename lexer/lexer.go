@@ -51,14 +51,14 @@ func (l *Lexer) nextToken() token.Token {
 	case '=':
 		if l.peekChar() == '=' {
 			l.readChar()
-			tok = token.Token{Type: token.EQ, Literal: "==", Line: startLine, Column: startCol}
+			tok = token.Token{Type: token.EQ, Literal: "==", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.ASSIGN, l.ch, startLine, startCol)
 		}
 	case ':':
 		if l.peekChar() == '=' {
 			l.readChar()
-			tok = token.Token{Type: token.DECLARE, Literal: ":=", Line: startLine, Column: startCol}
+			tok = token.Token{Type: token.DECLARE, Literal: ":=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.COLON, l.ch, startLine, startCol)
 		}
@@ -66,7 +66,7 @@ func (l *Lexer) nextToken() token.Token {
 		if l.peekChar() == '+' {
 			ch := l.ch
 			l.readChar()
-			tok = token.Token{Type: token.INC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1}
+			tok = token.Token{Type: token.INC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.PLUS, l.ch, l.line, l.column)
 		}
@@ -74,14 +74,14 @@ func (l *Lexer) nextToken() token.Token {
 		if l.peekChar() == '-' {
 			ch := l.ch
 			l.readChar()
-			tok = token.Token{Type: token.DEC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1}
+			tok = token.Token{Type: token.DEC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.MINUS, l.ch, l.line, l.column)
 		}
 	case '!':
 		if l.peekChar() == '=' {
 			l.readChar()
-			tok = token.Token{Type: token.NEQ, Literal: "!=", Line: startLine, Column: startCol}
+			tok = token.Token{Type: token.NEQ, Literal: "!=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.BANG, l.ch, startLine, startCol)
 		}
@@ -102,20 +102,20 @@ func (l *Lexer) nextToken() token.Token {
 	case '<':
 		if l.peekChar() == '=' {
 			l.readChar()
-			tok = token.Token{Type: token.LTE, Literal: "<=", Line: startLine, Column: startCol}
+			tok = token.Token{Type: token.LTE, Literal: "<=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else if l.peekChar() == '<' {
 			l.readChar()
-			tok = token.Token{Type: token.LSHIFT, Literal: "<<", Line: startLine, Column: startCol}
+			tok = token.Token{Type: token.LSHIFT, Literal: "<<", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.LT, l.ch, startLine, startCol)
 		}
 	case '>':
 		if l.peekChar() == '=' {
 			l.readChar()
-			tok = token.Token{Type: token.GTE, Literal: ">=", Line: startLine, Column: startCol}
+			tok = token.Token{Type: token.GTE, Literal: ">=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else if l.peekChar() == '>' {
 			l.readChar()
-			tok = token.Token{Type: token.RSHIFT, Literal: ">>", Line: startLine, Column: startCol}
+			tok = token.Token{Type: token.RSHIFT, Literal: ">>", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.GT, l.ch, startLine, startCol)
 		}
@@ -261,7 +261,7 @@ func Lex(input, filename string) []token.Token {
 			if tok.Line > prev.Line || tok.Type == token.EOF {
 				if prev.Type == token.IDENT || prev.Type == token.INT || prev.Type == token.STRING ||
 					prev.Type == token.RETURN || prev.Type == token.RPAREN || prev.Type == token.RBRACE || prev.Type == token.RBRACKET {
-					tokens = append(tokens, token.Token{Type: token.SEMICOLON, Literal: ";", Line: prev.Line, Column: prev.Column + len(prev.Literal)})
+					tokens = append(tokens, token.Token{Type: token.SEMICOLON, Literal: ";", Line: prev.Line, Column: prev.Column + len(prev.Literal), Filename: l.filename})
 				}
 			}
 		}

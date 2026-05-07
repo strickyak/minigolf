@@ -1,17 +1,17 @@
 package main
 
 type Apple struct {
-    worms   byte
+	worms byte
 }
 
-func (a *Apple) NumWorms() byte { return a.worms }
-func (a *Apple) NumWormsSquared() byte { return a.worms * a.worms}
-func (a *Apple) SetWorms(n byte) { a.worms = n }
+func (a *Apple) NumWorms() byte        { return a.worms }
+func (a *Apple) NumWormsSquared() byte { return a.worms * a.worms }
+func (a *Apple) SetWorms(n byte)       { a.worms = n }
 
 func main() {
-    var red Apple
-    println(red.NumWorms())
-    red.SetWorms(13)
-    println(red.NumWorms())
-    println(red.NumWormsSquared())
+	var red Apple
+	println(red.NumWorms())
+	red.SetWorms(13)
+	println(red.NumWorms())
+	println(red.NumWormsSquared())
 }

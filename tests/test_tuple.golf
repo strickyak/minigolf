@@ -1,6 +1,6 @@
 package main
 
-func f()(word,byte) { return 1000, 42 }
+func f() (word, byte) { return 1000, 42 }
 
 func main() {
 	var w word
