@@ -76,6 +76,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseArrayType)
 	p.registerPrefix(token.STRUCT, p.parseStructType)
+	p.registerPrefix(token.RANGE, p.parseRangeExpression)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
 	p.registerInfix(token.PLUS, p.parseInfixExpression)
@@ -408,6 +409,18 @@ func (p *Parser) parseExpressionOrAssignStatement() ast.Statement {
 		lefts = append(lefts, p.parseExpression(LOWEST))
 	}
 
+	if p.peekTokenIs(token.INC) || p.peekTokenIs(token.DEC) {
+		if len(lefts) > 1 {
+			return nil
+		}
+		stmt := &ast.IncDecStatement{Token: p.peekToken, Name: lefts[0]}
+		p.nextToken() // move to ++ or --
+		if p.peekTokenIs(token.SEMICOLON) {
+			p.nextToken()
+		}
+		return stmt
+	}
+
 	if p.peekTokenIs(token.ASSIGN) || p.peekTokenIs(token.DECLARE) {
 		stmt := &ast.AssignStatement{Names: lefts}
 		p.nextToken()
@@ -488,12 +501,69 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 	return stmt
 }
 
-func (p *Parser) parseForStatement() *ast.ForStatement {
-	stmt := &ast.ForStatement{Token: p.curToken}
+func (p *Parser) parseForStatement() ast.Statement {
+	startToken := p.curToken
 
 	p.nextToken()
-	stmt.Condition = p.parseExpression(LOWEST)
 
+	if p.curTokenIs(token.LBRACE) {
+		stmt := &ast.ForStatement{Token: startToken, Condition: nil}
+		stmt.Body = p.parseBlockStatement()
+		return stmt
+	}
+
+	var firstStmt ast.Statement
+	if !p.curTokenIs(token.SEMICOLON) {
+		firstStmt = p.parseStatement()
+	}
+
+	if assignStmt, ok := firstStmt.(*ast.AssignStatement); ok {
+		if len(assignStmt.Values) == 1 {
+			if rangeExpr, ok := assignStmt.Values[0].(*ast.RangeExpression); ok {
+				stmt := &ast.ForRangeStatement{
+					Token:      startToken,
+					Key:        assignStmt.Names[0],
+					IsDecl:     assignStmt.Token.Type == token.DECLARE,
+					RangeValue: rangeExpr.Value,
+				}
+				if !p.expectPeek(token.LBRACE) {
+					return nil
+				}
+				stmt.Body = p.parseBlockStatement()
+				return stmt
+			}
+		}
+	}
+
+	if p.curTokenIs(token.SEMICOLON) {
+		stmt := &ast.For3Statement{Token: startToken, Init: firstStmt}
+		p.nextToken() // Skip first semicolon
+
+		if !p.curTokenIs(token.SEMICOLON) {
+			stmt.Condition = p.parseExpression(LOWEST)
+			if !p.expectPeek(token.SEMICOLON) {
+				return nil
+			}
+		}
+		
+		p.nextToken() // Skip second semicolon
+
+		if !p.curTokenIs(token.LBRACE) {
+			stmt.Increment = p.parseStatement()
+			if !p.expectPeek(token.LBRACE) {
+				return nil
+			}
+		}
+
+		stmt.Body = p.parseBlockStatement()
+		return stmt
+	}
+
+	stmt := &ast.ForStatement{Token: startToken}
+	if exprStmt, ok := firstStmt.(*ast.ExpressionStatement); ok {
+		stmt.Condition = exprStmt.Expression
+	}
+	
 	if !p.expectPeek(token.LBRACE) {
 		return nil
 	}
@@ -565,6 +635,13 @@ func (p *Parser) curPrecedence() int {
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
 	msg := fmt.Sprintf("no prefix parse function for %s found at line %d:%d", t, p.curToken.Line, p.curToken.Column)
 	p.errors = append(p.errors, msg)
+}
+
+func (p *Parser) parseRangeExpression() ast.Expression {
+	expr := &ast.RangeExpression{Token: p.curToken}
+	p.nextToken()
+	expr.Value = p.parseExpression(LOWEST)
+	return expr
 }
 
 func (p *Parser) parseIdentifier() ast.Expression {

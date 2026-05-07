@@ -571,6 +571,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.flushRegisters()
 		size := b.getTypeSize(string(i.Typ))
 		destStr := b.memAccess(offset)
+        fmt.Fprintf(&b.buf, "\t\t; ZeroInit size=%d dest=%v\n", size, destStr)
+
 		if size == 1 || size == 2 {
 			b.buf.WriteString("\tclra\n\tclrb\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
@@ -592,6 +594,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		eltSize := b.getEltSize(string(i.Array.Type()))
 		arrayStr := b.getAddrStr(i.Array)
 		destStr := b.memAccess(offset)
+        fmt.Fprintf(&b.buf, "\t\t; ExtractElement size=%d array=%v dest=%v\n", eltSize, arrayStr, destStr)
 
 		b.emitLoadAddr("y", arrayStr)
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {

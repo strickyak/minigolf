@@ -84,7 +84,7 @@ func main() {
 			os.Exit(1)
 		}
 		
-		tokens := lexer.Lex(string(content))
+		tokens := lexer.Lex(string(content), filename)
 		p := parser.New(tokens)
 		fileProgram := p.ParseProgram()
 		

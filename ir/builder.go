@@ -284,7 +284,12 @@ func (b *Builder) sealBlock(block *BasicBlock) {
 
 func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 	for _, stmt := range blockAst.Statements {
-		switch s := stmt.(type) {
+		b.buildStatement(stmt)
+	}
+}
+
+func (b *Builder) buildStatement(stmt ast.Statement) {
+	switch s := stmt.(type) {
 		case *ast.VarStatement:
 			typ := astToIRType(s.ValueType)
 			b.varTypes[s.Name.Value] = typ
@@ -334,6 +339,25 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 					b.assignToExpr(nameExpr, vals[i])
 				}
 			}
+		case *ast.IncDecStatement:
+			b.addInstr(&SourceMarker{
+				BaseInstruction: BaseInstruction{Typ: TypeVoid},
+				Comment: fmt.Sprintf("Line %d: %s", s.Token.Line, s.Token.Literal),
+			})
+			val := b.buildExpr(s.Name)
+			typ := val.Type()
+			op := "add"
+			if s.Token.Literal == "--" {
+				op = "sub"
+			}
+			var one Value
+			if typ == TypeByte {
+				one = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1})
+			} else {
+				one = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1})
+			}
+			newVal := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: op, Left: val, Right: one})
+			b.assignToExpr(s.Name, newVal)
 		case *ast.ExpressionStatement:
 			b.addInstr(&SourceMarker{
 				BaseInstruction: BaseInstruction{Typ: TypeVoid},
@@ -395,10 +419,15 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			b.addEdge(b.currentBlock, headerBlk)
 			
 			b.currentBlock = headerBlk
-			cond := b.buildExpr(s.Condition)
-			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk})
-			b.addEdge(headerBlk, bodyBlk)
-			b.addEdge(headerBlk, endBlk)
+			if s.Condition != nil {
+				cond := b.buildExpr(s.Condition)
+				b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk})
+				b.addEdge(headerBlk, bodyBlk)
+				b.addEdge(headerBlk, endBlk)
+			} else {
+				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: bodyBlk})
+				b.addEdge(headerBlk, bodyBlk)
+			}
 			
 			b.sealBlock(bodyBlk)
 			
@@ -408,6 +437,131 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk})
 				b.addEdge(b.currentBlock, headerBlk)
 			}
+			
+			b.sealBlock(headerBlk) 
+			b.sealBlock(endBlk)
+			b.currentBlock = endBlk
+
+		case *ast.For3Statement:
+			b.addInstr(&SourceMarker{
+				BaseInstruction: BaseInstruction{Typ: TypeVoid},
+				Comment: fmt.Sprintf("Line %d: For3 statement init", s.Token.Line),
+			})
+			if s.Init != nil {
+				b.buildStatement(s.Init)
+			}
+			
+			headerBlk := b.newBlock()
+			bodyBlk := b.newBlock()
+			postBlk := b.newBlock()
+			endBlk := b.newBlock()
+			
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk})
+			b.addEdge(b.currentBlock, headerBlk)
+			
+			b.currentBlock = headerBlk
+			if s.Condition != nil {
+				cond := b.buildExpr(s.Condition)
+				b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk})
+				b.addEdge(headerBlk, bodyBlk)
+				b.addEdge(headerBlk, endBlk)
+			} else {
+				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: bodyBlk})
+				b.addEdge(headerBlk, bodyBlk)
+			}
+			
+			b.sealBlock(bodyBlk)
+			
+			b.currentBlock = bodyBlk
+			b.buildBlock(s.Body)
+			
+			if b.currentBlock.Terminator == nil {
+				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: postBlk})
+				b.addEdge(b.currentBlock, postBlk)
+			}
+			
+			b.sealBlock(postBlk)
+			b.currentBlock = postBlk
+			if s.Increment != nil {
+				b.buildStatement(s.Increment)
+			}
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk})
+			b.addEdge(b.currentBlock, headerBlk)
+			
+			b.sealBlock(headerBlk) 
+			b.sealBlock(endBlk)
+			b.currentBlock = endBlk
+
+		case *ast.ForRangeStatement:
+			b.addInstr(&SourceMarker{
+				BaseInstruction: BaseInstruction{Typ: TypeVoid},
+				Comment: fmt.Sprintf("Line %d: For range statement", s.Token.Line),
+			})
+			
+			limitVal := b.buildExpr(s.RangeValue)
+			typ := limitVal.Type()
+			
+			var zero Value
+			if typ == TypeByte {
+				zero = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0})
+			} else {
+				zero = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0})
+			}
+			
+			ident, ok := s.Key.(*ast.Identifier)
+			if ok && s.IsDecl {
+				b.varTypes[ident.Value] = typ
+			}
+			if ok {
+				b.writeVariable(ident.Value, b.currentBlock, zero)
+			}
+			
+			headerBlk := b.newBlock()
+			bodyBlk := b.newBlock()
+			postBlk := b.newBlock()
+			endBlk := b.newBlock()
+			
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk})
+			b.addEdge(b.currentBlock, headerBlk)
+			
+			b.currentBlock = headerBlk
+			var cond Value
+			if ok {
+				currentI := b.readVariable(ident.Value, headerBlk)
+				cond = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lt", Left: currentI, Right: limitVal})
+			} else {
+				cond = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1})
+			}
+			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk})
+			b.addEdge(headerBlk, bodyBlk)
+			b.addEdge(headerBlk, endBlk)
+			
+			b.sealBlock(bodyBlk)
+			
+			b.currentBlock = bodyBlk
+			b.buildBlock(s.Body)
+			
+			if b.currentBlock.Terminator == nil {
+				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: postBlk})
+				b.addEdge(b.currentBlock, postBlk)
+			}
+			
+			b.sealBlock(postBlk)
+			
+			b.currentBlock = postBlk
+			if ok {
+				currentI := b.readVariable(ident.Value, postBlk)
+				var one Value
+				if typ == TypeByte {
+					one = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1})
+				} else {
+					one = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1})
+				}
+				nextI := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "add", Left: currentI, Right: one})
+				b.writeVariable(ident.Value, postBlk, nextI)
+			}
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk})
+			b.addEdge(b.currentBlock, headerBlk)
 			
 			b.sealBlock(headerBlk) 
 			b.sealBlock(endBlk)
@@ -434,7 +588,6 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 			}
 			b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Val: val})
 		}
-	}
 }
 
 func (b *Builder) buildExpr(expr ast.Expression) Value {

@@ -138,6 +138,36 @@ type ForStatement struct {
 func (s *ForStatement) statementNode()       {}
 func (s *ForStatement) TokenLiteral() string { return s.Token.Literal }
 
+type For3Statement struct {
+	Token     token.Token // The 'for' token
+	Init      Statement
+	Condition Expression
+	Increment Statement
+	Body      *BlockStatement
+}
+
+func (s *For3Statement) statementNode()       {}
+func (s *For3Statement) TokenLiteral() string { return s.Token.Literal }
+
+type IncDecStatement struct {
+	Token token.Token // The '++' or '--' token
+	Name  Expression  // The identifier or expression being modified
+}
+
+func (s *IncDecStatement) statementNode()       {}
+func (s *IncDecStatement) TokenLiteral() string { return s.Token.Literal }
+
+type ForRangeStatement struct {
+	Token      token.Token // The 'for' token
+	Key        Expression  // The identifier assigned (e.g. `i`)
+	IsDecl     bool        // true if `:=`, false if `=`
+	RangeValue Expression  // e.g. `byte(5)`
+	Body       *BlockStatement
+}
+
+func (s *ForRangeStatement) statementNode()       {}
+func (s *ForRangeStatement) TokenLiteral() string { return s.Token.Literal }
+
 type ReturnStatement struct {
 	Token       token.Token // The 'return' token
 	ReturnValues []Expression  // Optional
@@ -242,6 +272,14 @@ type SelectorExpression struct {
 
 func (s *SelectorExpression) expressionNode()      {}
 func (s *SelectorExpression) TokenLiteral() string { return s.Token.Literal }
+
+type RangeExpression struct {
+	Token token.Token // The 'range' token
+	Value Expression
+}
+
+func (e *RangeExpression) expressionNode()      {}
+func (e *RangeExpression) TokenLiteral() string { return e.Token.Literal }
 
 type IndexExpression struct {
 	Token token.Token // The '[' token

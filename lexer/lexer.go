@@ -11,10 +11,11 @@ type Lexer struct {
 	ch           byte // current char under examination
 	line         int
 	column       int
+    filename    string
 }
 
-func New(input string) *Lexer {
-	l := &Lexer{input: input, line: 1, column: 0}
+func New(input string, filename string) *Lexer {
+    l := &Lexer{input: input, line: 1, column: 0, filename: filename}
 	l.readChar()
 	return l
 }
@@ -52,25 +53,37 @@ func (l *Lexer) nextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.EQ, Literal: "==", Line: startLine, Column: startCol}
 		} else {
-			tok = newToken(token.ASSIGN, l.ch, startLine, startCol)
+			tok = l.newToken(token.ASSIGN, l.ch, startLine, startCol)
 		}
 	case ':':
 		if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.DECLARE, Literal: ":=", Line: startLine, Column: startCol}
 		} else {
-			tok = newToken(token.COLON, l.ch, startLine, startCol)
+			tok = l.newToken(token.COLON, l.ch, startLine, startCol)
 		}
 	case '+':
-		tok = newToken(token.PLUS, l.ch, startLine, startCol)
+		if l.peekChar() == '+' {
+			ch := l.ch
+			l.readChar()
+			tok = token.Token{Type: token.INC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1}
+		} else {
+			tok = l.newToken(token.PLUS, l.ch, l.line, l.column)
+		}
 	case '-':
-		tok = newToken(token.MINUS, l.ch, startLine, startCol)
+		if l.peekChar() == '-' {
+			ch := l.ch
+			l.readChar()
+			tok = token.Token{Type: token.DEC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1}
+		} else {
+			tok = l.newToken(token.MINUS, l.ch, l.line, l.column)
+		}
 	case '!':
 		if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.NEQ, Literal: "!=", Line: startLine, Column: startCol}
 		} else {
-			tok = newToken(token.BANG, l.ch, startLine, startCol)
+			tok = l.newToken(token.BANG, l.ch, startLine, startCol)
 		}
 	case '/':
 		if l.peekChar() == '/' {
@@ -80,12 +93,12 @@ func (l *Lexer) nextToken() token.Token {
 			l.skipMultiLineComment()
 			return l.nextToken()
 		} else {
-			tok = newToken(token.SLASH, l.ch, startLine, startCol)
+			tok = l.newToken(token.SLASH, l.ch, startLine, startCol)
 		}
 	case '*':
-		tok = newToken(token.ASTERISK, l.ch, startLine, startCol)
+		tok = l.newToken(token.ASTERISK, l.ch, startLine, startCol)
 	case '%':
-		tok = newToken(token.MOD, l.ch, startLine, startCol)
+		tok = l.newToken(token.MOD, l.ch, startLine, startCol)
 	case '<':
 		if l.peekChar() == '=' {
 			l.readChar()
@@ -94,7 +107,7 @@ func (l *Lexer) nextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.LSHIFT, Literal: "<<", Line: startLine, Column: startCol}
 		} else {
-			tok = newToken(token.LT, l.ch, startLine, startCol)
+			tok = l.newToken(token.LT, l.ch, startLine, startCol)
 		}
 	case '>':
 		if l.peekChar() == '=' {
@@ -104,32 +117,32 @@ func (l *Lexer) nextToken() token.Token {
 			l.readChar()
 			tok = token.Token{Type: token.RSHIFT, Literal: ">>", Line: startLine, Column: startCol}
 		} else {
-			tok = newToken(token.GT, l.ch, startLine, startCol)
+			tok = l.newToken(token.GT, l.ch, startLine, startCol)
 		}
 	case '&':
-		tok = newToken(token.BIT_AND, l.ch, startLine, startCol)
+		tok = l.newToken(token.BIT_AND, l.ch, startLine, startCol)
 	case '|':
-		tok = newToken(token.BIT_OR, l.ch, startLine, startCol)
+		tok = l.newToken(token.BIT_OR, l.ch, startLine, startCol)
 	case '^':
-		tok = newToken(token.BIT_XOR, l.ch, startLine, startCol)
+		tok = l.newToken(token.BIT_XOR, l.ch, startLine, startCol)
 	case ';':
-		tok = newToken(token.SEMICOLON, l.ch, startLine, startCol)
+		tok = l.newToken(token.SEMICOLON, l.ch, startLine, startCol)
 	case ',':
-		tok = newToken(token.COMMA, l.ch, startLine, startCol)
+		tok = l.newToken(token.COMMA, l.ch, startLine, startCol)
 	case '.':
-		tok = newToken(token.DOT, l.ch, startLine, startCol)
+		tok = l.newToken(token.DOT, l.ch, startLine, startCol)
 	case '(':
-		tok = newToken(token.LPAREN, l.ch, startLine, startCol)
+		tok = l.newToken(token.LPAREN, l.ch, startLine, startCol)
 	case ')':
-		tok = newToken(token.RPAREN, l.ch, startLine, startCol)
+		tok = l.newToken(token.RPAREN, l.ch, startLine, startCol)
 	case '{':
-		tok = newToken(token.LBRACE, l.ch, startLine, startCol)
+		tok = l.newToken(token.LBRACE, l.ch, startLine, startCol)
 	case '}':
-		tok = newToken(token.RBRACE, l.ch, startLine, startCol)
+		tok = l.newToken(token.RBRACE, l.ch, startLine, startCol)
 	case '[':
-		tok = newToken(token.LBRACKET, l.ch, startLine, startCol)
+		tok = l.newToken(token.LBRACKET, l.ch, startLine, startCol)
 	case ']':
-		tok = newToken(token.RBRACKET, l.ch, startLine, startCol)
+		tok = l.newToken(token.RBRACKET, l.ch, startLine, startCol)
 	case '"':
 		tok.Type = token.STRING
 		tok.Literal = l.readString()
@@ -154,7 +167,7 @@ func (l *Lexer) nextToken() token.Token {
 			tok.Column = startCol
 			return tok
 		} else {
-			tok = newToken(token.ILLEGAL, l.ch, startLine, startCol)
+			tok = l.newToken(token.ILLEGAL, l.ch, startLine, startCol)
 		}
 	}
 
@@ -162,8 +175,8 @@ func (l *Lexer) nextToken() token.Token {
 	return tok
 }
 
-func newToken(tokenType token.TokenType, ch byte, line, col int) token.Token {
-	return token.Token{Type: tokenType, Literal: string(ch), Line: line, Column: col}
+func (l *Lexer) newToken(tokenType token.TokenType, ch byte, line, col int) token.Token {
+    return token.Token{Type: tokenType, Literal: string(ch), Line: line, Column: col, Filename: l.filename}
 }
 
 func (l *Lexer) readIdentifier() string {
@@ -235,8 +248,8 @@ func (l *Lexer) skipMultiLineComment() {
 	}
 }
 
-func Lex(input string) []token.Token {
-	l := New(input)
+func Lex(input, filename string) []token.Token {
+	l := New(input, filename)
 	var tokens []token.Token
 	var prev token.Token
 

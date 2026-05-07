@@ -7,6 +7,7 @@ type Token struct {
 	Literal string
 	Line    int
 	Column  int
+	Filename string
 }
 
 const (
@@ -22,7 +23,9 @@ const (
 	ASSIGN   = "="
 	DECLARE  = ":="
 	PLUS     = "+"
+	INC      = "++"
 	MINUS    = "-"
+	DEC      = "--"
 	BANG     = "!"
 	ASTERISK = "*"
 	SLASH    = "/"
@@ -65,6 +68,7 @@ const (
 	IF      = "IF"
 	ELSE    = "ELSE"
 	FOR     = "FOR"
+	RANGE   = "RANGE"
 	RETURN  = "RETURN"
 )
 
@@ -79,6 +83,7 @@ var keywords = map[string]TokenType{
 	"if":      IF,
 	"else":    ELSE,
 	"for":     FOR,
+	"range":   RANGE,
 	"return":  RETURN,
 }
 

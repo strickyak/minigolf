@@ -23,7 +23,7 @@ func checkParserErrors(t *testing.T, p *Parser) {
 
 func TestPackageStatement(t *testing.T) {
 	input := `package main`
-	tokens := lexer.Lex(input)
+	tokens := lexer.Lex(input, "<test>")
 	p := New(tokens)
 	program := p.ParseProgram()
 	checkParserErrors(t, p)
@@ -51,7 +51,7 @@ func TestVarStatements(t *testing.T) {
 	var y byte;
 	var z = 10
 	`
-	tokens := lexer.Lex(input)
+	tokens := lexer.Lex(input, "<test>")
 	p := New(tokens)
 	program := p.ParseProgram()
 	checkParserErrors(t, p)
@@ -103,7 +103,7 @@ func TestAssignStatement(t *testing.T) {
 		z := 10
 	}
 	`
-	tokens := lexer.Lex(input)
+	tokens := lexer.Lex(input, "<test>")
 	p := New(tokens)
 	program := p.ParseProgram()
 	checkParserErrors(t, p)
@@ -239,7 +239,7 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		input := "func test() { " + tt.input + " }"
-		tokens := lexer.Lex(input)
+		tokens := lexer.Lex(input, "<test>")
 		p := New(tokens)
 		program := p.ParseProgram()
 		checkParserErrors(t, p)

@@ -408,6 +408,22 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 				}
 			}
 		}
+	case *ast.IncDecStatement:
+		val := t.emitExprStr(s.Name)
+		op := "++"
+		if s.Token.Literal == "--" {
+			op = "--"
+		}
+		
+		if ident, ok := s.Name.(*ast.Identifier); ok {
+			if t.isLocal(ident.Value) {
+				t.buf.WriteString(fmt.Sprintf("v_%s%s;\n", ident.Value, op))
+			} else {
+				t.buf.WriteString(fmt.Sprintf("v_%s_%s%s;\n", t.pkgName, ident.Value, op))
+			}
+		} else {
+			t.buf.WriteString(fmt.Sprintf("%s%s;\n", val, op))
+		}
 	case *ast.IfStatement:
 		t.buf.WriteString(fmt.Sprintf("if (%s) ", t.emitExprStr(s.Condition)))
 		t.emitStatement(s.Consequence)
@@ -416,8 +432,69 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			t.emitStatement(s.Alternative)
 		}
 	case *ast.ForStatement:
-		t.buf.WriteString(fmt.Sprintf("while (%s) ", t.emitExprStr(s.Condition)))
+		condStr := "1"
+		if s.Condition != nil {
+			condStr = t.emitExprStr(s.Condition)
+		}
+		t.buf.WriteString(fmt.Sprintf("while (%s) ", condStr))
 		t.emitStatement(s.Body)
+	case *ast.For3Statement:
+		t.buf.WriteString("{\n")
+		t.pushScope()
+		if s.Init != nil {
+			t.emitStatement(s.Init)
+		}
+		condStr := "1"
+		if s.Condition != nil {
+			condStr = t.emitExprStr(s.Condition)
+		}
+		t.buf.WriteString(fmt.Sprintf("while (%s) {\n", condStr))
+		for _, bStmt := range s.Body.Statements {
+			t.buf.WriteString("\t")
+			t.emitStatement(bStmt)
+		}
+		if s.Increment != nil {
+			t.buf.WriteString("\t")
+			t.emitStatement(s.Increment)
+		}
+		t.buf.WriteString("}\n")
+		t.popScope()
+		t.buf.WriteString("}\n")
+	case *ast.ForRangeStatement:
+		t.buf.WriteString("{\n")
+		t.pushScope()
+		limitVal := t.emitExprStr(s.RangeValue)
+		ctype := t.typeOf(s.RangeValue)
+		
+		ident, ok := s.Key.(*ast.Identifier)
+		var loopVar string
+		if ok {
+			if s.IsDecl {
+				t.addLocal(ident.Value, ctype)
+				t.buf.WriteString(fmt.Sprintf("%s v_%s = 0;\n", ctype, ident.Value))
+				loopVar = fmt.Sprintf("v_%s", ident.Value)
+			} else {
+				if t.isLocal(ident.Value) {
+					t.buf.WriteString(fmt.Sprintf("v_%s = 0;\n", ident.Value))
+					loopVar = fmt.Sprintf("v_%s", ident.Value)
+				} else {
+					t.buf.WriteString(fmt.Sprintf("v_%s_%s = 0;\n", t.pkgName, ident.Value))
+					loopVar = fmt.Sprintf("v_%s_%s", t.pkgName, ident.Value)
+				}
+			}
+			t.buf.WriteString(fmt.Sprintf("%s limit_val = %s;\n", ctype, limitVal))
+			t.buf.WriteString(fmt.Sprintf("while (%s < limit_val) {\n", loopVar))
+			for _, bStmt := range s.Body.Statements {
+				t.buf.WriteString("\t")
+				t.emitStatement(bStmt)
+			}
+			t.buf.WriteString(fmt.Sprintf("\t%s++;\n", loopVar))
+			t.buf.WriteString("}\n")
+		} else {
+			t.buf.WriteString(fmt.Sprintf("while(0) {\n"))
+		}
+		t.popScope()
+		t.buf.WriteString("}\n")
 	case *ast.ReturnStatement:
 		if len(s.ReturnValues) == 1 {
 			t.buf.WriteString(fmt.Sprintf("return %s;\n", t.emitExprStr(s.ReturnValues[0])))

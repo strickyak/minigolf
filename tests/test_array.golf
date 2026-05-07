@@ -13,4 +13,14 @@ func main() {
     println(c[0])
     println(c[1])
     println(b[1][2])
+
+    for i := range(3) {
+        a[i] = i+1
+    }
+    for i := range(3) {
+        a[i] = a[i] * (i+1)
+    }
+    for i := range(3) {
+        println(a[i])
+    }
 }

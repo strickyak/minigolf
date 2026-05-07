@@ -1,0 +1,18 @@
+package main
+
+import "big"
+
+var g Bin
+
+func main() {
+   var a Bin 
+   println(42)
+
+   g.Small(20)
+   a.Small(40)
+
+   println( g.EqSmall(0) )
+   println( g.EqSmall(20) )
+   println( a.EqSmall(1) )
+   println( a.EqSmall(40) )
+}

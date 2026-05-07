@@ -23,7 +23,7 @@ func TestLexerBasic(t *testing.T) {
 		{token.EOF, ""},
 	}
 
-	tokens := Lex(input)
+	tokens := Lex(input, "<test>")
 
 	if len(tokens) != len(tests) {
 		t.Fatalf("lengths differ. expected=%d, got=%d", len(tests), len(tokens))
@@ -185,7 +185,7 @@ func main() {
 		{token.EOF, ""},
 	}
 
-	tokens := Lex(input)
+	tokens := Lex(input, "<test>")
 
 	if len(tokens) != len(tests) {
 		t.Fatalf("lengths differ. expected=%d, got=%d", len(tests), len(tokens))
@@ -226,7 +226,7 @@ func TestLexerLineAndColumn(t *testing.T) {
 		{token.EOF, 2, 6},
 	}
 	
-	tokens := Lex(input)
+	tokens := Lex(input, "<test>")
 
 	if len(tokens) != len(tests) {
 		t.Fatalf("lengths differ. expected=%d, got=%d", len(tests), len(tokens))

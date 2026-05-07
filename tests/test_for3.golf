@@ -1,0 +1,26 @@
+package main
+
+func main() {
+	for i := byte(0); i < 5; i++ {
+		println(i)
+	}
+	
+	// test without init
+	j := 5
+	for ; j < 10; j++ {
+		println(j)
+	}
+	
+	// test without ++
+	j = 5
+	for ; j < 10; j = j + 1 {
+		println(j)
+	}
+	
+	// test 1-clause
+	n := 13
+	for n < 15 {
+		println(n)
+		n++
+	}
+}

@@ -35,7 +35,7 @@ func TestTranspiler(t *testing.T) {
 		println("sum is", sum(x, word(y)))
 	}`
 
-	tokens := lexer.Lex(input)
+	tokens := lexer.Lex(input, "<test>")
 	p := parser.New(tokens)
 	program := p.ParseProgram()
 	

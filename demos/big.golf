@@ -1,0 +1,73 @@
+package big
+
+type Bin struct {
+    Size byte
+    Guts [255]byte
+}
+
+func (z *Bin) Small(a byte) {
+    z.Size = (a > 0)
+    z.Guts[0] = byte(a)
+}
+
+func (z *Bin) EqSmall(a byte) byte {
+    if z.Size == 0 {
+        return (a==0)
+    }
+    if (z.Guts[0] != a) {
+        return 0 // false
+    }
+
+    for i := byte(1); i < z.Size; i++ {
+        if z.Guts[i] != 0 {
+            return 0 // false
+        }
+    }
+    return 1 // true
+}
+
+func (a *Bin) IsEven() byte {
+    if (a.Size == 0) {
+        return 1 // true
+    }
+    return (a.Guts[0] & 1) == 0;
+}
+
+func (z *Bin) Dup(a *Bin) {
+    sz := a.Size
+    z.Size = sz
+    for i := range(sz) {
+        z.Guts[i] = a.Guts[i]
+    }
+}
+
+func MaxB(x byte, y byte) byte {
+    if x > y {
+        return x
+    } else {
+        return y
+    }
+}
+
+func (z *Bin) Get(i byte) byte {
+    if i < z.Size {
+        return z.Guts[i]
+    } else {
+        return 0
+    }
+}
+
+func (z *Bin) Add(a *Bin, b *Bin) {
+    max := MaxB(a.Size, b.Size)
+    carry := byte(0)
+    for i := range(max) {
+        t := a.Get(i) + b.Get(i) + carry
+        carry = (t > 255)
+        z.Guts[i] = t
+    }
+    z.Size = max
+    if (carry) {
+        z.Guts[max] = 1
+        z.Size++
+    }
+}

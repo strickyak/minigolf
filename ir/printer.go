@@ -62,10 +62,14 @@ func PrintProgram(p *Program) string {
 					if i.Val != nil { args = append(args, i.Val.String()) }
 				}
 				
+                comment := instr.GetComment()
+                if comment != "" {
+                    comment = "  ; " + comment
+                }
 				if instr.Type() != TypeVoid && instr.Type() != TypeUnknown {
-					buf.WriteString(fmt.Sprintf("  %s:%s = %s %s\n", instr.String(), instr.Type(), op, strings.Join(args, ", ")))
+					buf.WriteString(fmt.Sprintf("  %s:%s = %s %s%s\n", instr.String(), instr.Type(), op, strings.Join(args, ", "),comment))
 				} else {
-					buf.WriteString(fmt.Sprintf("  %s %s\n", op, strings.Join(args, ", ")))
+					buf.WriteString(fmt.Sprintf("  %s %s%s\n", op, strings.Join(args, ", "),comment))
 				}
 			}
 		}
