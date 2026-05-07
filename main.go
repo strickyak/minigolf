@@ -155,7 +155,7 @@ func main() {
 	}
 
 	// Flag -m=x86_64 : Generate X86_64 assembly from IR and exit cleanly
-	if *archFlag == "X86_64" || *archFlag == "X86-64" {
+	if *archFlag == "X86_64" || *archFlag == "X86-64" || *archFlag == "X" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 
@@ -175,7 +175,7 @@ func main() {
 	}
 
 	// Flag -m=6809 : Generate M6809 assembly from IR and exit cleanly
-	if *archFlag == "6809" || *archFlag == "M6809" {
+	if *archFlag == "6809" || *archFlag == "M6809" || *archFlag == "M" {
 		builder := ir.NewBuilder()
 		irProg := builder.Build(program)
 

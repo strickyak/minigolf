@@ -640,7 +640,27 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 			}
 		} else {
-			panic("Dynamic array indexing not yet implemented for 6809")
+			idxStr := b.getAddrStr(i.Index)
+			if eltSize == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.buf.WriteString("\tleay d,y\n")
+			} else if eltSize == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.buf.WriteString("\tlslb\n")
+				b.buf.WriteString("\trola\n")
+				b.buf.WriteString("\tleay d,y\n")
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.buf.WriteString("\tcmpd #0\n")
+				lblEnd := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblEnd))
+				lblLoop := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
+				b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", eltSize))
+				b.buf.WriteString("\tsubd #1\n")
+				b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblLoop))
+				b.buf.WriteString(fmt.Sprintf("%s:\n", lblEnd))
+			}
 		}
 
 		switch eltSize {
@@ -691,7 +711,27 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
 			}
 		} else {
-			panic("Dynamic array indexing not yet implemented for 6809")
+			idxStr := b.getAddrStr(i.Index)
+			if eltSize == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.buf.WriteString("\tleax d,x\n")
+			} else if eltSize == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.buf.WriteString("\tlslb\n")
+				b.buf.WriteString("\trola\n")
+				b.buf.WriteString("\tleax d,x\n")
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.buf.WriteString("\tcmpd #0\n")
+				lblEnd := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblEnd))
+				lblLoop := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", eltSize))
+				b.buf.WriteString("\tsubd #1\n")
+				b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblLoop))
+				b.buf.WriteString(fmt.Sprintf("%s:\n", lblEnd))
+			}
 		}
 
 		if cVal, ok := i.Val.(*ir.ConstWord); ok {
