@@ -1,16 +1,16 @@
 package big
 
-type Bin struct {
+type Dec struct {
 	Size byte
 	Guts [255]byte
 }
 
-func (z *Bin) Small(a byte) {
+func (z *Dec) SetSmall(a byte) {
 	z.Size = (a > 0)
 	z.Guts[0] = byte(a)
 }
 
-func (z *Bin) EqSmall(a byte) byte {
+func (z *Dec) EqSmall(a byte) byte {
 	if z.Size == 0 {
 		return (a == 0)
 	}
@@ -26,14 +26,14 @@ func (z *Bin) EqSmall(a byte) byte {
 	return 1 // true
 }
 
-func (a *Bin) IsEven() byte {
+func (a *Dec) IsEven() byte {
 	if a.Size == 0 {
 		return 1 // true
 	}
 	return (a.Guts[0] & 1) == 0
 }
 
-func (z *Bin) Dup(a *Bin) {
+func (z *Dec) Dup(a *Dec) {
 	sz := a.Size
 	z.Size = sz
 	for i := range sz {
@@ -49,7 +49,7 @@ func MaxB(x byte, y byte) byte {
 	}
 }
 
-func (z *Bin) Get(i byte) byte {
+func (z *Dec) Get(i byte) byte {
 	if i < z.Size {
 		return z.Guts[i]
 	} else {
@@ -57,17 +57,33 @@ func (z *Bin) Get(i byte) byte {
 	}
 }
 
-func (z *Bin) Add(a *Bin, b *Bin) {
-	max := MaxB(a.Size, b.Size)
+func (z *Dec) Add(a *Dec, b *Dec) {
+	sz := MaxB(a.Size, b.Size)
 	carry := byte(0)
-	for i := range max {
+	for i := range sz {
 		t := a.Get(i) + b.Get(i) + carry
-		carry = (t > 255)
-		z.Guts[i] = t
+		carry = (t >= 10)
+        if carry {
+		    z.Guts[i] = t - 10
+        } else {
+		    z.Guts[i] = t
+        }
 	}
-	z.Size = max
+	z.Size = sz
 	if carry {
-		z.Guts[max] = 1
+		z.Guts[sz] = 1
 		z.Size++
 	}
+}
+
+func (z *Dec) Print() {
+    if z.Size == 0 {
+        println("0.")
+        return
+    }
+    for i := range z.Size {
+        j := z.Size - i - 1
+        print(z.Guts[j])
+    }
+    println(".")
 }

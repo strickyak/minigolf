@@ -2,17 +2,17 @@ package main
 
 import "big"
 
-var g Bin
+var g Dec
 
 func main() {
-	var a Bin
-	println(42)
+	var a Dec
+	println(4)
 
-	g.Small(20)
-	a.Small(40)
+	g.SetSmall(2)
+	a.SetSmall(6)
 
 	println(g.EqSmall(0))
-	println(g.EqSmall(20))
+	println(g.EqSmall(2))
 	println(a.EqSmall(1))
-	println(a.EqSmall(40))
+	println(a.EqSmall(6))
 }

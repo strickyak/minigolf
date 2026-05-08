@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"regexp"
 
 	"minigo/ast"
 	"minigo/cbe"
@@ -33,9 +35,13 @@ func (f *repeatedFlag) Set(value string) error {
 	return nil
 }
 
-func ParseSourceFiles(sourceFiles []string) *ast.Program {
+var MatchValidImport = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`).FindStringSubmatch
+
+func ParseSourceFiles(mainSourceFile string) *ast.Program {
 	var program *ast.Program
-	for _, filename := range sourceFiles {
+	imported := make(map[string]bool)
+
+	slurp := func(filename string, overridePackage string) {
 		content, err := os.ReadFile(filename)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filename, err)
@@ -45,10 +51,6 @@ func ParseSourceFiles(sourceFiles []string) *ast.Program {
 		tokens := lexer.Lex(string(content), filename)
 		p := parser.New(tokens)
 
-        overridePackage := ""
-        if len(sourceFiles) == 1 {
-            overridePackage = "main"
-        }
 		fileProgram := p.ParseProgram(overridePackage)
 
 		if len(p.Errors()) > 0 {
@@ -59,13 +61,41 @@ func ParseSourceFiles(sourceFiles []string) *ast.Program {
 			os.Exit(1)
 		}
 
+		for _, stmt := range fileProgram.Statements {
+			if imp, ok := stmt.(*ast.ImportStatement); ok {
+				s := imp.Path.Value
+				if m := MatchValidImport(s); m == nil {
+					log.Panicf("Bad import syntax (should match `^[A-Za-z][A-Za-z0-9_]*$`): %q", s)
+				}
+				if _, ok := imported[s]; !ok {
+					imported[s] = false
+				}
+			}
+		}
+
 		if program == nil {
 			program = fileProgram
 		} else {
 			program.Statements = append(program.Statements, fileProgram.Statements...)
 		}
 	}
-    return program
+
+	dirname := filepath.Dir(mainSourceFile)
+
+	imported["main"] = true
+	slurp(mainSourceFile, "main")
+
+MORE:
+	for key, done := range imported {
+		if !done {
+			imported[key] = true
+			slurp(filepath.Join(dirname, key+".golf"), key)
+            // We changed the iterated object, so restart the iteration.
+            // When everything is done, we fall through and return the program.
+			goto MORE
+		}
+	}
+	return program
 }
 
 func main() {
@@ -76,7 +106,7 @@ func main() {
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
 	picFlag := flag.Bool("pic", false, "Generate position-independent code (PIC) using relative branches and localized PCR data segments")
 
-    var includeDirs repeatedFlag
+	var includeDirs repeatedFlag
 	flag.Var(&includeDirs, "I", "directory to be searched")
 
 	// Custom usage message
@@ -102,11 +132,12 @@ func main() {
 
 	// Remaining arguments are source files
 	sourceFiles := flag.Args()
-	if len(sourceFiles) == 0 {
-		fmt.Fprintln(os.Stderr, "Error: At least one source file must be provided.")
+	if len(sourceFiles) != 1 {
+		fmt.Fprintln(os.Stderr, "Error: Exactly one GOLF source file must be provided.")
 		flag.Usage()
 		os.Exit(1)
 	}
+	mainSourceFile := sourceFiles[0]
 
 	// Create a log file based on the output filename for debugging
 	logFilename := *outFlag + ".log"
@@ -123,16 +154,16 @@ func main() {
 	logger.Printf("Starting whole-program compilation")
 	logger.Printf("Target architecture: %s", *archFlag)
 	logger.Printf("Output object file: %s", *outFlag)
-    logger.Printf("Include path: %v", includeDirs)
+	logger.Printf("Include path: %v", includeDirs)
 	logger.Printf("Source files: %v", sourceFiles)
 
 	// =========================================================================
 	// Compilation Pipeline
 	// =========================================================================
 	// 1 & 2. Parse all source files into a single flat namespace AST
-	// 3. Perform semantic analysis & type checking.
-    program := ParseSourceFiles(sourceFiles)
+	program := ParseSourceFiles(mainSourceFile)
 
+	// 3. Perform semantic analysis & type checking.
 	analyzer := semantic.New()
 	analyzer.Analyze(program)
 	if len(analyzer.Errors()) > 0 {

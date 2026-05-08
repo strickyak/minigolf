@@ -136,6 +136,11 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString("\tmov rbp, rsp\n")
 	b.buf.WriteString("\tand rsp, -16\n")
 	b.buf.WriteString("\tcall f_main\n")
+
+    // TODO -- fix this, to call fflush(stdout), where stdout is `extern FILE* stdout;`
+	// b.buf.WriteString("\tlea eax, [rip + stdout]\n")
+	// b.buf.WriteString("\tcall fflush@PLT\n")
+
 	b.buf.WriteString("\txor rax, rax\n")
 	b.buf.WriteString("\tmov rsp, rbp\n")
 	b.buf.WriteString("\tpop rbp\n")

@@ -10,7 +10,7 @@ import (
 
 // Transpiler walks the AST and emits C99 code
 type Transpiler struct {
-	pkgName      string
+	// pkgName removed in favor of currentPackage
 	buf          bytes.Buffer
 	typedefBuf   bytes.Buffer
 	locals       []map[string]string
@@ -19,6 +19,7 @@ type Transpiler struct {
 	funcTypes    map[string]string
 	funcRetTypes map[string][]string
 	currentFunc  *ast.FuncStatement
+    currentPackage string
 }
 
 func New() *Transpiler {
@@ -58,6 +59,9 @@ func (t *Transpiler) getVarType(name string) string {
 			return ctype
 		}
 	}
+	if ctype, ok := t.globals[t.currentPackage+"."+name]; ok {
+		return ctype
+	}
 	if ctype, ok := t.globals[name]; ok {
 		return ctype
 	}
@@ -80,7 +84,7 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 			if ident.Value == "byte" || ident.Value == "word" {
 				return ident.Value
 			}
-			if ctype, ok := t.funcTypes[ident.Value]; ok {
+			if ctype, ok := t.funcTypes[t.currentPackage+"."+ident.Value]; ok {
 				return ctype
 			}
 		}
@@ -97,6 +101,21 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 			}
 		}
 		return t.typeOf(e.Right)
+	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			if t.isLocal(pkgIdent.Value) || t.getVarType(pkgIdent.Value) != "word" {
+				return "word" // Struct field access mapped to word by default in transpiler
+			}
+			qname := t.currentPackage + "." + e.Right.Value
+			if ctype, ok := t.globals[qname]; ok {
+				return ctype
+			}
+			if ctype, ok := t.funcTypes[qname]; ok {
+				return ctype
+			}
+			return fmt.Sprintf("t_%s_%s", pkgIdent.Value, e.Right.Value)
+		}
+		return "word"
 	case *ast.InfixExpression:
 		return t.typeOf(e.Left)
 	case *ast.PointerType:
@@ -110,21 +129,17 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 	t.arrayTypes = make(map[string]bool)
 
 	// First pass: find package name
-	t.pkgName = "main" // default
-	for _, stmt := range program.Statements {
-		if pkg, ok := stmt.(*ast.PackageStatement); ok {
-			t.pkgName = pkg.Name.Value
-			break
-		}
-	}
+	t.currentPackage = "main" // default
 
 	var forwardBuf bytes.Buffer
 	forwardBuf.WriteString("// Forward declarations\n")
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
+		case *ast.PackageStatement:
+			t.currentPackage = s.Name.Value
 		case *ast.TypeStatement:
 			base := t.mapType(s.BaseType)
-			forwardBuf.WriteString(fmt.Sprintf("typedef %s t_%s_%s;\n", base, t.pkgName, s.Name.Value))
+			forwardBuf.WriteString(fmt.Sprintf("typedef %s t_%s_%s;\n", base, t.currentPackage, s.Name.Value))
 		case *ast.FuncStatement:
 			retType := "void"
 			if len(s.ReturnTypes) == 1 {
@@ -142,17 +157,26 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 					recvType := t.mapType(s.Receiver.Type)
 					baseType := recvType
 					baseType = strings.TrimSuffix(baseType, "*")
-					if strings.HasPrefix(baseType, "t_"+t.pkgName+"_") {
-						baseType = baseType[len("t_"+t.pkgName+"_"):]
+					if strings.HasPrefix(baseType, "t_"+t.currentPackage+"_") {
+						baseType = baseType[len("t_"+t.currentPackage+"_"):]
+					} else {
+						// It might be from another package?
+						// In transpiler, recvType has format t_pkg_Type
+						if strings.HasPrefix(baseType, "t_") {
+							parts := strings.SplitN(baseType[2:], "_", 2)
+							if len(parts) == 2 {
+								baseType = parts[0] + "_" + parts[1]
+							}
+						}
 					}
 					funcName = baseType + "_" + funcName
 				}
-				structName := fmt.Sprintf("f_%s_%s_returns", t.pkgName, funcName)
+				structName := fmt.Sprintf("f_%s_%s_returns", t.currentPackage, funcName)
 				retType = fmt.Sprintf("struct %s", structName)
 				forwardBuf.WriteString(fmt.Sprintf("%s { %s; };\n", retType, strings.Join(fields, "; ")))
-				t.funcRetTypes[s.Name.Value] = retTypes
+				t.funcRetTypes[t.currentPackage+"."+s.Name.Value] = retTypes
 			}
-			t.funcTypes[s.Name.Value] = retType
+			t.funcTypes[t.currentPackage+"."+s.Name.Value] = retType
 			forwardBuf.WriteString(t.emitFuncSignatureStr(s, true))
 		}
 	}
@@ -160,19 +184,22 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 	t.buf.WriteString(forwardBuf.String())
 
 	t.buf.WriteString("\n// Global variables and constants\n")
+	t.currentPackage = "main"
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
+		case *ast.PackageStatement:
+			t.currentPackage = s.Name.Value
 		case *ast.VarStatement:
 			valType := "word"
 			if s.ValueType != nil {
 				valType = t.mapType(s.ValueType)
 			}
-			t.globals[s.Name.Value] = valType
-			t.buf.WriteString(fmt.Sprintf("%s v_%s_%s", valType, t.pkgName, s.Name.Value))
+			t.globals[t.currentPackage+"."+s.Name.Value] = valType
+			t.buf.WriteString(fmt.Sprintf("%s v_%s_%s", valType, t.currentPackage, s.Name.Value))
 			if s.Value != nil {
 				t.buf.WriteString(fmt.Sprintf(" = %s", t.emitExprStr(s.Value)))
 			} else {
-				if strings.HasPrefix(valType, "t_arr_") || strings.HasPrefix(valType, "t_"+t.pkgName+"_") {
+				if strings.HasPrefix(valType, "t_") && !strings.HasSuffix(valType, "*") {
 					t.buf.WriteString(" = {0}")
 				} else {
 					t.buf.WriteString(" = 0")
@@ -180,21 +207,25 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 			}
 			t.buf.WriteString(";\n")
 		case *ast.ConstStatement:
-			t.buf.WriteString(fmt.Sprintf("#define v_%s_%s %s\n", t.pkgName, s.Name.Value, t.emitExprStr(s.Value)))
+			t.buf.WriteString(fmt.Sprintf("#define v_%s_%s %s\n", t.currentPackage, s.Name.Value, t.emitExprStr(s.Value)))
 		}
 	}
 	t.buf.WriteString("\n")
 
 	// Third pass: Implementations
+	t.currentPackage = "main"
 	for _, stmt := range program.Statements {
-		if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
-			t.emitStatement(funcStmt)
+		switch s := stmt.(type) {
+		case *ast.PackageStatement:
+			t.currentPackage = s.Name.Value
+		case *ast.FuncStatement:
+			t.emitStatement(s)
 		}
 	}
 
 	// Finally: C main function
 	t.buf.WriteString("\nint main() {\n")
-	t.buf.WriteString(fmt.Sprintf("\tf_%s_main();\n", t.pkgName))
+	t.buf.WriteString("\tf_main_main();\n")
 	t.buf.WriteString("\treturn 0;\n")
 	t.buf.WriteString("}\n")
 
@@ -221,7 +252,15 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		if name == "byte" || name == "word" {
 			return name
 		}
-		return fmt.Sprintf("t_%s_%s", t.pkgName, name)
+		return fmt.Sprintf("t_%s_%s", t.currentPackage, name)
+	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			if t.isLocal(pkgIdent.Value) || t.getVarType(pkgIdent.Value) != "word" {
+				return "word" // Struct field access mapped to word by default in transpiler
+			}
+			return fmt.Sprintf("t_%s_%s", pkgIdent.Value, e.Right.Value)
+		}
+		return "word"
 	case *ast.ArrayType:
 		lenStr := "0"
 		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
@@ -249,7 +288,7 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 
 func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) string {
 	retType := "void"
-	if rt, ok := t.funcTypes[s.Name.Value]; ok {
+	if rt, ok := t.funcTypes[t.currentPackage+"."+s.Name.Value]; ok {
 		retType = rt
 	} else if len(s.ReturnTypes) == 1 {
 		retType = t.mapType(s.ReturnTypes[0])
@@ -262,8 +301,8 @@ func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) 
 		recvType := t.mapType(s.Receiver.Type)
 		baseType := recvType
 		baseType = strings.TrimSuffix(baseType, "*")
-		if strings.HasPrefix(baseType, "t_"+t.pkgName+"_") {
-			baseType = baseType[len("t_"+t.pkgName+"_"):]
+		if strings.HasPrefix(baseType, "t_"+t.currentPackage+"_") {
+			baseType = baseType[len("t_"+t.currentPackage+"_"):]
 		}
 		funcName = baseType + "_" + funcName
 
@@ -280,7 +319,7 @@ func (t *Transpiler) emitFuncSignatureStr(s *ast.FuncStatement, isForward bool) 
 		params = append(params, fmt.Sprintf("%s v_%s", t.mapType(p.Type), p.Name.Value))
 	}
 
-	res := fmt.Sprintf("%s f_%s_%s(%s)", retType, t.pkgName, funcName, strings.Join(params, ", "))
+	res := fmt.Sprintf("%s f_%s_%s(%s)", retType, t.currentPackage, funcName, strings.Join(params, ", "))
 	if isForward {
 		res += ";\n"
 	} else {
@@ -303,7 +342,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		if s.Value != nil {
 			t.buf.WriteString(fmt.Sprintf(" = %s", t.emitExprStr(s.Value)))
 		} else {
-			if strings.HasPrefix(valType, "t_arr_") || strings.HasPrefix(valType, "t_"+t.pkgName+"_") {
+			if strings.HasPrefix(valType, "t_") && !strings.HasSuffix(valType, "*") {
 				t.buf.WriteString(" = {0}")
 			} else {
 				t.buf.WriteString(" = 0")
@@ -346,7 +385,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 						if t.isLocal(ident.Value) {
 							t.buf.WriteString(fmt.Sprintf("v_%s = tmp_val_%p_%d;\n", ident.Value, s, i))
 						} else {
-							t.buf.WriteString(fmt.Sprintf("v_%s_%s = tmp_val_%p_%d;\n", t.pkgName, ident.Value, s, i))
+							t.buf.WriteString(fmt.Sprintf("v_%s_%s = tmp_val_%p_%d;\n", t.currentPackage, ident.Value, s, i))
 						}
 					} else {
 						t.buf.WriteString(fmt.Sprintf("%s = tmp_val_%p_%d;\n", t.emitExprStr(nameExpr), s, i))
@@ -378,7 +417,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 						if t.isLocal(ident.Value) {
 							t.buf.WriteString(fmt.Sprintf("v_%s = %s.f%d;\n", ident.Value, tmpName, i))
 						} else {
-							t.buf.WriteString(fmt.Sprintf("v_%s_%s = %s.f%d;\n", t.pkgName, ident.Value, tmpName, i))
+							t.buf.WriteString(fmt.Sprintf("v_%s_%s = %s.f%d;\n", t.currentPackage, ident.Value, tmpName, i))
 						}
 					} else {
 						t.buf.WriteString(fmt.Sprintf("%s = %s.f%d;\n", t.emitExprStr(nameExpr), tmpName, i))
@@ -400,7 +439,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 						if t.isLocal(ident.Value) {
 							t.buf.WriteString(fmt.Sprintf("v_%s = %s;\n", ident.Value, val))
 						} else {
-							t.buf.WriteString(fmt.Sprintf("v_%s_%s = %s;\n", t.pkgName, ident.Value, val))
+							t.buf.WriteString(fmt.Sprintf("v_%s_%s = %s;\n", t.currentPackage, ident.Value, val))
 						}
 					} else {
 						t.buf.WriteString(fmt.Sprintf("%s = %s;\n", t.emitExprStr(nameExpr), val))
@@ -419,7 +458,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			if t.isLocal(ident.Value) {
 				t.buf.WriteString(fmt.Sprintf("v_%s%s;\n", ident.Value, op))
 			} else {
-				t.buf.WriteString(fmt.Sprintf("v_%s_%s%s;\n", t.pkgName, ident.Value, op))
+				t.buf.WriteString(fmt.Sprintf("v_%s_%s%s;\n", t.currentPackage, ident.Value, op))
 			}
 		} else {
 			t.buf.WriteString(fmt.Sprintf("%s%s;\n", val, op))
@@ -478,8 +517,8 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 					t.buf.WriteString(fmt.Sprintf("v_%s = 0;\n", ident.Value))
 					loopVar = fmt.Sprintf("v_%s", ident.Value)
 				} else {
-					t.buf.WriteString(fmt.Sprintf("v_%s_%s = 0;\n", t.pkgName, ident.Value))
-					loopVar = fmt.Sprintf("v_%s_%s", t.pkgName, ident.Value)
+					t.buf.WriteString(fmt.Sprintf("v_%s_%s = 0;\n", t.currentPackage, ident.Value))
+					loopVar = fmt.Sprintf("v_%s_%s", t.currentPackage, ident.Value)
 				}
 			}
 			t.buf.WriteString(fmt.Sprintf("%s limit_val = %s;\n", ctype, limitVal))
@@ -499,7 +538,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		if len(s.ReturnValues) == 1 {
 			t.buf.WriteString(fmt.Sprintf("return %s;\n", t.emitExprStr(s.ReturnValues[0])))
 		} else if len(s.ReturnValues) > 1 {
-			structTyp := t.funcTypes[t.currentFunc.Name.Value]
+			structTyp := t.funcTypes[t.currentPackage+"."+t.currentFunc.Name.Value]
 			var vals []string
 			for _, rv := range s.ReturnValues {
 				vals = append(vals, t.emitExprStr(rv))
@@ -523,7 +562,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 		if t.isLocal(e.Value) {
 			return fmt.Sprintf("v_%s", e.Value)
 		}
-		return fmt.Sprintf("v_%s_%s", t.pkgName, e.Value)
+		return fmt.Sprintf("v_%s_%s", t.currentPackage, e.Value)
 	case *ast.IntegerLiteral:
 		return strconv.FormatInt(e.Value, 10)
 	case *ast.StringLiteral:
@@ -537,12 +576,29 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 	case *ast.IndexExpression:
 		return fmt.Sprintf("(%s).data[%s]", t.emitExprStr(e.Left), t.emitExprStr(e.Index))
 	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			qname := pkgIdent.Value + "." + e.Right.Value
+			if _, ok := t.globals[qname]; ok {
+				return fmt.Sprintf("v_%s_%s", pkgIdent.Value, e.Right.Value)
+			}
+		}
 		if strings.HasSuffix(t.typeOf(e.Left), "*") {
 			return fmt.Sprintf("(%s)->%s", t.emitExprStr(e.Left), e.Right.Value)
 		}
 		return fmt.Sprintf("(%s).%s", t.emitExprStr(e.Left), e.Right.Value)
 	case *ast.CallExpression:
 		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+				funcQName := pkgIdent.Value + "." + sel.Right.Value
+				if _, ok := t.funcTypes[funcQName]; ok {
+					args := []string{}
+					for _, arg := range e.Arguments {
+						args = append(args, t.emitExprStr(arg))
+					}
+					return fmt.Sprintf("f_%s_%s(%s)", pkgIdent.Value, sel.Right.Value, strings.Join(args, ", "))
+				}
+			}
+
 			receiverType := t.typeOf(sel.Left)
 			baseType := receiverType
 			isPtr := false
@@ -550,9 +606,16 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				baseType = baseType[:len(baseType)-1]
 				isPtr = true
 			}
-			if strings.HasPrefix(baseType, "t_"+t.pkgName+"_") {
-				baseType = baseType[len("t_"+t.pkgName+"_"):]
+			
+			pkgPart := t.currentPackage
+			if strings.HasPrefix(baseType, "t_") {
+				parts := strings.SplitN(baseType[2:], "_", 2)
+				if len(parts) == 2 {
+					pkgPart = parts[0]
+					baseType = parts[1]
+				}
 			}
+			
 			funcName := baseType + "_" + sel.Right.Value
 
 			receiverStr := t.emitExprStr(sel.Left)
@@ -564,7 +627,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			for _, arg := range e.Arguments {
 				args = append(args, t.emitExprStr(arg))
 			}
-			return fmt.Sprintf("f_%s_%s(%s)", t.pkgName, funcName, strings.Join(args, ", "))
+			return fmt.Sprintf("f_%s_%s(%s)", pkgPart, funcName, strings.Join(args, ", "))
 		}
 
 		if ident, ok := e.Function.(*ast.Identifier); ok {
@@ -581,7 +644,8 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			for _, arg := range e.Arguments {
 				args = append(args, t.emitExprStr(arg))
 			}
-			return fmt.Sprintf("f_%s_%s(%s)", t.pkgName, ident.Value, strings.Join(args, ", "))
+			funcName := ident.Value
+			return fmt.Sprintf("f_%s_%s(%s)", t.currentPackage, funcName, strings.Join(args, ", "))
 		}
 		return ""
 	}

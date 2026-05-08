@@ -24,6 +24,7 @@ type Builder struct {
 	consts      map[string]Value
 	varTypes    map[string]Type
 	typeDefsAST map[string]*ast.StructType
+	currentPackage string
 }
 
 func NewBuilder() *Builder {
@@ -40,7 +41,7 @@ func NewBuilder() *Builder {
 	}
 }
 
-func astToIRType(expr ast.Expression) Type {
+func (b *Builder) astToIRType(expr ast.Expression) Type {
 	if expr == nil {
 		return TypeWord
 	}
@@ -52,65 +53,99 @@ func astToIRType(expr ast.Expression) Type {
 		case "word":
 			return TypeWord
 		default:
+			qname := b.currentPackage + "." + e.Value
+			if _, ok := b.typeDefsAST[qname]; ok {
+				return Type(qname)
+			}
 			return Type(e.Value)
 		}
+	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			return Type(pkgIdent.Value + "." + e.Right.Value)
+		}
+		return TypeWord
 	case *ast.ArrayType:
 		lenStr := "0"
 		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
 			lenStr = fmt.Sprintf("%d", il.Value)
 		}
-		return Type(fmt.Sprintf("[%s]%s", lenStr, astToIRType(e.Elt)))
+		return Type(fmt.Sprintf("[%s]%s", lenStr, b.astToIRType(e.Elt)))
 	case *ast.PointerType:
-		return Type("*" + string(astToIRType(e.Elt)))
+		return Type("*" + string(b.astToIRType(e.Elt)))
 	}
 	return TypeWord
 }
 
 func (b *Builder) Build(astProg *ast.Program) *Program {
 	// Pass 0: register struct types
+	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
+		if ps, ok := stmt.(*ast.PackageStatement); ok {
+			b.currentPackage = ps.Name.Value
+		}
 		if s, ok := stmt.(*ast.TypeStatement); ok {
 			if st, ok := s.BaseType.(*ast.StructType); ok {
-				b.typeDefsAST[s.Name.Value] = st
+				qname := b.currentPackage + "." + s.Name.Value
+				b.typeDefsAST[qname] = st
+				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, qname)
+			}
+		}
+	}
+
+	// Pass 0.5: build struct type strings
+	b.currentPackage = ""
+	for _, stmt := range astProg.Statements {
+		if ps, ok := stmt.(*ast.PackageStatement); ok {
+			b.currentPackage = ps.Name.Value
+		}
+		if s, ok := stmt.(*ast.TypeStatement); ok {
+			if st, ok := s.BaseType.(*ast.StructType); ok {
+				qname := b.currentPackage + "." + s.Name.Value
 				res := "struct{"
 				for _, f := range st.Fields {
-					res += string(astToIRType(f.Type)) + ";"
+					res += string(b.astToIRType(f.Type)) + ";"
 				}
 				res += "}"
-				b.Program.TypeDefs[s.Name.Value] = res
-				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, s.Name.Value)
+				b.Program.TypeDefs[qname] = res
 			}
 		}
 	}
 
 	// First pass: register all globals, constants, and function signatures
+	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
 		switch s := stmt.(type) {
+		case *ast.PackageStatement:
+			b.currentPackage = s.Name.Value
 		case *ast.VarStatement:
-			typ := astToIRType(s.ValueType)
-			g := &Global{Name: s.Name.Value, Typ: typ}
+			typ := b.astToIRType(s.ValueType)
+			g := &Global{Name: b.currentPackage + "." + s.Name.Value, Typ: typ}
 			b.globals[g.Name] = g
 			b.Program.Globals = append(b.Program.Globals, g)
 		case *ast.ConstStatement:
 			if intLit, ok := s.Value.(*ast.IntegerLiteral); ok {
-				b.consts[s.Name.Value] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}
+				b.consts[b.currentPackage + "." + s.Name.Value] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}
 			}
 		case *ast.FuncStatement:
 			funcName := s.Name.Value
 			var receiverTyp Type
 			if s.Receiver != nil {
-				receiverTyp = astToIRType(s.Receiver.Type)
+				receiverTyp = b.astToIRType(s.Receiver.Type)
 				baseType := string(receiverTyp)
 				baseType = strings.TrimPrefix(baseType, "*")
 				funcName = baseType + "_" + funcName
+			} else {
+				if b.currentPackage != "main" || funcName != "main" {
+					funcName = b.currentPackage + "." + funcName
+				}
 			}
 			f := &Function{Name: funcName}
 			if len(s.ReturnTypes) == 1 {
-				f.ReturnType = astToIRType(s.ReturnTypes[0])
+				f.ReturnType = b.astToIRType(s.ReturnTypes[0])
 			} else if len(s.ReturnTypes) > 1 {
 				var fields []string
 				for _, rt := range s.ReturnTypes {
-					fields = append(fields, string(astToIRType(rt)))
+					fields = append(fields, string(b.astToIRType(rt)))
 				}
 				f.ReturnType = Type(fmt.Sprintf("struct{%s;}", strings.Join(fields, ";")))
 			} else {
@@ -122,7 +157,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 				paramIdx++
 			}
 			for _, p := range s.Parameters {
-				typ := astToIRType(p.Type)
+				typ := b.astToIRType(p.Type)
 				f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
 				paramIdx++
 			}
@@ -132,7 +167,11 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 	}
 
 	// Second pass: build bodies
+	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
+		if ps, ok := stmt.(*ast.PackageStatement); ok {
+			b.currentPackage = ps.Name.Value
+		}
 		if s, ok := stmt.(*ast.FuncStatement); ok {
 			b.buildFunc(s)
 		}
@@ -144,10 +183,14 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	funcName := s.Name.Value
 	if s.Receiver != nil {
-		receiverTyp := astToIRType(s.Receiver.Type)
+		receiverTyp := b.astToIRType(s.Receiver.Type)
 		baseType := string(receiverTyp)
 		baseType = strings.TrimPrefix(baseType, "*")
 		funcName = baseType + "_" + funcName
+	} else {
+		if b.currentPackage != "main" || funcName != "main" {
+			funcName = b.currentPackage + "." + funcName
+		}
 	}
 	b.currentFunc = b.funcs[funcName]
 	b.nextValueID = 1
@@ -366,7 +409,7 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 func (b *Builder) buildStatement(stmt ast.Statement) {
 	switch s := stmt.(type) {
 	case *ast.VarStatement:
-		typ := astToIRType(s.ValueType)
+		typ := b.astToIRType(s.ValueType)
 		b.varTypes[s.Name.Value] = typ
 		var val Value
 		if s.Value != nil {
@@ -674,8 +717,17 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 	case *ast.IntegerLiteral:
 		return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(e.Value)}, e)
 	case *ast.Identifier:
+		qname := b.currentPackage + "." + e.Value
+		if g, ok := b.globals[qname]; ok {
+			return b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: g}, e)
+		}
 		if g, ok := b.globals[e.Value]; ok {
 			return b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: g}, e)
+		}
+		if c, ok := b.consts[qname]; ok {
+			if cw, ok := c.(*ConstWord); ok {
+				return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: cw.Val}, e)
+			}
 		}
 		if c, ok := b.consts[e.Value]; ok {
 			if cw, ok := c.(*ConstWord); ok {
@@ -700,6 +752,18 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		}
 		return b.addInstr(&ExtractElement{BaseInstruction: BaseInstruction{Typ: eltType}, Array: arr, Index: idx}, e)
 	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			qname := pkgIdent.Value + "." + e.Right.Value
+			if g, ok := b.globals[qname]; ok {
+				return b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: g}, e)
+			}
+			if c, ok := b.consts[qname]; ok {
+				if cw, ok := c.(*ConstWord); ok {
+					return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: cw.Val}, e)
+				}
+			}
+		}
+
 		strct := b.buildExpr(e.Left)
 		fieldName := e.Right.Value
 
@@ -720,7 +784,7 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		for i, f := range st.Fields {
 			if f.Name.Value == fieldName {
 				fieldIdx = i
-				fieldType = astToIRType(f.Type)
+				fieldType = b.astToIRType(f.Type)
 				break
 			}
 		}
@@ -777,6 +841,17 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 
 	case *ast.CallExpression:
 		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+				qname := pkgIdent.Value + "." + sel.Right.Value
+				if f, exists := b.funcs[qname]; exists {
+					var args []Value
+					for _, arg := range e.Arguments {
+						args = append(args, b.buildExpr(arg))
+					}
+					return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+				}
+			}
+
 			leftVal := b.buildExpr(sel.Left)
 			structTyp := string(leftVal.Type())
 			isPtr := strings.HasPrefix(structTyp, "*")
@@ -791,7 +866,10 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 					receiverVal = leftVal
 				} else {
 					if ident, ok := sel.Left.(*ast.Identifier); ok {
-						if g, ok := b.globals[ident.Value]; ok {
+						qname := b.currentPackage + "." + ident.Value
+						if g, ok := b.globals[qname]; ok {
+							receiverVal = b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Global: g}, expr)
+						} else if g, ok := b.globals[ident.Value]; ok {
 							receiverVal = b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Global: g}, expr)
 						} else {
 							receiverVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Local: leftVal}, expr)
@@ -829,7 +907,11 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			for _, arg := range e.Arguments {
 				args = append(args, b.buildExpr(arg))
 			}
-			f := b.funcs[ident.Value]
+			funcName := ident.Value
+			if _, ok := b.funcs[b.currentPackage + "." + funcName]; ok {
+				funcName = b.currentPackage + "." + funcName
+			}
+			f := b.funcs[funcName]
 			return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
 		}
 	case *ast.PointerType:
@@ -840,6 +922,10 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 	case *ast.PrefixExpression:
 		if e.Operator == "&" {
 			if ident, ok := e.Right.(*ast.Identifier); ok {
+				qname := b.currentPackage + "." + ident.Value
+				if g, ok := b.globals[qname]; ok {
+					return b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, expr)
+				}
 				if g, ok := b.globals[ident.Value]; ok {
 					return b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, expr)
 				}
@@ -853,7 +939,11 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 
 func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 	if ident, ok := lhs.(*ast.Identifier); ok {
-		if g, ok := b.globals[ident.Value]; ok {
+		qname := b.currentPackage + "." + ident.Value
+		if g, ok := b.globals[qname]; ok {
+			val = b.coerceType(val, g.Typ)
+			b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, val)
+		} else if g, ok := b.globals[ident.Value]; ok {
 			val = b.coerceType(val, g.Typ)
 			b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, val)
 		} else {

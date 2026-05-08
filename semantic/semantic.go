@@ -43,6 +43,7 @@ type Analyzer struct {
 	currentScope   *Scope
 	hasMainPackage bool
 	hasMainFunc    bool
+	currentPackage string
 }
 
 func New() *Analyzer {
@@ -60,28 +61,37 @@ func New() *Analyzer {
 	}
 }
 
-func exprToString(expr ast.Expression) string {
+func (a *Analyzer) exprToString(expr ast.Expression) string {
 	if expr == nil {
 		return ""
 	}
 	switch e := expr.(type) {
 	case *ast.Identifier:
+		qname := a.currentPackage + "." + e.Value
+		if _, ok := a.globalScope.symbols[qname]; ok {
+			return qname
+		}
 		return e.Value
+	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			return pkgIdent.Value + "." + e.Right.Value
+		}
+		return a.exprToString(e.Left) + "." + e.Right.Value
 	case *ast.ArrayType:
 		lenStr := "0"
 		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
 			lenStr = fmt.Sprintf("%d", il.Value)
 		}
-		return fmt.Sprintf("[%s]%s", lenStr, exprToString(e.Elt))
+		return fmt.Sprintf("[%s]%s", lenStr, a.exprToString(e.Elt))
 	case *ast.StructType:
 		res := "struct{"
 		for _, f := range e.Fields {
-			res += exprToString(f.Type) + ";"
+			res += a.exprToString(f.Type) + ";"
 		}
 		res += "}"
 		return res
 	case *ast.PointerType:
-		return "*" + exprToString(e.Elt)
+		return "*" + a.exprToString(e.Elt)
 	default:
 		return expr.TokenLiteral()
 	}
@@ -93,33 +103,39 @@ func (a *Analyzer) Errors() []string {
 
 func (a *Analyzer) Analyze(program *ast.Program) {
 	// First pass: define global symbols
+	a.currentPackage = ""
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
 		case *ast.PackageStatement:
+			a.currentPackage = s.Name.Value
 			if s.Name.Value == "main" {
 				a.hasMainPackage = true
 			}
 		case *ast.FuncStatement:
-			if s.Name.Value == "main" && s.Receiver == nil {
+			if a.currentPackage == "main" && s.Name.Value == "main" && s.Receiver == nil {
 				a.hasMainFunc = true
 			}
 
 			funcName := s.Name.Value
 			if s.Receiver != nil {
-				recvTyp := exprToString(s.Receiver.Type)
+				recvTyp := a.exprToString(s.Receiver.Type)
 				baseType := recvTyp
 				baseType = strings.TrimPrefix(baseType, "*")
 				funcName = baseType + "_" + funcName
+			} else {
+				if a.currentPackage != "main" || funcName != "main" {
+					funcName = a.currentPackage + "." + funcName
+				}
 			}
 			a.globalScope.Define(funcName, "func")
 		case *ast.VarStatement:
 			typ := "word" // default
 			if s.ValueType != nil {
-				typ = exprToString(s.ValueType)
+				typ = a.exprToString(s.ValueType)
 			}
-			a.globalScope.Define(s.Name.Value, typ)
+			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, typ)
 		case *ast.ConstStatement:
-			a.globalScope.Define(s.Name.Value, "word") // simplification
+			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, "word") // simplification
 		}
 	}
 
@@ -131,7 +147,11 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 	}
 
 	// Second pass: check function bodies
+	a.currentPackage = ""
 	for _, stmt := range program.Statements {
+		if ps, ok := stmt.(*ast.PackageStatement); ok {
+			a.currentPackage = ps.Name.Value
+		}
 		if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
 			a.analyzeFunc(funcStmt)
 		}
@@ -143,11 +163,11 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	defer func() { a.currentScope = a.currentScope.parent }()
 
 	if s.Receiver != nil {
-		a.currentScope.Define(s.Receiver.Name.Value, exprToString(s.Receiver.Type))
+		a.currentScope.Define(s.Receiver.Name.Value, a.exprToString(s.Receiver.Type))
 	}
 
 	for _, p := range s.Parameters {
-		a.currentScope.Define(p.Name.Value, exprToString(p.Type))
+		a.currentScope.Define(p.Name.Value, a.exprToString(p.Type))
 	}
 
 	a.analyzeBlock(s.Body)
@@ -159,7 +179,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 		case *ast.VarStatement:
 			typ := "word"
 			if s.ValueType != nil {
-				typ = exprToString(s.ValueType)
+				typ = a.exprToString(s.ValueType)
 			}
 			a.currentScope.Define(s.Name.Value, typ)
 		case *ast.AssignStatement:
@@ -206,6 +226,10 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 	switch e := expr.(type) {
 	case *ast.Identifier:
+		qname := a.currentPackage + "." + e.Value
+		if _, ok := a.currentScope.Resolve(qname); ok {
+			return
+		}
 		if _, ok := a.currentScope.Resolve(e.Value); !ok {
 			a.errors = append(a.errors, fmt.Sprintf("undefined identifier: %s", e.Value))
 		}
@@ -223,6 +247,12 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		a.analyzeExpression(e.Left)
 		a.analyzeExpression(e.Index)
 	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			qname := pkgIdent.Value + "." + e.Right.Value
+			if _, ok := a.currentScope.Resolve(qname); ok {
+				return
+			}
+		}
 		a.analyzeExpression(e.Left)
 	}
 }

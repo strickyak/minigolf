@@ -50,16 +50,17 @@ HERE
 - lwasm --format=obj -o'cstart.o' cstart.asm
 - lwlink --format=decb -o'main.decb' --script=script --entry=entry main.o cstart.o
 
-( cd /home/strick/modoc/coco-shelf/gomar/ && go build --tags=level1,coco1,trace gomar.go )
+# ( cd /home/strick/modoc/coco-shelf/gomar/ && go build --tags=level1,coco1,trace gomar.go )
+( cd /home/strick/modoc/coco-shelf/gomar/ && go build --tags=level1,coco1 gomar.go )
 
 /home/strick/modoc/coco-shelf/gomar/gomar \
     --loadm 'main.decb' \
     --entry=0x7F00 \
-    -t=1 \
     -n=1 \
     -raw_hyper_print=1 \
     | tee _out
 Z=$?
+    # -t=1 \
 
 sleep 2
 

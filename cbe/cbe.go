@@ -74,7 +74,7 @@ func (c *CBE) mapType(typ string) string {
 		return typeName
 	}
 	// Assume it's a named struct type if it reaches here
-	return typ
+	return strings.ReplaceAll(typ, ".", "_")
 }
 
 func (c *CBE) Generate(program *ir.Program) string {
@@ -99,13 +99,15 @@ func (c *CBE) Generate(program *ir.Program) string {
 					start = i + 1
 				}
 			}
-			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s} %s;\n", fields, name))
+			nameSanitized := strings.ReplaceAll(name, ".", "_")
+			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s} %s;\n", fields, nameSanitized))
 		}
 	}
 
 	// Globals
 	for _, g := range program.Globals {
-		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(string(g.Typ)), g.Name))
+		gName := strings.ReplaceAll(g.Name, ".", "_")
+		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(string(g.Typ)), gName))
 	}
 	if len(program.Globals) > 0 {
 		c.buf.WriteString("\n")
@@ -152,7 +154,8 @@ func (c *CBE) emitFuncSignature(f *ir.Function, isForward bool) {
 		params = append(params, fmt.Sprintf("%s v_%s", c.mapType(string(p.Typ)), p.Name))
 	}
 
-	c.buf.WriteString(fmt.Sprintf("%s f_%s(%s)", retType, f.Name, strings.Join(params, ", ")))
+	fName := strings.ReplaceAll(f.Name, ".", "_")
+	c.buf.WriteString(fmt.Sprintf("%s f_%s(%s)", retType, fName, strings.Join(params, ", ")))
 	if isForward {
 		c.buf.WriteString(";\n")
 	} else {
@@ -261,7 +264,8 @@ func (c *CBE) formatVal(v ir.Value) string {
 	case *ir.Parameter:
 		return "v_" + val.Name
 	case *ir.Global:
-		return "v_" + val.Name
+		gName := strings.ReplaceAll(val.Name, ".", "_")
+		return "v_" + gName
 	case *ir.StringLiteral:
 		return fmt.Sprintf("%q", val.Value)
 	case ir.Instruction:
@@ -345,7 +349,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			}
 			args = append(args, argStr)
 		}
-		return fmt.Sprintf("f_%s(%s)", i.Func.Name, strings.Join(args, ", "))
+		fName := strings.ReplaceAll(i.Func.Name, ".", "_")
+		return fmt.Sprintf("f_%s(%s)", fName, strings.Join(args, ", "))
 	case *ir.BuiltinCall:
 		if i.Name == "print" || i.Name == "println" {
 			return c.emitPrint(i.Name == "println", i.Args)
@@ -364,7 +369,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 	case *ir.ExtractField:
 		return fmt.Sprintf("(%s).f%d", c.formatVal(i.Struct), i.FieldIndex)
 	case *ir.AddressOfGlobal:
-		return fmt.Sprintf("(&v_%s)", i.Global.Name)
+		gName := strings.ReplaceAll(i.Global.Name, ".", "_")
+		return fmt.Sprintf("(&v_%s)", gName)
 	case *ir.AddressOfLocal:
 		return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
 	case *ir.LoadPtr:
