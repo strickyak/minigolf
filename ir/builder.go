@@ -479,6 +479,8 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 			return rtype
 		case TypeWord:
 			return rtype
+		case TypeInt:
+			return rtype
 		default:
 			log.Panicf("NO CASE [left const] in sameTypeOfValues left=(%T)%v:%v op=%q right=(%T)%v:%v", left, left, ltype, op, right, right, rtype)
 		}
@@ -488,6 +490,8 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 		case TypeByte:
 			return ltype
 		case TypeWord:
+			return ltype
+		case TypeInt:
 			return ltype
 		default:
 			log.Panicf("NO CASE [right const] in sameTypeOfValues left=(%T)%v:%v op=%q right=(%T)%v:%v", left, left, ltype, op, right, right, rtype)
@@ -1013,6 +1017,12 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		}
 
 	case *ast.CallExpression:
+		if ptrType, ok := e.Function.(*ast.PointerType); ok {
+			targetTyp := b.astToIRType(ptrType)
+			val := b.buildExpr(e.Arguments[0])
+			return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, expr)
+		}
+		
 		var isGenericFunc bool
 		var funcName string
 		var rawFuncName string
@@ -1181,8 +1191,44 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 				if g, ok := b.globals[ident.Value]; ok {
 					return b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, expr)
 				}
-				panic("Taking address of local variable not supported yet")
+				if typ, ok := b.varTypes[ident.Value]; ok {
+					val := b.readVariable(ident.Value, b.currentBlock)
+					return b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(typ))}, Local: val}, expr)
+				}
+				panic("Taking address of variable not found: " + ident.Value)
 			}
+			if sel, ok := e.Right.(*ast.SelectorExpression); ok {
+				strct := b.buildExpr(sel.Left)
+				structName := string(strct.Type())
+				var ptr Value
+				if strings.HasPrefix(structName, "*") {
+					ptr = strct
+					structName = structName[1:]
+				} else {
+					ptr = b.buildExpr(&ast.PrefixExpression{Operator: "&", Right: sel.Left, Token: e.Token})
+				}
+				
+				st, ok := b.typeDefsAST[structName]
+				if !ok {
+					panic("Taking address of field on unknown struct type: " + structName)
+				}
+				
+				fieldIdx := -1
+				var fieldType Type
+				for i, f := range st.Fields {
+					if f.Name.Value == sel.Right.Value {
+						fieldIdx = i
+						fieldType = b.astToIRType(f.Type)
+						break
+					}
+				}
+				if fieldIdx == -1 {
+					panic("Field not found: " + sel.Right.Value)
+				}
+				
+				return b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: Type("*" + string(fieldType))}, Ptr: ptr, FieldIndex: fieldIdx}, expr)
+			}
+			panic("Taking address of expression not supported yet")
 		}
 	}
 	log.Panicf("NO CASE: Builder.buildExpr: expr (%T)%v", expr, expr)

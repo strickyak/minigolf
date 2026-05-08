@@ -366,6 +366,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			return fmt.Sprintf("(byte)(%s)", c.formatVal(i.Operand))
 		case "zero_ext":
 			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
+		case "word_to_ptr":
+			return fmt.Sprintf("(%s)(%s)", c.mapType(string(i.Typ)), c.formatVal(i.Operand))
 		}
 	case *ir.ZeroInit:
 		return fmt.Sprintf("(%s){0}", c.mapType(string(i.Typ)))
@@ -378,6 +380,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(&v_%s)", gName)
 	case *ir.AddressOfLocal:
 		return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
+	case *ir.AddressOfField:
+		return fmt.Sprintf("(&(%s->f%d))", c.formatVal(i.Ptr), i.FieldIndex)
 	case *ir.LoadPtr:
 		return fmt.Sprintf("(*%s)", c.formatVal(i.Ptr))
 	case *ir.ExtractFieldPtr:

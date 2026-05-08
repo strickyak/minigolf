@@ -420,6 +420,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		localOffset := b.slots[localInstr.GetID()]
 		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rbp - %d]\n", localOffset))
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.AddressOfField:
+		structName := strings.TrimPrefix(string(i.Ptr.Type()), "*")
+		byteOffset, _ := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		b.loadVal(i.Ptr, "rax")
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tadd rax, %d\n", byteOffset))
+		}
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.ExtractFieldPtr:
 		structName := strings.TrimPrefix(string(i.Ptr.Type()), "*")
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)

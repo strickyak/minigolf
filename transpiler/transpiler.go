@@ -25,6 +25,7 @@ type Transpiler struct {
 	currentFunc  *ast.FuncStatement
 	currentPackage string
 	genericTemplates map[string]*GenericTemplate
+	typeDefs     map[string]*ast.TypeStatement
 }
 
 type GenericTemplate struct {
@@ -38,6 +39,7 @@ func New() *Transpiler {
 		funcTypes:    make(map[string]string),
 		funcRetTypes: make(map[string][]string),
 		genericTemplates: make(map[string]*GenericTemplate),
+		typeDefs:     make(map[string]*ast.TypeStatement),
 	}
 }
 
@@ -114,17 +116,38 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 		return t.typeOf(e.Right)
 	case *ast.SelectorExpression:
 		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
-			if t.isLocal(pkgIdent.Value) || t.getVarType(pkgIdent.Value) != "word" {
-				return "word" // Struct field access mapped to word by default in transpiler
+			qname := t.getVarType(pkgIdent.Value)
+			
+			// Extract struct name from mangled t_pkg_StructName
+			structName := strings.TrimPrefix(qname, "t_")
+			structName = strings.Replace(structName, "_", ".", 1)
+			
+			if st, ok := t.typeDefs[structName]; ok {
+				if structType, ok := st.BaseType.(*ast.StructType); ok {
+					for _, f := range structType.Fields {
+						if f.Name.Value == e.Right.Value {
+							if ident, ok := f.Type.(*ast.Identifier); ok {
+								if ident.Value == "byte" || ident.Value == "word" {
+									return ident.Value
+								}
+								if ident.Value == "int" {
+									return "intptr_t"
+								}
+							}
+							return t.mapType(f.Type)
+						}
+					}
+				}
 			}
-			qname := t.currentPackage + "." + e.Right.Value
-			if ctype, ok := t.globals[qname]; ok {
+			
+			qname2 := t.currentPackage + "." + e.Right.Value
+			if ctype, ok := t.globals[qname2]; ok {
 				return ctype
 			}
-			if ctype, ok := t.funcTypes[qname]; ok {
+			if ctype, ok := t.funcTypes[qname2]; ok {
 				return ctype
 			}
-			return fmt.Sprintf("t_%s_%s", pkgIdent.Value, e.Right.Value)
+			return "word"
 		}
 		return "word"
 	case *ast.InfixExpression:
@@ -149,6 +172,7 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 		case *ast.PackageStatement:
 			t.currentPackage = s.Name.Value
 		case *ast.TypeStatement:
+			t.typeDefs[t.currentPackage+"."+s.Name.Value] = s
 			if len(s.TypeParameters) > 0 {
 				qname := t.currentPackage + "." + s.Name.Value
 				var typeParams []string
@@ -849,6 +873,12 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 		}
 		return fmt.Sprintf("(%s).%s", t.emitExprStr(e.Left), e.Right.Value)
 	case *ast.CallExpression:
+		if ptrType, ok := e.Function.(*ast.PointerType); ok {
+			targetTyp := t.mapType(ptrType)
+			argStr := t.emitExprStr(e.Arguments[0])
+			return fmt.Sprintf("((%s)(%s))", targetTyp, argStr)
+		}
+		
 		var isGenericFunc bool
 		var funcName string
 		var rawFuncName string

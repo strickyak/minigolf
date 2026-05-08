@@ -229,6 +229,13 @@ func (b *Backend) memAccess(offsetFromEntry int) string {
 	return fmt.Sprintf("%d,s", sOffset)
 }
 
+func offsetAddrStr(valStr string, offset int) string {
+	if idx := strings.Index(valStr, ","); idx != -1 {
+		return fmt.Sprintf("%d+%s", offset, valStr)
+	}
+	return fmt.Sprintf("%s+%d", valStr, offset)
+}
+
 func (b *Backend) emitLoadAddr(reg string, addrStr string) {
 	if strings.HasPrefix(addrStr, "v_") && !strings.Contains(addrStr, ",") {
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%s\n", reg, addrStr))
@@ -916,6 +923,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.emitLoadAddr("x", b.memAccess(localOffset))
 		b.buf.WriteString("\ttfr x,d\n")
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
+	case *ir.AddressOfField:
+		structName := string(i.Ptr.Type())
+		structName = strings.TrimPrefix(structName, "*")
+		byteOffset, _ := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		b.loadVal(i.Ptr)
+		if byteOffset > 0 {
+			b.buf.WriteString(fmt.Sprintf("\taddd #%d\n", byteOffset))
+		}
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
 	case *ir.ExtractFieldPtr:
 		b.flushRegisters()
 		structName := string(i.Ptr.Type())
@@ -1042,7 +1058,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			valStr := b.getAddrStr(i.Val)
 			switch fieldSize {
 			case 1:
-				b.buf.WriteString(fmt.Sprintf("\tldb %s+1\n", valStr))
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", offsetAddrStr(valStr, 1)))
 				b.buf.WriteString("\tstb ,x\t\t; store byte via pointer\n")
 			case 2:
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))

@@ -271,6 +271,14 @@ type AddressOfLocal struct {
 
 func (i *AddressOfLocal) Opcode() string { return "addrof_local" }
 
+type AddressOfField struct {
+	BaseInstruction
+	Ptr        Value
+	FieldIndex int
+}
+
+func (i *AddressOfField) Opcode() string { return "addrof_field" }
+
 type ExtractFieldPtr struct {
 	BaseInstruction
 	Ptr        Value
