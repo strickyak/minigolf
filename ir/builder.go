@@ -50,8 +50,10 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		switch e.Value {
 		case "byte":
 			return TypeByte
-		case "word":
+		case "word", "uint":
 			return TypeWord
+		case "int":
+			return TypeInt
 		default:
 			qname := b.currentPackage + "." + e.Value
 			if _, ok := b.typeDefsAST[qname]; ok {

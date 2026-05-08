@@ -124,11 +124,7 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-	if *outFlag == "" {
-		fmt.Fprintln(os.Stderr, "Error: Output object file flag (-o) is required.")
-		flag.Usage()
-		os.Exit(1)
-	}
+
 
 	// Remaining arguments are source files
 	sourceFiles := flag.Args()
@@ -139,17 +135,19 @@ func main() {
 	}
 	mainSourceFile := sourceFiles[0]
 
-	// Create a log file based on the output filename for debugging
-	logFilename := *outFlag + ".log"
-	logFile, err := os.Create(logFilename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Fatal error: could not create log file %s: %v\n", logFilename, err)
-		os.Exit(1)
+	var logger *log.Logger
+	if *outFlag != "" {
+		logFilename := *outFlag + ".log"
+		logFile, err := os.Create(logFilename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Fatal error: could not create log file %s: %v\n", logFilename, err)
+			os.Exit(1)
+		}
+		defer logFile.Close()
+		logger = log.New(logFile, "minigo: ", log.Lshortfile)
+	} else {
+		logger = log.New(os.Stderr, "minigo: ", log.Lshortfile)
 	}
-	defer logFile.Close()
-
-	// Configure a dedicated logger
-	logger := log.New(logFile, "minigo: ", log.Lshortfile)
 
 	logger.Printf("Starting whole-program compilation")
 	logger.Printf("Target architecture: %s", *archFlag)
@@ -185,7 +183,7 @@ func main() {
 		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + irCode
 
-		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+        err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing IR output: %v\n", err)
 			os.Exit(1)
@@ -205,7 +203,7 @@ func main() {
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation (CBE Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + cCode
 
-		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+        err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing CBE output: %v\n", err)
 			os.Exit(1)
@@ -225,7 +223,7 @@ func main() {
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation (X86_64 Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + asmCode
 
-		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+        err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing X86_64 output: %v\n", err)
 			os.Exit(1)
@@ -245,7 +243,7 @@ func main() {
 		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + asmCode
 
-		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+        err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing 6809 output: %v\n", err)
 			os.Exit(1)
@@ -262,7 +260,7 @@ func main() {
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + cCode
 
-		err = os.WriteFile(*outFlag, []byte(finalOutput), 0644)
+        err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing C output: %v\n", err)
 			os.Exit(1)
@@ -273,4 +271,12 @@ func main() {
 
 	// For other values of -m, panic for now
 	panic("Architecture " + *archFlag + " not yet implemented. Use -m=C for the transpiler.")
+}
+
+func writeOutput(outFlag string, finalOutput string) error {
+	if outFlag == "" {
+		_, err := os.Stdout.WriteString(finalOutput)
+		return err
+	}
+	return os.WriteFile(outFlag, []byte(finalOutput), 0644)
 }

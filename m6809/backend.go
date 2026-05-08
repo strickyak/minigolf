@@ -1106,19 +1106,20 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		lblTrue := b.nextLabel()
 		lblEnd := b.nextLabel()
 
+		isInt := i.Left.Type() == ir.TypeInt
 		switch i.Op {
 		case "eq":
 			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblTrue))
 		case "neq":
 			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
 		case "lt":
-			b.buf.WriteString(fmt.Sprintf("\tblo %s\n", lblTrue))
+			if isInt { b.buf.WriteString(fmt.Sprintf("\tblt %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tblo %s\n", lblTrue)) }
 		case "lte":
-			b.buf.WriteString(fmt.Sprintf("\tbls %s\n", lblTrue))
+			if isInt { b.buf.WriteString(fmt.Sprintf("\tble %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tbls %s\n", lblTrue)) }
 		case "gt":
-			b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue))
+			if isInt { b.buf.WriteString(fmt.Sprintf("\tbgt %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue)) }
 		case "gte":
-			b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue))
+			if isInt { b.buf.WriteString(fmt.Sprintf("\tbge %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue)) }
 		default:
 			log.Panicf("Unknown Compare Op in M6809: %q", i.Op)
 		}
@@ -1245,7 +1246,11 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		if strLit, ok := arg.(*ir.StringLiteral); ok {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
-			formatStrs = append(formatStrs, "%u")
+			if arg.Type() == ir.TypeInt {
+				formatStrs = append(formatStrs, "%d")
+			} else {
+				formatStrs = append(formatStrs, "%u")
+			}
 			dataArgs = append(dataArgs, arg)
 		}
 	}

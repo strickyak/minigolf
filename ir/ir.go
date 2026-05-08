@@ -13,6 +13,7 @@ const (
 	TypeUnknown Type = ""
 	TypeByte    Type = "byte"
 	TypeWord    Type = "word"
+	TypeInt     Type = "int"
 	TypeVoid    Type = "void"
 )
 
@@ -20,7 +21,7 @@ func GetTypeSize(typ string) int {
 	if typ == "byte" {
 		return 1
 	}
-	if typ == "word" {
+	if typ == "word" || typ == "int" {
 		return 2
 	}
 	if strings.HasPrefix(typ, "[") {

@@ -459,10 +459,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tsub rax, rcx\n")
 		case "mul":
 			b.buf.WriteString("\timul rax, rcx\n")
-		case "div":
-			b.buf.WriteString("\txor rdx, rdx\n\tdiv rcx\n")
-		case "mod":
-			b.buf.WriteString("\txor rdx, rdx\n\tdiv rcx\n\tmov rax, rdx\n")
+		case "div", "mod":
+			if i.Typ == ir.TypeInt {
+				b.buf.WriteString("\tcqo\n\tidiv rcx\n")
+			} else {
+				b.buf.WriteString("\txor rdx, rdx\n\tdiv rcx\n")
+			}
+			if i.Op == "mod" {
+				b.buf.WriteString("\tmov rax, rdx\n")
+			}
 		case "and":
 			b.buf.WriteString("\tand rax, rcx\n")
 		case "or":
@@ -472,7 +477,11 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case "shl":
 			b.buf.WriteString("\tshl rax, cl\n")
 		case "shr":
-			b.buf.WriteString("\tshr rax, cl\n")
+			if i.Typ == ir.TypeInt {
+				b.buf.WriteString("\tsar rax, cl\n")
+			} else {
+				b.buf.WriteString("\tshr rax, cl\n")
+			}
 		}
 		if i.Typ == ir.TypeByte {
 			b.buf.WriteString("\tmovzx rax, al\n")
@@ -482,19 +491,20 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i.Left, "rax")
 		b.loadVal(i.Right, "rcx")
 		b.buf.WriteString("\tcmp rax, rcx\n")
+		isInt := i.Left.Type() == ir.TypeInt
 		switch i.Op {
 		case "eq":
 			b.buf.WriteString("\tsete al\n")
 		case "neq":
 			b.buf.WriteString("\tsetne al\n")
 		case "lt":
-			b.buf.WriteString("\tsetb al\n")
+			if isInt { b.buf.WriteString("\tsetl al\n") } else { b.buf.WriteString("\tsetb al\n") }
 		case "lte":
-			b.buf.WriteString("\tsetbe al\n")
+			if isInt { b.buf.WriteString("\tsetle al\n") } else { b.buf.WriteString("\tsetbe al\n") }
 		case "gt":
-			b.buf.WriteString("\tseta al\n")
+			if isInt { b.buf.WriteString("\tsetg al\n") } else { b.buf.WriteString("\tseta al\n") }
 		case "gte":
-			b.buf.WriteString("\tsetae al\n")
+			if isInt { b.buf.WriteString("\tsetge al\n") } else { b.buf.WriteString("\tsetae al\n") }
 		}
 		b.buf.WriteString("\tmovzx rax, al\n")
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
@@ -551,7 +561,11 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		if strLit, ok := arg.(*ir.StringLiteral); ok {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
-			formatStrs = append(formatStrs, "%llu")
+			if arg.Type() == ir.TypeInt {
+				formatStrs = append(formatStrs, "%lld")
+			} else {
+				formatStrs = append(formatStrs, "%llu")
+			}
 			dataArgs = append(dataArgs, arg)
 		}
 	}

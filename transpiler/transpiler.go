@@ -252,6 +252,12 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		if name == "byte" || name == "word" {
 			return name
 		}
+		if name == "uint" {
+			return "word"
+		}
+		if name == "int" {
+			return "intptr_t"
+		}
 		return fmt.Sprintf("t_%s_%s", t.currentPackage, name)
 	case *ast.SelectorExpression:
 		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {

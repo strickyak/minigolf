@@ -389,8 +389,13 @@ func (c *CBE) emitPrint(newline bool, args []ir.Value) string {
 		if strLit, ok := arg.(*ir.StringLiteral); ok {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
-			formatStrs = append(formatStrs, "%llu")
-			argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)%s", c.formatVal(arg)))
+			if arg.Type() == ir.TypeInt {
+				formatStrs = append(formatStrs, "%lld")
+				argStrs = append(argStrs, fmt.Sprintf("(long long)%s", c.formatVal(arg)))
+			} else {
+				formatStrs = append(formatStrs, "%llu")
+				argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)%s", c.formatVal(arg)))
+			}
 		}
 	}
 
