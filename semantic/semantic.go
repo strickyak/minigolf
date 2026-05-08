@@ -53,6 +53,9 @@ func New() *Analyzer {
 	global.Define("println", "func")
 	global.Define("byte", "type")
 	global.Define("word", "type")
+	global.Define("int", "type")
+	global.Define("uint", "type")
+	global.Define("any", "type")
 
 	return &Analyzer{
 		errors:       []string{},
@@ -245,7 +248,9 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		}
 	case *ast.IndexExpression:
 		a.analyzeExpression(e.Left)
-		a.analyzeExpression(e.Index)
+		for _, idx := range e.Indices {
+			a.analyzeExpression(idx)
+		}
 	case *ast.SelectorExpression:
 		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
 			qname := pkgIdent.Value + "." + e.Right.Value

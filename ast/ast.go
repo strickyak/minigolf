@@ -94,9 +94,11 @@ func (s *VarStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *VarStatement) GetToken() *token.Token { return &s.Token }
 
 type FuncStatement struct {
-	Token       token.Token // The 'func' token
-	Name        *Identifier
-	Receiver    *Parameter // Optional
+	Token          token.Token // The 'func' token
+	Name           *Identifier
+	TypeParameters []*Identifier
+	Tokens         []token.Token
+	Receiver       *Parameter // Optional
 	Parameters  []*Parameter
 	ReturnTypes []Expression // Optional
 	Body        *BlockStatement
@@ -316,9 +318,9 @@ func (e *RangeExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *RangeExpression) GetToken() *token.Token { return &e.Token }
 
 type IndexExpression struct {
-	Token token.Token // The '[' token
-	Left  Expression
-	Index Expression
+	Token   token.Token // The '[' token
+	Left    Expression
+	Indices []Expression
 }
 
 func (e *IndexExpression) expressionNode()        {}

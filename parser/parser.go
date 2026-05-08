@@ -288,6 +288,10 @@ func (p *Parser) ParseExpressionForGeneric() ast.Expression {
 	return p.parseExpression(LOWEST)
 }
 
+func (p *Parser) ParseStatementForGeneric() ast.Statement {
+	return p.parseTopLevelStatement("")
+}
+
 func (p *Parser) parseVarStatement() *ast.VarStatement {
 	stmt := &ast.VarStatement{Token: p.curToken}
 
@@ -315,6 +319,7 @@ func (p *Parser) parseVarStatement() *ast.VarStatement {
 }
 
 func (p *Parser) parseFuncStatement() *ast.FuncStatement {
+	startPos := p.pos - 2
 	stmt := &ast.FuncStatement{Token: p.curToken}
 
 	if p.peekTokenIs(token.LPAREN) {
@@ -336,6 +341,21 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 		return nil
 	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+
+	if p.peekTokenIs(token.LBRACKET) {
+		p.nextToken() // move to '['
+		for !p.peekTokenIs(token.RBRACKET) {
+			p.nextToken()
+			if p.curToken.Type == token.IDENT && p.curToken.Literal != "any" {
+				stmt.TypeParameters = append(stmt.TypeParameters, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+			} else if p.curToken.Type == token.COMMA {
+				continue
+			}
+		}
+		if !p.expectPeek(token.RBRACKET) {
+			return nil
+		}
+	}
 
 	if !p.expectPeek(token.LPAREN) {
 		return nil
@@ -366,6 +386,12 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 	}
 
 	stmt.Body = p.parseBlockStatement()
+
+	if len(stmt.TypeParameters) > 0 {
+		endPos := p.pos - 1
+		stmt.Tokens = make([]token.Token, endPos-startPos)
+		copy(stmt.Tokens, p.tokens[startPos:endPos])
+	}
 
 	return stmt
 }
@@ -848,7 +874,13 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	exp := &ast.IndexExpression{Token: p.curToken, Left: left}
 
 	p.nextToken()
-	exp.Index = p.parseExpression(LOWEST)
+	exp.Indices = append(exp.Indices, p.parseExpression(LOWEST))
+
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // skip comma
+		p.nextToken() // next expression
+		exp.Indices = append(exp.Indices, p.parseExpression(LOWEST))
+	}
 
 	if !p.expectPeek(token.RBRACKET) {
 		return nil

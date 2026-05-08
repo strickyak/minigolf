@@ -32,8 +32,8 @@ type Builder struct {
 }
 
 type GenericTemplate struct {
-	TypeParam string
-	Tokens    []token.Token
+	TypeParams []string
+	Tokens     []token.Token
 }
 
 func NewBuilder() *Builder {
@@ -77,24 +77,27 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		}
 		return TypeWord
 	case *ast.IndexExpression:
-		var genericName string
+		var rawGenericName string
 		if ident, ok := e.Left.(*ast.Identifier); ok {
-			genericName = b.currentPackage + "." + ident.Value
+			rawGenericName = b.currentPackage + "." + ident.Value
 		} else if sel, ok := e.Left.(*ast.SelectorExpression); ok {
 			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
-				genericName = pkgIdent.Value + "." + sel.Right.Value
+				rawGenericName = pkgIdent.Value + "." + sel.Right.Value
 			}
 		}
 		
-		if genericName != "" {
-			argTyp := b.astToIRType(e.Index)
-			instName := fmt.Sprintf("%s[%s]", genericName, string(argTyp))
-			
-			if _, exists := b.typeDefsAST[instName]; !exists {
-				if tmpl, ok := b.genericTemplates[genericName]; ok {
-					b.instantiateGeneric(instName, genericName, string(argTyp), tmpl)
+		if rawGenericName != "" {
+			var instTypStr string
+			for _, idx := range e.Indices {
+				instTypStr += "_" + string(b.astToIRType(idx))
+			}
+			instName := fmt.Sprintf("%s%s", rawGenericName, instTypStr)
+
+			if _, ok := b.typeDefsAST[instName]; !ok {
+				if tmpl, ok := b.genericTemplates[rawGenericName]; ok {
+					b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl)
 				} else {
-					panic("Generic template not found: " + genericName)
+					panic("Generic template not found: " + rawGenericName)
 				}
 			}
 			return Type(instName)
@@ -112,26 +115,47 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 	return TypeWord
 }
 
-func (b *Builder) instantiateGeneric(instName, genericName, argTyp string, tmpl *GenericTemplate) {
+func (b *Builder) substituteGenericTokens(argTyps []string, tmpl *GenericTemplate) []token.Token {
+	var argTokensList [][]token.Token
+	for _, argTyp := range argTyps {
+		argTokens := lexer.Lex(argTyp, "generic_inst")
+		if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.EOF {
+			argTokens = argTokens[:len(argTokens)-1]
+		}
+		if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.SEMICOLON {
+			argTokens = argTokens[:len(argTokens)-1]
+		}
+		argTokensList = append(argTokensList, argTokens)
+	}
+	
 	var newTokens []token.Token
-	
-	argTokens := lexer.Lex(argTyp, "generic_inst")
-	if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.EOF {
-		argTokens = argTokens[:len(argTokens)-1]
-	}
-	if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.SEMICOLON {
-		argTokens = argTokens[:len(argTokens)-1]
-	}
-	
 	for _, tok := range tmpl.Tokens {
-		if tok.Type == token.IDENT && tok.Literal == tmpl.TypeParam {
-			newTokens = append(newTokens, argTokens...)
-		} else {
+		replaced := false
+		if tok.Type == token.IDENT {
+			for i, tp := range tmpl.TypeParams {
+				if tok.Literal == tp {
+					if i < len(argTokensList) {
+						newTokens = append(newTokens, argTokensList[i]...)
+						replaced = true
+						break
+					}
+				}
+			}
+		}
+		if !replaced {
 			newTokens = append(newTokens, tok)
 		}
 	}
-	
 	newTokens = append(newTokens, token.Token{Type: token.EOF, Literal: ""})
+	return newTokens
+}
+
+func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []ast.Expression, tmpl *GenericTemplate) {
+	var argTyps []string
+	for _, argNode := range argNodes {
+		argTyps = append(argTyps, string(b.astToIRType(argNode)))
+	}
+	newTokens := b.substituteGenericTokens(argTyps, tmpl)
 	
 	p := parser.New(newTokens)
 	baseTypeAST := p.ParseExpressionForGeneric()
@@ -158,6 +182,40 @@ func (b *Builder) instantiateGeneric(instName, genericName, argTyp string, tmpl 
 	}
 }
 
+func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []string, tmpl *GenericTemplate) {
+	newTokens := b.substituteGenericTokens(argTyps, tmpl)
+	
+	p := parser.New(newTokens)
+	stmt := p.ParseStatementForGeneric()
+	
+	if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
+		funcStmt.Name.Value = strings.TrimPrefix(instName, b.currentPackage+".")
+		b.registerFunc(funcStmt)
+		
+		oldFunc := b.currentFunc
+		oldNextValID := b.nextValueID
+		oldNextBlkID := b.nextBlockID
+		oldCurDef := b.currentDef
+		oldSealed := b.sealedBlocks
+		oldIncPhis := b.incompletePhis
+		oldVarTypes := b.varTypes
+		oldCurBlk := b.currentBlock
+
+		b.buildFunc(funcStmt)
+
+		b.currentFunc = oldFunc
+		b.nextValueID = oldNextValID
+		b.nextBlockID = oldNextBlkID
+		b.currentDef = oldCurDef
+		b.sealedBlocks = oldSealed
+		b.incompletePhis = oldIncPhis
+		b.varTypes = oldVarTypes
+		b.currentBlock = oldCurBlk
+	} else {
+		panic("Generic instantiation did not produce a function: " + instName)
+	}
+}
+
 func (b *Builder) Build(astProg *ast.Program) *Program {
 	// Pass 0: register struct types
 	b.currentPackage = ""
@@ -165,16 +223,22 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 		if ps, ok := stmt.(*ast.PackageStatement); ok {
 			b.currentPackage = ps.Name.Value
 		}
-		if s, ok := stmt.(*ast.TypeStatement); ok {
-			qname := b.currentPackage + "." + s.Name.Value
+		switch s := stmt.(type) {
+		case *ast.TypeStatement:
 			if len(s.TypeParameters) > 0 {
+				qname := b.currentPackage + "." + s.Name.Value
+				var typeParams []string
+				for _, tp := range s.TypeParameters {
+					typeParams = append(typeParams, tp.Value)
+				}
 				b.genericTemplates[qname] = &GenericTemplate{
-					TypeParam: s.TypeParameters[0].Value,
-					Tokens:    s.Tokens,
+					TypeParams: typeParams,
+					Tokens:     s.Tokens,
 				}
 				continue
 			}
 			if st, ok := s.BaseType.(*ast.StructType); ok {
+				qname := b.currentPackage + "." + s.Name.Value
 				b.typeDefsAST[qname] = st
 				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, qname)
 			}
@@ -217,57 +281,76 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 				b.consts[b.currentPackage + "." + s.Name.Value] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}
 			}
 		case *ast.FuncStatement:
-			funcName := s.Name.Value
-			var receiverTyp Type
-			if s.Receiver != nil {
-				receiverTyp = b.astToIRType(s.Receiver.Type)
-				baseType := string(receiverTyp)
-				baseType = strings.TrimPrefix(baseType, "*")
-				funcName = baseType + "_" + funcName
-			} else {
-				if b.currentPackage != "main" || funcName != "main" {
-					funcName = b.currentPackage + "." + funcName
+			if len(s.TypeParameters) > 0 {
+				qname := b.currentPackage + "." + s.Name.Value
+				var typeParams []string
+				for _, tp := range s.TypeParameters {
+					typeParams = append(typeParams, tp.Value)
 				}
-			}
-			f := &Function{Name: funcName}
-			if len(s.ReturnTypes) == 1 {
-				f.ReturnType = b.astToIRType(s.ReturnTypes[0])
-			} else if len(s.ReturnTypes) > 1 {
-				var fields []string
-				for _, rt := range s.ReturnTypes {
-					fields = append(fields, string(b.astToIRType(rt)))
+				b.genericTemplates[qname] = &GenericTemplate{
+					TypeParams: typeParams,
+					Tokens:     s.Tokens,
 				}
-				f.ReturnType = Type(fmt.Sprintf("struct{%s;}", strings.Join(fields, ";")))
-			} else {
-				f.ReturnType = TypeVoid
+				continue
 			}
-			paramIdx := 0
-			if s.Receiver != nil {
-				f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: s.Receiver.Name.Value, Typ: receiverTyp})
-				paramIdx++
-			}
-			for _, p := range s.Parameters {
-				typ := b.astToIRType(p.Type)
-				f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
-				paramIdx++
-			}
-			b.funcs[f.Name] = f
-			b.Program.Functions = append(b.Program.Functions, f)
+			b.registerFunc(s)
 		}
 	}
-
-	// Second pass: build bodies
+	
+	// Pass 2: build functionsbodies
 	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
 		if ps, ok := stmt.(*ast.PackageStatement); ok {
 			b.currentPackage = ps.Name.Value
 		}
 		if s, ok := stmt.(*ast.FuncStatement); ok {
+			if len(s.TypeParameters) > 0 {
+				continue
+			}
 			b.buildFunc(s)
 		}
 	}
 
 	return b.Program
+}
+
+func (b *Builder) registerFunc(s *ast.FuncStatement) {
+	funcName := s.Name.Value
+	var receiverTyp Type
+	if s.Receiver != nil {
+		receiverTyp = b.astToIRType(s.Receiver.Type)
+		baseType := string(receiverTyp)
+		baseType = strings.TrimPrefix(baseType, "*")
+		funcName = baseType + "_" + funcName
+	} else {
+		if b.currentPackage != "main" || funcName != "main" {
+			funcName = b.currentPackage + "." + funcName
+		}
+	}
+	f := &Function{Name: funcName}
+	if len(s.ReturnTypes) == 1 {
+		f.ReturnType = b.astToIRType(s.ReturnTypes[0])
+	} else if len(s.ReturnTypes) > 1 {
+		var fields []string
+		for _, rt := range s.ReturnTypes {
+			fields = append(fields, string(b.astToIRType(rt)))
+		}
+		f.ReturnType = Type(fmt.Sprintf("struct{%s;}", strings.Join(fields, ";")))
+	} else {
+		f.ReturnType = TypeVoid
+	}
+	paramIdx := 0
+	if s.Receiver != nil {
+		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: s.Receiver.Name.Value, Typ: receiverTyp})
+		paramIdx++
+	}
+	for _, p := range s.Parameters {
+		typ := b.astToIRType(p.Type)
+		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
+		paramIdx++
+	}
+	b.funcs[f.Name] = f
+	b.Program.Functions = append(b.Program.Functions, f)
 }
 
 func (b *Builder) buildFunc(s *ast.FuncStatement) {
@@ -827,7 +910,7 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		return b.readVariable(e.Value, b.currentBlock)
 	case *ast.IndexExpression:
 		arr := b.buildExpr(e.Left)
-		idx := b.buildExpr(e.Index)
+		idx := b.buildExpr(e.Indices[0])
 		// type of elt:
 		var eltType Type = TypeUnknown
 		if arr != nil && string(arr.Type()) != "" && string(arr.Type())[0] == '[' {
@@ -930,6 +1013,85 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		}
 
 	case *ast.CallExpression:
+		var isGenericFunc bool
+		var funcName string
+		var rawFuncName string
+		var args []Value
+		
+		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
+			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+				rawFuncName = b.currentPackage + "." + ident.Value
+			} else if sel, ok := idxExpr.Left.(*ast.SelectorExpression); ok {
+				if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+					rawFuncName = pkgIdent.Value + "." + sel.Right.Value
+				}
+			}
+			if rawFuncName != "" {
+				var instTypStr string
+				var argTyps []string
+				for _, idx := range idxExpr.Indices {
+					argTyp := string(b.astToIRType(idx))
+					argTyps = append(argTyps, argTyp)
+					instTypStr += "_" + argTyp
+				}
+				funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+				if _, ok := b.funcs[funcName]; !ok {
+					if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
+					}
+				}
+				isGenericFunc = true
+			}
+		} else if ident, ok := e.Function.(*ast.Identifier); ok {
+			rawFuncName = b.currentPackage + "." + ident.Value
+			if _, ok := b.funcs[rawFuncName]; !ok {
+				if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+					p := parser.New(tmpl.Tokens)
+					stmt := p.ParseStatementForGeneric()
+					if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
+						typeMap := make(map[string]string)
+						for _, arg := range e.Arguments {
+							args = append(args, b.buildExpr(arg))
+						}
+						for i, param := range funcStmt.Parameters {
+							if i < len(args) {
+								extractTypeParamsIR(param.Type, string(args[i].Type()), typeMap, tmpl.TypeParams)
+							}
+						}
+						
+						var argTyps []string
+						var instTypStr string
+						for _, tp := range tmpl.TypeParams {
+							argTyp := typeMap[tp]
+							if argTyp == "" { argTyp = "word" }
+							argTyps = append(argTyps, argTyp)
+							instTypStr += "_" + argTyp
+						}
+						funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+						if _, ok := b.funcs[funcName]; !ok {
+							b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
+						}
+						isGenericFunc = true
+					}
+				}
+			}
+		}
+
+		if isGenericFunc {
+			if len(args) == 0 && len(e.Arguments) > 0 {
+				for _, arg := range e.Arguments {
+					args = append(args, b.buildExpr(arg))
+				}
+			}
+			f, ok := b.funcs[funcName]
+			if !ok {
+				var keys []string
+				for k := range b.funcs { keys = append(keys, k) }
+				panic(fmt.Sprintf("MISSING GENERIC FUNC: %s, AVAILABLE: %v", funcName, keys))
+			}
+			return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+		}
+
 		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
 			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
 				qname := pkgIdent.Value + "." + sel.Right.Value
@@ -1047,7 +1209,7 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 		}
 	} else if idxExpr, ok := lhs.(*ast.IndexExpression); ok {
 		arr := b.buildExpr(idxExpr.Left)
-		idx := b.buildExpr(idxExpr.Index)
+		idx := b.buildExpr(idxExpr.Indices[0])
 		newArr := b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: arr.Type()}, Array: arr, Index: idx, Val: val}, arr)
 		b.assignToExpr(idxExpr.Left, newArr)
 	} else if selExpr, ok := lhs.(*ast.SelectorExpression); ok {
@@ -1077,5 +1239,32 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 		ptrVal := b.buildExpr(ptrExpr.Elt)
 		b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: ptrVal, Val: val}, lhs)
 		return
+	}
+}
+
+func extractTypeParamsIR(paramType ast.Expression, argTyp string, typeMap map[string]string, typeParams []string) {
+	if ident, ok := paramType.(*ast.Identifier); ok {
+		for _, tp := range typeParams {
+			if tp == ident.Value {
+				typeMap[tp] = argTyp
+				return
+			}
+		}
+	} else if prefix, ok := paramType.(*ast.PrefixExpression); ok && prefix.Operator == "*" {
+		if strings.HasPrefix(argTyp, "*") {
+			extractTypeParamsIR(prefix.Right, argTyp[1:], typeMap, typeParams)
+		}
+	} else if ptr, ok := paramType.(*ast.PointerType); ok {
+		if strings.HasPrefix(argTyp, "*") {
+			extractTypeParamsIR(ptr.Elt, argTyp[1:], typeMap, typeParams)
+		}
+	} else if idx, ok := paramType.(*ast.IndexExpression); ok {
+		parts := strings.Split(argTyp, "_")
+		numIdx := len(idx.Indices)
+		if len(parts) >= numIdx {
+			for i, innerIdx := range idx.Indices {
+				extractTypeParamsIR(innerIdx, parts[len(parts)-numIdx+i], typeMap, typeParams)
+			}
+		}
 	}
 }

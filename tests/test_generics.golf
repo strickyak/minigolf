@@ -17,4 +17,18 @@ func main() {
 	println(globalA.Value)
 	var ptr *Link[byte] = globalA.Next
 	println(ptr.Value)
+
+	println(First[byte](&globalA))
+	println(First(&globalB))
+
+	println(Draw[byte, int](6, 7))
+	println(Draw(6, 7))
+}
+
+func First[T any](root *Link[T]) T {
+	return root.Value
+}
+
+func Draw[A any, B any](a A, b B) int {
+	return 100 // Returning a simple integer to test parameter substitution
 }

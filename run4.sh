@@ -1,5 +1,6 @@
 T=/tmp/$(echo "$1" | tr -c A-Za-z0-9 _)
 
+echo "[ IR ] /tmp/ir" >&2
 go run main.go  -m=ir            "$@" > /tmp/ir
 
 echo "[ C ] /tmp/c.c $T.c.out" >&2
