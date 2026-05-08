@@ -74,7 +74,11 @@ func (c *CBE) mapType(typ string) string {
 		return typeName
 	}
 	// Assume it's a named struct type if it reaches here
-	return strings.ReplaceAll(typ, ".", "_")
+	typ = strings.ReplaceAll(typ, ".", "_")
+	typ = strings.ReplaceAll(typ, "*", "ptr_")
+	typ = strings.ReplaceAll(typ, "[", "_")
+	typ = strings.ReplaceAll(typ, "]", "_")
+	return typ
 }
 
 func (c *CBE) Generate(program *ir.Program) string {
@@ -99,8 +103,9 @@ func (c *CBE) Generate(program *ir.Program) string {
 					start = i + 1
 				}
 			}
-			nameSanitized := strings.ReplaceAll(name, ".", "_")
-			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s} %s;\n", fields, nameSanitized))
+			nameSanitized := c.mapType(name)
+			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", nameSanitized, nameSanitized))
+			c.typedefBuf.WriteString(fmt.Sprintf("struct %s { %s};\n", nameSanitized, fields))
 		}
 	}
 

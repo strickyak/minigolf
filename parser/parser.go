@@ -253,14 +253,39 @@ func (p *Parser) parseTypeStatement() *ast.TypeStatement {
 	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
-	p.nextToken()
-	stmt.BaseType = p.parseExpression(LOWEST)
+	if p.peekTokenIs(token.LBRACKET) {
+		p.nextToken() // consume '['
+		if !p.expectPeek(token.IDENT) { return nil }
+		typeParam := p.curToken.Literal
+		stmt.TypeParameters = append(stmt.TypeParameters, &ast.Identifier{Token: p.curToken, Value: typeParam})
+		
+		if !p.expectPeek(token.IDENT) || p.curToken.Literal != "any" {
+			p.errors = append(p.errors, "expected 'any' constraint")
+			return nil
+		}
+		if !p.expectPeek(token.RBRACKET) { return nil }
+		
+		p.nextToken() // move to start of base type
+		startPos := p.pos - 2
+		stmt.BaseType = p.parseExpression(LOWEST)
+		endPos := p.pos - 1
+		
+		stmt.Tokens = make([]token.Token, endPos-startPos)
+		copy(stmt.Tokens, p.tokens[startPos:endPos])
+	} else {
+		p.nextToken()
+		stmt.BaseType = p.parseExpression(LOWEST)
+	}
 
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()
 	}
 
 	return stmt
+}
+
+func (p *Parser) ParseExpressionForGeneric() ast.Expression {
+	return p.parseExpression(LOWEST)
 }
 
 func (p *Parser) parseVarStatement() *ast.VarStatement {

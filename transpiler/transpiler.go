@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"minigo/ast"
+	"minigo/lexer"
+	"minigo/parser"
+	"minigo/token"
 	"strconv"
 	"strings"
 )
@@ -19,7 +22,13 @@ type Transpiler struct {
 	funcTypes    map[string]string
 	funcRetTypes map[string][]string
 	currentFunc  *ast.FuncStatement
-    currentPackage string
+	currentPackage string
+	genericTemplates map[string]*GenericTemplate
+}
+
+type GenericTemplate struct {
+	TypeParam string
+	Tokens    []token.Token
 }
 
 func New() *Transpiler {
@@ -27,6 +36,7 @@ func New() *Transpiler {
 		globals:      make(map[string]string),
 		funcTypes:    make(map[string]string),
 		funcRetTypes: make(map[string][]string),
+		genericTemplates: make(map[string]*GenericTemplate),
 	}
 }
 
@@ -138,8 +148,22 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 		case *ast.PackageStatement:
 			t.currentPackage = s.Name.Value
 		case *ast.TypeStatement:
+			if len(s.TypeParameters) > 0 {
+				qname := t.currentPackage + "." + s.Name.Value
+				t.genericTemplates[qname] = &GenericTemplate{
+					TypeParam: s.TypeParameters[0].Value,
+					Tokens:    s.Tokens,
+				}
+				continue
+			}
 			base := t.mapType(s.BaseType)
-			forwardBuf.WriteString(fmt.Sprintf("typedef %s t_%s_%s;\n", base, t.currentPackage, s.Name.Value))
+			name := fmt.Sprintf("t_%s_%s", t.currentPackage, s.Name.Value)
+			if strings.HasPrefix(base, "struct {") {
+				forwardBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", name, name))
+				forwardBuf.WriteString(fmt.Sprintf("struct %s %s;\n", name, base[6:]))
+			} else {
+				forwardBuf.WriteString(fmt.Sprintf("typedef %s %s;\n", base, name))
+			}
 		case *ast.FuncStatement:
 			retType := "void"
 			if len(s.ReturnTypes) == 1 {
@@ -267,6 +291,35 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 			return fmt.Sprintf("t_%s_%s", pkgIdent.Value, e.Right.Value)
 		}
 		return "word"
+	case *ast.IndexExpression:
+		var genericName string
+		var rawGenericName string
+		if ident, ok := e.Left.(*ast.Identifier); ok {
+			genericName = t.currentPackage + "_" + ident.Value
+			rawGenericName = t.currentPackage + "." + ident.Value
+		} else if sel, ok := e.Left.(*ast.SelectorExpression); ok {
+			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+				genericName = pkgIdent.Value + "_" + sel.Right.Value
+				rawGenericName = pkgIdent.Value + "." + sel.Right.Value
+			}
+		}
+		
+		if genericName != "" {
+			argTyp := t.mapType(e.Index)
+			instName := fmt.Sprintf("t_%s_%s", genericName, argTyp)
+			instName = strings.ReplaceAll(instName, "*", "ptr_")
+			instName = strings.ReplaceAll(instName, "[", "arr_")
+			instName = strings.ReplaceAll(instName, "]", "_")
+			
+			if !t.arrayTypes[instName] {
+				t.arrayTypes[instName] = true
+				if tmpl, ok := t.genericTemplates[rawGenericName]; ok {
+					t.instantiateGenericC(instName, rawGenericName, e.Index, tmpl)
+				}
+			}
+			return instName
+		}
+		return "word"
 	case *ast.ArrayType:
 		lenStr := "0"
 		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
@@ -288,6 +341,58 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		return fmt.Sprintf("struct { %s; }", strings.Join(fields, "; "))
 	case *ast.PointerType:
 		return t.mapType(e.Elt) + "*"
+	}
+	return "word"
+}
+
+func (t *Transpiler) instantiateGenericC(instName, genericName string, argNode ast.Expression, tmpl *GenericTemplate) {
+	argTyp := astToGoString(argNode)
+	var newTokens []token.Token
+	argTokens := lexer.Lex(argTyp, "generic_inst")
+	if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.EOF {
+		argTokens = argTokens[:len(argTokens)-1]
+	}
+	if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.SEMICOLON {
+		argTokens = argTokens[:len(argTokens)-1]
+	}
+	
+	for _, tok := range tmpl.Tokens {
+		if tok.Type == token.IDENT && tok.Literal == tmpl.TypeParam {
+			newTokens = append(newTokens, argTokens...)
+		} else {
+			newTokens = append(newTokens, tok)
+		}
+	}
+	newTokens = append(newTokens, token.Token{Type: token.EOF, Literal: ""})
+	
+	p := parser.New(newTokens)
+	baseTypeAST := p.ParseExpressionForGeneric()
+	
+	base := t.mapType(baseTypeAST)
+	if strings.HasPrefix(base, "struct {") {
+		t.typedefBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", instName, instName))
+		t.typedefBuf.WriteString(fmt.Sprintf("struct %s %s;\n", instName, base[6:]))
+	} else {
+		t.typedefBuf.WriteString(fmt.Sprintf("typedef %s %s;\n", base, instName))
+	}
+}
+
+func astToGoString(expr ast.Expression) string {
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return e.Value
+	case *ast.SelectorExpression:
+		return astToGoString(e.Left) + "." + e.Right.Value
+	case *ast.PointerType:
+		return "*" + astToGoString(e.Elt)
+	case *ast.ArrayType:
+		lenStr := ""
+		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
+			lenStr = strconv.FormatInt(il.Value, 10)
+		}
+		return "[" + lenStr + "]" + astToGoString(e.Elt)
+	case *ast.IndexExpression:
+		return astToGoString(e.Left) + "[" + astToGoString(e.Index) + "]"
 	}
 	return "word"
 }

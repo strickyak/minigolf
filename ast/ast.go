@@ -71,9 +71,11 @@ func (s *ConstStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ConstStatement) GetToken() *token.Token { return &s.Token }
 
 type TypeStatement struct {
-	Token    token.Token // The 'type' token
-	Name     *Identifier
-	BaseType Expression // 'byte' or 'word' or array
+	Token          token.Token
+	Name           *Identifier
+	TypeParameters []*Identifier
+	Tokens         []token.Token
+	BaseType       Expression
 }
 
 func (s *TypeStatement) statementNode()         {}

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log"
 	"minigo/ast"
+	"minigo/lexer"
+	"minigo/parser"
+	"minigo/token"
 	"strings"
 )
 
@@ -24,7 +27,13 @@ type Builder struct {
 	consts      map[string]Value
 	varTypes    map[string]Type
 	typeDefsAST map[string]*ast.StructType
+	genericTemplates map[string]*GenericTemplate
 	currentPackage string
+}
+
+type GenericTemplate struct {
+	TypeParam string
+	Tokens    []token.Token
 }
 
 func NewBuilder() *Builder {
@@ -38,6 +47,7 @@ func NewBuilder() *Builder {
 		consts:         make(map[string]Value),
 		varTypes:       make(map[string]Type),
 		typeDefsAST:    make(map[string]*ast.StructType),
+		genericTemplates: make(map[string]*GenericTemplate),
 	}
 }
 
@@ -66,6 +76,30 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 			return Type(pkgIdent.Value + "." + e.Right.Value)
 		}
 		return TypeWord
+	case *ast.IndexExpression:
+		var genericName string
+		if ident, ok := e.Left.(*ast.Identifier); ok {
+			genericName = b.currentPackage + "." + ident.Value
+		} else if sel, ok := e.Left.(*ast.SelectorExpression); ok {
+			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+				genericName = pkgIdent.Value + "." + sel.Right.Value
+			}
+		}
+		
+		if genericName != "" {
+			argTyp := b.astToIRType(e.Index)
+			instName := fmt.Sprintf("%s[%s]", genericName, string(argTyp))
+			
+			if _, exists := b.typeDefsAST[instName]; !exists {
+				if tmpl, ok := b.genericTemplates[genericName]; ok {
+					b.instantiateGeneric(instName, genericName, string(argTyp), tmpl)
+				} else {
+					panic("Generic template not found: " + genericName)
+				}
+			}
+			return Type(instName)
+		}
+		return TypeWord
 	case *ast.ArrayType:
 		lenStr := "0"
 		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
@@ -78,6 +112,52 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 	return TypeWord
 }
 
+func (b *Builder) instantiateGeneric(instName, genericName, argTyp string, tmpl *GenericTemplate) {
+	var newTokens []token.Token
+	
+	argTokens := lexer.Lex(argTyp, "generic_inst")
+	if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.EOF {
+		argTokens = argTokens[:len(argTokens)-1]
+	}
+	if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.SEMICOLON {
+		argTokens = argTokens[:len(argTokens)-1]
+	}
+	
+	for _, tok := range tmpl.Tokens {
+		if tok.Type == token.IDENT && tok.Literal == tmpl.TypeParam {
+			newTokens = append(newTokens, argTokens...)
+		} else {
+			newTokens = append(newTokens, tok)
+		}
+	}
+	
+	newTokens = append(newTokens, token.Token{Type: token.EOF, Literal: ""})
+	
+	p := parser.New(newTokens)
+	baseTypeAST := p.ParseExpressionForGeneric()
+	
+	if len(p.Errors()) > 0 {
+		fmt.Printf("Parser errors during generic instantiation of %s:\n", instName)
+		for _, msg := range p.Errors() {
+			fmt.Println("\t", msg)
+		}
+	}
+	
+	if st, ok := baseTypeAST.(*ast.StructType); ok {
+		b.typeDefsAST[instName] = st
+		b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, instName)
+		
+		res := "struct{"
+		for _, f := range st.Fields {
+			res += string(b.astToIRType(f.Type)) + ";"
+		}
+		res += "}"
+		b.Program.TypeDefs[instName] = res
+	} else {
+		panic("Generic instantiation did not produce a struct: " + instName)
+	}
+}
+
 func (b *Builder) Build(astProg *ast.Program) *Program {
 	// Pass 0: register struct types
 	b.currentPackage = ""
@@ -86,8 +166,15 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.currentPackage = ps.Name.Value
 		}
 		if s, ok := stmt.(*ast.TypeStatement); ok {
+			qname := b.currentPackage + "." + s.Name.Value
+			if len(s.TypeParameters) > 0 {
+				b.genericTemplates[qname] = &GenericTemplate{
+					TypeParam: s.TypeParameters[0].Value,
+					Tokens:    s.Tokens,
+				}
+				continue
+			}
 			if st, ok := s.BaseType.(*ast.StructType); ok {
-				qname := b.currentPackage + "." + s.Name.Value
 				b.typeDefsAST[qname] = st
 				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, qname)
 			}
@@ -101,6 +188,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.currentPackage = ps.Name.Value
 		}
 		if s, ok := stmt.(*ast.TypeStatement); ok {
+			if len(s.TypeParameters) > 0 { continue }
 			if st, ok := s.BaseType.(*ast.StructType); ok {
 				qname := b.currentPackage + "." + s.Name.Value
 				res := "struct{"
