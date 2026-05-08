@@ -18,28 +18,28 @@ type Transpiler struct {
 	typedefBuf       bytes.Buffer
 	genericImplBuf   bytes.Buffer
 	locals           []map[string]string
-	globals      map[string]string
-	arrayTypes   map[string]bool
-	funcTypes    map[string]string
-	funcRetTypes map[string][]string
-	currentFunc  *ast.FuncStatement
-	currentPackage string
+	globals          map[string]string
+	arrayTypes       map[string]bool
+	funcTypes        map[string]string
+	funcRetTypes     map[string][]string
+	currentFunc      *ast.FuncStatement
+	currentPackage   string
 	genericTemplates map[string]*GenericTemplate
-	typeDefs     map[string]*ast.TypeStatement
+	typeDefs         map[string]*ast.TypeStatement
 }
 
 type GenericTemplate struct {
 	TypeParams []string
-	Tokens    []token.Token
+	Tokens     []token.Token
 }
 
 func New() *Transpiler {
 	return &Transpiler{
-		globals:      make(map[string]string),
-		funcTypes:    make(map[string]string),
-		funcRetTypes: make(map[string][]string),
+		globals:          make(map[string]string),
+		funcTypes:        make(map[string]string),
+		funcRetTypes:     make(map[string][]string),
 		genericTemplates: make(map[string]*GenericTemplate),
-		typeDefs:     make(map[string]*ast.TypeStatement),
+		typeDefs:         make(map[string]*ast.TypeStatement),
 	}
 }
 
@@ -117,11 +117,11 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 	case *ast.SelectorExpression:
 		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
 			qname := t.getVarType(pkgIdent.Value)
-			
+
 			// Extract struct name from mangled t_pkg_StructName
 			structName := strings.TrimPrefix(qname, "t_")
 			structName = strings.Replace(structName, "_", ".", 1)
-			
+
 			if st, ok := t.typeDefs[structName]; ok {
 				if structType, ok := st.BaseType.(*ast.StructType); ok {
 					for _, f := range structType.Fields {
@@ -139,7 +139,7 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 					}
 				}
 			}
-			
+
 			qname2 := t.currentPackage + "." + e.Right.Value
 			if ctype, ok := t.globals[qname2]; ok {
 				return ctype
@@ -181,7 +181,7 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 				}
 				t.genericTemplates[qname] = &GenericTemplate{
 					TypeParams: typeParams,
-					Tokens:    s.Tokens,
+					Tokens:     s.Tokens,
 				}
 				continue
 			}
@@ -202,7 +202,7 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 				}
 				t.genericTemplates[qname] = &GenericTemplate{
 					TypeParams: typeParams,
-					Tokens:    s.Tokens,
+					Tokens:     s.Tokens,
 				}
 				continue
 			}
@@ -284,7 +284,9 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 		case *ast.PackageStatement:
 			t.currentPackage = s.Name.Value
 		case *ast.FuncStatement:
-			if len(s.TypeParameters) > 0 { continue }
+			if len(s.TypeParameters) > 0 {
+				continue
+			}
 			t.emitStatement(s)
 		}
 	}
@@ -386,7 +388,7 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 				rawGenericName = pkgIdent.Value + "." + sel.Right.Value
 			}
 		}
-		
+
 		if genericName != "" {
 			var argTyps []string
 			for _, idx := range e.Indices {
@@ -397,7 +399,7 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 			instName = strings.ReplaceAll(instName, "*", "ptr_")
 			instName = strings.ReplaceAll(instName, "[", "arr_")
 			instName = strings.ReplaceAll(instName, "]", "_")
-			
+
 			if !t.arrayTypes[instName] {
 				t.arrayTypes[instName] = true
 				if tmpl, ok := t.genericTemplates[rawGenericName]; ok {
@@ -445,7 +447,7 @@ func (t *Transpiler) instantiateGenericC(instName, genericName string, argNodes 
 		}
 		argTokensList = append(argTokensList, argTokens)
 	}
-	
+
 	var newTokens []token.Token
 	for _, tok := range tmpl.Tokens {
 		replaced := false
@@ -465,10 +467,10 @@ func (t *Transpiler) instantiateGenericC(instName, genericName string, argNodes 
 		}
 	}
 	newTokens = append(newTokens, token.Token{Type: token.EOF, Literal: ""})
-	
+
 	p := parser.New(newTokens)
 	baseTypeAST := p.ParseExpressionForGeneric()
-	
+
 	base := t.mapType(baseTypeAST)
 	if strings.HasPrefix(base, "struct {") {
 		t.typedefBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", instName, instName))
@@ -490,7 +492,7 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 		}
 		argTokensList = append(argTokensList, argTokens)
 	}
-	
+
 	var newTokens []token.Token
 	for _, tok := range tmpl.Tokens {
 		replaced := false
@@ -510,38 +512,38 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 		}
 	}
 	newTokens = append(newTokens, token.Token{Type: token.EOF, Literal: ""})
-	
+
 	p := parser.New(newTokens)
 	stmt := p.ParseStatementForGeneric()
 	if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
-		funcStmt.Name.Value = strings.TrimPrefix(instName, t.currentPackage + "_")
-		
+		funcStmt.Name.Value = strings.TrimPrefix(instName, t.currentPackage+"_")
+
 		oldFunc := t.currentFunc
 		t.currentFunc = funcStmt
-		
+
 		retType := "void"
 		if len(funcStmt.ReturnTypes) == 1 {
 			retType = t.mapType(funcStmt.ReturnTypes[0])
 		} else if len(funcStmt.ReturnTypes) > 1 {
 			retType = fmt.Sprintf("t_tuple_%d", len(funcStmt.ReturnTypes))
 		}
-		
+
 		var params []string
 		for _, param := range funcStmt.Parameters {
 			params = append(params, fmt.Sprintf("%s v_%s", t.mapType(param.Type), param.Name.Value))
 		}
-		
+
 		funcSig := fmt.Sprintf("%s f_%s(%s)", retType, instName, strings.Join(params, ", "))
 		t.typedefBuf.WriteString(funcSig + ";\n")
-		
+
 		savedBytes := append([]byte(nil), t.buf.Bytes()...)
 		t.buf.Reset()
-		
+
 		t.emitStatement(funcStmt)
 		t.buf.WriteString("\n")
-		
+
 		t.genericImplBuf.WriteString(t.buf.String())
-		
+
 		t.buf.Reset()
 		t.buf.Write(savedBytes)
 		t.currentFunc = oldFunc
@@ -878,12 +880,12 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			argStr := t.emitExprStr(e.Arguments[0])
 			return fmt.Sprintf("((%s)(%s))", targetTyp, argStr)
 		}
-		
+
 		var isGenericFunc bool
 		var funcName string
 		var rawFuncName string
 		var args []string
-		
+
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
 				rawFuncName = t.currentPackage + "." + ident.Value
@@ -926,12 +928,14 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 								extractTypeParamsC(param.Type, t.typeOf(e.Arguments[i]), typeMap, tmpl.TypeParams)
 							}
 						}
-						
+
 						var argTyps []string
 						var instTypStr string
 						for _, tp := range tmpl.TypeParams {
 							argTyp := typeMap[tp]
-							if argTyp == "" { argTyp = "word" }
+							if argTyp == "" {
+								argTyp = "word"
+							}
 							argTyps = append(argTyps, argTyp)
 							instTypStr += "_" + argTyp
 						}
@@ -975,7 +979,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				baseType = baseType[:len(baseType)-1]
 				isPtr = true
 			}
-			
+
 			pkgPart := t.currentPackage
 			if strings.HasPrefix(baseType, "t_") {
 				parts := strings.SplitN(baseType[2:], "_", 2)
@@ -984,7 +988,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 					baseType = parts[1]
 				}
 			}
-			
+
 			funcName := baseType + "_" + sel.Right.Value
 
 			receiverStr := t.emitExprStr(sel.Left)

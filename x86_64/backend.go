@@ -137,7 +137,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString("\tand rsp, -16\n")
 	b.buf.WriteString("\tcall f_main\n")
 
-    // TODO -- fix this, to call fflush(stdout), where stdout is `extern FILE* stdout;`
+	// TODO -- fix this, to call fflush(stdout), where stdout is `extern FILE* stdout;`
 	// b.buf.WriteString("\tlea eax, [rip + stdout]\n")
 	// b.buf.WriteString("\tcall fflush@PLT\n")
 
@@ -506,13 +506,29 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case "neq":
 			b.buf.WriteString("\tsetne al\n")
 		case "lt":
-			if isInt { b.buf.WriteString("\tsetl al\n") } else { b.buf.WriteString("\tsetb al\n") }
+			if isInt {
+				b.buf.WriteString("\tsetl al\n")
+			} else {
+				b.buf.WriteString("\tsetb al\n")
+			}
 		case "lte":
-			if isInt { b.buf.WriteString("\tsetle al\n") } else { b.buf.WriteString("\tsetbe al\n") }
+			if isInt {
+				b.buf.WriteString("\tsetle al\n")
+			} else {
+				b.buf.WriteString("\tsetbe al\n")
+			}
 		case "gt":
-			if isInt { b.buf.WriteString("\tsetg al\n") } else { b.buf.WriteString("\tseta al\n") }
+			if isInt {
+				b.buf.WriteString("\tsetg al\n")
+			} else {
+				b.buf.WriteString("\tseta al\n")
+			}
 		case "gte":
-			if isInt { b.buf.WriteString("\tsetge al\n") } else { b.buf.WriteString("\tsetae al\n") }
+			if isInt {
+				b.buf.WriteString("\tsetge al\n")
+			} else {
+				b.buf.WriteString("\tsetae al\n")
+			}
 		}
 		b.buf.WriteString("\tmovzx rax, al\n")
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))

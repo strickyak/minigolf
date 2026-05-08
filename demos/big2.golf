@@ -5,12 +5,12 @@ import "big"
 var g big.Dec
 
 func main() {
-    g.Print()
+	g.Print()
 	g.SetSmall(1)
-    g.Print()
+	g.Print()
 
-    for i := range 500  {
-        g.Add(&g, &g)
-        g.Print()
-    }
+	for i := range 500 {
+		g.Add(&g, &g)
+		g.Print()
+	}
 }

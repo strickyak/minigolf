@@ -22,13 +22,13 @@ type Builder struct {
 	sealedBlocks   map[*BasicBlock]bool
 	incompletePhis map[*BasicBlock]map[string]*Phi
 
-	globals     map[string]*Global
-	funcs       map[string]*Function
-	consts      map[string]Value
-	varTypes    map[string]Type
-	typeDefsAST map[string]*ast.StructType
+	globals          map[string]*Global
+	funcs            map[string]*Function
+	consts           map[string]Value
+	varTypes         map[string]Type
+	typeDefsAST      map[string]*ast.StructType
 	genericTemplates map[string]*GenericTemplate
-	currentPackage string
+	currentPackage   string
 }
 
 type GenericTemplate struct {
@@ -38,15 +38,15 @@ type GenericTemplate struct {
 
 func NewBuilder() *Builder {
 	return &Builder{
-		Program:        &Program{TypeDefs: make(map[string]string)},
-		currentDef:     make(map[*BasicBlock]map[string]Value),
-		sealedBlocks:   make(map[*BasicBlock]bool),
-		incompletePhis: make(map[*BasicBlock]map[string]*Phi),
-		globals:        make(map[string]*Global),
-		funcs:          make(map[string]*Function),
-		consts:         make(map[string]Value),
-		varTypes:       make(map[string]Type),
-		typeDefsAST:    make(map[string]*ast.StructType),
+		Program:          &Program{TypeDefs: make(map[string]string)},
+		currentDef:       make(map[*BasicBlock]map[string]Value),
+		sealedBlocks:     make(map[*BasicBlock]bool),
+		incompletePhis:   make(map[*BasicBlock]map[string]*Phi),
+		globals:          make(map[string]*Global),
+		funcs:            make(map[string]*Function),
+		consts:           make(map[string]Value),
+		varTypes:         make(map[string]Type),
+		typeDefsAST:      make(map[string]*ast.StructType),
 		genericTemplates: make(map[string]*GenericTemplate),
 	}
 }
@@ -85,7 +85,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 				rawGenericName = pkgIdent.Value + "." + sel.Right.Value
 			}
 		}
-		
+
 		if rawGenericName != "" {
 			var instTypStr string
 			for _, idx := range e.Indices {
@@ -127,7 +127,7 @@ func (b *Builder) substituteGenericTokens(argTyps []string, tmpl *GenericTemplat
 		}
 		argTokensList = append(argTokensList, argTokens)
 	}
-	
+
 	var newTokens []token.Token
 	for _, tok := range tmpl.Tokens {
 		replaced := false
@@ -156,21 +156,21 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 		argTyps = append(argTyps, string(b.astToIRType(argNode)))
 	}
 	newTokens := b.substituteGenericTokens(argTyps, tmpl)
-	
+
 	p := parser.New(newTokens)
 	baseTypeAST := p.ParseExpressionForGeneric()
-	
+
 	if len(p.Errors()) > 0 {
 		fmt.Printf("Parser errors during generic instantiation of %s:\n", instName)
 		for _, msg := range p.Errors() {
 			fmt.Println("\t", msg)
 		}
 	}
-	
+
 	if st, ok := baseTypeAST.(*ast.StructType); ok {
 		b.typeDefsAST[instName] = st
 		b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, instName)
-		
+
 		res := "struct{"
 		for _, f := range st.Fields {
 			res += string(b.astToIRType(f.Type)) + ";"
@@ -184,14 +184,14 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 
 func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []string, tmpl *GenericTemplate) {
 	newTokens := b.substituteGenericTokens(argTyps, tmpl)
-	
+
 	p := parser.New(newTokens)
 	stmt := p.ParseStatementForGeneric()
-	
+
 	if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
 		funcStmt.Name.Value = strings.TrimPrefix(instName, b.currentPackage+".")
 		b.registerFunc(funcStmt)
-		
+
 		oldFunc := b.currentFunc
 		oldNextValID := b.nextValueID
 		oldNextBlkID := b.nextBlockID
@@ -252,7 +252,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.currentPackage = ps.Name.Value
 		}
 		if s, ok := stmt.(*ast.TypeStatement); ok {
-			if len(s.TypeParameters) > 0 { continue }
+			if len(s.TypeParameters) > 0 {
+				continue
+			}
 			if st, ok := s.BaseType.(*ast.StructType); ok {
 				qname := b.currentPackage + "." + s.Name.Value
 				res := "struct{"
@@ -278,7 +280,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.Program.Globals = append(b.Program.Globals, g)
 		case *ast.ConstStatement:
 			if intLit, ok := s.Value.(*ast.IntegerLiteral); ok {
-				b.consts[b.currentPackage + "." + s.Name.Value] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}
+				b.consts[b.currentPackage+"."+s.Name.Value] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}
 			}
 		case *ast.FuncStatement:
 			if len(s.TypeParameters) > 0 {
@@ -296,7 +298,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.registerFunc(s)
 		}
 	}
-	
+
 	// Pass 2: build functionsbodies
 	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
@@ -1022,12 +1024,12 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			val := b.buildExpr(e.Arguments[0])
 			return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, expr)
 		}
-		
+
 		var isGenericFunc bool
 		var funcName string
 		var rawFuncName string
 		var args []Value
-		
+
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
 				rawFuncName = b.currentPackage + "." + ident.Value
@@ -1068,12 +1070,14 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 								extractTypeParamsIR(param.Type, string(args[i].Type()), typeMap, tmpl.TypeParams)
 							}
 						}
-						
+
 						var argTyps []string
 						var instTypStr string
 						for _, tp := range tmpl.TypeParams {
 							argTyp := typeMap[tp]
-							if argTyp == "" { argTyp = "word" }
+							if argTyp == "" {
+								argTyp = "word"
+							}
 							argTyps = append(argTyps, argTyp)
 							instTypStr += "_" + argTyp
 						}
@@ -1096,7 +1100,9 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			f, ok := b.funcs[funcName]
 			if !ok {
 				var keys []string
-				for k := range b.funcs { keys = append(keys, k) }
+				for k := range b.funcs {
+					keys = append(keys, k)
+				}
 				panic(fmt.Sprintf("MISSING GENERIC FUNC: %s, AVAILABLE: %v", funcName, keys))
 			}
 			return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
@@ -1170,7 +1176,7 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 				args = append(args, b.buildExpr(arg))
 			}
 			funcName := ident.Value
-			if _, ok := b.funcs[b.currentPackage + "." + funcName]; ok {
+			if _, ok := b.funcs[b.currentPackage+"."+funcName]; ok {
 				funcName = b.currentPackage + "." + funcName
 			}
 			f := b.funcs[funcName]
@@ -1207,12 +1213,12 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 				} else {
 					ptr = b.buildExpr(&ast.PrefixExpression{Operator: "&", Right: sel.Left, Token: e.Token})
 				}
-				
+
 				st, ok := b.typeDefsAST[structName]
 				if !ok {
 					panic("Taking address of field on unknown struct type: " + structName)
 				}
-				
+
 				fieldIdx := -1
 				var fieldType Type
 				for i, f := range st.Fields {
@@ -1225,7 +1231,7 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 				if fieldIdx == -1 {
 					panic("Field not found: " + sel.Right.Value)
 				}
-				
+
 				return b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: Type("*" + string(fieldType))}, Ptr: ptr, FieldIndex: fieldIdx}, expr)
 			}
 			panic("Taking address of expression not supported yet")

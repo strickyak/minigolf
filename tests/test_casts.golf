@@ -1,41 +1,41 @@
 package main
 
 type Apple struct {
-    worms   word
-    spots   int
-    seeds   byte
+	worms word
+	spots int
+	seeds byte
 }
 
 var red Apple
 
 func Inc[T any](ptr *T) {
-    *ptr = *ptr + 1
+	*ptr = *ptr + 1
 }
 
 func main() {
-    var green Apple
+	var green Apple
 
-    print(red.worms)
-    print(red.spots)
-    println(red.seeds)
+	print(red.worms)
+	print(red.spots)
+	println(red.seeds)
 
-    print(green.worms)
-    print(green.spots)
-    println(green.seeds)
+	print(green.worms)
+	print(green.spots)
+	println(green.seeds)
 
-    Inc(&red.worms)
-    Inc(&red.spots)
-    Inc(&red.seeds)
+	Inc(&red.worms)
+	Inc(&red.spots)
+	Inc(&red.seeds)
 
-    Inc(&green.worms)
-    Inc(&green.spots)
-    Inc(&green.seeds)
+	Inc(&green.worms)
+	Inc(&green.spots)
+	Inc(&green.seeds)
 
-    print(red.worms)
-    print(red.spots)
-    println(red.seeds)
+	print(red.worms)
+	print(red.spots)
+	println(red.seeds)
 
-    print(green.worms)
-    print(green.spots)
-    println(green.seeds)
+	print(green.worms)
+	print(green.spots)
+	println(green.seeds)
 }

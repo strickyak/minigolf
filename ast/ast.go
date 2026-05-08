@@ -99,9 +99,9 @@ type FuncStatement struct {
 	TypeParameters []*Identifier
 	Tokens         []token.Token
 	Receiver       *Parameter // Optional
-	Parameters  []*Parameter
-	ReturnTypes []Expression // Optional
-	Body        *BlockStatement
+	Parameters     []*Parameter
+	ReturnTypes    []Expression // Optional
+	Body           *BlockStatement
 }
 
 func (s *FuncStatement) statementNode()         {}

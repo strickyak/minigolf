@@ -74,10 +74,10 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	}
 	if backend == "m6809" {
 		ext = ".asm"
-        tmpDir = fmt.Sprintf("/tmp/m6809.%s.tmp", filepath.Base(sourceFile))
-        os.MkdirAll(tmpDir, 0777)
+		tmpDir = fmt.Sprintf("/tmp/m6809.%s.tmp", filepath.Base(sourceFile))
+		os.MkdirAll(tmpDir, 0777)
 	}
-    t.Logf("TempDir is %q", tmpDir)
+	t.Logf("TempDir is %q", tmpDir)
 	midFile := filepath.Join(tmpDir, "out"+ext)
 	exeFile := filepath.Join(tmpDir, "out.exe")
 
@@ -90,58 +90,58 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-    switch backend {
-    case "m6809":
-/*
-        t.Logf("Running scripts/run-6809-at-4000.sh with %q", midFile)
-	    cmd = exec.Command("sh", "-c", fmt.Sprintf("sh scripts/run-6809-at-4000.sh %q >/tmp/out 2>/tmp/err", midFile))
-	    if out, err := cmd.CombinedOutput(); err != nil {
-            t.Fatalf("Failed scripts/run-6809-at-4000.sh %s\nOutput: %s", midFile, out)
-	    }
-        t.Logf("/tmp/out: %q", Value(exec.Command("cat", "-n", "/tmp/out").CombinedOutput()))
-        t.Logf("/tmp/err: %q", Value(exec.Command("cat", "-n", "/tmp/err").CombinedOutput()))
+	switch backend {
+	case "m6809":
+		/*
+		           t.Logf("Running scripts/run-6809-at-4000.sh with %q", midFile)
+		   	    cmd = exec.Command("sh", "-c", fmt.Sprintf("sh scripts/run-6809-at-4000.sh %q >/tmp/out 2>/tmp/err", midFile))
+		   	    if out, err := cmd.CombinedOutput(); err != nil {
+		               t.Fatalf("Failed scripts/run-6809-at-4000.sh %s\nOutput: %s", midFile, out)
+		   	    }
+		           t.Logf("/tmp/out: %q", Value(exec.Command("cat", "-n", "/tmp/out").CombinedOutput()))
+		           t.Logf("/tmp/err: %q", Value(exec.Command("cat", "-n", "/tmp/err").CombinedOutput()))
 
-        tmp_out := Value(os.ReadFile("/tmp/out"))
-        tmp_err := Value(os.ReadFile("/tmp/err"))
-        stdout.Write(tmp_out)
-        stderr.Write(tmp_err)
-        t.Logf("tmp stdout: %q", tmp_out)
-        t.Logf("tmp stderr: %q", tmp_err)
-        t.Logf("stdout: %q", stdout.String())
-        t.Logf("stderr: %q", stderr.String())
-*/
+		           tmp_out := Value(os.ReadFile("/tmp/out"))
+		           tmp_err := Value(os.ReadFile("/tmp/err"))
+		           stdout.Write(tmp_out)
+		           stderr.Write(tmp_err)
+		           t.Logf("tmp stdout: %q", tmp_out)
+		           t.Logf("tmp stderr: %q", tmp_err)
+		           t.Logf("stdout: %q", stdout.String())
+		           t.Logf("stderr: %q", stderr.String())
+		*/
 
-	    cmd = exec.Command("sh", "scripts/run-6809-at-4000.sh", midFile)
-        cmd.Stdout = &stdout
-        cmd.Stderr = &stderr
-	    if err := cmd.Run(); err != nil {
-            t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
-	    }
+		cmd = exec.Command("sh", "scripts/run-6809-at-4000.sh", midFile)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
+		}
 
-    default:
-	    // Compile generated code with gcc
-	    cmd = exec.Command("gcc", "-o", exeFile, midFile)
-	    if out, err := cmd.CombinedOutput(); err != nil {
-		    t.Fatalf("Failed to compile C code with gcc for backend %s: %v\nOutput: %s", backend, err, out)
-	    }
+	default:
+		// Compile generated code with gcc
+		cmd = exec.Command("gcc", "-o", exeFile, midFile)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("Failed to compile C code with gcc for backend %s: %v\nOutput: %s", backend, err, out)
+		}
 
-        // Run the executable
-        cmd = exec.Command(exeFile)
-        cmd.Stdout = &stdout
-        if err := cmd.Run(); err != nil {
-            t.Fatalf("Failed to run executable for backend %s: %v", backend, err)
-        }
-    }
+		// Run the executable
+		cmd = exec.Command(exeFile)
+		cmd.Stdout = &stdout
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("Failed to run executable for backend %s: %v", backend, err)
+		}
+	}
 
-    out := stdout.String()
+	out := stdout.String()
 	actualLines := cleanOutput(out)
 	expectedLines := cleanOutput(expectedStr)
 
-    // t.Logf("actual: %q", out)
-    // t.Logf("wanted: %q", expectedLines)
+	// t.Logf("actual: %q", out)
+	// t.Logf("wanted: %q", expectedLines)
 
-    // t.Logf("actual: %dx %s", len(actualLines), actualLines)
-    // t.Logf("wanted: %dx %s", len(expectedLines), expectedLines)
+	// t.Logf("actual: %dx %s", len(actualLines), actualLines)
+	// t.Logf("wanted: %dx %s", len(expectedLines), expectedLines)
 
 	if len(actualLines) < len(expectedLines) {
 		t.Fatalf("Backend %s output too short. Expected at least %d lines, got %d", backend, len(expectedLines), len(actualLines))
@@ -155,7 +155,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 
 	if actual != expected {
 		t.Errorf("Backend %s output mismatch.\nGot %d lines:\n%q\n\nWanted %d lines:\n%q",
-            backend, len(actualLines), actual, len(expectedLines), expected)
+			backend, len(actualLines), actual, len(expectedLines), expected)
 	}
 }
 
@@ -209,8 +209,8 @@ func TestSystemAllGolfFiles(t *testing.T) {
 }
 
 func Value[T any](val T, err error) T {
-    if err != nil {
-        log.Panicf("Failure within Value(%T, err): %v", val, err)
-    }
-    return val
+	if err != nil {
+		log.Panicf("Failure within Value(%T, err): %v", val, err)
+	}
+	return val
 }

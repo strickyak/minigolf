@@ -193,12 +193,12 @@ func (p *Parser) parsePackageStatement(overridePackage string) *ast.PackageState
 		return nil
 	}
 
-    pkg := p.curToken.Literal
-    if overridePackage != "" {
-        // The Identifier may have Token and Value fields
-        // that don't match up.  Let's hope Value gets used.
-        pkg = overridePackage
-    }
+	pkg := p.curToken.Literal
+	if overridePackage != "" {
+		// The Identifier may have Token and Value fields
+		// that don't match up.  Let's hope Value gets used.
+		pkg = overridePackage
+	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: pkg}
 
 	if p.peekTokenIs(token.SEMICOLON) {
@@ -255,21 +255,25 @@ func (p *Parser) parseTypeStatement() *ast.TypeStatement {
 
 	if p.peekTokenIs(token.LBRACKET) {
 		p.nextToken() // consume '['
-		if !p.expectPeek(token.IDENT) { return nil }
+		if !p.expectPeek(token.IDENT) {
+			return nil
+		}
 		typeParam := p.curToken.Literal
 		stmt.TypeParameters = append(stmt.TypeParameters, &ast.Identifier{Token: p.curToken, Value: typeParam})
-		
+
 		if !p.expectPeek(token.IDENT) || p.curToken.Literal != "any" {
 			p.errors = append(p.errors, "expected 'any' constraint")
 			return nil
 		}
-		if !p.expectPeek(token.RBRACKET) { return nil }
-		
+		if !p.expectPeek(token.RBRACKET) {
+			return nil
+		}
+
 		p.nextToken() // move to start of base type
 		startPos := p.pos - 2
 		stmt.BaseType = p.parseExpression(LOWEST)
 		endPos := p.pos - 1
-		
+
 		stmt.Tokens = make([]token.Token, endPos-startPos)
 		copy(stmt.Tokens, p.tokens[startPos:endPos])
 	} else {

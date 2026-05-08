@@ -35,7 +35,7 @@ func main() {
 
 	var m int = 0 - 100
 	var n int = 0 - 200
-	if m == 0 - 100 {
+	if m == 0-100 {
 		println(1)
 	} else {
 		if m == 65436 {

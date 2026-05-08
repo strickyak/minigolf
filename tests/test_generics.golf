@@ -10,10 +10,10 @@ var globalB Link[byte]
 
 func main() {
 	globalA.Value = 42
-	
+
 	globalB.Value = 100
 	globalA.Next = &globalB
-	
+
 	println(globalA.Value)
 	var ptr *Link[byte] = globalA.Next
 	println(ptr.Value)

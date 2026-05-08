@@ -63,11 +63,11 @@ func (z *Dec) Add(a *Dec, b *Dec) {
 	for i := range sz {
 		t := a.Get(i) + b.Get(i) + carry
 		carry = (t >= 10)
-        if carry {
-		    z.Guts[i] = t - 10
-        } else {
-		    z.Guts[i] = t
-        }
+		if carry {
+			z.Guts[i] = t - 10
+		} else {
+			z.Guts[i] = t
+		}
 	}
 	z.Size = sz
 	if carry {
@@ -77,13 +77,13 @@ func (z *Dec) Add(a *Dec, b *Dec) {
 }
 
 func (z *Dec) Print() {
-    if z.Size == 0 {
-        println("0.")
-        return
-    }
-    for i := range z.Size {
-        j := z.Size - i - 1
-        print(z.Guts[j])
-    }
-    println(".")
+	if z.Size == 0 {
+		println("0.")
+		return
+	}
+	for i := range z.Size {
+		j := z.Size - i - 1
+		print(z.Guts[j])
+	}
+	println(".")
 }

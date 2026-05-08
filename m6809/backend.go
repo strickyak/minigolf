@@ -381,7 +381,9 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.buf.WriteString("\t; --- Function parameters ---\n")
 	if retSize > 2 {
 		aligned := retSize
-		if aligned%2 != 0 { aligned++ }
+		if aligned%2 != 0 {
+			aligned++
+		}
 		b.retSlot = stackArgOffset
 		b.buf.WriteString(fmt.Sprintf("\t; Return value: size=%d, stack_offset=%d\n", retSize, stackArgOffset))
 		stackArgOffset += aligned
@@ -402,7 +404,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		if p == firstWord || p == firstByte {
 			continue
 		}
-		
+
 		aligned := size
 		if aligned < 2 {
 			aligned = 2
@@ -1129,13 +1131,29 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case "neq":
 			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
 		case "lt":
-			if isInt { b.buf.WriteString(fmt.Sprintf("\tblt %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tblo %s\n", lblTrue)) }
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tblt %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tblo %s\n", lblTrue))
+			}
 		case "lte":
-			if isInt { b.buf.WriteString(fmt.Sprintf("\tble %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tbls %s\n", lblTrue)) }
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tble %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tbls %s\n", lblTrue))
+			}
 		case "gt":
-			if isInt { b.buf.WriteString(fmt.Sprintf("\tbgt %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue)) }
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tbgt %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue))
+			}
 		case "gte":
-			if isInt { b.buf.WriteString(fmt.Sprintf("\tbge %s\n", lblTrue)) } else { b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue)) }
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tbge %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue))
+			}
 		default:
 			log.Panicf("Unknown Compare Op in M6809: %q", i.Op)
 		}
@@ -1170,8 +1188,12 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 			argSize := b.getTypeSize(string(i.Args[idx].Type()))
 			aligned := argSize
-			if aligned < 2 { aligned = 2 } else if aligned%2 != 0 { aligned++ }
-			
+			if aligned < 2 {
+				aligned = 2
+			} else if aligned%2 != 0 {
+				aligned++
+			}
+
 			b.buf.WriteString(fmt.Sprintf("\t; Push arg %d: size=%d\n", idx, argSize))
 			if argSize <= 2 {
 				b.loadVal(i.Args[idx])
@@ -1191,7 +1213,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		retSize := b.getTypeSize(string(i.Func.ReturnType))
 		if retSize > 2 {
 			aligned := retSize
-			if aligned%2 != 0 { aligned++ }
+			if aligned%2 != 0 {
+				aligned++
+			}
 			b.buf.WriteString(fmt.Sprintf("\t; Allocate space for return value: size=%d\n", retSize))
 			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
 			b.pushBytes(aligned)

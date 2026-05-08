@@ -90,8 +90,8 @@ MORE:
 		if !done {
 			imported[key] = true
 			slurp(filepath.Join(dirname, key+".golf"), key)
-            // We changed the iterated object, so restart the iteration.
-            // When everything is done, we fall through and return the program.
+			// We changed the iterated object, so restart the iteration.
+			// When everything is done, we fall through and return the program.
 			goto MORE
 		}
 	}
@@ -124,7 +124,6 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
-
 
 	// Remaining arguments are source files
 	sourceFiles := flag.Args()
@@ -183,7 +182,7 @@ func main() {
 		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + irCode
 
-        err := writeOutput(*outFlag, finalOutput)
+		err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing IR output: %v\n", err)
 			os.Exit(1)
@@ -203,7 +202,7 @@ func main() {
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation (CBE Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + cCode
 
-        err := writeOutput(*outFlag, finalOutput)
+		err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing CBE output: %v\n", err)
 			os.Exit(1)
@@ -223,7 +222,7 @@ func main() {
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation (X86_64 Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + asmCode
 
-        err := writeOutput(*outFlag, finalOutput)
+		err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing X86_64 output: %v\n", err)
 			os.Exit(1)
@@ -243,7 +242,7 @@ func main() {
 		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + asmCode
 
-        err := writeOutput(*outFlag, finalOutput)
+		err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing 6809 output: %v\n", err)
 			os.Exit(1)
@@ -260,7 +259,7 @@ func main() {
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + cCode
 
-        err := writeOutput(*outFlag, finalOutput)
+		err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing C output: %v\n", err)
 			os.Exit(1)
