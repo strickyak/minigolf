@@ -3,6 +3,7 @@ package cbe
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"minigo/ir"
 	"strings"
 )
@@ -246,6 +247,8 @@ func (c *CBE) emitFunc(f *ir.Function) {
 			} else {
 				c.buf.WriteString("\treturn;\n")
 			}
+		default:
+			log.Panicf("bad case: %T / %v", term, term)
 		}
 	}
 
@@ -275,6 +278,8 @@ func (c *CBE) formatVal(v ir.Value) string {
 		return fmt.Sprintf("%q", val.Value)
 	case ir.Instruction:
 		return fmt.Sprintf("v%d", val.(interface{ GetID() int }).GetID())
+	default:
+		log.Panicf("bad case: %T / %v", val, val)
 	}
 	return v.String()
 }
@@ -368,6 +373,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
 		case "word_to_ptr":
 			return fmt.Sprintf("(%s)(%s)", c.mapType(string(i.Typ)), c.formatVal(i.Operand))
+		default:
+			log.Panicf("bad case: %v", i.Op)
 		}
 	case *ir.ZeroInit:
 		return fmt.Sprintf("(%s){0}", c.mapType(string(i.Typ)))
@@ -386,6 +393,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(*%s)", c.formatVal(i.Ptr))
 	case *ir.ExtractFieldPtr:
 		return fmt.Sprintf("(%s->f%d)", c.formatVal(i.Ptr), i.FieldIndex)
+	default:
+		log.Panicf("bad case: %T / %v", i, i)
 	}
 	return "/* unsupported instruction */"
 }

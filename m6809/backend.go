@@ -9,13 +9,30 @@ import (
 	"strings"
 )
 
+func align(sz int) int {
+    if (sz == 0) {
+        return 1
+    }
+    return sz
+}
+
 func (b *Backend) getTypeSize(typ string) int {
-	if typ == "byte" {
+    switch typ {
+	case "void" :
 		return 1
-	}
-	if typ == "word" {
+	case "byte" :
+		return 1
+	case "word" :
 		return 2
-	}
+	case "int" :
+		return 2
+	default:
+		// fallthrough
+    }
+
+	if strings.HasPrefix(typ, "*") {
+		return 2
+    }
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
@@ -46,7 +63,8 @@ func (b *Backend) getTypeSize(typ string) int {
 		}
 		return size
 	}
-	return 2
+    log.Panicf("getTypeSize: unknown type: %q", typ)
+    panic(0)
 }
 
 func (b *Backend) getEltSize(arrType string) int {
@@ -66,7 +84,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 	} else if strings.HasPrefix(structName, "struct{") {
 		content = structName[7 : len(structName)-1]
 	} else {
-		return 0, 2
+        log.Panicf("getFieldOffsetAndSize: not a struct: %q", structName)
 	}
 
 	byteOffset := 0
@@ -90,7 +108,8 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 			start = idx + 1
 		}
 	}
-	return 0, 2
+    log.Panicf("getFieldOffsetAndSize: field not found: %q . %d", structName, fieldIndex)
+    panic(0)
 }
 
 type Backend struct {
@@ -105,6 +124,7 @@ type Backend struct {
 	stackSize       int
 	pushedBytes     int
 	slots           map[int]int
+	slotSizes       map[int]int
 	paramSlots      map[string]int
 	globalOffsets   map[string]int
 	activeRegs      map[string]int
@@ -126,6 +146,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		picMode:         picMode,
 		frameOffset:     frameOff,
 		slots:           make(map[int]int),
+		slotSizes:       make(map[int]int),
 		paramSlots:      make(map[string]int),
 		globalOffsets:   make(map[string]int),
 	}
@@ -146,22 +167,29 @@ func (b *Backend) flushRegisters() {
 	if len(b.activeRegs) == 0 {
 		return
 	}
-	b.buf.WriteString("\t; flush registers\n")
+	b.buf.WriteString("\t\t\t; flushing registers {\n")
 	for reg, id := range b.activeRegs {
-		if reg == "X" {
-			b.buf.WriteString("\ttfr x,d\n")
+        switch reg {
+        case "X" :
+                b.buf.WriteString("\ttfr x,d\n")
+            case "Y" :
+                b.buf.WriteString("\ttfr y,d\n")
+            case "U" :
+                b.buf.WriteString("\ttfr u,d\n")
+            default:
+                panic(reg)
 		}
-		if reg == "Y" {
-			b.buf.WriteString("\ttfr y,d\n")
+		sz := b.slotSizes[id]
+		if sz == 1 {
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\t; reg=%v id=%v\n", b.memAccess(b.slots[id]), reg, id))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\t; reg=%v id=%v\n", b.memAccess(b.slots[id]), reg, id))
 		}
-		if reg == "U" {
-			b.buf.WriteString("\ttfr u,d\n")
-		}
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[id])))
 	}
 	b.activeRegs = map[string]int{}
 	b.valInReg = map[int]string{}
 	b.freeRegs = b.availableRegisters()
+	b.buf.WriteString("\t\t\t; registers flushed }\n")
 }
 
 func (b *Backend) allocateReg(id int) string {
@@ -193,7 +221,11 @@ func (b *Backend) allocateReg(id int) string {
 	if regToSpill == "U" {
 		b.buf.WriteString("\ttfr u,d\n")
 	}
-	b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[spilledId])))
+	if b.slotSizes[spilledId] == 1 {
+		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.slots[spilledId])))
+	} else {
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[spilledId])))
+	}
 	b.buf.WriteString("\tpuls d\n")
 	b.popBytes(2)
 
@@ -205,14 +237,15 @@ func (b *Backend) allocateReg(id int) string {
 
 func (b *Backend) storeResult(id int) {
 	reg := b.allocateReg(id)
-	if reg == "X" {
+    switch reg {
+    case "X":
 		b.buf.WriteString("\ttfr d,x\n")
-	}
-	if reg == "Y" {
+    case "Y":
 		b.buf.WriteString("\ttfr d,y\n")
-	}
-	if reg == "U" {
+    case "U":
 		b.buf.WriteString("\ttfr d,u\n")
+    default:
+        log.Panicf("bad case in storeResult: %v", reg)
 	}
 }
 
@@ -258,31 +291,33 @@ func (b *Backend) getAddrStr(val ir.Value) string {
 			return fmt.Sprintf("v_%s,pcr", v.Name)
 		}
 		return fmt.Sprintf("v_%s", v.Name)
+	default:
+		log.Panicf("bad case: %T / %v", v, v)
 	}
 	return ""
 }
 
 func (b *Backend) pushBytes(n int) {
 	b.pushedBytes += n
+    fmt.Fprintf(&b.buf, "\t\t\t; pushBytes: %d -> %d\n", n, b.pushedBytes)
 }
 func (b *Backend) popBytes(n int) {
 	b.pushedBytes -= n
+    fmt.Fprintf(&b.buf, "\t\t\t; popBytes: %d -> %d\n", n, b.pushedBytes)
 }
 
 func (b *Backend) getSlot(id int, typ string) int {
 	if offset, ok := b.slots[id]; ok {
+        fmt.Fprintf(&b.buf, "\t\t\t; getSlot(%d, %q): found: offset=%d\n", id, typ, offset)
 		return offset
 	}
 	size := b.getTypeSize(typ)
-	aligned := size
-	if aligned < 2 {
-		aligned = 2
-	} else if aligned%2 != 0 {
-		aligned++
-	}
+    aligned := align( size )
 	b.stackSize += aligned
 	offset := -(b.frameOffset + b.stackSize)
 	b.slots[id] = offset
+	b.slotSizes[id] = size
+    fmt.Fprintf(&b.buf, "\t\t\t; getSlot(%d, %q): setting: offset=%d; frame=%d  size=%d newStackSize: %d\n", id, typ, offset, b.frameOffset, aligned, b.stackSize)
 	return offset
 }
 
@@ -333,29 +368,31 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.stackSize = 0
 	b.pushedBytes = 0
 	b.slots = make(map[int]int)
+	b.slotSizes = make(map[int]int)
 	b.paramSlots = make(map[string]int)
 
 	var firstWord *ir.Parameter
 	var firstByte *ir.Parameter
 
+    fmt.Fprintf(&b.buf, "\t\t; =========== EMIT FUNC %q\n", f.Name)
+
 	for _, p := range f.Parameters {
-		if p.Typ == ir.TypeWord && firstWord == nil {
+        sz := b.getTypeSize(string(p.Typ))
+		if sz == 2 && firstWord == nil {
 			firstWord = p
-		} else if p.Typ == ir.TypeByte && firstByte == nil {
+            fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
+		} else if sz == 1 && firstByte == nil {
 			firstByte = p
+            fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
 		}
 	}
 
 	for _, p := range f.Parameters {
 		size := b.getTypeSize(string(p.Typ))
-		aligned := size
-		if aligned < 2 {
-			aligned = 2
-		} else if aligned%2 != 0 {
-			aligned++
-		}
+        aligned := align( size )
 		b.stackSize += aligned
 		b.paramSlots[p.Name] = -(b.frameOffset + b.stackSize)
+        fmt.Fprintf(&b.buf, "\t\t; Note: with param %q, type %q, size %d, b.stackSize becomes %d, slot becomes %v\n", p.Name, p.Type(), aligned, b.stackSize, b.paramSlots[p.Name])
 	}
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
@@ -380,10 +417,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.retSlot = -1
 	b.buf.WriteString("\t; --- Function parameters ---\n")
 	if retSize > 2 {
-		aligned := retSize
-		if aligned%2 != 0 {
-			aligned++
-		}
+        aligned := align( retSize )
 		b.retSlot = stackArgOffset
 		b.buf.WriteString(fmt.Sprintf("\t; Return value: size=%d, stack_offset=%d\n", retSize, stackArgOffset))
 		stackArgOffset += aligned
@@ -395,8 +429,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 	if firstByte != nil {
 		b.buf.WriteString(fmt.Sprintf("\t; Param %s passed in B\n", firstByte.Name))
-		b.buf.WriteString("\tclra\n")
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[firstByte.Name])))
+		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.paramSlots[firstByte.Name])))
 	}
 
 	for _, p := range f.Parameters {
@@ -405,16 +438,16 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			continue
 		}
 
-		aligned := size
-		if aligned < 2 {
-			aligned = 2
-		} else if aligned%2 != 0 {
-			aligned++
-		}
+        aligned := align( size )
 		b.buf.WriteString(fmt.Sprintf("\t; Param %s: size=%d, stack_offset=%d\n", p.Name, size, stackArgOffset))
 		if size <= 2 {
-			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(stackArgOffset)))
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
+			if size == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", b.memAccess(stackArgOffset)))
+				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.paramSlots[p.Name])))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(stackArgOffset)))
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
+			}
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tleay %s\n", b.memAccess(stackArgOffset)))
 			b.emitLoadAddr("x", b.memAccess(b.paramSlots[p.Name]))
@@ -485,6 +518,8 @@ func (b *Backend) emitFunc(f *ir.Function) {
 				}
 				b.buf.WriteString("\trts\n")
 			}
+		default:
+			log.Panicf("bad case: %T / %v", term, term)
 		}
 	}
 }
@@ -492,7 +527,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 func (b *Backend) loadVal(val ir.Value) {
 	switch v := val.(type) {
 	case *ir.Parameter:
-		b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.paramSlots[v.Name])))
+		if b.getTypeSize(string(v.Typ)) == 1 {
+			b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.paramSlots[v.Name])))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.paramSlots[v.Name])))
+		}
 	case *ir.ConstWord:
 		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", v.Val&0xFFFF))
 	case *ir.ConstByte:
@@ -509,8 +548,14 @@ func (b *Backend) loadVal(val ir.Value) {
 				b.buf.WriteString("\ttfr u,d\n")
 			}
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.slots[v.GetID()])))
+			if b.slotSizes[v.GetID()] == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.slots[v.GetID()])))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.slots[v.GetID()])))
+			}
 		}
+	default:
+		log.Panicf("bad case: %T / %v", v, v)
 	}
 }
 
@@ -524,8 +569,10 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 						b.loadVal(edge.Value)
 						if phi.Type() == ir.TypeByte {
 							b.buf.WriteString("\tclra\n")
+							b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.slots[phi.GetID()])))
+						} else {
+							b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[phi.GetID()])))
 						}
-						b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[phi.GetID()])))
 					} else {
 						b.flushRegisters()
 						destStr := b.memAccess(b.slots[phi.GetID()])
@@ -590,7 +637,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
@@ -637,7 +684,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			switch size {
 			case 1:
 				b.emitLoadAddr("y", valStr)
-				b.buf.WriteString("\tldb 1,y\n")
+				b.buf.WriteString("\tldb ,y\n")
 				b.buf.WriteString("\tstb ,x\n")
 			case 2:
 				b.emitLoadAddr("y", valStr)
@@ -663,7 +710,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		destStr := b.memAccess(offset)
 		fmt.Fprintf(&b.buf, "\t\t; ZeroInit size=%d dest=%v\n", size, destStr)
 
-		if size == 1 || size == 2 {
+		if size == 1 {
+			b.buf.WriteString("\tclra\n\tclrb\n")
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
+		} else if size == 2 {
 			b.buf.WriteString("\tclra\n\tclrb\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
 		} else {
@@ -693,17 +743,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 			}
 		} else {
-			idxStr := b.getAddrStr(i.Index)
 			if eltSize == 1 {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.loadVal(i.Index)
 				b.buf.WriteString("\tleay d,y\n")
 			} else if eltSize == 2 {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.loadVal(i.Index)
 				b.buf.WriteString("\tlslb\n")
 				b.buf.WriteString("\trola\n")
 				b.buf.WriteString("\tleay d,y\n")
 			} else {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.loadVal(i.Index)
 				b.buf.WriteString("\tcmpd #0\n")
 				lblEnd := b.nextLabel()
 				b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblEnd))
@@ -720,7 +769,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
@@ -764,17 +813,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
 			}
 		} else {
-			idxStr := b.getAddrStr(i.Index)
 			if eltSize == 1 {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.loadVal(i.Index)
 				b.buf.WriteString("\tleax d,x\n")
 			} else if eltSize == 2 {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.loadVal(i.Index)
 				b.buf.WriteString("\tlslb\n")
 				b.buf.WriteString("\trola\n")
 				b.buf.WriteString("\tleax d,x\n")
 			} else {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", idxStr))
+				b.loadVal(i.Index)
 				b.buf.WriteString("\tcmpd #0\n")
 				lblEnd := b.nextLabel()
 				b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblEnd))
@@ -803,7 +851,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			switch eltSize {
 			case 1:
 				b.emitLoadAddr("y", valStr)
-				b.buf.WriteString("\tldb 1,y\n")
+				b.buf.WriteString("\tldb ,y\n")
 				b.buf.WriteString("\tstb ,x\n")
 			case 2:
 				b.emitLoadAddr("y", valStr)
@@ -838,7 +886,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
@@ -896,7 +944,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			switch fieldSize {
 			case 1:
 				b.emitLoadAddr("y", valStr)
-				b.buf.WriteString("\tldb 1,y\n")
+				b.buf.WriteString("\tldb ,y\n")
 				b.buf.WriteString("\tstb ,x\n")
 			case 2:
 				b.emitLoadAddr("y", valStr)
@@ -918,22 +966,22 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.AddressOfGlobal:
 		b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfGlobal(%s)\n", b.memAccess(offset), i.Global.Name))
 	case *ir.AddressOfLocal:
 		localInstr := i.Local.(ir.Instruction)
 		localOffset := b.slots[localInstr.GetID()]
 		b.emitLoadAddr("x", b.memAccess(localOffset))
 		b.buf.WriteString("\ttfr x,d\n")
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
+        b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(%v, locOff=%d ;%v)\n", b.memAccess(offset), localOffset, localInstr.GetID(), localInstr.GetComment()))
 	case *ir.AddressOfField:
 		structName := string(i.Ptr.Type())
 		structName = strings.TrimPrefix(structName, "*")
 		byteOffset, _ := b.getFieldOffsetAndSize(structName, i.FieldIndex)
 		b.loadVal(i.Ptr)
 		if byteOffset > 0 {
-			b.buf.WriteString(fmt.Sprintf("\taddd #%d\n", byteOffset))
+			b.buf.WriteString(fmt.Sprintf("\taddd #%d\t; byteOffset\n", byteOffset))
 		}
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfField(%v.%v)\n", b.memAccess(offset), structName, i.FieldIndex))
 	case *ir.ExtractFieldPtr:
 		b.flushRegisters()
 		structName := string(i.Ptr.Type())
@@ -942,7 +990,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 		destStr := b.memAccess(offset)
 		b.loadVal(i.Ptr)
-		b.buf.WriteString("\ttfr d,y\n")
+		b.buf.WriteString("\ttfr d,y\t; starting ir.ExtractFieldPtr\n")
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 		}
@@ -951,7 +999,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
@@ -974,7 +1022,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		structName = strings.TrimPrefix(structName, "*")
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
 		b.loadVal(i.Ptr)
-		b.buf.WriteString("\ttfr d,x\n")
+		b.buf.WriteString("\ttfr d,x\t; starting ir.InsertFieldPtr\n")
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
 		}
@@ -991,7 +1039,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			valStr := b.getAddrStr(i.Val)
 			switch fieldSize {
 			case 1:
-				b.buf.WriteString(fmt.Sprintf("\tldb 1+%s\n", valStr))
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", valStr))
 				b.buf.WriteString("\tstb ,x\n")
 			case 2:
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
@@ -1014,13 +1062,13 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.flushRegisters()
 		destStr := b.memAccess(offset)
 		b.loadVal(i.Ptr)
-		b.buf.WriteString("\ttfr d,y\n")
+		b.buf.WriteString("\ttfr d,y\t; starting ir.LoadPtr\n")
 		fieldSize := b.getTypeSize(string(i.Typ))
 		switch fieldSize {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
 			b.buf.WriteString("\tclra\n")
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
@@ -1046,7 +1094,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 		fieldSize := b.getTypeSize(pointeeType)
 		b.loadVal(i.Ptr)
-		b.buf.WriteString("\ttfr d,x\n")
+		b.buf.WriteString("\ttfr d,x\t; starting ir.StorePtr\n")
 
 		if cVal, ok := i.Val.(*ir.ConstWord); ok {
 			if fieldSize == 1 {
@@ -1060,7 +1108,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			valStr := b.getAddrStr(i.Val)
 			switch fieldSize {
 			case 1:
-				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", offsetAddrStr(valStr, 1)))
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", valStr))
 				b.buf.WriteString("\tstb ,x\t\t; store byte via pointer\n")
 			case 2:
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", valStr))
@@ -1082,7 +1130,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.BinaryOp:
 		b.loadVal(i.Right)
-		b.buf.WriteString("\tstd ,--s\n")
+		b.buf.WriteString(fmt.Sprintf("\tstd ,--s\t ; starting ir.BinaryOp(%v,%v,%v)\n", i.Left, i.Op, i.Right))
 		b.pushBytes(2)
 		b.loadVal(i.Left)
 		switch i.Op {
@@ -1115,7 +1163,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.Compare:
 		b.loadVal(i.Right)
-		b.buf.WriteString("\tstd ,--s\n")
+		b.buf.WriteString(fmt.Sprintf("\tstd ,--s\t; starting ir.Compare(%v,%v,%v\n", i.Left, i.Op, i.Right))
 		b.pushBytes(2)
 		b.loadVal(i.Left)
 		b.buf.WriteString("\tcmpd ,s++\n")
@@ -1164,17 +1212,19 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.Call:
 		b.flushRegisters()
+		b.buf.WriteString(fmt.Sprintf("\t; --- Calling %q\n", i.Func.Name))
 		var firstWordArg ir.Value
 		var firstByteArg ir.Value
 		var firstWordIdx = -1
 		var firstByteIdx = -1
 
 		for idx, arg := range i.Args {
-			expectedTyp := i.Func.Parameters[idx].Typ
-			if expectedTyp == ir.TypeWord && firstWordArg == nil {
+			sz := b.getTypeSize(string(i.Func.Parameters[idx].Typ))
+            _ = sz
+			if sz == 2 && firstWordArg == nil {
 				firstWordArg = arg
 				firstWordIdx = idx
-			} else if expectedTyp == ir.TypeByte && firstByteArg == nil {
+			} else if sz == 1 && firstByteArg == nil {
 				firstByteArg = arg
 				firstByteIdx = idx
 			}
@@ -1183,19 +1233,23 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		var pushedBytes int
 		b.buf.WriteString("\t; --- Setup call arguments ---\n")
 		for idx := len(i.Args) - 1; idx >= 0; idx-- {
-			if idx == firstWordIdx || idx == firstByteIdx {
+			if idx == firstWordIdx {
+                b.buf.WriteString(fmt.Sprintf("\t\t; --- first size=2 arg: %q %q\n", i.Args[idx].String(), i.Args[idx].Type()))
+				continue
+			}
+			if idx == firstByteIdx {
+                b.buf.WriteString(fmt.Sprintf("\t\t; --- first size=1 arg: %q %q\n", i.Args[idx].String(), i.Args[idx].Type()))
 				continue
 			}
 			argSize := b.getTypeSize(string(i.Args[idx].Type()))
-			aligned := argSize
-			if aligned < 2 {
-				aligned = 2
-			} else if aligned%2 != 0 {
-				aligned++
-			}
+            aligned := align( argSize )
 
-			b.buf.WriteString(fmt.Sprintf("\t; Push arg %d: size=%d\n", idx, argSize))
-			if argSize <= 2 {
+			b.buf.WriteString(fmt.Sprintf("\t\t\t; Push arg %d: size=%d\n", idx, argSize))
+			if argSize == 1 {
+				b.loadVal(i.Args[idx])
+				b.buf.WriteString("\tstb ,-s\n")
+				b.pushBytes(aligned)
+            } else if argSize == 2 {
 				b.loadVal(i.Args[idx])
 				b.buf.WriteString("\tstd ,--s\n")
 				b.pushBytes(aligned)
@@ -1209,44 +1263,45 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 			pushedBytes += aligned
 		}
+		b.buf.WriteString(fmt.Sprintf("\t; --- Pushed args, pushedBytes=%d", pushedBytes))
 
 		retSize := b.getTypeSize(string(i.Func.ReturnType))
 		if retSize > 2 {
-			aligned := retSize
-			if aligned%2 != 0 {
-				aligned++
-			}
+            aligned := align( retSize )
 			b.buf.WriteString(fmt.Sprintf("\t; Allocate space for return value: size=%d\n", retSize))
 			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
 			b.pushBytes(aligned)
 			pushedBytes += aligned
 		}
+		b.buf.WriteString(fmt.Sprintf("\t; pushedBytes total %d bytes\n", pushedBytes))
 
 		if firstWordArg != nil {
-			b.buf.WriteString(fmt.Sprintf("\t; Load arg %d into X\n", firstWordIdx))
+			b.buf.WriteString(fmt.Sprintf("\t; Load arg %d into X (first size=2 arg)\n", firstWordIdx))
 			b.loadVal(firstWordArg)
 			b.buf.WriteString("\ttfr d,x\n")
 		}
 		if firstByteArg != nil {
-			b.buf.WriteString(fmt.Sprintf("\t; Load arg %d into B\n", firstByteIdx))
+			b.buf.WriteString(fmt.Sprintf("\t; Load arg %d into B (first size=1 arg)\n", firstByteIdx))
 			b.loadVal(firstByteArg)
 		}
 
 		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tlbsr f_%s\n", i.Func.Name))
+			b.buf.WriteString(fmt.Sprintf("\tlbsr f_%s\t\t; CALL (PIC)\n", i.Func.Name))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tjsr f_%s\n", i.Func.Name))
+			b.buf.WriteString(fmt.Sprintf("\tjsr f_%s\t\t; CALL\n", i.Func.Name))
 		}
 
 		if retSize > 2 {
+			b.buf.WriteString(fmt.Sprintf("\t\t\t; doing emitCopyXY(%d)\n", retSize))
 			dest := b.getAddrStr(i)
 			b.emitLoadAddr("x", dest)
-			b.buf.WriteString("\tleay ,s\n")
+			b.buf.WriteString(fmt.Sprintf("\tleay ,s\t; for emitCopyXY(%d)\n", retSize))
 			b.emitCopyYX(retSize)
+			b.buf.WriteString(fmt.Sprintf("\t\t\t; done emitCopyXY(%d)\n", retSize))
 		}
 
 		if pushedBytes > 0 {
-			b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", pushedBytes))
+			b.buf.WriteString(fmt.Sprintf("\tleas %d,s  ; unpushing bytes\n", pushedBytes))
 			b.popBytes(pushedBytes)
 		}
 
@@ -1255,6 +1310,12 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\ttfr x,d\n")
 		case ir.TypeByte:
 			b.buf.WriteString("\tclra\n")
+		case ir.TypeVoid:
+			// Do nothing
+		default:
+			if retSize <= 2 && strings.HasPrefix(string(i.Typ), "*") {
+				b.buf.WriteString("\ttfr x,d\n")
+			}
 		}
 		if i.Typ != ir.TypeVoid && retSize <= 2 {
 			b.storeResult(id)

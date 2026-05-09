@@ -1,5 +1,5 @@
 set -ex
-T=/tmp/run-6809.$(echo "$1" | tr -c A-Za-z0-9 _).tmp
+T=$PWD/_tmp/run-6809.$(echo "$1" | tr -c A-Za-z0-9 _).tmp
 
 rm -rf $T
 mkdir -p $T

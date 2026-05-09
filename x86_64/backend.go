@@ -3,6 +3,7 @@ package x86_64
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"minigo/ir"
 	"strconv"
 	"strings"
@@ -255,6 +256,8 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			b.buf.WriteString("\tmov rsp, rbp\n")
 			b.buf.WriteString("\tpop rbp\n")
 			b.buf.WriteString("\tret\n")
+		default:
+			log.Panicf("bad case: %T / %v", term, term)
 		}
 	}
 }
@@ -269,6 +272,8 @@ func (b *Backend) loadVal(val ir.Value, reg string) {
 		b.buf.WriteString(fmt.Sprintf("\tmov %s, %d\n", reg, v.Val))
 	case ir.Instruction:
 		b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [rbp - %d]\n", reg, b.slots[v.GetID()]))
+	default:
+		log.Panicf("bad case: %T / %v", v, v)
 	}
 }
 
@@ -280,6 +285,8 @@ func (b *Backend) getAddr(val ir.Value) string {
 		return fmt.Sprintf("rbp - %d", b.slots[v.GetID()])
 	case *ir.Global:
 		return fmt.Sprintf("rip + v_%s", v.Name)
+	default:
+		log.Panicf("bad case: %T / %v", v, v)
 	}
 	return ""
 }
@@ -490,6 +497,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			} else {
 				b.buf.WriteString("\tshr rax, cl\n")
 			}
+		default:
+			log.Panicf("bad case: %v", i.Op)
 		}
 		if i.Typ == ir.TypeByte {
 			b.buf.WriteString("\tmovzx rax, al\n")
@@ -529,6 +538,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			} else {
 				b.buf.WriteString("\tsetae al\n")
 			}
+		default:
+			log.Panicf("bad case: %v", i.Op)
 		}
 		b.buf.WriteString("\tmovzx rax, al\n")
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))

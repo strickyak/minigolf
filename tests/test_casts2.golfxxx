@@ -1,0 +1,18 @@
+package main
+
+type Apple struct {
+	worms word
+	spots int
+	seeds byte
+}
+
+func main() {
+    var green Apple
+    green.worms = 10
+    green.spots = 20
+    green.seeds = 30
+    println(word(&green.worms))
+    println(word(&green.seeds))
+    println(word(&green.worms), " ", green.worms)
+    println(word(&green.seeds), " ", green.seeds)
+}
