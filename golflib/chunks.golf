@@ -1,0 +1,57 @@
+package chunks
+
+const SZ = 20
+const NUM = 500
+
+const true = 1
+const false = 0
+
+func Nil[T any]() {
+	return *T(word(0))
+}
+
+type Chunk struct {
+	Next *Chunk
+	Rest [SZ - 2]byte
+}
+
+var FreeList *Chunk
+var Pool [NUM]Chunk
+
+func Init() {
+	var fixme **Chunk = &FreeList
+	for i := range NUM {
+		*fixme = &(Pool[i])
+		fixme = &(Pool[i].Next)
+	}
+}
+
+func panic(w word) {
+	println("\n***PANIC***\n")
+	for true {
+	}
+}
+
+func Alloc() word {
+	if FreeList == Nil[Chunk] {
+		panic(0)
+	}
+	z := FreeList
+	FreeList = z.Next
+	z.Next = Nil[Chunk]
+	for i := range SZ - 2 {
+		z.Rest[i] = 0
+	}
+	return word(z)
+}
+
+func Free(ptr word) {
+	p := *Chunk(ptr)
+	for i := range SZ - 2 {
+		p.Rest[i] = 0
+	}
+	p.Next = FreeList
+	FreeList = p
+}
+
+func main() {}

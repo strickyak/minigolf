@@ -1,10 +1,11 @@
 package transpiler
 
 import (
-	"github.com/strickyak/minigolf/lexer"
-	"github.com/strickyak/minigolf/parser"
 	"strings"
 	"testing"
+
+	"github.com/strickyak/minigolf/lexer"
+	"github.com/strickyak/minigolf/parser"
 )
 
 func TestTranspiler(t *testing.T) {

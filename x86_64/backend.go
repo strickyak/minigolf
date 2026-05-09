@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"github.com/strickyak/minigolf/ir"
 	"strconv"
 	"strings"
+
+	"github.com/strickyak/minigolf/ir"
 )
 
 func (b *Backend) getTypeSize(typ string) int {

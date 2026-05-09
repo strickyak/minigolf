@@ -3,11 +3,12 @@ package ir
 import (
 	"fmt"
 	"log"
+	"strings"
+
 	"github.com/strickyak/minigolf/ast"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/parser"
 	"github.com/strickyak/minigolf/token"
-	"strings"
 )
 
 type Builder struct {
@@ -986,20 +987,20 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, nil)
 			rightBlock := b.newBlock()
 			endBlock := b.newBlock()
-			
+
 			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: left, TrueBlock: rightBlock, FalseBlock: endBlock}, expr)
 			b.addEdge(b.currentBlock, rightBlock)
 			b.addEdge(b.currentBlock, endBlock)
 			b.sealBlock(rightBlock)
-			
+
 			b.currentBlock = rightBlock
 			right := b.buildExpr(e.Right)
 			rightEndBlock := b.currentBlock
-			
+
 			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlock}, expr)
 			b.addEdge(b.currentBlock, endBlock)
 			b.sealBlock(endBlock)
-			
+
 			b.currentBlock = endBlock
 			phi := &Phi{
 				BaseInstruction: BaseInstruction{Typ: TypeByte},
@@ -1016,20 +1017,20 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			trueVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, nil)
 			rightBlock := b.newBlock()
 			endBlock := b.newBlock()
-			
+
 			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: left, TrueBlock: endBlock, FalseBlock: rightBlock}, expr)
 			b.addEdge(b.currentBlock, endBlock)
 			b.addEdge(b.currentBlock, rightBlock)
 			b.sealBlock(rightBlock)
-			
+
 			b.currentBlock = rightBlock
 			right := b.buildExpr(e.Right)
 			rightEndBlock := b.currentBlock
-			
+
 			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlock}, expr)
 			b.addEdge(b.currentBlock, endBlock)
 			b.sealBlock(endBlock)
-			
+
 			b.currentBlock = endBlock
 			phi := &Phi{
 				BaseInstruction: BaseInstruction{Typ: TypeByte},

@@ -1,0 +1,39 @@
+package slice
+
+import mem
+
+type Slice[T any] struct {
+	Base   word
+	Cap word
+	Len    word
+}
+
+type Forge(ptr word, size_bytes word) Slice {
+    var z Slice
+    z.Base = ptr
+    z.Cap = size_bytes / sizeof(T)
+    z.Len = 0
+    return z
+}
+
+func Get[T any](o Slice[T], i word) T {
+    if i < z.Len {
+        panic()
+    }
+    return mem.Peek[T](z.Base + i * sizeof(T))
+}
+
+func (o *Slice) Chop(start word, limit word) Slice {
+    if start > limit {
+        panic()
+    }
+    if limit > z.Cap {
+        panic()
+    }
+    var z Slice
+    z.Base = o.Base
+    z.Cap = z.Cap - start
+    z.Len = limit - start
+}
+
+func main() {}

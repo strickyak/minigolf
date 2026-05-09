@@ -2,8 +2,9 @@ package semantic
 
 import (
 	"fmt"
-	"github.com/strickyak/minigolf/ast"
 	"strings"
+
+	"github.com/strickyak/minigolf/ast"
 )
 
 type Symbol struct {
@@ -140,6 +141,8 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, typ)
 		case *ast.ConstStatement:
 			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, "word") // simplification
+		case *ast.TypeStatement:
+			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, "type")
 		}
 	}
 
@@ -196,7 +199,10 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			} else {
 				for _, nameExpr := range s.Names {
 					if name, ok := nameExpr.(*ast.Identifier); ok {
-						if _, ok := a.currentScope.Resolve(name.Value); !ok {
+						qname := a.currentPackage + "." + name.Value
+						_, ok1 := a.currentScope.Resolve(qname)
+						_, ok2 := a.currentScope.Resolve(name.Value)
+						if !ok1 && !ok2 {
 							a.errors = append(a.errors, fmt.Sprintf("undefined variable: %s", name.Value))
 						}
 					} else if idx, ok := nameExpr.(*ast.IndexExpression); ok {

@@ -2,9 +2,10 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/strickyak/minigolf/ast"
 	"github.com/strickyak/minigolf/token"
-	"strconv"
 )
 
 // Precedence levels for Pratt parsing

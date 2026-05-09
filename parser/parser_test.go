@@ -1,11 +1,12 @@
 package parser
 
 import (
-	"github.com/strickyak/minigolf/ast"
-	"github.com/strickyak/minigolf/lexer"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/strickyak/minigolf/ast"
+	"github.com/strickyak/minigolf/lexer"
 )
 
 func checkParserErrors(t *testing.T, p *Parser) {

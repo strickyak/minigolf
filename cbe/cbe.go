@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"github.com/strickyak/minigolf/ir"
 	"strings"
+
+	"github.com/strickyak/minigolf/ir"
 )
 
 type CBE struct {

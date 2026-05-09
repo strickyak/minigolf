@@ -1,0 +1,17 @@
+package mem
+
+func Peek[T any](addr word) T {
+	return *((*T)(addr))
+}
+
+func Poke[T any](addr word, value T) {
+	*((*T)(addr)) = value
+}
+
+func PeekB(addr word) byte { return Peek[byte](addr) }
+func PeekW(addr word) word { return Peek[word](addr) }
+
+func PokeB(addr word, value byte) { Poke[byte](addr, value) }
+func PokeW(addr word, value word) { Poke[word](addr, value) }
+
+func main() {}

@@ -4,35 +4,36 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"github.com/strickyak/minigolf/ir"
 	"strconv"
 	"strings"
+
+	"github.com/strickyak/minigolf/ir"
 )
 
 func align(sz int) int {
-    if (sz == 0) {
-        return 1
-    }
-    return sz
+	if sz == 0 {
+		return 1
+	}
+	return sz
 }
 
 func (b *Backend) getTypeSize(typ string) int {
-    switch typ {
-	case "void" :
+	switch typ {
+	case "void":
 		return 1
-	case "byte" :
+	case "byte":
 		return 1
-	case "word" :
+	case "word":
 		return 2
-	case "int" :
+	case "int":
 		return 2
 	default:
 		// fallthrough
-    }
+	}
 
 	if strings.HasPrefix(typ, "*") {
 		return 2
-    }
+	}
 	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
@@ -63,8 +64,8 @@ func (b *Backend) getTypeSize(typ string) int {
 		}
 		return size
 	}
-    log.Panicf("getTypeSize: unknown type: %q", typ)
-    panic(0)
+	log.Panicf("getTypeSize: unknown type: %q", typ)
+	panic(0)
 }
 
 func (b *Backend) getEltSize(arrType string) int {
@@ -84,7 +85,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 	} else if strings.HasPrefix(structName, "struct{") {
 		content = structName[7 : len(structName)-1]
 	} else {
-        log.Panicf("getFieldOffsetAndSize: not a struct: %q", structName)
+		log.Panicf("getFieldOffsetAndSize: not a struct: %q", structName)
 	}
 
 	byteOffset := 0
@@ -108,8 +109,8 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 			start = idx + 1
 		}
 	}
-    log.Panicf("getFieldOffsetAndSize: field not found: %q . %d", structName, fieldIndex)
-    panic(0)
+	log.Panicf("getFieldOffsetAndSize: field not found: %q . %d", structName, fieldIndex)
+	panic(0)
 }
 
 type Backend struct {
@@ -169,15 +170,15 @@ func (b *Backend) flushRegisters() {
 	}
 	b.buf.WriteString("\t\t\t; flushing registers {\n")
 	for reg, id := range b.activeRegs {
-        switch reg {
-        case "X" :
-                b.buf.WriteString("\ttfr x,d\n")
-            case "Y" :
-                b.buf.WriteString("\ttfr y,d\n")
-            case "U" :
-                b.buf.WriteString("\ttfr u,d\n")
-            default:
-                panic(reg)
+		switch reg {
+		case "X":
+			b.buf.WriteString("\ttfr x,d\n")
+		case "Y":
+			b.buf.WriteString("\ttfr y,d\n")
+		case "U":
+			b.buf.WriteString("\ttfr u,d\n")
+		default:
+			panic(reg)
 		}
 		sz := b.slotSizes[id]
 		if sz == 1 {
@@ -237,15 +238,15 @@ func (b *Backend) allocateReg(id int) string {
 
 func (b *Backend) storeResult(id int) {
 	reg := b.allocateReg(id)
-    switch reg {
-    case "X":
+	switch reg {
+	case "X":
 		b.buf.WriteString("\ttfr d,x\n")
-    case "Y":
+	case "Y":
 		b.buf.WriteString("\ttfr d,y\n")
-    case "U":
+	case "U":
 		b.buf.WriteString("\ttfr d,u\n")
-    default:
-        log.Panicf("bad case in storeResult: %v", reg)
+	default:
+		log.Panicf("bad case in storeResult: %v", reg)
 	}
 }
 
@@ -299,25 +300,25 @@ func (b *Backend) getAddrStr(val ir.Value) string {
 
 func (b *Backend) pushBytes(n int) {
 	b.pushedBytes += n
-    fmt.Fprintf(&b.buf, "\t\t\t; pushBytes: %d -> %d\n", n, b.pushedBytes)
+	fmt.Fprintf(&b.buf, "\t\t\t; pushBytes: %d -> %d\n", n, b.pushedBytes)
 }
 func (b *Backend) popBytes(n int) {
 	b.pushedBytes -= n
-    fmt.Fprintf(&b.buf, "\t\t\t; popBytes: %d -> %d\n", n, b.pushedBytes)
+	fmt.Fprintf(&b.buf, "\t\t\t; popBytes: %d -> %d\n", n, b.pushedBytes)
 }
 
 func (b *Backend) getSlot(id int, typ string) int {
 	if offset, ok := b.slots[id]; ok {
-        fmt.Fprintf(&b.buf, "\t\t\t; getSlot(%d, %q): found: offset=%d\n", id, typ, offset)
+		fmt.Fprintf(&b.buf, "\t\t\t; getSlot(%d, %q): found: offset=%d\n", id, typ, offset)
 		return offset
 	}
 	size := b.getTypeSize(typ)
-    aligned := align( size )
+	aligned := align(size)
 	b.stackSize += aligned
 	offset := -(b.frameOffset + b.stackSize)
 	b.slots[id] = offset
 	b.slotSizes[id] = size
-    fmt.Fprintf(&b.buf, "\t\t\t; getSlot(%d, %q): setting: offset=%d; frame=%d  size=%d newStackSize: %d\n", id, typ, offset, b.frameOffset, aligned, b.stackSize)
+	fmt.Fprintf(&b.buf, "\t\t\t; getSlot(%d, %q): setting: offset=%d; frame=%d  size=%d newStackSize: %d\n", id, typ, offset, b.frameOffset, aligned, b.stackSize)
 	return offset
 }
 
@@ -374,25 +375,25 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	var firstWord *ir.Parameter
 	var firstByte *ir.Parameter
 
-    fmt.Fprintf(&b.buf, "\t\t; =========== EMIT FUNC %q\n", f.Name)
+	fmt.Fprintf(&b.buf, "\t\t; =========== EMIT FUNC %q\n", f.Name)
 
 	for _, p := range f.Parameters {
-        sz := b.getTypeSize(string(p.Typ))
+		sz := b.getTypeSize(string(p.Typ))
 		if sz == 2 && firstWord == nil {
 			firstWord = p
-            fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
+			fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
 		} else if sz == 1 && firstByte == nil {
 			firstByte = p
-            fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
+			fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
 		}
 	}
 
 	for _, p := range f.Parameters {
 		size := b.getTypeSize(string(p.Typ))
-        aligned := align( size )
+		aligned := align(size)
 		b.stackSize += aligned
 		b.paramSlots[p.Name] = -(b.frameOffset + b.stackSize)
-        fmt.Fprintf(&b.buf, "\t\t; Note: with param %q, type %q, size %d, b.stackSize becomes %d, slot becomes %v\n", p.Name, p.Type(), aligned, b.stackSize, b.paramSlots[p.Name])
+		fmt.Fprintf(&b.buf, "\t\t; Note: with param %q, type %q, size %d, b.stackSize becomes %d, slot becomes %v\n", p.Name, p.Type(), aligned, b.stackSize, b.paramSlots[p.Name])
 	}
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
@@ -417,7 +418,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.retSlot = -1
 	b.buf.WriteString("\t; --- Function parameters ---\n")
 	if retSize > 2 {
-        aligned := align( retSize )
+		aligned := align(retSize)
 		b.retSlot = stackArgOffset
 		b.buf.WriteString(fmt.Sprintf("\t; Return value: size=%d, stack_offset=%d\n", retSize, stackArgOffset))
 		stackArgOffset += aligned
@@ -438,7 +439,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			continue
 		}
 
-        aligned := align( size )
+		aligned := align(size)
 		b.buf.WriteString(fmt.Sprintf("\t; Param %s: size=%d, stack_offset=%d\n", p.Name, size, stackArgOffset))
 		if size <= 2 {
 			if size == 1 {
@@ -976,7 +977,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		localOffset := b.slots[localInstr.GetID()]
 		b.emitLoadAddr("x", b.memAccess(localOffset))
 		b.buf.WriteString("\ttfr x,d\n")
-        b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(%v, locOff=%d ;%v)\n", b.memAccess(offset), localOffset, localInstr.GetID(), localInstr.GetComment()))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(%v, locOff=%d ;%v)\n", b.memAccess(offset), localOffset, localInstr.GetID(), localInstr.GetComment()))
 	case *ir.AddressOfField:
 		structName := string(i.Ptr.Type())
 		structName = strings.TrimPrefix(structName, "*")
@@ -1224,7 +1225,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 		for idx, arg := range i.Args {
 			sz := b.getTypeSize(string(i.Func.Parameters[idx].Typ))
-            _ = sz
+			_ = sz
 			if sz == 2 && firstWordArg == nil {
 				firstWordArg = arg
 				firstWordIdx = idx
@@ -1238,22 +1239,22 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString("\t; --- Setup call arguments ---\n")
 		for idx := len(i.Args) - 1; idx >= 0; idx-- {
 			if idx == firstWordIdx {
-                b.buf.WriteString(fmt.Sprintf("\t\t; --- first size=2 arg: %q %q\n", i.Args[idx].String(), i.Args[idx].Type()))
+				b.buf.WriteString(fmt.Sprintf("\t\t; --- first size=2 arg: %q %q\n", i.Args[idx].String(), i.Args[idx].Type()))
 				continue
 			}
 			if idx == firstByteIdx {
-                b.buf.WriteString(fmt.Sprintf("\t\t; --- first size=1 arg: %q %q\n", i.Args[idx].String(), i.Args[idx].Type()))
+				b.buf.WriteString(fmt.Sprintf("\t\t; --- first size=1 arg: %q %q\n", i.Args[idx].String(), i.Args[idx].Type()))
 				continue
 			}
 			argSize := b.getTypeSize(string(i.Args[idx].Type()))
-            aligned := align( argSize )
+			aligned := align(argSize)
 
 			b.buf.WriteString(fmt.Sprintf("\t\t\t; Push arg %d: size=%d\n", idx, argSize))
 			if argSize == 1 {
 				b.loadVal(i.Args[idx])
 				b.buf.WriteString("\tstb ,-s\n")
 				b.pushBytes(aligned)
-            } else if argSize == 2 {
+			} else if argSize == 2 {
 				b.loadVal(i.Args[idx])
 				b.buf.WriteString("\tstd ,--s\n")
 				b.pushBytes(aligned)
@@ -1271,7 +1272,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 		retSize := b.getTypeSize(string(i.Func.ReturnType))
 		if retSize > 2 {
-            aligned := align( retSize )
+			aligned := align(retSize)
 			b.buf.WriteString(fmt.Sprintf("\t; Allocate space for return value: size=%d\n", retSize))
 			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
 			b.pushBytes(aligned)

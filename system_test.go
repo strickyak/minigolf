@@ -66,8 +66,8 @@ func cleanOutput(out string) []string {
 }
 
 func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
-	tmpDir := filepath.Join("_tmp", backend + "_" + filepath.Base(sourceFile))
-    os.MkdirAll(tmpDir, 0777)
+	tmpDir := filepath.Join("_tmp", backend+"_"+filepath.Base(sourceFile))
+	os.MkdirAll(tmpDir, 0777)
 
 	ext := ".c"
 	if backend == "x86_64" {
@@ -143,7 +143,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	// t.Logf("wanted: %dx %s", len(expectedLines), expectedLines)
 
 	//if len(actualLines) < len(expectedLines) {
-		//t.Fatalf("Backend %s output too short. Expected at least %d lines, got %d", backend, len(expectedLines), len(actualLines))
+	//t.Fatalf("Backend %s output too short. Expected at least %d lines, got %d", backend, len(expectedLines), len(actualLines))
 	//}
 
 	// // Truncate actual lines to length of expected lines (since triangles_byte limit is 100 but we only check first 30)

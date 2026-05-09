@@ -1,8 +1,9 @@
 package lexer
 
 import (
-	"github.com/strickyak/minigolf/token"
 	"testing"
+
+	"github.com/strickyak/minigolf/token"
 )
 
 func TestLexerBasic(t *testing.T) {

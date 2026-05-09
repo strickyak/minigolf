@@ -3,12 +3,13 @@ package transpiler
 import (
 	"bytes"
 	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/strickyak/minigolf/ast"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/parser"
 	"github.com/strickyak/minigolf/token"
-	"strconv"
-	"strings"
 )
 
 // Transpiler walks the AST and emits C99 code
