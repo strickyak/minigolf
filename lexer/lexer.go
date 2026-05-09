@@ -120,9 +120,19 @@ func (l *Lexer) nextToken() token.Token {
 			tok = l.newToken(token.GT, l.ch, startLine, startCol)
 		}
 	case '&':
-		tok = l.newToken(token.BIT_AND, l.ch, startLine, startCol)
+		if l.peekChar() == '&' {
+			l.readChar()
+			tok = token.Token{Type: token.AND, Literal: "&&", Line: startLine, Column: startCol, Filename: l.filename}
+		} else {
+			tok = l.newToken(token.BIT_AND, l.ch, startLine, startCol)
+		}
 	case '|':
-		tok = l.newToken(token.BIT_OR, l.ch, startLine, startCol)
+		if l.peekChar() == '|' {
+			l.readChar()
+			tok = token.Token{Type: token.OR, Literal: "||", Line: startLine, Column: startCol, Filename: l.filename}
+		} else {
+			tok = l.newToken(token.BIT_OR, l.ch, startLine, startCol)
+		}
 	case '^':
 		tok = l.newToken(token.BIT_XOR, l.ch, startLine, startCol)
 	case ';':

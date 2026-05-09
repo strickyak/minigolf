@@ -619,6 +619,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.ConstByte, *ir.ConstWord:
 		b.loadVal(i)
 		b.storeResult(id)
+	case *ir.Sizeof:
+		size := b.getTypeSize(string(i.TargetTyp))
+		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", size))
+		b.storeResult(id)
 	case *ir.Load:
 		b.flushRegisters()
 		size := b.getTypeSize(string(i.Global.Typ))

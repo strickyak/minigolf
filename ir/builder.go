@@ -980,6 +980,66 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		return &StringLiteral{Value: e.Value}
 
 	case *ast.InfixExpression:
+		if e.Operator == "&&" {
+			left := b.buildExpr(e.Left)
+			leftBlock := b.currentBlock
+			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, nil)
+			rightBlock := b.newBlock()
+			endBlock := b.newBlock()
+			
+			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: left, TrueBlock: rightBlock, FalseBlock: endBlock}, expr)
+			b.addEdge(b.currentBlock, rightBlock)
+			b.addEdge(b.currentBlock, endBlock)
+			b.sealBlock(rightBlock)
+			
+			b.currentBlock = rightBlock
+			right := b.buildExpr(e.Right)
+			rightEndBlock := b.currentBlock
+			
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlock}, expr)
+			b.addEdge(b.currentBlock, endBlock)
+			b.sealBlock(endBlock)
+			
+			b.currentBlock = endBlock
+			phi := &Phi{
+				BaseInstruction: BaseInstruction{Typ: TypeByte},
+				Edges: []PhiEdge{
+					{Block: leftBlock, Value: falseVal},
+					{Block: rightEndBlock, Value: right},
+				},
+			}
+			return b.addInstr(phi, expr)
+		}
+		if e.Operator == "||" {
+			left := b.buildExpr(e.Left)
+			leftBlock := b.currentBlock
+			trueVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, nil)
+			rightBlock := b.newBlock()
+			endBlock := b.newBlock()
+			
+			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: left, TrueBlock: endBlock, FalseBlock: rightBlock}, expr)
+			b.addEdge(b.currentBlock, endBlock)
+			b.addEdge(b.currentBlock, rightBlock)
+			b.sealBlock(rightBlock)
+			
+			b.currentBlock = rightBlock
+			right := b.buildExpr(e.Right)
+			rightEndBlock := b.currentBlock
+			
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlock}, expr)
+			b.addEdge(b.currentBlock, endBlock)
+			b.sealBlock(endBlock)
+			
+			b.currentBlock = endBlock
+			phi := &Phi{
+				BaseInstruction: BaseInstruction{Typ: TypeByte},
+				Edges: []PhiEdge{
+					{Block: leftBlock, Value: trueVal},
+					{Block: rightEndBlock, Value: right},
+				},
+			}
+			return b.addInstr(phi, expr)
+		}
 		// log.Printf("ast.InfixExpression: e.Left=(%T)%v e.Right=(%T)%v", e.Left, e.Left, e.Right, e.Right)
 		left := b.buildExpr(e.Left)
 		right := b.buildExpr(e.Right)
@@ -1032,6 +1092,10 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+				if ident.Value == "sizeof" {
+					targetTyp := b.astToIRType(idxExpr.Indices[0])
+					return b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, expr)
+				}
 				rawFuncName = b.currentPackage + "." + ident.Value
 			} else if sel, ok := idxExpr.Left.(*ast.SelectorExpression); ok {
 				if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
@@ -1188,6 +1252,11 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		typ = strings.TrimPrefix(typ, "*")
 		return b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: Type(typ)}, Ptr: ptrVal}, expr)
 	case *ast.PrefixExpression:
+		if e.Operator == "!" {
+			right := b.buildExpr(e.Right)
+			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, nil)
+			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: right, Right: falseVal}, expr)
+		}
 		if e.Operator == "&" {
 			if ident, ok := e.Right.(*ast.Identifier); ok {
 				qname := b.currentPackage + "." + ident.Value

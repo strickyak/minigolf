@@ -1,0 +1,20 @@
+package main
+
+func func_call(c *byte) byte {
+    *c = 1
+    return 1
+}
+
+func main() {
+	var a byte = 0
+	var b byte = 1
+	var count byte = 0
+	
+	if a == 1 && func_call(&count) == 1 { println(1) } else { println(0) }
+	println(count)
+	
+	if b == 1 || func_call(&count) == 1 { println(1) } else { println(0) }
+	println(count)
+	
+	if ! (a == 1) { println(1) } else { println(0) }
+}

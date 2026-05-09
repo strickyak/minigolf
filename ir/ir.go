@@ -174,6 +174,14 @@ type ConstWord struct {
 
 func (i *ConstWord) Opcode() string { return "const_word" }
 
+type Sizeof struct {
+	BaseInstruction
+	TargetTyp Type
+}
+
+func (i *Sizeof) Opcode() string { return "sizeof" }
+func (i *Sizeof) String() string { return fmt.Sprintf("sizeof(%s)", i.TargetTyp) }
+
 // --- Memory Operations ---
 
 type Load struct {

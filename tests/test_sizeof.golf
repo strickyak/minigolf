@@ -1,0 +1,11 @@
+package main
+
+func main() {
+	var a word = sizeof[byte]()
+	var b word = sizeof[word]()
+	var c word = sizeof[[3]byte]()
+	
+	if a == 1 { println(1) } else { println(0) }
+	if b == 2 || b == 8 { println(1) } else { println(0) }
+	if c == 3 { println(1) } else { println(0) }
+}

@@ -888,6 +888,10 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+				if ident.Value == "sizeof" {
+					targetTyp := t.mapType(idxExpr.Indices[0])
+					return fmt.Sprintf("sizeof(%s)", targetTyp)
+				}
 				rawFuncName = t.currentPackage + "." + ident.Value
 			} else if sel, ok := idxExpr.Left.(*ast.SelectorExpression); ok {
 				if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {

@@ -290,6 +290,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("%d", i.Val)
 	case *ir.ConstWord:
 		return fmt.Sprintf("%d", i.Val)
+	case *ir.Sizeof:
+		return fmt.Sprintf("sizeof(%s)", c.mapType(string(i.TargetTyp)))
 	case *ir.Load:
 		return c.formatVal(i.Global)
 	case *ir.Store:

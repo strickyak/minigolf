@@ -351,6 +351,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.ConstByte, *ir.ConstWord:
 		b.loadVal(i, "rax")
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.Sizeof:
+		size := b.getTypeSize(string(i.TargetTyp))
+		b.buf.WriteString(fmt.Sprintf("\tmov rax, %d\n", size))
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.Load:
 		size := b.getTypeSize(string(i.Global.Typ))
 		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), fmt.Sprintf("rip + v_%s", i.Global.Name), size)

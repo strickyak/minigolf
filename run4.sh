@@ -1,4 +1,4 @@
-T=_tmp/$(echo "$1" | tr -c A-Za-z0-9 _)
+T=$PWD/_tmp/$(echo "$1" | tr -c A-Za-z0-9 _)
 mkdir -p _tmp
 
 echo "[ IR ] _tmp/ir" >&2

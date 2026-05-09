@@ -51,6 +51,7 @@ func New() *Analyzer {
 	// Built-ins
 	global.Define("print", "func")
 	global.Define("println", "func")
+	global.Define("sizeof", "func")
 	global.Define("byte", "type")
 	global.Define("word", "type")
 	global.Define("int", "type")
