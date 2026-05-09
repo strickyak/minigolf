@@ -2,7 +2,7 @@ package semantic
 
 import (
 	"fmt"
-	"minigo/ast"
+	"github.com/strickyak/minigolf/ast"
 	"strings"
 )
 

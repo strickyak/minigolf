@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"minigo/ir"
+	"github.com/strickyak/minigolf/ir"
 	"strconv"
 	"strings"
 )

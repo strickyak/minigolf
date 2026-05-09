@@ -1,8 +1,8 @@
 package transpiler
 
 import (
-	"minigo/lexer"
-	"minigo/parser"
+	"github.com/strickyak/minigolf/lexer"
+	"github.com/strickyak/minigolf/parser"
 	"strings"
 	"testing"
 )

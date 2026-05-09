@@ -46,14 +46,14 @@ _printf:
 
 HERE
 
-- lwasm --format=obj -o'main.o' --pragma=undefextern  main.asm
-- lwasm --format=obj -o'cstart.o' cstart.asm
-- lwlink --format=decb -o'main.decb' --script=script --entry=entry main.o cstart.o
+time - lwasm --format=obj -o'main.o' --pragma=undefextern  main.asm
+time - lwasm --format=obj -o'cstart.o' cstart.asm
+time - lwlink --format=decb -o'main.decb' --script=script --entry=entry main.o cstart.o
 
 # ( cd /home/strick/modoc/coco-shelf/gomar/ && go build --tags=level1,coco1,trace gomar.go )
-( cd /home/strick/modoc/coco-shelf/gomar/ && go build --tags=level1,coco1 gomar.go )
+( cd /home/strick/modoc/coco-shelf/gomar/ && time go build --tags=level1,coco1 gomar.go )
 
-/home/strick/modoc/coco-shelf/gomar/gomar \
+time /home/strick/modoc/coco-shelf/gomar/gomar \
     --loadm 'main.decb' \
     --entry=0x7F00 \
     -n=1 \
@@ -61,8 +61,6 @@ HERE
     | tee _out
 Z=$?
     # -t=1 \
-
-sleep 2
 
 case $Z in
     0) : okay ;;

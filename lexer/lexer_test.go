@@ -1,7 +1,7 @@
 package lexer
 
 import (
-	"minigo/token"
+	"github.com/strickyak/minigolf/token"
 	"testing"
 )
 

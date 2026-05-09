@@ -1,0 +1,17 @@
+package main
+
+import "big"
+
+const LIMIT = 500
+
+var x big.Dec
+
+func main() {
+	x.SetSmall(1)
+
+	for i := range LIMIT {
+		x.Add(&x, &x)
+		print("two to the ", i+1, " is ")
+		x.Print()
+	}
+}

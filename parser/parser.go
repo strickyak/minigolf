@@ -2,8 +2,8 @@ package parser
 
 import (
 	"fmt"
-	"minigo/ast"
-	"minigo/token"
+	"github.com/strickyak/minigolf/ast"
+	"github.com/strickyak/minigolf/token"
 	"strconv"
 )
 

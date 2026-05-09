@@ -1,5 +1,8 @@
 package big
 
+const false = 0
+const true  = 1
+
 type Dec struct {
 	Size byte
 	Guts [255]byte
@@ -15,20 +18,20 @@ func (z *Dec) EqSmall(a byte) byte {
 		return (a == 0)
 	}
 	if z.Guts[0] != a {
-		return 0 // false
+		return false
 	}
 
 	for i := byte(1); i < z.Size; i++ {
 		if z.Guts[i] != 0 {
-			return 0 // false
+			return false
 		}
 	}
-	return 1 // true
+	return true
 }
 
 func (a *Dec) IsEven() byte {
 	if a.Size == 0 {
-		return 1 // true
+		return true
 	}
 	return (a.Guts[0] & 1) == 0
 }
@@ -41,14 +44,6 @@ func (z *Dec) Dup(a *Dec) {
 	}
 }
 
-func MaxB(x byte, y byte) byte {
-	if x > y {
-		return x
-	} else {
-		return y
-	}
-}
-
 func (z *Dec) Get(i byte) byte {
 	if i < z.Size {
 		return z.Guts[i]
@@ -58,7 +53,7 @@ func (z *Dec) Get(i byte) byte {
 }
 
 func (z *Dec) Add(a *Dec, b *Dec) {
-	sz := MaxB(a.Size, b.Size)
+	sz := max(a.Size, b.Size)
 	carry := byte(0)
 	for i := range sz {
 		t := a.Get(i) + b.Get(i) + carry
@@ -86,4 +81,12 @@ func (z *Dec) Print() {
 		print(z.Guts[j])
 	}
 	println(".")
+}
+
+func max[T any](x T, y T) T {
+	if x > y {
+		return x
+	} else {
+		return y
+	}
 }

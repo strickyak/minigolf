@@ -3,10 +3,10 @@ package ir
 import (
 	"fmt"
 	"log"
-	"minigo/ast"
-	"minigo/lexer"
-	"minigo/parser"
-	"minigo/token"
+	"github.com/strickyak/minigolf/ast"
+	"github.com/strickyak/minigolf/lexer"
+	"github.com/strickyak/minigolf/parser"
+	"github.com/strickyak/minigolf/token"
 	"strings"
 )
 

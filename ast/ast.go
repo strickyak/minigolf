@@ -1,6 +1,6 @@
 package ast
 
-import "minigo/token"
+import "github.com/strickyak/minigolf/token"
 
 // Node is the base interface for all AST nodes.
 type Node interface {

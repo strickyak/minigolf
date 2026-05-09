@@ -7,17 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-
-	"minigo/ast"
-	"minigo/cbe"
-	"minigo/ir"
-	"minigo/lexer"
-	"minigo/m6809"
-	"minigo/parser"
-	"minigo/semantic"
-	"minigo/transpiler"
-	"minigo/x86_64"
 	"strings"
+
+	"github.com/strickyak/minigolf/ast"
+	"github.com/strickyak/minigolf/cbe"
+	"github.com/strickyak/minigolf/ir"
+	"github.com/strickyak/minigolf/lexer"
+	"github.com/strickyak/minigolf/m6809"
+	"github.com/strickyak/minigolf/parser"
+	"github.com/strickyak/minigolf/semantic"
+	"github.com/strickyak/minigolf/transpiler"
+	"github.com/strickyak/minigolf/x86_64"
 )
 
 // Define a custom type that is a slice of strings
