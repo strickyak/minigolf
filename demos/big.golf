@@ -1,11 +1,11 @@
 package big
 
-const false = 0
+const MAX_DIGITS = 255
 const true  = 1
 
 type Dec struct {
 	Size byte
-	Guts [255]byte
+	Guts [MAX_DIGITS]byte
 }
 
 func (z *Dec) SetSmall(a byte) {
