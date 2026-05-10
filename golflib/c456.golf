@@ -1,0 +1,14 @@
+package chunks
+
+const SZ = 20
+
+type Chunk struct {
+	Next *Chunk
+	Rest [SZ]byte
+}
+
+var FreeList *Chunk
+
+func main() {
+    println( sizeof[Chunk]() )
+}

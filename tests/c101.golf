@@ -1,0 +1,22 @@
+package c101
+
+const SZ = 20
+const NUM = 500
+
+type Chunk struct {
+	Next *Chunk
+	Rest [SZ - sizeof[*Chunk]()]byte
+}
+
+var FreeList *Chunk
+var Pool [NUM]Chunk
+
+func Init() {
+	var fixme **Chunk = &FreeList
+	for i := range NUM {
+		*fixme = &(Pool[i])
+		fixme = &(Pool[i].Next)
+	}
+}
+
+func main() {}

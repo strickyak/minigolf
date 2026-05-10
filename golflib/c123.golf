@@ -1,0 +1,30 @@
+package chunks
+
+const SZ = 20
+
+func Nil[T any]() *T {
+	return (*T)(word(0))
+}
+
+type Chunk struct {
+	Next *Chunk
+	Rest [20]byte
+}
+
+var FreeList *Chunk
+
+func main() {
+
+    
+    if 22 <= sizeof[Chunk]() && sizeof[Chunk]() <= 32 {
+        println("Good")
+    } else {
+        println("Bad")
+    }
+
+	if FreeList == Nil[Chunk]() {
+		println(100)
+	} else {
+		println(200)
+    }
+}
