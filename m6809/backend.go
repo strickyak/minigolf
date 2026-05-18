@@ -1019,7 +1019,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.AddressOfElement:
 		b.flushRegisters()
 		b.loadVal(i.ArrayPtr)
-		
+
 		eltSize := b.getEltSize(i.ArrayPtr.Type().Name)
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
 			byteOffset := int(cIdx.Val) * eltSize
@@ -1452,27 +1452,27 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 }
 
 func (b *Backend) emitMul16() {
-    fmt.Fprintln(&b.buf, "\t pshs D,X // BEGIN emitMul16(D,X)->D {")
+	fmt.Fprintln(&b.buf, "\t pshs D,X // BEGIN emitMul16(D,X)->D {")
 
-    fmt.Fprintln(&b.buf, "\t lda 1,s")
-    fmt.Fprintln(&b.buf, "\t ldb 3,s")
-    fmt.Fprintln(&b.buf, "\t mul")
-    fmt.Fprintln(&b.buf, "\t tfr d,x // first partial")
+	fmt.Fprintln(&b.buf, "\t lda 1,s")
+	fmt.Fprintln(&b.buf, "\t ldb 3,s")
+	fmt.Fprintln(&b.buf, "\t mul")
+	fmt.Fprintln(&b.buf, "\t tfr d,x // first partial")
 
-    fmt.Fprintln(&b.buf, "\t lda 0,s")
-    fmt.Fprintln(&b.buf, "\t ldb 3,s")
-    fmt.Fprintln(&b.buf, "\t mul")
-    fmt.Fprintln(&b.buf, "\t tfr b,a")
-    fmt.Fprintln(&b.buf, "\t clrb")
-    fmt.Fprintln(&b.buf, "\t leax d,x // second partial")
+	fmt.Fprintln(&b.buf, "\t lda 0,s")
+	fmt.Fprintln(&b.buf, "\t ldb 3,s")
+	fmt.Fprintln(&b.buf, "\t mul")
+	fmt.Fprintln(&b.buf, "\t tfr b,a")
+	fmt.Fprintln(&b.buf, "\t clrb")
+	fmt.Fprintln(&b.buf, "\t leax d,x // second partial")
 
-    fmt.Fprintln(&b.buf, "\t lda 1,s")
-    fmt.Fprintln(&b.buf, "\t ldb 2,s")
-    fmt.Fprintln(&b.buf, "\t mul")
-    fmt.Fprintln(&b.buf, "\t tfr b,a")
-    fmt.Fprintln(&b.buf, "\t clrb")
-    fmt.Fprintln(&b.buf, "\t leax d,x // third partial")
+	fmt.Fprintln(&b.buf, "\t lda 1,s")
+	fmt.Fprintln(&b.buf, "\t ldb 2,s")
+	fmt.Fprintln(&b.buf, "\t mul")
+	fmt.Fprintln(&b.buf, "\t tfr b,a")
+	fmt.Fprintln(&b.buf, "\t clrb")
+	fmt.Fprintln(&b.buf, "\t leax d,x // third partial")
 
-    fmt.Fprintln(&b.buf, "\t tfr x,d")
-    fmt.Fprintln(&b.buf, "\t leas 4,s // END emitMul16(D,X)->D }")
+	fmt.Fprintln(&b.buf, "\t tfr x,d")
+	fmt.Fprintln(&b.buf, "\t leas 4,s // END emitMul16(D,X)->D }")
 }

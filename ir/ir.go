@@ -50,12 +50,12 @@ func (t Type) PointedType() Type {
 }
 
 func (t Type) PointerTo() Type {
-    return Type{ 
-        Expr: &ast.PointerType{
-            Elt: t.Expr,
-        },
-        Name: "*" + t.Name,
-    }
+	return Type{
+		Expr: &ast.PointerType{
+			Elt: t.Expr,
+		},
+		Name: "*" + t.Name,
+	}
 }
 
 func (t Type) IsAnArray() bool {
@@ -115,16 +115,16 @@ func GetTypeSize(typ Type) int {
 	if typ.Name == "byte" {
 		return 1
 	}
-    log.Panicf("GetTypeSize: unknown type: %q", typ)
-    panic(0)
+	log.Panicf("GetTypeSize: unknown type: %q", typ)
+	panic(0)
 }
 
 func GetEltSize(arrType Type) int {
 	if arrType.IsAnArray() {
 		return GetTypeSize(arrType.ArrayElementType())
 	}
-    log.Panicf("GetEltSize: not an array: %q", arrType)
-    panic(0)
+	log.Panicf("GetEltSize: not an array: %q", arrType)
+	panic(0)
 }
 
 // Value is an interface for anything that can be an operand.
@@ -467,29 +467,29 @@ func (i *Return) Opcode() string { return "ret" }
 func (i *Return) IsTerminator()  {}
 
 func MangleName(s string) string {
-    var bbuf bytes.Buffer
-    for _, c := range s {
-        if '0' <= c && c <= '9' ||
-        'a' <= c && c <= 'z' ||
-        'A' <= c && c <= 'Z' ||
-        '_' == c {
-            bbuf.WriteByte(byte(c))
-        } else {
-            bbuf.WriteByte('_')
-            bbuf.WriteByte('_')
-        }
-    }
-    return bbuf.String()
+	var bbuf bytes.Buffer
+	for _, c := range s {
+		if '0' <= c && c <= '9' ||
+			'a' <= c && c <= 'z' ||
+			'A' <= c && c <= 'Z' ||
+			'_' == c {
+			bbuf.WriteByte(byte(c))
+		} else {
+			bbuf.WriteByte('_')
+			bbuf.WriteByte('_')
+		}
+	}
+	return bbuf.String()
 }
 
 func (t Type) MangledName() string {
-    return MangleName(t.Name)
+	return MangleName(t.Name)
 }
 
 func (f *Function) MangledName() string {
-    return MangleName(f.Name)
+	return MangleName(f.Name)
 }
 
 func (g *Global) MangledName() string {
-    return MangleName(g.Name)
+	return MangleName(g.Name)
 }
