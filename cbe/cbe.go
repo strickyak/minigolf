@@ -25,19 +25,28 @@ func (c *CBE) mapType(typ string) string {
 	if typ == "byte" || typ == "word" || typ == "void" || typ == "unknown" {
 		return typ
 	}
-	if strings.HasPrefix(typ, "*") {
-		return c.mapType(typ[1:]) + "*"
+	if typ == "const_integer" {
+		return "word"
 	}
-	if strings.HasPrefix(typ, "[") {
+	if typ == "int" {
+		return "int16_t"
+	}
+	if typ == "uint" {
+		return "uint16_t"
+	}
+	if (ir.Type{Name: typ}).IsAPointer() {
+		return c.mapType((ir.Type{Name: typ}).PointedType().Name) + "*"
+	}
+	if (ir.Type{Name: typ}).IsAnArray() {
 		idx := strings.Index(typ, "]")
 		if idx == -1 {
 			return "word"
 		}
 		lenStr := typ[1:idx]
-		eltType := typ[idx+1:]
+		eltType := (ir.Type{Name: typ}).ArrayElementType().Name
 
 		eltName := c.mapType(eltType)
-		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, eltName)
+		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, ir.MangleName(eltType))
 
 		if !c.arrayTypes[typeName] {
 			c.arrayTypes[typeName] = true
@@ -45,12 +54,9 @@ func (c *CBE) mapType(typ string) string {
 		}
 		return typeName
 	}
-	if strings.HasPrefix(typ, "struct{") {
+	if (ir.Type{Name: typ}).IsAStruct() {
 		content := typ[7 : len(typ)-1]
-		typeName := "t_tuple_" + strings.ReplaceAll(content, ";", "_")
-		typeName = strings.ReplaceAll(typeName, "*", "ptr_")
-		typeName = strings.ReplaceAll(typeName, "[", "arr_")
-		typeName = strings.ReplaceAll(typeName, "]", "_")
+		typeName := "t_tuple_" + ir.MangleName(content)
 
 		if !c.arrayTypes[typeName] {
 			c.arrayTypes[typeName] = true
@@ -76,19 +82,24 @@ func (c *CBE) mapType(typ string) string {
 		return typeName
 	}
 	// Assume it's a named struct type if it reaches here
-	typ = strings.ReplaceAll(typ, ".", "_")
-	typ = strings.ReplaceAll(typ, "*", "ptr_")
-	typ = strings.ReplaceAll(typ, "[", "_")
-	typ = strings.ReplaceAll(typ, "]", "_")
-	return typ
+	return ir.MangleName(typ)
 }
 
 func (c *CBE) Generate(program *ir.Program) string {
-	// Struct types
+	// Struct types forward declarations
 	for _, name := range program.TypeDefOrder {
 		typStr := program.TypeDefs[name]
-		if strings.HasPrefix(typStr, "struct{") {
-			content := typStr[7 : len(typStr)-1]
+		if typStr.IsAStruct() {
+			nameSanitized := c.mapType(name)
+			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", nameSanitized, nameSanitized))
+		}
+	}
+
+	// Struct types bodies
+	for _, name := range program.TypeDefOrder {
+		typStr := program.TypeDefs[name]
+		if typStr.IsAStruct() {
+			content := typStr.Name[7 : len(typStr.Name)-1]
 			var fields string
 			depth := 0
 			start := 0
@@ -106,7 +117,6 @@ func (c *CBE) Generate(program *ir.Program) string {
 				}
 			}
 			nameSanitized := c.mapType(name)
-			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", nameSanitized, nameSanitized))
 			c.typedefBuf.WriteString(fmt.Sprintf("struct %s { %s};\n", nameSanitized, fields))
 		}
 	}
@@ -114,7 +124,7 @@ func (c *CBE) Generate(program *ir.Program) string {
 	// Globals
 	for _, g := range program.Globals {
 		gName := strings.ReplaceAll(g.Name, ".", "_")
-		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(string(g.Typ)), gName))
+		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(g.Typ.Name), gName))
 	}
 	if len(program.Globals) > 0 {
 		c.buf.WriteString("\n")
@@ -152,13 +162,13 @@ func (c *CBE) Generate(program *ir.Program) string {
 
 func (c *CBE) emitFuncSignature(f *ir.Function, isForward bool) {
 	retType := "void"
-	if f.ReturnType != ir.TypeVoid {
-		retType = c.mapType(string(f.ReturnType))
+	if !f.ReturnType.Equals(ir.TypeVoid) {
+		retType = c.mapType(f.ReturnType.Name)
 	}
 
 	var params []string
 	for _, p := range f.Parameters {
-		params = append(params, fmt.Sprintf("%s v_%s", c.mapType(string(p.Typ)), p.Name))
+		params = append(params, fmt.Sprintf("%s v_%s", c.mapType(p.Typ.Name), p.Name))
 	}
 
 	fName := strings.ReplaceAll(f.Name, ".", "_")
@@ -176,8 +186,8 @@ func (c *CBE) emitFunc(f *ir.Function) {
 	// Declare all local variables (values) at the top of the function
 	for _, b := range f.Blocks {
 		for _, instr := range b.Instructions {
-			if instr.Type() != ir.TypeVoid && instr.Type() != ir.TypeUnknown {
-				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", c.mapType(string(instr.Type())), instr.GetID()))
+			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
+				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", c.mapType(instr.Type().Name), instr.GetID()))
 			}
 		}
 	}
@@ -223,7 +233,7 @@ func (c *CBE) emitFunc(f *ir.Function) {
 			}
 
 			c.buf.WriteString("\t")
-			if instr.Type() != ir.TypeVoid && instr.Type() != ir.TypeUnknown {
+			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				c.buf.WriteString(fmt.Sprintf("v%d = ", instr.GetID()))
 			}
 			c.buf.WriteString(c.emitInstrExpr(instr) + ";\n")
@@ -292,7 +302,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 	case *ir.ConstWord:
 		return fmt.Sprintf("%d", i.Val)
 	case *ir.Sizeof:
-		return fmt.Sprintf("sizeof(%s)", c.mapType(string(i.TargetTyp)))
+		return fmt.Sprintf("sizeof(%s)", c.mapType(i.TargetTyp.Name))
 	case *ir.Load:
 		return c.formatVal(i.Global)
 	case *ir.Store:
@@ -354,9 +364,9 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		for idx, arg := range i.Args {
 			argStr := c.formatVal(arg)
 			if idx < len(i.Func.Parameters) {
-				expectedTyp := string(i.Func.Parameters[idx].Typ)
-				argTyp := string(arg.Type())
-				if strings.HasPrefix(expectedTyp, "*") && !strings.HasPrefix(argTyp, "*") {
+				expectedTyp := i.Func.Parameters[idx].Typ.Name
+				argTyp := arg.Type().Name
+				if (ir.Type{Name: expectedTyp}).IsAPointer() && !(ir.Type{Name: argTyp}).IsAPointer() {
 					argStr = "(&" + argStr + ")"
 				}
 			}
@@ -375,12 +385,14 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		case "zero_ext":
 			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
 		case "word_to_ptr":
-			return fmt.Sprintf("(%s)(%s)", c.mapType(string(i.Typ)), c.formatVal(i.Operand))
+			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), c.formatVal(i.Operand))
+		case "bitcast":
+			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), c.formatVal(i.Operand))
 		default:
 			log.Panicf("bad case: %v", i.Op)
 		}
 	case *ir.ZeroInit:
-		return fmt.Sprintf("(%s){0}", c.mapType(string(i.Typ)))
+		return fmt.Sprintf("(%s){0}", c.mapType(i.Typ.Name))
 	case *ir.ExtractElement:
 		return fmt.Sprintf("(%s).data[%s]", c.formatVal(i.Array), c.formatVal(i.Index))
 	case *ir.ExtractField:
@@ -392,6 +404,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
 	case *ir.AddressOfField:
 		return fmt.Sprintf("(&(%s->f%d))", c.formatVal(i.Ptr), i.FieldIndex)
+	case *ir.AddressOfElement:
+		return fmt.Sprintf("(&(%s->data[%s]))", c.formatVal(i.ArrayPtr), c.formatVal(i.Index))
 	case *ir.LoadPtr:
 		return fmt.Sprintf("(*%s)", c.formatVal(i.Ptr))
 	case *ir.ExtractFieldPtr:
@@ -410,7 +424,7 @@ func (c *CBE) emitPrint(newline bool, args []ir.Value) string {
 		if strLit, ok := arg.(*ir.StringLiteral); ok {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
-			if arg.Type() == ir.TypeInt {
+			if arg.Type().Equals(ir.TypeInt) {
 				formatStrs = append(formatStrs, "%lld")
 				argStrs = append(argStrs, fmt.Sprintf("(long long)%s", c.formatVal(arg)))
 			} else {

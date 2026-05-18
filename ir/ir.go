@@ -1,39 +1,97 @@
 package ir
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
+
+	"github.com/strickyak/minigolf/ast"
 )
 
 // Type represents a primitive or composite type in the IR.
-type Type string
+type Type struct {
+	Expr ast.Expression
+	Name string
+}
 
-const (
-	TypeUnknown Type = ""
-	TypeByte    Type = "byte"
-	TypeWord    Type = "word"
-	TypeInt     Type = "int"
-	TypeVoid    Type = "void"
+func (t Type) TypeName() string {
+	return t.Name
+}
+
+func (t Type) String() string {
+	return t.Name
+}
+
+func (t Type) Equals(other Type) bool {
+	return t.Name == other.Name
+}
+
+var (
+	TypeUnknown      = Type{Name: ""}
+	TypeByte         = Type{Name: "byte", Expr: &ast.Identifier{Value: "byte"}}
+	TypeWord         = Type{Name: "word", Expr: &ast.Identifier{Value: "word"}}
+	TypeInt          = Type{Name: "int", Expr: &ast.Identifier{Value: "int"}}
+	TypeUint         = Type{Name: "uint", Expr: &ast.Identifier{Value: "uint"}}
+	TypeConstInteger = Type{Name: "const_integer", Expr: &ast.Identifier{Value: "const_integer"}}
+	TypeVoid         = Type{Name: "void", Expr: &ast.Identifier{Value: "void"}}
 )
 
-func GetTypeSize(typ string) int {
-	if typ == "byte" {
+func (t Type) IsAPointer() bool {
+	return strings.HasPrefix(t.Name, "*")
+}
+
+func (t Type) PointedType() Type {
+	if !t.IsAPointer() {
+		panic("PointedType called on non-pointer type: " + t.Name)
+	}
+	return Type{Name: t.Name[1:]}
+}
+
+func (t Type) PointerTo() Type {
+    return Type{ 
+        Expr: &ast.PointerType{
+            Elt: t.Expr,
+        },
+        Name: "*" + t.Name,
+    }
+}
+
+func (t Type) IsAnArray() bool {
+	return strings.HasPrefix(t.Name, "[")
+}
+
+func (t Type) ArrayElementType() Type {
+	if !t.IsAnArray() {
+		panic("ArrayElementType called on non-array type: " + t.Name)
+	}
+	idx := strings.Index(t.Name, "]")
+	return Type{Name: t.Name[idx+1:]}
+}
+
+func (t Type) IsAStruct() bool {
+	return strings.HasPrefix(t.Name, "struct{")
+}
+
+func GetTypeSize(typ Type) int {
+	if typ.Name == "byte" {
 		return 1
 	}
-	if typ == "word" || typ == "int" {
+	if typ.Name == "word" || typ.Name == "int" || typ.Name == "uint" || typ.Name == "const_integer" {
 		return 2
 	}
-	if strings.HasPrefix(typ, "[") {
-		idx := strings.Index(typ, "]")
+	if typ.IsAnArray() {
+		str := typ.Name
+		idx := strings.Index(str, "]")
 		if idx != -1 {
-			length, _ := strconv.Atoi(typ[1:idx])
-			eltSize := GetTypeSize(typ[idx+1:])
+			length, _ := strconv.Atoi(str[1:idx])
+			eltSize := GetTypeSize(typ.ArrayElementType())
 			return length * eltSize
 		}
 	}
-	if strings.HasPrefix(typ, "struct{") {
-		content := typ[7 : len(typ)-1]
+	if typ.IsAStruct() {
+		content := typ.Name[7 : len(typ.Name)-1]
 		size := 0
 		depth := 0
 		start := 0
@@ -44,30 +102,29 @@ func GetTypeSize(typ string) int {
 				depth--
 			} else if content[i] == ';' && depth == 0 {
 				fTyp := content[start:i]
-				size += GetTypeSize(fTyp)
+				size += GetTypeSize(Type{Name: fTyp})
 				start = i + 1
 			}
 		}
 		return size
 	}
-	return 2
+	if typ.IsAPointer() {
+		return 2
+	}
+	// Default to trying as a string if no match
+	if typ.Name == "byte" {
+		return 1
+	}
+    log.Panicf("GetTypeSize: unknown type: %q", typ)
+    panic(0)
 }
 
-func GetEltSize(arrType string) int {
-	if strings.HasPrefix(arrType, "[") {
-		idx := strings.Index(arrType, "]")
-		if idx != -1 {
-			return GetTypeSize(arrType[idx+1:])
-		}
+func GetEltSize(arrType Type) int {
+	if arrType.IsAnArray() {
+		return GetTypeSize(arrType.ArrayElementType())
 	}
-	return 2
-}
-
-func (t Type) String() string {
-	if t == "" {
-		return "unknown"
-	}
-	return string(t)
+    log.Panicf("GetEltSize: not an array: %q", arrType)
+    panic(0)
 }
 
 // Value is an interface for anything that can be an operand.
@@ -80,7 +137,7 @@ type Value interface {
 type Program struct {
 	Globals      []*Global
 	Functions    []*Function
-	TypeDefs     map[string]string
+	TypeDefs     map[string]Type
 	TypeDefOrder []string
 }
 
@@ -287,6 +344,14 @@ type AddressOfField struct {
 
 func (i *AddressOfField) Opcode() string { return "addrof_field" }
 
+type AddressOfElement struct {
+	BaseInstruction
+	ArrayPtr Value
+	Index    Value
+}
+
+func (i *AddressOfElement) Opcode() string { return "addrof_element" }
+
 type ExtractFieldPtr struct {
 	BaseInstruction
 	Ptr        Value
@@ -400,3 +465,31 @@ type Return struct {
 
 func (i *Return) Opcode() string { return "ret" }
 func (i *Return) IsTerminator()  {}
+
+func MangleName(s string) string {
+    var bbuf bytes.Buffer
+    for _, c := range s {
+        if '0' <= c && c <= '9' ||
+        'a' <= c && c <= 'z' ||
+        'A' <= c && c <= 'Z' ||
+        '_' == c {
+            bbuf.WriteByte(byte(c))
+        } else {
+            bbuf.WriteByte('_')
+            bbuf.WriteByte('_')
+        }
+    }
+    return bbuf.String()
+}
+
+func (t Type) MangledName() string {
+    return MangleName(t.Name)
+}
+
+func (f *Function) MangledName() string {
+    return MangleName(f.Name)
+}
+
+func (g *Global) MangledName() string {
+    return MangleName(g.Name)
+}

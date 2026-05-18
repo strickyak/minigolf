@@ -91,8 +91,8 @@ func PrintProgram(p *Program) string {
 				if comment != "" {
 					comment = "\t\t; " + comment
 				}
-				if instr.Type() != TypeVoid && instr.Type() != TypeUnknown {
-					buf.WriteString(fmt.Sprintf("  %s:%s = %s %s%s\n", instr.String(), instr.Type(), op, strings.Join(args, ", "), comment))
+				if !instr.Type().Equals(TypeVoid) && !instr.Type().Equals(TypeUnknown) {
+					buf.WriteString(fmt.Sprintf("  %s:%s = %s %s%s\n", instr.String(), instr.Type().Name, op, strings.Join(args, ", "), comment))
 				} else {
 					buf.WriteString(fmt.Sprintf("  %s %s%s\n", op, strings.Join(args, ", "), comment))
 				}

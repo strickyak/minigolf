@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
+	"github.com/strickyak/minigolf/ir"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/parser"
 	"github.com/strickyak/minigolf/token"
@@ -14,9 +15,9 @@ import (
 
 // Transpiler walks the AST and emits C99 code
 type Transpiler struct {
-	// pkgName removed in favor of currentPackage
 	buf              bytes.Buffer
 	typedefBuf       bytes.Buffer
+	funcDeclsBuf     bytes.Buffer
 	genericImplBuf   bytes.Buffer
 	locals           []map[string]string
 	globals          map[string]string
@@ -25,8 +26,9 @@ type Transpiler struct {
 	funcRetTypes     map[string][]string
 	currentFunc      *ast.FuncStatement
 	currentPackage   string
-	genericTemplates map[string]*GenericTemplate
 	typeDefs         map[string]*ast.TypeStatement
+	genericTemplates map[string]*GenericTemplate
+	irBuilder        *ir.Builder
 }
 
 type GenericTemplate struct {
@@ -101,6 +103,37 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 			if ctype, ok := t.funcTypes[t.currentPackage+"."+ident.Value]; ok {
 				return ctype
 			}
+			qname := t.currentPackage + "." + ident.Value
+			if _, ok := t.typeDefs[qname]; ok {
+				return t.mapType(ident)
+			}
+		}
+		if ptrType, ok := e.Function.(*ast.PointerType); ok {
+			return t.mapType(ptrType)
+		}
+		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
+			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+				rawFuncName := t.currentPackage + "." + ident.Value
+				var instTypStr string
+				var argTyps []string
+				for _, idx := range idxExpr.Indices {
+					argTyp := t.mapType(idx)
+					argTyps = append(argTyps, argTyp)
+					instTypStr += "_" + argTyp
+				}
+				funcName := fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+				funcName = strings.ReplaceAll(funcName, ".", "_")
+				
+				if !t.arrayTypes[funcName] {
+					t.arrayTypes[funcName] = true
+					if tmpl, ok := t.genericTemplates[rawFuncName]; ok {
+						t.instantiateGenericFuncC(funcName, rawFuncName, argTyps, tmpl)
+					}
+				}
+				if ctype, ok := t.funcTypes[funcName]; ok {
+					return ctype
+				}
+			}
 		}
 	case *ast.PrefixExpression:
 		if e.Operator == "&" {
@@ -162,12 +195,14 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 func (t *Transpiler) Transpile(program *ast.Program) string {
 	// Initialize
 	t.arrayTypes = make(map[string]bool)
+	t.irBuilder = ir.NewBuilder()
+	t.irBuilder.Build(program)
 
 	// First pass: find package name
 	t.currentPackage = "main" // default
 
-	var forwardBuf bytes.Buffer
-	forwardBuf.WriteString("// Forward declarations\n")
+	t.typedefBuf.WriteString("// Forward type declarations\n")
+	t.funcDeclsBuf.WriteString("// Forward function declarations\n")
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
 		case *ast.PackageStatement:
@@ -189,10 +224,10 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 			base := t.mapType(s.BaseType)
 			name := fmt.Sprintf("t_%s_%s", t.currentPackage, s.Name.Value)
 			if strings.HasPrefix(base, "struct {") {
-				forwardBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", name, name))
-				forwardBuf.WriteString(fmt.Sprintf("struct %s %s;\n", name, base[6:]))
+				t.typedefBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", name, name))
+				t.typedefBuf.WriteString(fmt.Sprintf("struct %s %s;\n", name, base[6:]))
 			} else {
-				forwardBuf.WriteString(fmt.Sprintf("typedef %s %s;\n", base, name))
+				t.typedefBuf.WriteString(fmt.Sprintf("typedef %s %s;\n", base, name))
 			}
 		case *ast.FuncStatement:
 			if len(s.TypeParameters) > 0 {
@@ -239,15 +274,13 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 				}
 				structName := fmt.Sprintf("f_%s_%s_returns", t.currentPackage, funcName)
 				retType = fmt.Sprintf("struct %s", structName)
-				forwardBuf.WriteString(fmt.Sprintf("%s { %s; };\n", retType, strings.Join(fields, "; ")))
+				t.typedefBuf.WriteString(fmt.Sprintf("%s { %s; };\n", retType, strings.Join(fields, "; ")))
 				t.funcRetTypes[t.currentPackage+"."+s.Name.Value] = retTypes
 			}
 			t.funcTypes[t.currentPackage+"."+s.Name.Value] = retType
-			forwardBuf.WriteString(t.emitFuncSignatureStr(s, true))
+			t.funcDeclsBuf.WriteString(t.emitFuncSignatureStr(s, true))
 		}
 	}
-
-	t.buf.WriteString(forwardBuf.String())
 
 	t.buf.WriteString("\n// Global variables and constants\n")
 	t.currentPackage = "main"
@@ -306,6 +339,8 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 
 	finalBuf.WriteString(t.typedefBuf.String())
 	finalBuf.WriteString("\n")
+	finalBuf.WriteString(t.funcDeclsBuf.String())
+	finalBuf.WriteString("\n")
 	finalBuf.WriteString(t.genericImplBuf.String())
 	finalBuf.WriteString(t.buf.String())
 
@@ -324,8 +359,8 @@ func extractTypeParamsC(paramType ast.Expression, argTyp string, typeMap map[str
 		if strings.HasSuffix(argTyp, "*") {
 			argTyp = strings.TrimSpace(argTyp[:len(argTyp)-1])
 			extractTypeParamsC(prefix.Right, argTyp, typeMap, typeParams)
-		} else if strings.HasPrefix(argTyp, "*") {
-			extractTypeParamsC(prefix.Right, argTyp[1:], typeMap, typeParams)
+		} else if (ir.Type{Name: argTyp}).IsAPointer() {
+			extractTypeParamsC(prefix.Right, (ir.Type{Name: argTyp}).PointedType().Name, typeMap, typeParams)
 		} else {
 			extractTypeParamsC(prefix.Right, argTyp, typeMap, typeParams)
 		}
@@ -333,8 +368,8 @@ func extractTypeParamsC(paramType ast.Expression, argTyp string, typeMap map[str
 		if strings.HasSuffix(argTyp, "*") {
 			argTyp = strings.TrimSpace(argTyp[:len(argTyp)-1])
 			extractTypeParamsC(ptr.Elt, argTyp, typeMap, typeParams)
-		} else if strings.HasPrefix(argTyp, "*") {
-			extractTypeParamsC(ptr.Elt, argTyp[1:], typeMap, typeParams)
+		} else if (ir.Type{Name: argTyp}).IsAPointer() {
+			extractTypeParamsC(ptr.Elt, (ir.Type{Name: argTyp}).PointedType().Name, typeMap, typeParams)
 		} else {
 			extractTypeParamsC(ptr.Elt, argTyp, typeMap, typeParams)
 		}
@@ -367,6 +402,9 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		}
 		if name == "intptr_t" {
 			return "intptr_t"
+		}
+		if strings.HasPrefix(name, "t_") {
+			return name
 		}
 		return fmt.Sprintf("t_%s_%s", t.currentPackage, name)
 	case *ast.SelectorExpression:
@@ -411,10 +449,8 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		}
 		return "word"
 	case *ast.ArrayType:
-		lenStr := "0"
-		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
-			lenStr = strconv.FormatInt(il.Value, 10)
-		}
+		lenVal := t.irBuilder.EvalConst(e.Length)
+		lenStr := strconv.FormatInt(lenVal, 10)
 		eltName := t.mapType(e.Elt)
 		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, eltName)
 
@@ -534,8 +570,9 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 			params = append(params, fmt.Sprintf("%s v_%s", t.mapType(param.Type), param.Name.Value))
 		}
 
+		t.funcTypes[instName] = retType
 		funcSig := fmt.Sprintf("%s f_%s(%s)", retType, instName, strings.Join(params, ", "))
-		t.typedefBuf.WriteString(funcSig + ";\n")
+		t.funcDeclsBuf.WriteString(funcSig + ";\n")
 
 		savedBytes := append([]byte(nil), t.buf.Bytes()...)
 		t.buf.Reset()
