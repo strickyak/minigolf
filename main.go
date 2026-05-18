@@ -37,12 +37,35 @@ func (f *repeatedFlag) Set(value string) error {
 
 var MatchValidImport = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`).FindStringSubmatch
 
-func ParseSourceFiles(mainSourceFile string) *ast.Program {
+func ReadFileFromPath(base string, path []string) (content []byte, err error) {
+	for _, d := range path {
+		content, err = os.ReadFile(filepath.Join(d, base))
+		if err == nil {
+			return
+		}
+	}
+	return nil, fmt.Errorf("Cannot find filename %q in path %v", base, path)
+}
+
+func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Program {
 	var program *ast.Program
 	imported := make(map[string]bool)
 
-	slurp := func(filename string, overridePackage string) {
-		content, err := os.ReadFile(filename)
+	// Build new path with initial directory on the front.
+	mainDirname := filepath.Dir(mainSourceFile)
+	path := []string{mainDirname}
+	for _, d := range importDirPath {
+		path = append(path, d)
+	}
+
+	slurp := func(filename string, overridePackage string, path []string) {
+		var content []byte
+		var err error
+		if path == nil {
+			content, err = os.ReadFile(filename)
+		} else {
+			content, err = ReadFileFromPath(filename, path)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filename, err)
 			os.Exit(1)
@@ -80,16 +103,14 @@ func ParseSourceFiles(mainSourceFile string) *ast.Program {
 		}
 	}
 
-	dirname := filepath.Dir(mainSourceFile)
-
 	imported["main"] = true
-	slurp(mainSourceFile, "main")
+	slurp(mainSourceFile, "main", nil)
 
 MORE:
 	for key, done := range imported {
 		if !done {
 			imported[key] = true
-			slurp(filepath.Join(dirname, key+".golf"), key)
+			slurp(key+".golf", key, path)
 			// We changed the iterated object, so restart the iteration.
 			// When everything is done, we fall through and return the program.
 			goto MORE
@@ -106,8 +127,8 @@ func main() {
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
 	picFlag := flag.Bool("pic", false, "Generate position-independent code (PIC) using relative branches and localized PCR data segments")
 
-	var includeDirs repeatedFlag
-	flag.Var(&includeDirs, "I", "directory to be searched")
+	var importDirPath repeatedFlag
+	flag.Var(&importDirPath, "I", "directory to be searched for imports")
 
 	// Custom usage message
 	flag.Usage = func() {
@@ -151,14 +172,31 @@ func main() {
 	logger.Printf("Starting whole-program compilation")
 	logger.Printf("Target architecture: %s", *archFlag)
 	logger.Printf("Output object file: %s", *outFlag)
-	logger.Printf("Include path: %v", includeDirs)
+	logger.Printf("import path: %v", importDirPath)
 	logger.Printf("Source files: %v", sourceFiles)
 
 	// =========================================================================
 	// Compilation Pipeline
 	// =========================================================================
 	// 1 & 2. Parse all source files into a single flat namespace AST
-	program := ParseSourceFiles(mainSourceFile)
+	program := ParseSourceFiles(mainSourceFile, importDirPath)
+
+	*archFlag = strings.ToUpper(*archFlag)
+
+	// Flag -m=ast : print the AST and exit cleanly
+	if *archFlag == "AST" {
+		astOutput := ast.Print(program)
+		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + astOutput + "\n"
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing AST output: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Printf("Successfully dumped AST to: %s", *outFlag)
+		os.Exit(0)
+	}
 
 	// 3. Perform semantic analysis & type checking.
 	analyzer := semantic.New()
@@ -170,8 +208,6 @@ func main() {
 		}
 		os.Exit(1)
 	}
-
-	*archFlag = strings.ToUpper(*archFlag)
 
 	// Flag -m=ir : emit SSA IR and exit cleanly
 	if *archFlag == "IR" {

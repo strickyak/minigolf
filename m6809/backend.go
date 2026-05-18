@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,14 +28,18 @@ func (b *Backend) getTypeSize(typ string) int {
 		return 2
 	case "int":
 		return 2
+	case "uint":
+		return 2
+	case "const_integer":
+		return 2
 	default:
 		// fallthrough
 	}
 
-	if strings.HasPrefix(typ, "*") {
+	if ir.Type(typ).IsAPointer() {
 		return 2
 	}
-	if strings.HasPrefix(typ, "[") {
+	if ir.Type(typ).IsAnArray() {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
 			length, _ := strconv.Atoi(typ[1:idx])
@@ -47,7 +52,7 @@ func (b *Backend) getTypeSize(typ string) int {
 			typ = def
 		}
 	}
-	if strings.HasPrefix(typ, "struct{") {
+	if ir.Type(typ).IsAStruct() {
 		content := typ[7 : len(typ)-1]
 		size := 0
 		depth := 0
@@ -69,6 +74,9 @@ func (b *Backend) getTypeSize(typ string) int {
 }
 
 func (b *Backend) getEltSize(arrType string) int {
+	if strings.HasPrefix(arrType, "*") {
+		arrType = arrType[1:]
+	}
 	if strings.HasPrefix(arrType, "[") {
 		idx := strings.Index(arrType, "]")
 		if idx != -1 {
@@ -82,7 +90,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 	content := ""
 	if def, ok := b.program.TypeDefs[structName]; ok {
 		content = def[7 : len(def)-1]
-	} else if strings.HasPrefix(structName, "struct{") {
+	} else if ir.Type(structName).IsAStruct() {
 		content = structName[7 : len(structName)-1]
 	} else {
 		log.Panicf("getFieldOffsetAndSize: not a struct: %q", structName)
@@ -169,7 +177,13 @@ func (b *Backend) flushRegisters() {
 		return
 	}
 	b.buf.WriteString("\t\t\t; flushing registers {\n")
-	for reg, id := range b.activeRegs {
+	var regs []string
+	for r := range b.activeRegs {
+		regs = append(regs, r)
+	}
+	sort.Strings(regs)
+	for _, reg := range regs {
+		id := b.activeRegs[reg]
 		switch reg {
 		case "X":
 			b.buf.WriteString("\ttfr x,d\n")
@@ -204,11 +218,13 @@ func (b *Backend) allocateReg(id int) string {
 
 	var regToSpill string
 	var spilledId int
-	for r, i := range b.activeRegs {
-		regToSpill = r
-		spilledId = i
-		break
+	var regs []string
+	for r := range b.activeRegs {
+		regs = append(regs, r)
 	}
+	sort.Strings(regs)
+	regToSpill = regs[0]
+	spilledId = b.activeRegs[regToSpill]
 
 	b.buf.WriteString(fmt.Sprintf("\t; spilling %s (val %d) to stack\n", regToSpill, spilledId))
 	b.buf.WriteString("\tpshs d\n")
@@ -973,11 +989,24 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfGlobal(%s)\n", b.memAccess(offset), i.Global.Name))
 	case *ir.AddressOfLocal:
-		localInstr := i.Local.(ir.Instruction)
-		localOffset := b.slots[localInstr.GetID()]
+		b.flushRegisters()
+		var localOffset int
+		var isParam bool
+		if p, ok := i.Local.(*ir.Parameter); ok {
+			localOffset = b.paramSlots[p.Name]
+			isParam = true
+		} else {
+			localInstr := i.Local.(ir.Instruction)
+			localOffset = b.slots[localInstr.GetID()]
+		}
 		b.emitLoadAddr("x", b.memAccess(localOffset))
 		b.buf.WriteString("\ttfr x,d\n")
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(%v, locOff=%d ;%v)\n", b.memAccess(offset), localOffset, localInstr.GetID(), localInstr.GetComment()))
+		if isParam {
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(param, locOff=%d)\n", b.memAccess(offset), localOffset))
+		} else {
+			localInstr := i.Local.(ir.Instruction)
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(%v, locOff=%d ;%v)\n", b.memAccess(offset), localOffset, localInstr.GetID(), localInstr.GetComment()))
+		}
 	case *ir.AddressOfField:
 		structName := string(i.Ptr.Type())
 		structName = strings.TrimPrefix(structName, "*")
@@ -987,6 +1016,27 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\taddd #%d\t; byteOffset\n", byteOffset))
 		}
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfField(%v.%v)\n", b.memAccess(offset), structName, i.FieldIndex))
+	case *ir.AddressOfElement:
+		b.flushRegisters()
+		b.loadVal(i.ArrayPtr)
+		
+		eltSize := b.getEltSize(string(i.ArrayPtr.Type()))
+		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
+			byteOffset := int(cIdx.Val) * eltSize
+			if byteOffset > 0 {
+				b.buf.WriteString(fmt.Sprintf("\taddd #%d\n", byteOffset))
+			}
+		} else {
+			b.buf.WriteString("\ttfr d,y\n")
+			b.loadVal(i.Index)
+			if eltSize > 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n", eltSize))
+				b.emitMul16()
+			}
+			b.buf.WriteString("\tleay d,y\n")
+			b.buf.WriteString("\ttfr y,d\n")
+		}
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
 	case *ir.ExtractFieldPtr:
 		b.flushRegisters()
 		structName := string(i.Ptr.Type())
@@ -1094,7 +1144,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.flushRegisters()
 		ptrType := string(i.Ptr.Type())
 		pointeeType := "word"
-		if strings.HasPrefix(ptrType, "*") {
+		if ir.Type(ptrType).IsAPointer() {
 			pointeeType = ptrType[1:]
 		}
 		fieldSize := b.getTypeSize(pointeeType)
@@ -1318,7 +1368,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case ir.TypeVoid:
 			// Do nothing
 		default:
-			if retSize <= 2 && strings.HasPrefix(string(i.Typ), "*") {
+			if retSize <= 2 && i.Typ.IsAPointer() {
 				b.buf.WriteString("\ttfr x,d\n")
 			}
 		}
@@ -1399,4 +1449,30 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	cleanup := 2 + len(dataArgs)*2
 	b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", cleanup))
 	b.popBytes(cleanup)
+}
+
+func (b *Backend) emitMul16() {
+    fmt.Fprintln(&b.buf, "\t pshs D,X // BEGIN emitMul16(D,X)->D {")
+
+    fmt.Fprintln(&b.buf, "\t lda 1,s")
+    fmt.Fprintln(&b.buf, "\t ldb 3,s")
+    fmt.Fprintln(&b.buf, "\t mul")
+    fmt.Fprintln(&b.buf, "\t tfr d,x // first partial")
+
+    fmt.Fprintln(&b.buf, "\t lda 0,s")
+    fmt.Fprintln(&b.buf, "\t ldb 3,s")
+    fmt.Fprintln(&b.buf, "\t mul")
+    fmt.Fprintln(&b.buf, "\t tfr b,a")
+    fmt.Fprintln(&b.buf, "\t clrb")
+    fmt.Fprintln(&b.buf, "\t leax d,x // second partial")
+
+    fmt.Fprintln(&b.buf, "\t lda 1,s")
+    fmt.Fprintln(&b.buf, "\t ldb 2,s")
+    fmt.Fprintln(&b.buf, "\t mul")
+    fmt.Fprintln(&b.buf, "\t tfr b,a")
+    fmt.Fprintln(&b.buf, "\t clrb")
+    fmt.Fprintln(&b.buf, "\t leax d,x // third partial")
+
+    fmt.Fprintln(&b.buf, "\t tfr x,d")
+    fmt.Fprintln(&b.buf, "\t leas 4,s // END emitMul16(D,X)->D }")
 }

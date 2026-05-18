@@ -3,6 +3,7 @@ package ir
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
@@ -26,6 +27,9 @@ type Builder struct {
 	globals          map[string]*Global
 	funcs            map[string]*Function
 	consts           map[string]Value
+	constExprs       map[string]ast.Expression
+	evaluatingConst  map[string]bool
+	evaluatingType   map[string]bool
 	varTypes         map[string]Type
 	typeDefsAST      map[string]*ast.StructType
 	genericTemplates map[string]*GenericTemplate
@@ -46,6 +50,9 @@ func NewBuilder() *Builder {
 		globals:          make(map[string]*Global),
 		funcs:            make(map[string]*Function),
 		consts:           make(map[string]Value),
+		constExprs:       make(map[string]ast.Expression),
+		evaluatingConst:  make(map[string]bool),
+		evaluatingType:   make(map[string]bool),
 		varTypes:         make(map[string]Type),
 		typeDefsAST:      make(map[string]*ast.StructType),
 		genericTemplates: make(map[string]*GenericTemplate),
@@ -54,6 +61,7 @@ func NewBuilder() *Builder {
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
 	if expr == nil {
+        panic("TODO: when is expr nil?")
 		return TypeWord
 	}
 	switch e := expr.(type) {
@@ -105,11 +113,9 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		}
 		return TypeWord
 	case *ast.ArrayType:
-		lenStr := "0"
-		if il, ok := e.Length.(*ast.IntegerLiteral); ok {
-			lenStr = fmt.Sprintf("%d", il.Value)
-		}
-		return Type(fmt.Sprintf("[%s]%s", lenStr, b.astToIRType(e.Elt)))
+        // nando-GOOD
+		lenVal := b.EvalConst(e.Length)
+		return Type(fmt.Sprintf("[%d]%s", lenVal, b.astToIRType(e.Elt)))
 	case *ast.PointerType:
 		return Type("*" + string(b.astToIRType(e.Elt)))
 	}
@@ -219,14 +225,40 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 
 func (b *Builder) Build(astProg *ast.Program) *Program {
 	// Pass 0: register struct types
+    // nando-PROBLEM.  This pass 0, 0.5, 1, 2 might work for the current
+    // tests but is is not correct.  It registers const and struct types
+    // in pass 0, but that is naive.  Really it should be registering
+    // all names in the global space with the AST of their definition.
+    // But then be lazy about filling in concrete values for constants
+    // and the sizes of things.  And be capable of detecting cirularities.
+    //
+    // We probably need a loop around work-to-attempt, that keeps attempting,
+    // until everything needed to satisfy main() has been resolved and
+    // emitted.
+    //
+    // `package`:  Evaluated immediately.
+    //             Only used to set b.currentPackage.
+    //             Has to be used first (within eack package).
+    //             I think now it is always overrided;
+    //             TODO: assert that with code.
+    // `import`:  Evaluated immediately.
+    //            These must be known to evaluate selectors, which can occur
+    //            in any other definitions.
+    // `const`:   can depend on other consts and on sizeof types.
+    // `type`:    can depend on other consts and types.
+    // `var`:     can depend on types.  If we support global initialization,
+    //            can depend on func and var and anything.
+    // `func`:    can depend on anything.
 	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
 		if ps, ok := stmt.(*ast.PackageStatement); ok {
 			b.currentPackage = ps.Name.Value
 		}
 		switch s := stmt.(type) {
+
 		case *ast.TypeStatement:
 			if len(s.TypeParameters) > 0 {
+                // It's a generic type, so save it to b.genericTemplates
 				qname := b.currentPackage + "." + s.Name.Value
 				var typeParams []string
 				for _, tp := range s.TypeParameters {
@@ -236,36 +268,29 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 					TypeParams: typeParams,
 					Tokens:     s.Tokens,
 				}
-				continue
-			}
-			if st, ok := s.BaseType.(*ast.StructType); ok {
+			} else if st, ok := s.BaseType.(*ast.StructType); ok {
 				qname := b.currentPackage + "." + s.Name.Value
 				b.typeDefsAST[qname] = st
+                // nando-PROBLEM.  I think TypeDefOrder is not this simple.
 				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, qname)
-			}
+			} else {
+                // nando-PROBLEM
+                // Pass 0 is ignoring it.
+                // Shouldn't all types be registered in pass 0?
+            }
+
+		case *ast.ConstStatement:
+			qname := b.currentPackage + "." + s.Name.Value
+			b.constExprs[qname] = s.Value
+        default:
+            // nando-PROBLEM.   Do we need import names? function names?
+            // Other global names ignored in pass 0 .
 		}
 	}
 
-	// Pass 0.5: build struct type strings
-	b.currentPackage = ""
-	for _, stmt := range astProg.Statements {
-		if ps, ok := stmt.(*ast.PackageStatement); ok {
-			b.currentPackage = ps.Name.Value
-		}
-		if s, ok := stmt.(*ast.TypeStatement); ok {
-			if len(s.TypeParameters) > 0 {
-				continue
-			}
-			if st, ok := s.BaseType.(*ast.StructType); ok {
-				qname := b.currentPackage + "." + s.Name.Value
-				res := "struct{"
-				for _, f := range st.Fields {
-					res += string(b.astToIRType(f.Type)) + ";"
-				}
-				res += "}"
-				b.Program.TypeDefs[qname] = res
-			}
-		}
+	// Pass 0.5: build struct type strings and evaluate constants
+	for _, qname := range b.Program.TypeDefOrder {
+		b.getTypeString(qname)
 	}
 
 	// First pass: register all globals, constants, and function signatures
@@ -280,9 +305,12 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.globals[g.Name] = g
 			b.Program.Globals = append(b.Program.Globals, g)
 		case *ast.ConstStatement:
-			if intLit, ok := s.Value.(*ast.IntegerLiteral); ok {
-				b.consts[b.currentPackage+"."+s.Name.Value] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}
-			}
+            // nando-PROBLEM.  const definitions may involve
+            // consts and sizeof types we have not seen yet.
+            // Must detect circularities.
+			qname := b.currentPackage + "." + s.Name.Value
+			val := b.EvalConst(&ast.Identifier{Value: qname})
+			b.consts[qname] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
 		case *ast.FuncStatement:
 			if len(s.TypeParameters) > 0 {
 				qname := b.currentPackage + "." + s.Name.Value
@@ -301,6 +329,10 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 	}
 
 	// Pass 2: build functionsbodies
+	// nando-GOOD.  Do build function bodies after all consts,
+    // types, and vars are understood.
+    // TODO:  Should we be lazy at this point, and only compile
+    // function bodies that are reachable from main()?
 	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
 		if ps, ok := stmt.(*ast.PackageStatement); ok {
@@ -334,6 +366,7 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 	if len(s.ReturnTypes) == 1 {
 		f.ReturnType = b.astToIRType(s.ReturnTypes[0])
 	} else if len(s.ReturnTypes) > 1 {
+        // Construct a synthetic return type for a multi-value return.
 		var fields []string
 		for _, rt := range s.ReturnTypes {
 			fields = append(fields, string(b.astToIRType(rt)))
@@ -484,6 +517,10 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 			return rtype
 		case TypeInt:
 			return rtype
+		case TypeUint:
+			return rtype
+		case TypeConstInteger:
+			return rtype
 		default:
 			log.Panicf("NO CASE [left const] in sameTypeOfValues left=(%T)%v:%v op=%q right=(%T)%v:%v", left, left, ltype, op, right, right, rtype)
 		}
@@ -496,6 +533,10 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 			return ltype
 		case TypeInt:
 			return ltype
+		case TypeUint:
+			return ltype
+		case TypeConstInteger:
+			return ltype
 		default:
 			log.Panicf("NO CASE [right const] in sameTypeOfValues left=(%T)%v:%v op=%q right=(%T)%v:%v", left, left, ltype, op, right, right, rtype)
 		}
@@ -503,20 +544,45 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 	if ltype == rtype {
 		return ltype
 	}
+	if ltype == TypeConstInteger {
+		return rtype
+	}
+	if rtype == TypeConstInteger {
+		return ltype
+	}
+
 	log.Panicf("No common type for binop: left=(%T)%v:%v op=%q right=(%T)%v:%v", left, left, ltype, op, right, right, rtype)
 	panic(0)
 }
 
+// nando: When do we use coersion?
 func (b *Builder) coerceType(val Value, targetType Type) Value {
 	if val.Type() == targetType || val.Type() == TypeUnknown {
 		return val
 	}
+	
+	if val.Type() == TypeConstInteger {
+		if targetType == TypeByte {
+			if cw, ok := val.(*ConstWord); ok {
+				return b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: uint8(cw.Val)}, val)
+			}
+			return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: val}, val)
+		}
+		if targetType == TypeWord || targetType == TypeInt || targetType == TypeUint {
+			if cw, ok := val.(*ConstWord); ok {
+				return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: targetType}, Val: cw.Val}, val)
+			}
+			return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetType}, Op: "bitcast", Operand: val}, val)
+		}
+	}
+    // nando: TRUNCATION from word to byte?
 	if val.Type() == TypeWord && targetType == TypeByte {
 		if cw, ok := val.(*ConstWord); ok {
 			return b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: uint8(cw.Val)}, val)
 		}
 		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: val}, val)
 	}
+    // nando: PROMOTION from byte to word?
 	if val.Type() == TypeByte && targetType == TypeWord {
 		if cb, ok := val.(*ConstByte); ok {
 			return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(cb.Val)}, val)
@@ -609,8 +675,9 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 	case *ast.AssignStatement:
 		if len(s.Names) > 1 && len(s.Values) == 1 {
 			tupleVal := b.buildExpr(s.Values[0])
-			typStr := string(tupleVal.Type())
-			if strings.HasPrefix(typStr, "struct{") {
+			typ := tupleVal.Type()
+			if typ.IsAStruct() {
+				typStr := string(typ)
 				content := typStr[7 : len(typStr)-1]
 				fields := strings.Split(content, ";")
 				for i, nameExpr := range s.Names {
@@ -890,68 +957,105 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 	}
 }
 
-func (b *Builder) buildExpr(expr ast.Expression) Value {
-	// log.Printf("Builder.buildExpr: expr (%T)%v", expr, expr)
+type ExprResult struct {
+	IsLValue bool
+	Address  Value
+	Value    Value
+	Typ      Type
+}
 
+func (b *Builder) buildExpr(expr ast.Expression) Value {
+	res := b.eval(expr)
+	if res.IsLValue {
+		return b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: res.Typ}, Ptr: res.Address}, expr)
+	}
+	return res.Value
+}
+
+func (b *Builder) buildAddress(expr ast.Expression) Value {
+	res := b.eval(expr)
+	if !res.IsLValue {
+		panic(fmt.Sprintf("Cannot take the address of expression: %T", expr))
+	}
+	return res.Address
+}
+
+func (b *Builder) eval(expr ast.Expression) ExprResult {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteral:
-		return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(e.Value)}, e)
+		val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: uint64(e.Value)}, e)
+		return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
 	case *ast.Identifier:
 		qname := b.currentPackage + "." + e.Value
 		if g, ok := b.globals[qname]; ok {
-			return b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: g}, e)
+			addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, e)
+			return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
 		}
 		if g, ok := b.globals[e.Value]; ok {
-			return b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: g}, e)
+			addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, e)
+			return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
 		}
 		if c, ok := b.consts[qname]; ok {
 			if cw, ok := c.(*ConstWord); ok {
-				return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: cw.Val}, e)
+				val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: cw.Val}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
 			}
 		}
 		if c, ok := b.consts[e.Value]; ok {
 			if cw, ok := c.(*ConstWord); ok {
-				return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: cw.Val}, e)
+				val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: cw.Val}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
 			}
 		}
-		return b.readVariable(e.Value, b.currentBlock)
+		if typ, ok := b.varTypes[e.Value]; ok {
+			val := b.readVariable(e.Value, b.currentBlock)
+			addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(typ))}, Local: val}, e)
+			return ExprResult{IsLValue: true, Address: addr, Typ: typ}
+		}
+		panic(fmt.Sprintf("Identifier not found: %s", e.Value))
 	case *ast.IndexExpression:
-		arr := b.buildExpr(e.Left)
+		base := b.eval(e.Left)
 		idx := b.buildExpr(e.Indices[0])
-		// type of elt:
-		var eltType Type = TypeUnknown
-		if arr != nil && string(arr.Type()) != "" && string(arr.Type())[0] == '[' {
-			// e.g. "[3]byte" -> "byte"
-			s := string(arr.Type())
-			for i, c := range s {
-				if c == ']' {
-					eltType = Type(s[i+1:])
-					break
-				}
-			}
+
+		var eltTyp string
+		if base.Typ.IsAnArray() {
+			eltTyp = string(base.Typ.ArrayElementType())
+		} else if base.Typ.IsAPointer() {
+			panic("Pointer indexing not supported yet")
+		} else {
+			panic("Indexing non-array type")
 		}
-		return b.addInstr(&ExtractElement{BaseInstruction: BaseInstruction{Typ: eltType}, Array: arr, Index: idx}, e)
+
+		if base.IsLValue {
+			addr := b.addInstr(&AddressOfElement{BaseInstruction: BaseInstruction{Typ: Type("*" + eltTyp)}, ArrayPtr: base.Address, Index: idx}, e)
+			return ExprResult{IsLValue: true, Address: addr, Typ: Type(eltTyp)}
+		} else {
+			val := b.addInstr(&ExtractElement{BaseInstruction: BaseInstruction{Typ: Type(eltTyp)}, Array: base.Value, Index: idx}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: Type(eltTyp)}
+		}
+
 	case *ast.SelectorExpression:
 		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
 			qname := pkgIdent.Value + "." + e.Right.Value
 			if g, ok := b.globals[qname]; ok {
-				return b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: g}, e)
+				addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, e)
+				return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
 			}
 			if c, ok := b.consts[qname]; ok {
 				if cw, ok := c.(*ConstWord); ok {
-					return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: cw.Val}, e)
+					val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: cw.Val}, e)
+					return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 				}
 			}
 		}
 
-		strct := b.buildExpr(e.Left)
-		fieldName := e.Right.Value
-
-		structName := string(strct.Type())
-		isPointer := false
-		if strings.HasPrefix(structName, "*") {
-			isPointer = true
-			structName = structName[1:]
+		base := b.eval(e.Left)
+		isPtr := base.Typ.IsAPointer()
+		var structName string
+		if isPtr {
+			structName = string(base.Typ.PointedType())
+		} else {
+			structName = string(base.Typ)
 		}
 
 		st, ok := b.typeDefsAST[structName]
@@ -962,23 +1066,38 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 		fieldIdx := -1
 		var fieldType Type
 		for i, f := range st.Fields {
-			if f.Name.Value == fieldName {
+			if f.Name.Value == e.Right.Value {
 				fieldIdx = i
 				fieldType = b.astToIRType(f.Type)
 				break
 			}
 		}
 		if fieldIdx == -1 {
-			panic("Field not found: " + fieldName)
+			panic("Field not found: " + e.Right.Value)
 		}
 
-		if isPointer {
-			return b.addInstr(&ExtractFieldPtr{BaseInstruction: BaseInstruction{Typ: fieldType}, Ptr: strct, FieldIndex: fieldIdx}, e)
+		if isPtr {
+			var ptrVal Value
+			if base.IsLValue {
+				ptrVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, e)
+			} else {
+				ptrVal = base.Value
+			}
+			addr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: Type("*" + string(fieldType))}, Ptr: ptrVal, FieldIndex: fieldIdx}, e)
+			return ExprResult{IsLValue: true, Address: addr, Typ: fieldType}
+		} else {
+			if base.IsLValue {
+				addr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: Type("*" + string(fieldType))}, Ptr: base.Address, FieldIndex: fieldIdx}, e)
+				return ExprResult{IsLValue: true, Address: addr, Typ: fieldType}
+			} else {
+				val := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: fieldType}, Struct: base.Value, FieldIndex: fieldIdx}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: fieldType}
+			}
 		}
-		return b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: fieldType}, Struct: strct, FieldIndex: fieldIdx}, e)
 
 	case *ast.StringLiteral:
-		return &StringLiteral{Value: e.Value}
+		val := &StringLiteral{Value: e.Value}
+		return ExprResult{IsLValue: false, Value: val, Typ: Type("*byte")}
 
 	case *ast.InfixExpression:
 		if e.Operator == "&&" {
@@ -1009,7 +1128,8 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 					{Block: rightEndBlock, Value: right},
 				},
 			}
-			return b.addInstr(phi, expr)
+			val := b.addInstr(phi, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
 		}
 		if e.Operator == "||" {
 			left := b.buildExpr(e.Left)
@@ -1039,51 +1159,59 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 					{Block: rightEndBlock, Value: right},
 				},
 			}
-			return b.addInstr(phi, expr)
+			val := b.addInstr(phi, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
 		}
-		// log.Printf("ast.InfixExpression: e.Left=(%T)%v e.Right=(%T)%v", e.Left, e.Left, e.Right, e.Right)
+
 		left := b.buildExpr(e.Left)
 		right := b.buildExpr(e.Right)
 		typ := b.commonTypeOfValues(expr, left, e.Operator, right)
 
+		var val Value
 		switch e.Operator {
 		case "&":
-			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "and", Left: left, Right: right}, expr)
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "and", Left: left, Right: right}, expr)
 		case "|":
-			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "or", Left: left, Right: right}, expr)
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "or", Left: left, Right: right}, expr)
 		case "^":
-			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "xor", Left: left, Right: right}, expr)
-
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "xor", Left: left, Right: right}, expr)
 		case "+":
-			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "add", Left: left, Right: right}, expr)
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "add", Left: left, Right: right}, expr)
 		case "-":
-			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "sub", Left: left, Right: right}, expr)
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "sub", Left: left, Right: right}, expr)
 		case "*":
-			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "mul", Left: left, Right: right}, expr)
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "mul", Left: left, Right: right}, expr)
 		case "/":
-			return b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "div", Left: left, Right: right}, expr)
-
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "div", Left: left, Right: right}, expr)
 		case "==":
-			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: left, Right: right}, expr)
+			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: left, Right: right}, expr)
+			typ = TypeByte
 		case "!=":
-			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: left, Right: right}, expr)
+			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: left, Right: right}, expr)
+			typ = TypeByte
 		case "<":
-			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lt", Left: left, Right: right}, expr)
+			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lt", Left: left, Right: right}, expr)
+			typ = TypeByte
 		case "<=":
-			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lte", Left: left, Right: right}, expr)
+			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lte", Left: left, Right: right}, expr)
+			typ = TypeByte
 		case ">":
-			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "gt", Left: left, Right: right}, expr)
+			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "gt", Left: left, Right: right}, expr)
+			typ = TypeByte
 		case ">=":
-			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "gte", Left: left, Right: right}, expr)
+			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "gte", Left: left, Right: right}, expr)
+			typ = TypeByte
 		default:
 			log.Panicf("NO CASE operator %q expr (%T)%v", e.Operator, e, e)
 		}
+		return ExprResult{IsLValue: false, Value: val, Typ: typ}
 
 	case *ast.CallExpression:
 		if ptrType, ok := e.Function.(*ast.PointerType); ok {
 			targetTyp := b.astToIRType(ptrType)
 			val := b.buildExpr(e.Arguments[0])
-			return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, expr)
+			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, expr)
+			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
 		}
 
 		var isGenericFunc bool
@@ -1095,7 +1223,8 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
 				if ident.Value == "sizeof" {
 					targetTyp := b.astToIRType(idxExpr.Indices[0])
-					return b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, expr)
+					val := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, expr)
+					return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 				}
 				rawFuncName = b.currentPackage + "." + ident.Value
 			} else if sel, ok := idxExpr.Left.(*ast.SelectorExpression); ok {
@@ -1164,13 +1293,10 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			}
 			f, ok := b.funcs[funcName]
 			if !ok {
-				var keys []string
-				for k := range b.funcs {
-					keys = append(keys, k)
-				}
-				panic(fmt.Sprintf("MISSING GENERIC FUNC: %s, AVAILABLE: %v", funcName, keys))
+				panic(fmt.Sprintf("MISSING GENERIC FUNC: %s", funcName))
 			}
-			return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 		}
 
 		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
@@ -1181,41 +1307,41 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 					for _, arg := range e.Arguments {
 						args = append(args, b.buildExpr(arg))
 					}
-					return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+					val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+					return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 				}
 			}
 
-			leftVal := b.buildExpr(sel.Left)
-			structTyp := string(leftVal.Type())
-			isPtr := strings.HasPrefix(structTyp, "*")
-			baseType := structTyp
+			base := b.eval(sel.Left)
+			isPtr := base.Typ.IsAPointer()
+			var baseType string
 			if isPtr {
-				baseType = baseType[1:]
+				baseType = string(base.Typ.PointedType())
+			} else {
+				baseType = string(base.Typ)
 			}
 			funcName := baseType + "_" + sel.Right.Value
 			if f, exists := b.funcs[funcName]; exists {
 				var receiverVal Value
 				if isPtr {
-					receiverVal = leftVal
-				} else {
-					if ident, ok := sel.Left.(*ast.Identifier); ok {
-						qname := b.currentPackage + "." + ident.Value
-						if g, ok := b.globals[qname]; ok {
-							receiverVal = b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Global: g}, expr)
-						} else if g, ok := b.globals[ident.Value]; ok {
-							receiverVal = b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Global: g}, expr)
-						} else {
-							receiverVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Local: leftVal}, expr)
-						}
+					if base.IsLValue {
+						receiverVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, expr)
 					} else {
-						receiverVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + baseType)}, Local: leftVal}, expr)
+						receiverVal = base.Value
+					}
+				} else {
+					if base.IsLValue {
+						receiverVal = base.Address
+					} else {
+						panic(fmt.Sprintf("Cannot call pointer method on unaddressable value: %T", sel.Left))
 					}
 				}
 				args := []Value{receiverVal}
 				for _, arg := range e.Arguments {
 					args = append(args, b.buildExpr(arg))
 				}
-				return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+				val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 			}
 		}
 
@@ -1225,15 +1351,18 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 				for _, arg := range e.Arguments {
 					args = append(args, b.buildExpr(arg))
 				}
-				return b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: ident.Value, Args: args}, expr)
+				val := b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: ident.Value, Args: args}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeVoid}
 			}
 			if ident.Value == "byte" {
 				arg := b.buildExpr(e.Arguments[0])
-				return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: arg}, expr)
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: arg}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
 			}
 			if ident.Value == "word" {
 				arg := b.buildExpr(e.Arguments[0])
-				return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: arg}, expr)
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: arg}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 			}
 
 			args := []Value{}
@@ -1245,81 +1374,195 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 				funcName = b.currentPackage + "." + funcName
 			}
 			f := b.funcs[funcName]
-			return b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+			if f == nil {
+				qname := b.currentPackage + "." + ident.Value
+				if _, ok := b.typeDefsAST[qname]; ok {
+					arg := b.buildExpr(e.Arguments[0])
+					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type(qname)}, Op: "bitcast", Operand: arg}, expr)
+					return ExprResult{IsLValue: false, Value: val, Typ: Type(qname)}
+				}
+				log.Panicf("Undefined function: %s", funcName)
+			}
+			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
+		} else {
+			log.Panicf("Function is not an identifier: %v", e.Function)
 		}
-	case *ast.PointerType:
-		ptrVal := b.buildExpr(e.Elt)
-		typ := string(ptrVal.Type())
-		typ = strings.TrimPrefix(typ, "*")
-		return b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: Type(typ)}, Ptr: ptrVal}, expr)
+
 	case *ast.PrefixExpression:
 		if e.Operator == "!" {
 			right := b.buildExpr(e.Right)
 			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, nil)
-			return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: right, Right: falseVal}, expr)
+			val := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: right, Right: falseVal}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
 		}
 		if e.Operator == "&" {
-			if ident, ok := e.Right.(*ast.Identifier); ok {
-				qname := b.currentPackage + "." + ident.Value
-				if g, ok := b.globals[qname]; ok {
-					return b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, expr)
-				}
-				if g, ok := b.globals[ident.Value]; ok {
-					return b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(g.Typ))}, Global: g}, expr)
-				}
-				if typ, ok := b.varTypes[ident.Value]; ok {
-					val := b.readVariable(ident.Value, b.currentBlock)
-					return b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: Type("*" + string(typ))}, Local: val}, expr)
-				}
-				panic("Taking address of variable not found: " + ident.Value)
+			res := b.eval(e.Right)
+			if !res.IsLValue {
+				panic(fmt.Sprintf("Cannot take address of expression: %T", e.Right))
 			}
-			if sel, ok := e.Right.(*ast.SelectorExpression); ok {
-				strct := b.buildExpr(sel.Left)
-				structName := string(strct.Type())
-				var ptr Value
-				if strings.HasPrefix(structName, "*") {
-					ptr = strct
-					structName = structName[1:]
-				} else {
-					ptr = b.buildExpr(&ast.PrefixExpression{Operator: "&", Right: sel.Left, Token: e.Token})
-				}
+			return ExprResult{IsLValue: false, Value: res.Address, Typ: Type("*" + string(res.Typ))}
+		}
+		if e.Operator == "*" {
+			ptrVal := b.buildExpr(e.Right)
+			typStr := string(ptrVal.Type())
+			typStr = strings.TrimPrefix(typStr, "*")
+			return ExprResult{IsLValue: true, Address: ptrVal, Typ: Type(typStr)}
+		}
 
-				st, ok := b.typeDefsAST[structName]
-				if !ok {
-					panic("Taking address of field on unknown struct type: " + structName)
-				}
+	case *ast.PointerType:
+		ptrVal := b.buildExpr(e.Elt)
+		typStr := string(ptrVal.Type())
+		typStr = strings.TrimPrefix(typStr, "*")
+		return ExprResult{IsLValue: true, Address: ptrVal, Typ: Type(typStr)}
+	}
+	log.Panicf("NO CASE: Builder.eval: expr (%T)%v", expr, expr)
+	return ExprResult{}
+}
 
-				fieldIdx := -1
-				var fieldType Type
-				for i, f := range st.Fields {
-					if f.Name.Value == sel.Right.Value {
-						fieldIdx = i
-						fieldType = b.astToIRType(f.Type)
-						break
-					}
-				}
-				if fieldIdx == -1 {
-					panic("Field not found: " + sel.Right.Value)
-				}
+func (b *Builder) getTypeString(qname string) string {
+    // NANDO-recent.
+	if res, ok := b.Program.TypeDefs[qname]; ok {
+		return res
+	}
+	if b.evaluatingType[qname] {
+		panic("circular dependency in type definition: " + qname)
+	}
+	st, ok := b.typeDefsAST[qname]
+	if !ok {
+		panic("unknown type: " + qname)
+	}
+	b.evaluatingType[qname] = true
+	res := "struct{"
+	for _, f := range st.Fields {
+		res += string(b.astToIRType(f.Type)) + ";"
+	}
+	res += "}"
+	b.Program.TypeDefs[qname] = res
+	b.evaluatingType[qname] = false
+	return res
+}
 
-				return b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: Type("*" + string(fieldType))}, Ptr: ptr, FieldIndex: fieldIdx}, expr)
-			}
-			panic("Taking address of expression not supported yet")
+func (b *Builder) getTypeSize(typ string) int {
+    // NANDO-recent.
+	if typ == "void" || typ == "byte" {
+		return 1
+	}
+	if typ == "word" || typ == "int" || typ == "uint" {
+		return 2
+	}
+	if Type(typ).IsAPointer() {
+		return 2
+	}
+	if Type(typ).IsAnArray() {
+		idx := strings.Index(typ, "]")
+		if idx != -1 {
+			length, _ := strconv.Atoi(typ[1:idx])
+			eltSize := b.getTypeSize(string(Type(typ).ArrayElementType()))
+			return length * eltSize
 		}
 	}
-	log.Panicf("NO CASE: Builder.buildExpr: expr (%T)%v", expr, expr)
-	return nil
+	if !Type(typ).IsAStruct() {
+		if _, ok := b.typeDefsAST[typ]; ok {
+			typ = b.getTypeString(typ)
+		} else if def, ok := b.Program.TypeDefs[typ]; ok {
+			typ = def
+		} else {
+			return 2
+		}
+	}
+	if Type(typ).IsAStruct() {
+		content := typ[7 : len(typ)-1]
+		size := 0
+		depth := 0
+		start := 0
+		for i := 0; i < len(content); i++ {
+			if content[i] == '{' {
+				depth++
+			} else if content[i] == '}' {
+				depth--
+			} else if content[i] == ';' && depth == 0 {
+				fTyp := content[start:i]
+				size += b.getTypeSize(fTyp)
+				start = i + 1
+			}
+		}
+		return size
+	}
+    panic("why return 2")
+	return 2
 }
+
+func (b *Builder) EvalConst(expr ast.Expression) int64 {
+    // nando-recent
+    // Keep this one.   Does ast.Identifier include qualified names?
+    // Perhaps use `ok` instead of panic, so that a "keep trying unti
+    // everything has been defined" approach works without panics.
+	switch e := expr.(type) {
+	case *ast.IntegerLiteral:
+		return e.Value
+	case *ast.Identifier:
+		qname := b.currentPackage + "." + e.Value
+		var target ast.Expression
+		targetName := qname
+		if cExpr, ok := b.constExprs[qname]; ok {
+			target = cExpr
+		} else if cExpr, ok := b.constExprs[e.Value]; ok {
+			target = cExpr
+			targetName = e.Value
+		} else {
+			panic("unknown constant: " + e.Value)
+		}
+
+		if b.evaluatingConst[targetName] {
+			panic("circular dependency detected for constant: " + targetName)
+		}
+		b.evaluatingConst[targetName] = true
+		val := b.EvalConst(target)
+		b.evaluatingConst[targetName] = false
+
+		b.consts[targetName] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
+		b.constExprs[targetName] = &ast.IntegerLiteral{Value: val}
+
+		return val
+	case *ast.InfixExpression:
+		left := b.EvalConst(e.Left)
+		right := b.EvalConst(e.Right)
+		switch e.Operator {
+		case "+":
+			return left + right
+		case "-":
+			return left - right
+		case "*":
+			return left * right
+		case "/":
+			return left / right
+		}
+	case *ast.CallExpression:
+		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
+			if ident, ok := idxExpr.Left.(*ast.Identifier); ok && ident.Value == "sizeof" {
+				typ := string(b.astToIRType(idxExpr.Indices[0]))
+				size := b.getTypeSize(typ)
+				return int64(size)
+			}
+		}
+	}
+	panic(fmt.Sprintf("not a constant expression: %T", expr))
+}
+
+
 
 func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 	if ident, ok := lhs.(*ast.Identifier); ok {
 		qname := b.currentPackage + "." + ident.Value
 		if g, ok := b.globals[qname]; ok {
 			val = b.coerceType(val, g.Typ)
-			b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, val)
+			b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, lhs)
+			return
 		} else if g, ok := b.globals[ident.Value]; ok {
 			val = b.coerceType(val, g.Typ)
-			b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, val)
+			b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, lhs)
+			return
 		} else {
 			targetType, exists := b.varTypes[ident.Value]
 			if !exists {
@@ -1328,40 +1571,16 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 			}
 			val = b.coerceType(val, targetType)
 			b.writeVariable(ident.Value, b.currentBlock, val)
-		}
-	} else if idxExpr, ok := lhs.(*ast.IndexExpression); ok {
-		arr := b.buildExpr(idxExpr.Left)
-		idx := b.buildExpr(idxExpr.Indices[0])
-		newArr := b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: arr.Type()}, Array: arr, Index: idx, Val: val}, arr)
-		b.assignToExpr(idxExpr.Left, newArr)
-	} else if selExpr, ok := lhs.(*ast.SelectorExpression); ok {
-		strct := b.buildExpr(selExpr.Left)
-		fieldName := selExpr.Right.Value
-		structName := string(strct.Type())
-		isPointer := false
-		if strings.HasPrefix(structName, "*") {
-			isPointer = true
-			structName = structName[1:]
-		}
-		st := b.typeDefsAST[structName]
-		fieldIdx := -1
-		for i, f := range st.Fields {
-			if f.Name.Value == fieldName {
-				fieldIdx = i
-				break
-			}
-		}
-		if isPointer {
-			b.addInstr(&InsertFieldPtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: strct, FieldIndex: fieldIdx, Val: val}, lhs)
 			return
 		}
-		newStrct := b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: strct.Type()}, Struct: strct, FieldIndex: fieldIdx, Val: val}, lhs)
-		b.assignToExpr(selExpr.Left, newStrct)
-	} else if ptrExpr, ok := lhs.(*ast.PointerType); ok {
-		ptrVal := b.buildExpr(ptrExpr.Elt)
-		b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: ptrVal, Val: val}, lhs)
-		return
 	}
+
+	res := b.eval(lhs)
+	if !res.IsLValue {
+		panic(fmt.Sprintf("Cannot assign to expression: %T", lhs))
+	}
+	val = b.coerceType(val, res.Typ)
+	b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: res.Address, Val: val}, lhs)
 }
 
 func extractTypeParamsIR(paramType ast.Expression, argTyp string, typeMap map[string]string, typeParams []string) {
@@ -1373,14 +1592,15 @@ func extractTypeParamsIR(paramType ast.Expression, argTyp string, typeMap map[st
 			}
 		}
 	} else if prefix, ok := paramType.(*ast.PrefixExpression); ok && prefix.Operator == "*" {
-		if strings.HasPrefix(argTyp, "*") {
-			extractTypeParamsIR(prefix.Right, argTyp[1:], typeMap, typeParams)
+		if Type(argTyp).IsAPointer() {
+			extractTypeParamsIR(prefix.Right, string(Type(argTyp).PointedType()), typeMap, typeParams)
 		}
 	} else if ptr, ok := paramType.(*ast.PointerType); ok {
-		if strings.HasPrefix(argTyp, "*") {
-			extractTypeParamsIR(ptr.Elt, argTyp[1:], typeMap, typeParams)
+		if Type(argTyp).IsAPointer() {
+			extractTypeParamsIR(ptr.Elt, string(Type(argTyp).PointedType()), typeMap, typeParams)
 		}
 	} else if idx, ok := paramType.(*ast.IndexExpression); ok {
+        // nando-BAD.  Spliting on _ cannot work.
 		parts := strings.Split(argTyp, "_")
 		numIdx := len(idx.Indices)
 		if len(parts) >= numIdx {

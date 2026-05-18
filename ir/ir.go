@@ -2,6 +2,7 @@ package ir
 
 import (
 	"fmt"
+    "log"
 	"strconv"
 	"strings"
 )
@@ -13,27 +14,57 @@ const (
 	TypeUnknown Type = ""
 	TypeByte    Type = "byte"
 	TypeWord    Type = "word"
-	TypeInt     Type = "int"
-	TypeVoid    Type = "void"
+	TypeInt          Type = "int"
+	TypeUint         Type = "uint"
+	TypeConstInteger Type = "const_integer"
+	TypeVoid         Type = "void"
 )
 
-func GetTypeSize(typ string) int {
+func (t Type) IsAPointer() bool {
+	return strings.HasPrefix(string(t), "*")
+}
+
+func (t Type) PointedType() Type {
+	if !t.IsAPointer() {
+		panic("PointedType called on non-pointer type: " + t)
+	}
+	return Type(string(t)[1:])
+}
+
+func (t Type) IsAnArray() bool {
+	return strings.HasPrefix(string(t), "[")
+}
+
+func (t Type) ArrayElementType() Type {
+	if !t.IsAnArray() {
+		panic("ArrayElementType called on non-array type: " + t)
+	}
+	idx := strings.Index(string(t), "]")
+	return Type(string(t)[idx+1:])
+}
+
+func (t Type) IsAStruct() bool {
+	return strings.HasPrefix(string(t), "struct{")
+}
+
+func GetTypeSize(typ Type) int {
 	if typ == "byte" {
 		return 1
 	}
-	if typ == "word" || typ == "int" {
+	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" {
 		return 2
 	}
-	if strings.HasPrefix(typ, "[") {
-		idx := strings.Index(typ, "]")
+	if typ.IsAnArray() {
+		str := string(typ)
+		idx := strings.Index(str, "]")
 		if idx != -1 {
-			length, _ := strconv.Atoi(typ[1:idx])
-			eltSize := GetTypeSize(typ[idx+1:])
+			length, _ := strconv.Atoi(str[1:idx])
+			eltSize := GetTypeSize(typ.ArrayElementType())
 			return length * eltSize
 		}
 	}
-	if strings.HasPrefix(typ, "struct{") {
-		content := typ[7 : len(typ)-1]
+	if typ.IsAStruct() {
+		content := string(typ)[7 : len(string(typ))-1]
 		size := 0
 		depth := 0
 		start := 0
@@ -44,23 +75,29 @@ func GetTypeSize(typ string) int {
 				depth--
 			} else if content[i] == ';' && depth == 0 {
 				fTyp := content[start:i]
-				size += GetTypeSize(fTyp)
+				size += GetTypeSize(Type(fTyp))
 				start = i + 1
 			}
 		}
 		return size
 	}
-	return 2
+	if typ.IsAPointer() {
+		return 2
+	}
+	// Default to trying as a string if no match
+	if string(typ) == "byte" {
+		return 1
+	}
+    log.Panicf("GetTypeSize: unknown type: %q", typ)
+    panic(0)
 }
 
-func GetEltSize(arrType string) int {
-	if strings.HasPrefix(arrType, "[") {
-		idx := strings.Index(arrType, "]")
-		if idx != -1 {
-			return GetTypeSize(arrType[idx+1:])
-		}
+func GetEltSize(arrType Type) int {
+	if arrType.IsAnArray() {
+		return GetTypeSize(arrType.ArrayElementType())
 	}
-	return 2
+    log.Panicf("GetEltSize: not an array: %q", arrType)
+    panic(0)
 }
 
 func (t Type) String() string {
@@ -286,6 +323,14 @@ type AddressOfField struct {
 }
 
 func (i *AddressOfField) Opcode() string { return "addrof_field" }
+
+type AddressOfElement struct {
+	BaseInstruction
+	ArrayPtr Value
+	Index    Value
+}
+
+func (i *AddressOfElement) Opcode() string { return "addrof_element" }
 
 type ExtractFieldPtr struct {
 	BaseInstruction

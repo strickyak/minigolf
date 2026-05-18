@@ -6,13 +6,13 @@ const NUM = 500
 const true = 1
 const false = 0
 
-func Nil[T any]() {
-	return *T(word(0))
+func Nil[T any]() *T {
+	return (*T)(word(0))
 }
 
 type Chunk struct {
 	Next *Chunk
-	Rest [SZ - 2]byte
+	Rest [SZ - sizeof[*Chunk]()]byte
 }
 
 var FreeList *Chunk
@@ -33,12 +33,12 @@ func panic(w word) {
 }
 
 func Alloc() word {
-	if FreeList == Nil[Chunk] {
+	if FreeList == Nil[Chunk]() {
 		panic(0)
 	}
 	z := FreeList
 	FreeList = z.Next
-	z.Next = Nil[Chunk]
+	z.Next = Nil[Chunk]()
 	for i := range SZ - 2 {
 		z.Rest[i] = 0
 	}
@@ -46,7 +46,7 @@ func Alloc() word {
 }
 
 func Free(ptr word) {
-	p := *Chunk(ptr)
+	p := (*Chunk)(ptr)
 	for i := range SZ - 2 {
 		p.Rest[i] = 0
 	}

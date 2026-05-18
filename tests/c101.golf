@@ -17,6 +17,9 @@ func Init() {
 		*fixme = &(Pool[i])
 		fixme = &(Pool[i].Next)
 	}
+    println(999)
 }
 
-func main() {}
+func main() {
+	Init()
+}
