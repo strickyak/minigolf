@@ -359,8 +359,8 @@ func extractTypeParamsC(paramType ast.Expression, argTyp string, typeMap map[str
 		if strings.HasSuffix(argTyp, "*") {
 			argTyp = strings.TrimSpace(argTyp[:len(argTyp)-1])
 			extractTypeParamsC(prefix.Right, argTyp, typeMap, typeParams)
-		} else if ir.Type(argTyp).IsAPointer() {
-			extractTypeParamsC(prefix.Right, string(ir.Type(argTyp).PointedType()), typeMap, typeParams)
+		} else if (ir.Type{Name: argTyp}).IsAPointer() {
+			extractTypeParamsC(prefix.Right, (ir.Type{Name: argTyp}).PointedType().Name, typeMap, typeParams)
 		} else {
 			extractTypeParamsC(prefix.Right, argTyp, typeMap, typeParams)
 		}
@@ -368,8 +368,8 @@ func extractTypeParamsC(paramType ast.Expression, argTyp string, typeMap map[str
 		if strings.HasSuffix(argTyp, "*") {
 			argTyp = strings.TrimSpace(argTyp[:len(argTyp)-1])
 			extractTypeParamsC(ptr.Elt, argTyp, typeMap, typeParams)
-		} else if ir.Type(argTyp).IsAPointer() {
-			extractTypeParamsC(ptr.Elt, string(ir.Type(argTyp).PointedType()), typeMap, typeParams)
+		} else if (ir.Type{Name: argTyp}).IsAPointer() {
+			extractTypeParamsC(ptr.Elt, (ir.Type{Name: argTyp}).PointedType().Name, typeMap, typeParams)
 		} else {
 			extractTypeParamsC(ptr.Elt, argTyp, typeMap, typeParams)
 		}
