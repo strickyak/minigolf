@@ -32,6 +32,7 @@ type Builder struct {
 	evaluatingType    map[string]bool
 	varTypes          map[string]Type
 	typeDefsAST       map[string]*ast.StructType
+	typeAliases       map[string]ast.Expression
 	genericTemplates  map[string]*GenericTemplate
 	instantiatedTypes map[string]InstantiatedTypeInfo
 	currentPackage    string
@@ -61,6 +62,7 @@ func NewBuilder() *Builder {
 		evaluatingType:    make(map[string]bool),
 		varTypes:          make(map[string]Type),
 		typeDefsAST:       make(map[string]*ast.StructType),
+		typeAliases:       make(map[string]ast.Expression),
 		genericTemplates:  make(map[string]*GenericTemplate),
 		instantiatedTypes: make(map[string]InstantiatedTypeInfo),
 	}
@@ -81,11 +83,22 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 			return TypeInt
 		default:
 			qname := b.currentPackage + "." + e.Value
+			if _, ok := b.typeDefsAST[qname]; !ok {
+				if _, okAlias := b.typeAliases[qname]; !okAlias {
+					if _, ok := b.typeDefsAST["prelude."+e.Value]; ok {
+						qname = "prelude." + e.Value
+					} else if _, ok := b.typeAliases["prelude."+e.Value]; ok {
+						qname = "prelude." + e.Value
+					}
+				}
+			}
+
+			if aliasExpr, ok := b.typeAliases[qname]; ok {
+				return b.astToIRType(aliasExpr)
+			}
+
 			if _, ok := b.typeDefsAST[qname]; ok {
 				return Type{Expr: expr, Name: qname}
-			}
-			if _, ok := b.typeDefsAST["prelude."+e.Value]; ok {
-				return Type{Expr: expr, Name: "prelude." + e.Value}
 			}
 			return Type{Expr: expr, Name: e.Value}
 		}
@@ -328,6 +341,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 				b.typeDefsAST[qname] = st
 				// nando-PROBLEM.  I think TypeDefOrder is not this simple.
 				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, qname)
+			} else if s.IsAlias {
+				qname := b.currentPackage + "." + s.Name.Value
+				b.typeAliases[qname] = s.BaseType
 			} else {
 				// nando-PROBLEM
 				// Pass 0 is ignoring it.

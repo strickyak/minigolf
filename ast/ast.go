@@ -76,6 +76,7 @@ type TypeStatement struct {
 	TypeParameters []*Identifier
 	Tokens         []token.Token
 	BaseType       Expression
+	IsAlias        bool
 }
 
 func (s *TypeStatement) statementNode()         {}

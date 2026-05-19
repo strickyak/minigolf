@@ -27,6 +27,7 @@ type Transpiler struct {
 	currentFunc       *ast.FuncStatement
 	currentPackage    string
 	typeDefs          map[string]*ast.TypeStatement
+	typeAliases       map[string]ast.Expression
 	genericTemplates  map[string]*GenericTemplate
 	instantiatedTypes map[string]InstantiatedTypeInfoC
 	irBuilder         *ir.Builder
@@ -49,6 +50,7 @@ func New() *Transpiler {
 		funcRetTypes:      make(map[string][]string),
 		genericTemplates:  make(map[string]*GenericTemplate),
 		typeDefs:          make(map[string]*ast.TypeStatement),
+		typeAliases:       make(map[string]ast.Expression),
 		instantiatedTypes: make(map[string]InstantiatedTypeInfoC),
 	}
 }
@@ -226,6 +228,10 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 					TypeParams: typeParams,
 					Tokens:     s.Tokens,
 				}
+				continue
+			}
+			if s.IsAlias {
+				t.typeAliases[t.currentPackage+"."+s.Name.Value] = s.BaseType
 				continue
 			}
 			base := t.mapType(s.BaseType)
@@ -432,11 +438,22 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 			return name
 		}
 		qname := t.currentPackage + "." + name
-		if _, ok := t.typeDefs[qname]; ok {
-			return fmt.Sprintf("t_%s_%s", t.currentPackage, name)
+
+		if _, ok := t.typeDefs[qname]; !ok {
+			if _, ok := t.typeDefs["prelude."+name]; ok {
+				qname = "prelude." + name
+			} else if _, ok := t.typeAliases["prelude."+name]; ok {
+				qname = "prelude." + name
+			}
 		}
-		if _, ok := t.typeDefs["prelude."+name]; ok {
-			return fmt.Sprintf("t_prelude_%s", name)
+
+		if aliasExpr, ok := t.typeAliases[qname]; ok {
+			return t.mapType(aliasExpr)
+		}
+
+		if _, ok := t.typeDefs[qname]; ok {
+			parts := strings.SplitN(qname, ".", 2)
+			return fmt.Sprintf("t_%s_%s", parts[0], parts[1])
 		}
 		return fmt.Sprintf("t_%s_%s", t.currentPackage, name)
 	case *ast.SelectorExpression:

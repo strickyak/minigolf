@@ -39,8 +39,11 @@ func (f *repeatedFlag) Set(value string) error {
 var MatchValidImport = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`).FindStringSubmatch
 
 func ReadFileFromPath(base string, path []string) (content []byte, err error) {
+    log.Printf("RFFP: want %q with path %v", base, path)
 	for _, d := range path {
-		content, err = os.ReadFile(filepath.Join(d, base))
+        filename := filepath.Join(d, base)
+		content, err = os.ReadFile(filename)
+        log.Printf("RFFP: Looking for %q ... %v", filename, err)
 		if err == nil {
 			return
 		}
@@ -50,6 +53,7 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 	if base == "prelude.golf" {
 		content = []byte(prelude.Source)
 		err = nil
+        return
 	}
 
 	return nil, fmt.Errorf("Cannot find filename %q in path %v", base, path)

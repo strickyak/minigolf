@@ -3,6 +3,7 @@ package ast
 import (
 	"fmt"
 	"strings"
+    "reflect"
 )
 
 // Print returns a human-readable ASCII string representation of an AST node or tree.
@@ -15,10 +16,11 @@ func Print(node any) string {
 		}
 	}()
 
-	switch n := node.(type) {
-	case nil:
+    if reflect.ValueOf(node).IsNil() {
 		return "<nil>"
+    }
 
+	switch n := node.(type) {
 	case *Program:
 		var stmts []string
 		for _, s := range n.Statements {

@@ -284,7 +284,11 @@ func (p *Parser) parseTypeStatement() *ast.TypeStatement {
 		stmt.Tokens = make([]token.Token, endPos-startPos)
 		copy(stmt.Tokens, p.tokens[startPos:endPos])
 	} else {
-		p.nextToken()
+		if p.peekTokenIs(token.ASSIGN) {
+			stmt.IsAlias = true
+			p.nextToken() // consume '='
+		}
+		p.nextToken() // move to base type
 		stmt.BaseType = p.parseExpression(LOWEST)
 	}
 
