@@ -392,11 +392,10 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 		stmt.ReturnTypes = []ast.Expression{p.parseExpression(LOWEST)}
 	}
 
-	if !p.expectPeek(token.LBRACE) {
-		return nil
+	if p.peekTokenIs(token.LBRACE) {
+		p.nextToken()
+		stmt.Body = p.parseBlockStatement()
 	}
-
-	stmt.Body = p.parseBlockStatement()
 
 	if len(stmt.TypeParameters) > 0 {
 		endPos := p.pos - 1

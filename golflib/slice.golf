@@ -2,38 +2,98 @@ package slice
 
 import mem
 
-type Slice[T any] struct {
+type Bytes struct {
 	Base   word
 	Cap word
 	Len    word
 }
 
-type Forge(ptr word, size_bytes word) Slice {
-    var z Slice
+type ConjureBytes(ptr word, size word) Bytes {
+    var z Bytes
     z.Base = ptr
-    z.Cap = size_bytes / sizeof(T)
+    z.Cap = size
     z.Len = 0
     return z
 }
 
-func Get[T any](o Slice[T], i word) T {
-    if i < z.Len {
+func (o *Bytes) Address(o Slice, i word) word {
+    if i >= z.Len {
         panic()
     }
-    return mem.Peek[T](z.Base + i * sizeof(T))
+    return z.Base + i
 }
 
-func (o *Slice) Chop(start word, limit word) Slice {
+func (o *Bytes) Get(o Slice, i word) byte {
+    if i >= z.Len {
+        panic()
+    }
+    return mem.PeekB(z.Base + i)
+}
+
+func (o *Bytes) Put(o Slice, i word, x byte) {
+    if i >= z.Len {
+        panic()
+    }
+    mem.PokeB(z.Base + i, x)
+}
+
+func (o *Bytes) Chop(start word, limit word) Bytes {
     if start > limit {
         panic()
     }
     if limit > z.Cap {
         panic()
     }
-    var z Slice
+    var z Bytes
     z.Base = o.Base
     z.Cap = z.Cap - start
     z.Len = limit - start
+}
+
+/////////////////////////////////////////////
+
+type Slice[T any] struct {
+	guts Bytes
+}
+
+type Conjure[T any](ptr word, cap word, sz word) Slice[T] {
+    var z Slice[T]
+    z.guts.Base = ptr
+    z.guts.Cap = cap
+    z.guts.Len = sz
+    return z
+}
+
+func (o *Slice[T]) Get(i word) T {
+    p := i * Sizeof[T]()
+    if i < o.guts.Len {
+        panic()
+    }
+    return mem.Peek[T](o.guts.Base + i * sizeof(T))
+}
+
+func (o *Bytes) Put(o Slice, i word, x byte) {
+    p := i * Sizeof[T]()
+    if i >= o.guts.Len {
+        panic()
+    }
+    mem.PokeB(o.guts.Base + i, x)
+}
+
+func (o *Slice[T]) Chop(start word, limit word) Slice[T] {
+    p1 := start * Sizeof[T]()
+    p2 := limit * Sizeof[T]()
+    if p1 > p2 {
+        panic()
+    }
+    if p2 > o.guts.guts.Cap {
+        panic()
+    }
+    var z Slice[T]
+    z.guts.Base = o.Base + p1
+    z.guts.Cap = o.guts.Cap - p1
+    z.guts.Len = p2 - p1
+    return z
 }
 
 func main() {}

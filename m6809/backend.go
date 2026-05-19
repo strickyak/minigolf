@@ -365,7 +365,9 @@ func (b *Backend) Generate(program *ir.Program) string {
 	}
 
 	for _, f := range program.Functions {
-		b.emitFunc(f)
+		if len(f.Blocks) > 0 {
+			b.emitFunc(f)
+		}
 	}
 
 	b.buf.WriteString("\n\texport _main\n")

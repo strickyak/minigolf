@@ -177,7 +177,9 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 		a.currentScope.Define(p.Name.Value, a.exprToString(p.Type))
 	}
 
-	a.analyzeBlock(s.Body)
+	if s.Body != nil {
+		a.analyzeBlock(s.Body)
+	}
 }
 
 func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {

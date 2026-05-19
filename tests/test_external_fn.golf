@@ -1,0 +1,13 @@
+package main
+
+func Abc(x int, y int, z byte) uint
+func Def(x int, y int, z byte) uint
+func Ghi(x int, y int, z byte) uint
+
+func xyz() {
+}
+
+func main() {
+    println("ok")
+    xyz()
+}

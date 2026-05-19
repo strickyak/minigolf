@@ -217,25 +217,27 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 		funcStmt.Name.Value = strings.TrimPrefix(instName, b.currentPackage+".")
 		b.registerFunc(funcStmt)
 
-		oldFunc := b.currentFunc
-		oldNextValID := b.nextValueID
-		oldNextBlkID := b.nextBlockID
-		oldCurDef := b.currentDef
-		oldSealed := b.sealedBlocks
-		oldIncPhis := b.incompletePhis
-		oldVarTypes := b.varTypes
-		oldCurBlk := b.currentBlock
+		if funcStmt.Body != nil {
+			oldFunc := b.currentFunc
+			oldNextValID := b.nextValueID
+			oldNextBlkID := b.nextBlockID
+			oldCurDef := b.currentDef
+			oldSealed := b.sealedBlocks
+			oldIncPhis := b.incompletePhis
+			oldVarTypes := b.varTypes
+			oldCurBlk := b.currentBlock
 
-		b.buildFunc(funcStmt)
+			b.buildFunc(funcStmt)
 
-		b.currentFunc = oldFunc
-		b.nextValueID = oldNextValID
-		b.nextBlockID = oldNextBlkID
-		b.currentDef = oldCurDef
-		b.sealedBlocks = oldSealed
-		b.incompletePhis = oldIncPhis
-		b.varTypes = oldVarTypes
-		b.currentBlock = oldCurBlk
+			b.currentFunc = oldFunc
+			b.nextValueID = oldNextValID
+			b.nextBlockID = oldNextBlkID
+			b.currentDef = oldCurDef
+			b.sealedBlocks = oldSealed
+			b.incompletePhis = oldIncPhis
+			b.varTypes = oldVarTypes
+			b.currentBlock = oldCurBlk
+		}
 	} else {
 		panic("Generic instantiation did not produce a function: " + instName)
 	}
@@ -360,7 +362,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			if len(s.TypeParameters) > 0 {
 				continue
 			}
-			b.buildFunc(s)
+			if s.Body != nil {
+				b.buildFunc(s)
+			}
 		}
 	}
 

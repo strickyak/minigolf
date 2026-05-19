@@ -138,7 +138,9 @@ func (c *CBE) Generate(program *ir.Program) string {
 
 	// Function bodies
 	for _, f := range program.Functions {
-		c.emitFunc(f)
+		if len(f.Blocks) > 0 {
+			c.emitFunc(f)
+		}
 	}
 
 	// C main

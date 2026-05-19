@@ -1,7 +1,7 @@
 package chunks
 
-const SZ = 20
-const NUM = 500
+const SZ = 60 // 20
+const NUM = 200 // 500
 
 const true = 1
 const false = 0

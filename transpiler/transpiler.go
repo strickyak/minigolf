@@ -676,6 +676,10 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		}
 		t.buf.WriteString(";\n")
 	case *ast.FuncStatement:
+		if s.Body == nil {
+			t.buf.WriteString(t.emitFuncSignatureStr(s, true))
+			break
+		}
 		prevFunc := t.currentFunc
 		t.currentFunc = s
 		t.pushScope()
