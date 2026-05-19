@@ -20,9 +20,11 @@ MiniGolf's lexical structure mirrors Go.
 MiniGolf enforces strict typing. There are no implicit type conversions. 
 
 ### 3.1 Primitive Types
-There are exactly two primitive numeric types. Both are unsigned:
+There are exactly four primitive types:
 *   `byte`: An 8-bit unsigned integer. Arithmetic overflows modulo $2^8$.
 *   `word`: A pointer-sized unsigned integer (16-bit on the M6809 target). Arithmetic overflows modulo $2^{16}$.
+*   `int`: A pointer-sized signed integer (16-bit on the M6809 target).
+*   `string`: Currently, string literals are strictly immutable and only supported for passing directly to built-in `print` and `println` functions (improvements to the `string` type are planned for the future).
 
 ### 3.2 Composite Types
 *   **Arrays:** `[N]T` represents a contiguous, fixed-size array of `N` elements of type `T`. `N` must be a compile-time constant.
@@ -77,16 +79,30 @@ func (recv *Type) MethodName(args...) ReturnType {
 
 ## 8. Generics
 
-MiniGolf supports a limited, compile-time monomorphization generic system for functions.
+MiniGolf supports a limited, compile-time monomorphization generic system for both types and functions. Type parameters are declared using the `[T any]` or `[A any, B any]` syntax.
+
+### 8.1 Generic Types
+Structs can be parameterized over one or more types to allow creating generalized data structures like linked lists or buffers.
 
 ```go
-func FunctionName[T any](ptr *T) {
-    // ...
+type Link[T any] struct {
+    Value T
+    Next  *Link[T]
 }
 ```
-*   Functions can declare type parameters using the `[T any]` syntax.
-*   When a generic function is called (e.g., `FunctionName(&myVar)`), the compiler infers `T` from the argument types and instantiates a unique, strongly-typed copy of the function.
-*   Currently, generic parameters are primarily intended for pointer manipulation and memory operations where the exact layout of `T` is abstracted.
+*   When a generic type is used, it must be explicitly instantiated with concrete type arguments (e.g., `var myNode Link[byte]`).
+
+### 8.2 Generic Functions
+Functions can also declare type parameters.
+
+```go
+func First[T any](root *Link[T]) T {
+    return root.Value
+}
+```
+*   When a generic function is called (e.g., `First(&myNode)`), the compiler infers `T` from the argument types.
+*   Upon inference, the compiler instantiates a unique, strongly-typed copy of the function for that specific set of type arguments.
+*   Generic parameters abstract the exact memory layout of `T` while maintaining strict type safety during compilation.
 
 ## 9. Built-in Functions
 
