@@ -123,7 +123,7 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 				}
 				funcName := fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 				funcName = strings.ReplaceAll(funcName, ".", "_")
-				
+
 				if !t.arrayTypes[funcName] {
 					t.arrayTypes[funcName] = true
 					if tmpl, ok := t.genericTemplates[rawFuncName]; ok {

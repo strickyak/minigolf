@@ -61,7 +61,7 @@ func NewBuilder() *Builder {
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
 	if expr == nil {
-        panic("TODO: when is expr nil?")
+		panic("TODO: when is expr nil?")
 	}
 	switch e := expr.(type) {
 	case *ast.Identifier:
@@ -112,7 +112,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		}
 		return TypeWord
 	case *ast.ArrayType:
-        // nando-GOOD
+		// nando-GOOD
 		lenVal := b.EvalConst(e.Length)
 		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, b.astToIRType(e.Elt).Name)}
 	case *ast.PointerType:
@@ -132,19 +132,19 @@ func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate)
 	var argTokensList [][]token.Token
 	for _, argTyp := range argTyps {
 
-        // Use TypeName for type in expansion
+		// Use TypeName for type in expansion
 		argTokens := lexer.Lex(argTyp.TypeName(), "generic_inst")
 
-        // Trim EOF
+		// Trim EOF
 		if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.EOF {
 			argTokens = argTokens[:len(argTokens)-1]
 		}
-        // Trim SEMICOLON
+		// Trim SEMICOLON
 		if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.SEMICOLON {
 			argTokens = argTokens[:len(argTokens)-1]
 		}
 
-        // and add it to the list
+		// and add it to the list
 		argTokensList = append(argTokensList, argTokens)
 	}
 
@@ -190,28 +190,17 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 	if st, ok := baseTypeAST.(*ast.StructType); ok {
 		b.typeDefsAST[instName] = st
 		b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, instName)
-/*
-		var fields []*ast.Field
-		for i, rt := range s.ReturnTypes {
-			fields = append(fields, &ast.Field{
-                Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-                Type: rt,
-            })
-		}
-		f.ReturnType = b.astToIRType(&ast.StructType{
-            Fields: fields,
-        })
-*/
+
 		var fields []*ast.Field
 		for i, f := range st.Fields {
 			fields = append(fields, &ast.Field{
-                Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-                Type: f.Type,
-            })
+				Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
+				Type: f.Type,
+			})
 		}
-        structType := b.astToIRType(&ast.StructType{
-            Fields: fields,
-        })
+		structType := b.astToIRType(&ast.StructType{
+			Fields: fields,
+		})
 		b.Program.TypeDefs[instName] = structType
 	} else {
 		panic("Generic instantiation did not produce a struct: " + instName)
@@ -254,30 +243,30 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 
 func (b *Builder) Build(astProg *ast.Program) *Program {
 	// Pass 0: register struct types
-    // nando-PROBLEM.  This pass 0, 0.5, 1, 2 might work for the current
-    // tests but is is not correct.  It registers const and struct types
-    // in pass 0, but that is naive.  Really it should be registering
-    // all names in the global space with the AST of their definition.
-    // But then be lazy about filling in concrete values for constants
-    // and the sizes of things.  And be capable of detecting cirularities.
-    //
-    // We probably need a loop around work-to-attempt, that keeps attempting,
-    // until everything needed to satisfy main() has been resolved and
-    // emitted.
-    //
-    // `package`:  Evaluated immediately.
-    //             Only used to set b.currentPackage.
-    //             Has to be used first (within eack package).
-    //             I think now it is always overrided;
-    //             TODO: assert that with code.
-    // `import`:  Evaluated immediately.
-    //            These must be known to evaluate selectors, which can occur
-    //            in any other definitions.
-    // `const`:   can depend on other consts and on sizeof types.
-    // `type`:    can depend on other consts and types.
-    // `var`:     can depend on types.  If we support global initialization,
-    //            can depend on func and var and anything.
-    // `func`:    can depend on anything.
+	// nando-PROBLEM.  This pass 0, 0.5, 1, 2 might work for the current
+	// tests but is is not correct.  It registers const and struct types
+	// in pass 0, but that is naive.  Really it should be registering
+	// all names in the global space with the AST of their definition.
+	// But then be lazy about filling in concrete values for constants
+	// and the sizes of things.  And be capable of detecting cirularities.
+	//
+	// We probably need a loop around work-to-attempt, that keeps attempting,
+	// until everything needed to satisfy main() has been resolved and
+	// emitted.
+	//
+	// `package`:  Evaluated immediately.
+	//             Only used to set b.currentPackage.
+	//             Has to be used first (within eack package).
+	//             I think now it is always overrided;
+	//             TODO: assert that with code.
+	// `import`:  Evaluated immediately.
+	//            These must be known to evaluate selectors, which can occur
+	//            in any other definitions.
+	// `const`:   can depend on other consts and on sizeof types.
+	// `type`:    can depend on other consts and types.
+	// `var`:     can depend on types.  If we support global initialization,
+	//            can depend on func and var and anything.
+	// `func`:    can depend on anything.
 	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
 		if ps, ok := stmt.(*ast.PackageStatement); ok {
@@ -287,7 +276,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 
 		case *ast.TypeStatement:
 			if len(s.TypeParameters) > 0 {
-                // It's a generic type, so save it to b.genericTemplates
+				// It's a generic type, so save it to b.genericTemplates
 				qname := b.currentPackage + "." + s.Name.Value
 				var typeParams []string
 				for _, tp := range s.TypeParameters {
@@ -300,20 +289,20 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			} else if st, ok := s.BaseType.(*ast.StructType); ok {
 				qname := b.currentPackage + "." + s.Name.Value
 				b.typeDefsAST[qname] = st
-                // nando-PROBLEM.  I think TypeDefOrder is not this simple.
+				// nando-PROBLEM.  I think TypeDefOrder is not this simple.
 				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, qname)
 			} else {
-                // nando-PROBLEM
-                // Pass 0 is ignoring it.
-                // Shouldn't all types be registered in pass 0?
-            }
+				// nando-PROBLEM
+				// Pass 0 is ignoring it.
+				// Shouldn't all types be registered in pass 0?
+			}
 
 		case *ast.ConstStatement:
 			qname := b.currentPackage + "." + s.Name.Value
 			b.constExprs[qname] = s.Value
-        default:
-            // nando-PROBLEM.   Do we need import names? function names?
-            // Other global names ignored in pass 0 .
+		default:
+			// nando-PROBLEM.   Do we need import names? function names?
+			// Other global names ignored in pass 0 .
 		}
 	}
 
@@ -334,9 +323,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.globals[g.Name] = g
 			b.Program.Globals = append(b.Program.Globals, g)
 		case *ast.ConstStatement:
-            // nando-PROBLEM.  const definitions may involve
-            // consts and sizeof types we have not seen yet.
-            // Must detect circularities.
+			// nando-PROBLEM.  const definitions may involve
+			// consts and sizeof types we have not seen yet.
+			// Must detect circularities.
 			qname := b.currentPackage + "." + s.Name.Value
 			val := b.EvalConst(&ast.Identifier{Value: qname})
 			b.consts[qname] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
@@ -359,9 +348,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 
 	// Pass 2: build functionsbodies
 	// nando-GOOD.  Do build function bodies after all consts,
-    // types, and vars are understood.
-    // TODO:  Should we be lazy at this point, and only compile
-    // function bodies that are reachable from main()?
+	// types, and vars are understood.
+	// TODO:  Should we be lazy at this point, and only compile
+	// function bodies that are reachable from main()?
 	b.currentPackage = ""
 	for _, stmt := range astProg.Statements {
 		if ps, ok := stmt.(*ast.PackageStatement); ok {
@@ -397,17 +386,17 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 	if len(s.ReturnTypes) == 1 {
 		f.ReturnType = b.astToIRType(s.ReturnTypes[0])
 	} else if len(s.ReturnTypes) > 1 {
-        // Construct a synthetic return type for a multi-value return.
+		// Construct a synthetic return type for a multi-value return.
 		var fields []*ast.Field
 		for i, rt := range s.ReturnTypes {
 			fields = append(fields, &ast.Field{
-                Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-                Type: rt,
-            })
+				Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
+				Type: rt,
+			})
 		}
 		f.ReturnType = b.astToIRType(&ast.StructType{
-            Fields: fields,
-        })
+			Fields: fields,
+		})
 	} else {
 		f.ReturnType = TypeVoid
 	}
@@ -431,10 +420,10 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 		receiverTyp := b.astToIRType(s.Receiver.Type)
 		baseType := receiverTyp
 
-            // If baseType is a pointer, use its pointed type.
-        if baseType.IsAPointer() {
-            baseType = baseType.PointedType()
-        }
+		// If baseType is a pointer, use its pointed type.
+		if baseType.IsAPointer() {
+			baseType = baseType.PointedType()
+		}
 
 		funcName = MangleName(baseType.String()) + "_" + funcName
 	} else {
@@ -602,7 +591,7 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 	if val.Type().Equals(targetType) || val.Type().Equals(TypeUnknown) {
 		return val
 	}
-	
+
 	if val.Type().Equals(TypeConstInteger) {
 		if targetType.Equals(TypeByte) {
 			if cw, ok := val.(*ConstWord); ok {
@@ -617,14 +606,14 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 			return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetType}, Op: "bitcast", Operand: val}, val)
 		}
 	}
-    // nando: TRUNCATION from word to byte?
+	// nando: TRUNCATION from word to byte?
 	if val.Type().Equals(TypeWord) && targetType.Equals(TypeByte) {
 		if cw, ok := val.(*ConstWord); ok {
 			return b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: uint8(cw.Val)}, val)
 		}
 		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: val}, val)
 	}
-    // nando: PROMOTION from byte to word?
+	// nando: PROMOTION from byte to word?
 	if val.Type().Equals(TypeByte) && targetType.Equals(TypeWord) {
 		if cb, ok := val.(*ConstByte); ok {
 			return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(cb.Val)}, val)
@@ -722,11 +711,11 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 				// typStr := string(typ)
 				// content := typStr[7 : len(typStr)-1]
 				// fields := strings.Split(content, ";")
-                fields := typ.Expr.(*ast.StructType).Fields
+				fields := typ.Expr.(*ast.StructType).Fields
 
 				for i, f := range fields {
 					if f.Name.Value == "" {
-                        // TODO: when does this happen?
+						// TODO: when does this happen?
 						break
 					}
 					fieldTyp := f.Type
@@ -1457,14 +1446,14 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		ptrVal := b.buildExpr(e.Elt)
 		return ExprResult{IsLValue: true, Address: ptrVal, Typ: ptrVal.Type().PointedType()}
 
-    default:
-	    log.Panicf("NO CASE: Builder.eval: expr (%T)%v", expr, expr)
+	default:
+		log.Panicf("NO CASE: Builder.eval: expr (%T)%v", expr, expr)
 	}
 	panic("Not Reached")
 }
 
 func (b *Builder) getTypeString(qname string) Type {
-    // NANDO-recent.
+	// NANDO-recent.
 	if res, ok := b.Program.TypeDefs[qname]; ok {
 		return res
 	}
@@ -1493,7 +1482,7 @@ func (b *Builder) getTypeString(qname string) Type {
 }
 
 func (b *Builder) getTypeSize(typ Type) int {
-    // NANDO-recent.
+	// NANDO-recent.
 	if typ.Equals(TypeVoid) || typ.Equals(TypeByte) {
 		return 1
 	}
@@ -1528,14 +1517,14 @@ func (b *Builder) getTypeSize(typ Type) int {
 		}
 		return size
 	}
-    panic("why return 2")
+	panic("why return 2")
 }
 
 func (b *Builder) EvalConst(expr ast.Expression) int64 {
-    // nando-recent
-    // Keep this one.   Does ast.Identifier include qualified names?
-    // Perhaps use `ok` instead of panic, so that a "keep trying unti
-    // everything has been defined" approach works without panics.
+	// nando-recent
+	// Keep this one.   Does ast.Identifier include qualified names?
+	// Perhaps use `ok` instead of panic, so that a "keep trying unti
+	// everything has been defined" approach works without panics.
 	switch e := expr.(type) {
 	case *ast.IntegerLiteral:
 		return e.Value
@@ -1588,8 +1577,6 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 	panic(fmt.Sprintf("not a constant expression: %T", expr))
 }
 
-
-
 func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 	if ident, ok := lhs.(*ast.Identifier); ok {
 		qname := b.currentPackage + "." + ident.Value
@@ -1638,7 +1625,7 @@ func extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[stri
 			extractTypeParamsIR(ptr.Elt, argTyp.PointedType(), typeMap, typeParams)
 		}
 	} else if idx, ok := paramType.(*ast.IndexExpression); ok {
-        // nando-BAD.  Spliting on _ cannot work.
+		// nando-BAD.  Spliting on _ cannot work.
 		parts := strings.Split(argTyp.Name, "_")
 		numIdx := len(idx.Indices)
 		if len(parts) >= numIdx {

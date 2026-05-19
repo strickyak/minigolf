@@ -102,6 +102,8 @@ The strictness of having only `byte` and `word` requires careful handling during
 *   **Casting:** Explicit casts are necessary for mixing types in the source language.
     *   `word(b)`: Translates to a `ZeroExt` instruction in IR.
     *   `byte(w)`: Translates to a `Truncate` instruction in IR.
+*   **Type Representation (`ir.Type`):** Unlike early prototypes that relied on brittle string concatenation for types (e.g. `"ptr_word"`), the IR strictly uses an `ir.Type` struct. This object encapsulates both the human-readable "pretty name" (like `*fruit.Apple`) for error reporting and debugging, and a direct link to its `ast.Expression` definition. This ensures nested structs and arrays can be flawlessly resolved downstream.
+*   **Identifier Mangling:** To guarantee compatibility with constraints of C compilers and strict Assembly assemblers, all structured identifiers (types, functions, globals) use an on-demand `MangledName()` capability. This translates complex types (like `[32]*misc.Mango`) into safe, universally compatible string tokens (e.g., `t_arr_32_ptr_misc__Mango`), entirely decoupling frontend display from backend code generation.
 *   **Comparisons:** `Eq`, `Neq`, `Lt`, `Lte`, `Gt`, `Gte` require operands of the same type. The result of a comparison is conceptually a boolean, but can be represented internally as a `byte` (0 for false, 1 for true) to minimize primitives.
 
 ## 6. Optimization Passes

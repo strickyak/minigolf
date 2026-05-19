@@ -141,7 +141,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 			sz := b.getTypeSize(fTyp)
 			align := b.getTypeAlignment(fTyp)
 			byteOffset = alignVal(byteOffset, align)
-			
+
 			if fIdx == fieldIndex {
 				return byteOffset, sz
 			}

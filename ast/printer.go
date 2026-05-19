@@ -8,15 +8,15 @@ import (
 // Print returns a human-readable ASCII string representation of an AST node or tree.
 // It uses braces {} around nested structures and brackets [] around lists.
 func Print(node any) string {
-    defer func() {
-        r := recover()
-        if r != nil {
-            panic(fmt.Errorf("PANIC in printing %#v: %v", node, r))
-        }
-    }()
+	defer func() {
+		r := recover()
+		if r != nil {
+			panic(fmt.Errorf("PANIC in printing %#v: %v", node, r))
+		}
+	}()
 
 	switch n := node.(type) {
-    case nil:
+	case nil:
 		return "<nil>"
 
 	case *Program:
@@ -64,9 +64,9 @@ func Print(node any) string {
 			Print(n.Name), strings.Join(typeParams, ", "), Print(n.Receiver), strings.Join(params, ", "), strings.Join(retTypes, ", "), Print(n.Body))
 
 	case *Parameter:
-        if n == nil {
-            return "Paramter(nil)"
-        }
+		if n == nil {
+			return "Paramter(nil)"
+		}
 		return fmt.Sprintf("Parameter{Name: %s, Type: %s}", Print(n.Name), Print(n.Type))
 
 	case *BlockStatement:
