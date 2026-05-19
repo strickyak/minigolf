@@ -24,13 +24,13 @@ type Builder struct {
 	sealedBlocks   map[*BasicBlock]bool
 	incompletePhis map[*BasicBlock]map[string]*Phi
 
-	globals          map[string]*Global
-	funcs            map[string]*Function
-	consts           map[string]Value
-	constExprs       map[string]ast.Expression
-	evaluatingConst  map[string]bool
-	evaluatingType   map[string]bool
-	varTypes         map[string]Type
+	globals           map[string]*Global
+	funcs             map[string]*Function
+	consts            map[string]Value
+	constExprs        map[string]ast.Expression
+	evaluatingConst   map[string]bool
+	evaluatingType    map[string]bool
+	varTypes          map[string]Type
 	typeDefsAST       map[string]*ast.StructType
 	genericTemplates  map[string]*GenericTemplate
 	instantiatedTypes map[string]InstantiatedTypeInfo
@@ -49,15 +49,15 @@ type GenericTemplate struct {
 
 func NewBuilder() *Builder {
 	return &Builder{
-		Program:          &Program{TypeDefs: make(map[string]Type)},
-		currentDef:       make(map[*BasicBlock]map[string]Value),
-		sealedBlocks:     make(map[*BasicBlock]bool),
-		incompletePhis:   make(map[*BasicBlock]map[string]*Phi),
-		globals:          make(map[string]*Global),
-		funcs:            make(map[string]*Function),
-		consts:           make(map[string]Value),
-		constExprs:       make(map[string]ast.Expression),
-		evaluatingConst:  make(map[string]bool),
+		Program:           &Program{TypeDefs: make(map[string]Type)},
+		currentDef:        make(map[*BasicBlock]map[string]Value),
+		sealedBlocks:      make(map[*BasicBlock]bool),
+		incompletePhis:    make(map[*BasicBlock]map[string]*Phi),
+		globals:           make(map[string]*Global),
+		funcs:             make(map[string]*Function),
+		consts:            make(map[string]Value),
+		constExprs:        make(map[string]ast.Expression),
+		evaluatingConst:   make(map[string]bool),
 		evaluatingType:    make(map[string]bool),
 		varTypes:          make(map[string]Type),
 		typeDefsAST:       make(map[string]*ast.StructType),

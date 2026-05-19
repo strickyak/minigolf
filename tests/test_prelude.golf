@@ -1,7 +1,5 @@
 package main
 
-import "prelude"
-
 var m1 memslice
 var m2 memslice
 

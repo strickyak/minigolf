@@ -656,7 +656,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.Call:
 		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 		regsIdx := 0
-		
+
 		retSize := 0
 		if !i.Typ.Equals(ir.TypeVoid) {
 			retSize = b.getTypeSize(i.Typ.Name)

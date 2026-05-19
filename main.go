@@ -46,7 +46,7 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 		}
 	}
 
-    // If "prelude.golf" is not found in the path, we use the version included in this compiler.
+	// If "prelude.golf" is not found in the path, we use the version included in this compiler.
 	if base == "prelude.golf" {
 		content = []byte(prelude.Source)
 		err = nil

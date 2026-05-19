@@ -15,21 +15,21 @@ import (
 
 // Transpiler walks the AST and emits C99 code
 type Transpiler struct {
-	buf              bytes.Buffer
-	typedefBuf       bytes.Buffer
-	funcDeclsBuf     bytes.Buffer
-	genericImplBuf   bytes.Buffer
-	locals           []map[string]string
-	globals          map[string]string
-	arrayTypes       map[string]bool
-	funcTypes        map[string]string
-	funcRetTypes     map[string][]string
-	currentFunc      *ast.FuncStatement
-	currentPackage   string
-	typeDefs         map[string]*ast.TypeStatement
-	genericTemplates map[string]*GenericTemplate
+	buf               bytes.Buffer
+	typedefBuf        bytes.Buffer
+	funcDeclsBuf      bytes.Buffer
+	genericImplBuf    bytes.Buffer
+	locals            []map[string]string
+	globals           map[string]string
+	arrayTypes        map[string]bool
+	funcTypes         map[string]string
+	funcRetTypes      map[string][]string
+	currentFunc       *ast.FuncStatement
+	currentPackage    string
+	typeDefs          map[string]*ast.TypeStatement
+	genericTemplates  map[string]*GenericTemplate
 	instantiatedTypes map[string]InstantiatedTypeInfoC
-	irBuilder        *ir.Builder
+	irBuilder         *ir.Builder
 }
 
 type InstantiatedTypeInfoC struct {
@@ -44,11 +44,11 @@ type GenericTemplate struct {
 
 func New() *Transpiler {
 	return &Transpiler{
-		globals:          make(map[string]string),
-		funcTypes:        make(map[string]string),
-		funcRetTypes:     make(map[string][]string),
-		genericTemplates: make(map[string]*GenericTemplate),
-		typeDefs:         make(map[string]*ast.TypeStatement),
+		globals:           make(map[string]string),
+		funcTypes:         make(map[string]string),
+		funcRetTypes:      make(map[string][]string),
+		genericTemplates:  make(map[string]*GenericTemplate),
+		typeDefs:          make(map[string]*ast.TypeStatement),
 		instantiatedTypes: make(map[string]InstantiatedTypeInfoC),
 	}
 }
