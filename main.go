@@ -15,6 +15,7 @@ import (
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6809"
 	"github.com/strickyak/minigolf/parser"
+	"github.com/strickyak/minigolf/prelude"
 	"github.com/strickyak/minigolf/semantic"
 	"github.com/strickyak/minigolf/transpiler"
 	"github.com/strickyak/minigolf/x86_64"
@@ -44,6 +45,13 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 			return
 		}
 	}
+
+    // If "prelude.golf" is not found in the path, we use the version included in this compiler.
+	if base == "prelude.golf" {
+		content = []byte(prelude.Source)
+		err = nil
+	}
+
 	return nil, fmt.Errorf("Cannot find filename %q in path %v", base, path)
 }
 
@@ -66,6 +74,7 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Pr
 		} else {
 			content, err = ReadFileFromPath(filename, path)
 		}
+
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filename, err)
 			os.Exit(1)
@@ -102,6 +111,9 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Pr
 			program.Statements = append(program.Statements, fileProgram.Statements...)
 		}
 	}
+
+	imported["prelude"] = true
+	slurp("prelude.golf", "prelude", path)
 
 	imported["main"] = true
 	slurp(mainSourceFile, "main", nil)

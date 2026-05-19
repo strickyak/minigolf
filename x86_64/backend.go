@@ -158,6 +158,7 @@ type Backend struct {
 	buf         bytes.Buffer
 	dataBuf     bytes.Buffer
 	stackOffset int
+	retPtrSlot  int
 	slots       map[int]int
 	paramSlots  map[string]int
 	fmtCount    int
@@ -241,6 +242,16 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	regsIdx := 0
+
+	retSize := b.getTypeSize(f.ReturnType.Name)
+	b.retPtrSlot = 0
+	if retSize > 16 {
+		b.stackOffset += 8
+		b.retPtrSlot = b.stackOffset
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], %s\n", b.stackOffset, regs[regsIdx]))
+		regsIdx++
+	}
+
 	for _, p := range f.Parameters {
 		size := b.getTypeSize(p.Typ.Name)
 		aligned := (size + 7) &^ 7
@@ -307,12 +318,18 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if term.Val != nil {
 				size := b.getTypeSize(term.Val.Type().Name)
 				if size > 16 {
-					panic("Unsupported: large value return")
-				}
-				b.loadVal(term.Val, "rax")
-				if size > 8 {
 					addr := b.getAddr(term.Val)
-					b.buf.WriteString(fmt.Sprintf("\tmov rdx, qword ptr [%s + 8]\n", addr))
+					b.buf.WriteString(fmt.Sprintf("\tmov rax, qword ptr [rbp - %d]\n", b.retPtrSlot))
+					for i := 0; i < size; i += 8 {
+						b.buf.WriteString(fmt.Sprintf("\tmov rcx, qword ptr [%s + %d]\n", addr, i))
+						b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rax + %d], rcx\n", i))
+					}
+				} else {
+					b.loadVal(term.Val, "rax")
+					if size > 8 {
+						addr := b.getAddr(term.Val)
+						b.buf.WriteString(fmt.Sprintf("\tmov rdx, qword ptr [%s + 8]\n", addr))
+					}
 				}
 			}
 			b.buf.WriteString("\tmov rsp, rbp\n")
@@ -639,6 +656,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.Call:
 		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 		regsIdx := 0
+		
+		retSize := 0
+		if !i.Typ.Equals(ir.TypeVoid) {
+			retSize = b.getTypeSize(i.Typ.Name)
+			if retSize > 16 {
+				b.buf.WriteString(fmt.Sprintf("\tlea %s, [rbp - %d]\n", regs[regsIdx], offset))
+				regsIdx++
+			}
+		}
+
 		for _, arg := range i.Args {
 			size := b.getTypeSize(arg.Type().Name)
 			if regsIdx < len(regs) {
@@ -656,13 +683,11 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tmovzx rax, al\n")
 		}
 		if !i.Typ.Equals(ir.TypeVoid) {
-			size := b.getTypeSize(i.Typ.Name)
-			if size > 16 {
-				panic("Unsupported: large value return")
-			}
-			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
-			if size > 8 {
-				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + 8], rdx\n", offset))
+			if retSize <= 16 {
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+				if retSize > 8 {
+					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + 8], rdx\n", offset))
+				}
 			}
 		}
 	case *ir.BuiltinCall:

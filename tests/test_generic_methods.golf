@@ -1,0 +1,24 @@
+package main
+
+type Box[T any] struct {
+	Value T
+}
+
+func (b *Box[T]) Put(val T) {
+	b.Value = val
+}
+
+func (b *Box[T]) Get() T {
+	return b.Value
+}
+
+var b1 Box[byte]
+var b2 Box[int]
+
+func main() {
+	b1.Put(42)
+	b2.Put(900)
+
+	println(b1.Get())
+	println(b2.Get())
+}

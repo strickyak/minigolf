@@ -169,6 +169,10 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	a.currentScope = NewScope(a.currentScope)
 	defer func() { a.currentScope = a.currentScope.parent }()
 
+	for _, tp := range s.TypeParameters {
+		a.currentScope.Define(tp.Value, "type")
+	}
+
 	if s.Receiver != nil {
 		a.currentScope.Define(s.Receiver.Name.Value, a.exprToString(s.Receiver.Type))
 	}

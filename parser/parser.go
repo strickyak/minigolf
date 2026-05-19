@@ -346,6 +346,22 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 		if !p.expectPeek(token.RPAREN) {
 			return nil
 		}
+
+		// Extract type parameters from generic receivers like `*slice[T]`
+		var extractTypeParams func(expr ast.Expression)
+		extractTypeParams = func(expr ast.Expression) {
+			switch e := expr.(type) {
+			case *ast.PointerType:
+				extractTypeParams(e.Elt)
+			case *ast.IndexExpression:
+				for _, idx := range e.Indices {
+					if ident, ok := idx.(*ast.Identifier); ok {
+						stmt.TypeParameters = append(stmt.TypeParameters, ident)
+					}
+				}
+			}
+		}
+		extractTypeParams(receiver.Type)
 	}
 
 	if !p.expectPeek(token.IDENT) {

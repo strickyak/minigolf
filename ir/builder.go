@@ -31,9 +31,15 @@ type Builder struct {
 	evaluatingConst  map[string]bool
 	evaluatingType   map[string]bool
 	varTypes         map[string]Type
-	typeDefsAST      map[string]*ast.StructType
-	genericTemplates map[string]*GenericTemplate
-	currentPackage   string
+	typeDefsAST       map[string]*ast.StructType
+	genericTemplates  map[string]*GenericTemplate
+	instantiatedTypes map[string]InstantiatedTypeInfo
+	currentPackage    string
+}
+
+type InstantiatedTypeInfo struct {
+	RawGenericName string
+	ArgTyps        []Type
 }
 
 type GenericTemplate struct {
@@ -52,10 +58,11 @@ func NewBuilder() *Builder {
 		consts:           make(map[string]Value),
 		constExprs:       make(map[string]ast.Expression),
 		evaluatingConst:  make(map[string]bool),
-		evaluatingType:   make(map[string]bool),
-		varTypes:         make(map[string]Type),
-		typeDefsAST:      make(map[string]*ast.StructType),
-		genericTemplates: make(map[string]*GenericTemplate),
+		evaluatingType:    make(map[string]bool),
+		varTypes:          make(map[string]Type),
+		typeDefsAST:       make(map[string]*ast.StructType),
+		genericTemplates:  make(map[string]*GenericTemplate),
+		instantiatedTypes: make(map[string]InstantiatedTypeInfo),
 	}
 }
 
@@ -76,6 +83,9 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 			qname := b.currentPackage + "." + e.Value
 			if _, ok := b.typeDefsAST[qname]; ok {
 				return Type{Expr: expr, Name: qname}
+			}
+			if _, ok := b.typeDefsAST["prelude."+e.Value]; ok {
+				return Type{Expr: expr, Name: "prelude." + e.Value}
 			}
 			return Type{Expr: expr, Name: e.Value}
 		}
@@ -104,6 +114,17 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 			if _, ok := b.typeDefsAST[instName]; !ok {
 				if tmpl, ok := b.genericTemplates[rawGenericName]; ok {
 					b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl)
+				} else if ident, ok := e.Left.(*ast.Identifier); ok {
+					builtinRawGenericName := "prelude." + ident.Value
+					if tmpl, ok := b.genericTemplates[builtinRawGenericName]; ok {
+						rawGenericName = builtinRawGenericName
+						instName = fmt.Sprintf("%s%s", rawGenericName, instTypStr)
+						if _, ok := b.typeDefsAST[instName]; !ok {
+							b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl)
+						}
+					} else {
+						panic("Generic template not found: " + rawGenericName)
+					}
 				} else {
 					panic("Generic template not found: " + rawGenericName)
 				}
@@ -175,6 +196,12 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 	for _, argNode := range argNodes {
 		argTyps = append(argTyps, b.astToIRType(argNode))
 	}
+
+	b.instantiatedTypes[instName] = InstantiatedTypeInfo{
+		RawGenericName: genericName,
+		ArgTyps:        argTyps,
+	}
+
 	newTokens := b.substituteGenericTokens(argTyps, tmpl)
 
 	p := parser.New(newTokens)
@@ -214,7 +241,14 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 	stmt := p.ParseStatementForGeneric()
 
 	if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
-		funcStmt.Name.Value = strings.TrimPrefix(instName, b.currentPackage+".")
+		oldPkg := b.currentPackage
+		parts := strings.SplitN(instName, ".", 2)
+		if len(parts) == 2 {
+			b.currentPackage = parts[0]
+			funcStmt.Name.Value = parts[1]
+		} else {
+			funcStmt.Name.Value = instName
+		}
 		b.registerFunc(funcStmt)
 
 		if funcStmt.Body != nil {
@@ -238,6 +272,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			b.varTypes = oldVarTypes
 			b.currentBlock = oldCurBlk
 		}
+		b.currentPackage = oldPkg
 	} else {
 		panic("Generic instantiation did not produce a function: " + instName)
 	}
@@ -334,6 +369,24 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 		case *ast.FuncStatement:
 			if len(s.TypeParameters) > 0 {
 				qname := b.currentPackage + "." + s.Name.Value
+				if s.Receiver != nil {
+					var rawBase string
+					var findRawBase func(expr ast.Expression)
+					findRawBase = func(expr ast.Expression) {
+						switch e := expr.(type) {
+						case *ast.PointerType:
+							findRawBase(e.Elt)
+						case *ast.IndexExpression:
+							if ident, ok := e.Left.(*ast.Identifier); ok {
+								rawBase = ident.Value
+							}
+						case *ast.Identifier:
+							rawBase = e.Value
+						}
+					}
+					findRawBase(s.Receiver.Type)
+					qname = b.currentPackage + "." + rawBase + "_" + s.Name.Value
+				}
 				var typeParams []string
 				for _, tp := range s.TypeParameters {
 					typeParams = append(typeParams, tp.Value)
@@ -1111,7 +1164,11 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			}
 		}
 		if fieldIdx == -1 {
-			panic("Field not found: " + e.Right.Value)
+			var fieldNames []string
+			for _, f := range st.Fields {
+				fieldNames = append(fieldNames, f.Name.Value)
+			}
+			panic(fmt.Sprintf("Field not found: %s in struct %s (available: %v)", e.Right.Value, structName, fieldNames))
 		}
 
 		if isPtr {
@@ -1282,6 +1339,15 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				if _, ok := b.funcs[funcName]; !ok {
 					if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
 						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
+					} else if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+						builtinRawFuncName := "prelude." + ident.Value
+						if tmpl, ok := b.genericTemplates[builtinRawFuncName]; ok {
+							rawFuncName = builtinRawFuncName
+							funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+							if _, ok := b.funcs[funcName]; !ok {
+								b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
+							}
+						}
 					}
 				}
 				isGenericFunc = true
@@ -1359,6 +1425,16 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				baseType = base.Typ.Name
 			}
 			funcName := MangleName(baseType) + "_" + sel.Right.Value
+
+			if _, exists := b.funcs[funcName]; !exists {
+				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
+					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+						b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl)
+					}
+				}
+			}
+
 			if f, exists := b.funcs[funcName]; exists {
 				var receiverVal Value
 				if isPtr {
@@ -1410,6 +1486,8 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			funcName := ident.Value
 			if _, ok := b.funcs[b.currentPackage+"."+funcName]; ok {
 				funcName = b.currentPackage + "." + funcName
+			} else if _, ok := b.funcs["prelude."+funcName]; ok {
+				funcName = "prelude." + funcName
 			}
 			f := b.funcs[funcName]
 			if f == nil {
@@ -1418,6 +1496,11 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					arg := b.buildExpr(e.Arguments[0])
 					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Name: qname}}, Op: "bitcast", Operand: arg}, expr)
 					return ExprResult{IsLValue: false, Value: val, Typ: Type{Name: qname}}
+				}
+				if _, ok := b.typeDefsAST["prelude."+ident.Value]; ok {
+					arg := b.buildExpr(e.Arguments[0])
+					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Name: "prelude." + ident.Value}}, Op: "bitcast", Operand: arg}, expr)
+					return ExprResult{IsLValue: false, Value: val, Typ: Type{Name: "prelude." + ident.Value}}
 				}
 				log.Panicf("Undefined function: %s", funcName)
 			}

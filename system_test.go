@@ -81,7 +81,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	exeFile := filepath.Join(tmpDir, "out.exe")
 
 	// Compile demo file using minigo
-	cmd := exec.Command("go", "run", "main.go", "-m="+backend, "-o", midFile, sourceFile)
+	cmd := exec.Command("go", "run", "main.go", "-m="+backend, "-o", midFile, "-I=golflib", sourceFile)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile with minigo -m=%s: %v\nOutput: %s", backend, err, out)
 	}

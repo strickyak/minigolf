@@ -28,7 +28,13 @@ type Transpiler struct {
 	currentPackage   string
 	typeDefs         map[string]*ast.TypeStatement
 	genericTemplates map[string]*GenericTemplate
+	instantiatedTypes map[string]InstantiatedTypeInfoC
 	irBuilder        *ir.Builder
+}
+
+type InstantiatedTypeInfoC struct {
+	RawGenericName string
+	ArgTyps        []string
 }
 
 type GenericTemplate struct {
@@ -43,6 +49,7 @@ func New() *Transpiler {
 		funcRetTypes:     make(map[string][]string),
 		genericTemplates: make(map[string]*GenericTemplate),
 		typeDefs:         make(map[string]*ast.TypeStatement),
+		instantiatedTypes: make(map[string]InstantiatedTypeInfoC),
 	}
 }
 
@@ -232,6 +239,24 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 		case *ast.FuncStatement:
 			if len(s.TypeParameters) > 0 {
 				qname := t.currentPackage + "." + s.Name.Value
+				if s.Receiver != nil {
+					var rawBase string
+					var findRawBase func(expr ast.Expression)
+					findRawBase = func(expr ast.Expression) {
+						switch e := expr.(type) {
+						case *ast.PointerType:
+							findRawBase(e.Elt)
+						case *ast.IndexExpression:
+							if ident, ok := e.Left.(*ast.Identifier); ok {
+								rawBase = ident.Value
+							}
+						case *ast.Identifier:
+							rawBase = e.Value
+						}
+					}
+					findRawBase(s.Receiver.Type)
+					qname = t.currentPackage + "." + rawBase + "_" + s.Name.Value
+				}
 				var typeParams []string
 				for _, tp := range s.TypeParameters {
 					typeParams = append(typeParams, tp.Value)
@@ -406,6 +431,13 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		if strings.HasPrefix(name, "t_") {
 			return name
 		}
+		qname := t.currentPackage + "." + name
+		if _, ok := t.typeDefs[qname]; ok {
+			return fmt.Sprintf("t_%s_%s", t.currentPackage, name)
+		}
+		if _, ok := t.typeDefs["prelude."+name]; ok {
+			return fmt.Sprintf("t_prelude_%s", name)
+		}
 		return fmt.Sprintf("t_%s_%s", t.currentPackage, name)
 	case *ast.SelectorExpression:
 		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
@@ -430,19 +462,43 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 
 		if genericName != "" {
 			var argTyps []string
-			for _, idx := range e.Indices {
-				argTyps = append(argTyps, t.mapType(idx))
+			for _, argNode := range e.Indices {
+				argTyps = append(argTyps, t.mapType(argNode))
 			}
+
 			instTypStr := strings.Join(argTyps, "_")
 			instName := fmt.Sprintf("t_%s_%s", genericName, instTypStr)
 			instName = strings.ReplaceAll(instName, "*", "ptr_")
 			instName = strings.ReplaceAll(instName, "[", "arr_")
 			instName = strings.ReplaceAll(instName, "]", "_")
 
+			t.instantiatedTypes[strings.ReplaceAll(instName, ".", "_")] = InstantiatedTypeInfoC{
+				RawGenericName: rawGenericName,
+				ArgTyps:        argTyps,
+			}
+
 			if !t.arrayTypes[instName] {
 				t.arrayTypes[instName] = true
 				if tmpl, ok := t.genericTemplates[rawGenericName]; ok {
 					t.instantiateGenericC(instName, rawGenericName, e.Indices, tmpl)
+				} else if ident, ok := e.Left.(*ast.Identifier); ok {
+					preludeRawGenericName := "prelude." + ident.Value
+					if tmpl, ok := t.genericTemplates[preludeRawGenericName]; ok {
+						rawGenericName = preludeRawGenericName
+						genericName = "prelude_" + ident.Value
+						instName = fmt.Sprintf("t_%s_%s", genericName, instTypStr)
+						instName = strings.ReplaceAll(instName, "*", "ptr_")
+						instName = strings.ReplaceAll(instName, "[", "arr_")
+						instName = strings.ReplaceAll(instName, "]", "_")
+						if !t.arrayTypes[instName] {
+							t.arrayTypes[instName] = true
+							t.instantiatedTypes[strings.ReplaceAll(instName, ".", "_")] = InstantiatedTypeInfoC{
+								RawGenericName: rawGenericName,
+								ArgTyps:        argTyps,
+							}
+							t.instantiateGenericC(instName, rawGenericName, e.Indices, tmpl)
+						}
+					}
 				}
 			}
 			return instName
@@ -553,7 +609,23 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 	p := parser.New(newTokens)
 	stmt := p.ParseStatementForGeneric()
 	if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
-		funcStmt.Name.Value = strings.TrimPrefix(instName, t.currentPackage+"_")
+		oldPkg := t.currentPackage
+		var parts []string
+		if strings.Contains(instName, ".") {
+			parts = strings.SplitN(instName, ".", 2)
+		} else {
+			parts = strings.SplitN(instName, "_", 2)
+		}
+		if len(parts) == 2 {
+			t.currentPackage = parts[0]
+			if funcStmt.Receiver == nil {
+				funcStmt.Name.Value = parts[1]
+			}
+		} else {
+			if funcStmt.Receiver == nil {
+				funcStmt.Name.Value = instName
+			}
+		}
 
 		oldFunc := t.currentFunc
 		t.currentFunc = funcStmt
@@ -564,15 +636,10 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 		} else if len(funcStmt.ReturnTypes) > 1 {
 			retType = fmt.Sprintf("t_tuple_%d", len(funcStmt.ReturnTypes))
 		}
-
-		var params []string
-		for _, param := range funcStmt.Parameters {
-			params = append(params, fmt.Sprintf("%s v_%s", t.mapType(param.Type), param.Name.Value))
-		}
-
 		t.funcTypes[instName] = retType
-		funcSig := fmt.Sprintf("%s f_%s(%s)", retType, instName, strings.Join(params, ", "))
-		t.funcDeclsBuf.WriteString(funcSig + ";\n")
+
+		funcSigDecl := t.emitFuncSignatureStr(funcStmt, true)
+		t.funcDeclsBuf.WriteString(funcSigDecl)
 
 		savedBytes := append([]byte(nil), t.buf.Bytes()...)
 		t.buf.Reset()
@@ -585,6 +652,7 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 		t.buf.Reset()
 		t.buf.Write(savedBytes)
 		t.currentFunc = oldFunc
+		t.currentPackage = oldPkg
 	}
 }
 
@@ -954,6 +1022,15 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 					t.arrayTypes[funcName] = true
 					if tmpl, ok := t.genericTemplates[rawFuncName]; ok {
 						t.instantiateGenericFuncC(funcName, rawFuncName, argTyps, tmpl)
+					} else if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+						preludeRawFuncName := "prelude." + ident.Value
+						if tmpl, ok := t.genericTemplates[preludeRawFuncName]; ok {
+							rawFuncName = preludeRawFuncName
+							funcName = fmt.Sprintf("prelude_%s%s", ident.Value, instTypStr)
+							funcName = strings.ReplaceAll(funcName, ".", "_")
+							t.arrayTypes[funcName] = true
+							t.instantiateGenericFuncC(funcName, rawFuncName, argTyps, tmpl)
+						}
 					}
 				}
 				isGenericFunc = true
@@ -993,6 +1070,41 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 						}
 						isGenericFunc = true
 					}
+				} else if tmpl, ok := t.genericTemplates["prelude."+ident.Value]; ok {
+					rawFuncName = "prelude." + ident.Value
+					p := parser.New(tmpl.Tokens)
+					stmt := p.ParseStatementForGeneric()
+					if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
+						typeMap := make(map[string]string)
+						for _, arg := range e.Arguments {
+							args = append(args, t.emitExprStr(arg))
+						}
+						for i, param := range funcStmt.Parameters {
+							if i < len(args) {
+								extractTypeParamsC(param.Type, t.typeOf(e.Arguments[i]), typeMap, tmpl.TypeParams)
+							}
+						}
+
+						var argTyps []string
+						var instTypStr string
+						for _, tp := range tmpl.TypeParams {
+							argTyp := typeMap[tp]
+							if argTyp == "" {
+								argTyp = "word"
+							}
+							argTyps = append(argTyps, argTyp)
+							instTypStr += "_" + argTyp
+						}
+						funcName = fmt.Sprintf("prelude_%s%s", ident.Value, instTypStr)
+						funcName = strings.ReplaceAll(funcName, ".", "_")
+						if !t.arrayTypes[funcName] {
+							t.arrayTypes[funcName] = true
+							t.instantiateGenericFuncC(funcName, rawFuncName, argTyps, tmpl)
+						}
+						isGenericFunc = true
+					}
+				} else if _, ok := t.funcTypes["prelude."+ident.Value]; ok {
+					funcName = "prelude_" + ident.Value
 				}
 			}
 		}
@@ -1036,6 +1148,16 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			}
 
 			funcName := baseType + "_" + sel.Right.Value
+
+			funcQNameCheck := pkgPart + "." + funcName
+			if _, exists := t.funcTypes[funcQNameCheck]; !exists {
+				if instInfo, ok := t.instantiatedTypes["t_"+pkgPart+"_"+baseType]; ok {
+					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
+					if tmpl, ok := t.genericTemplates[rawGenericFuncName]; ok {
+						t.instantiateGenericFuncC(funcQNameCheck, rawGenericFuncName, instInfo.ArgTyps, tmpl)
+					}
+				}
+			}
 
 			receiverStr := t.emitExprStr(sel.Left)
 			if !isPtr {
