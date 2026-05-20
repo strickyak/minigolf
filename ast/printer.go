@@ -2,8 +2,8 @@ package ast
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
-    "reflect"
 )
 
 // Print returns a human-readable ASCII string representation of an AST node or tree.
@@ -16,9 +16,9 @@ func Print(node any) string {
 		}
 	}()
 
-    if reflect.ValueOf(node).IsNil() {
+	if reflect.ValueOf(node).IsNil() {
 		return "<nil>"
-    }
+	}
 
 	switch n := node.(type) {
 	case *Program:

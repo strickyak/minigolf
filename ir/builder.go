@@ -12,6 +12,27 @@ import (
 	"github.com/strickyak/minigolf/token"
 )
 
+type GlobalItemKind int
+
+const (
+	ItemUnknown GlobalItemKind = iota
+	ItemConst
+	ItemType
+	ItemAlias
+	ItemGenericType
+	ItemVar
+	ItemFunc
+	ItemGenericFunc
+)
+
+type GlobalItem struct {
+	Kind     GlobalItemKind
+	QName    string
+	ASTNode  ast.Node
+	Resolved bool
+	Blocker  string
+}
+
 type Builder struct {
 	Program *Program
 
@@ -35,6 +56,8 @@ type Builder struct {
 	typeAliases       map[string]ast.Expression
 	genericTemplates  map[string]*GenericTemplate
 	instantiatedTypes map[string]InstantiatedTypeInfo
+	globalItems       map[string]*GlobalItem
+	worklist          []*GlobalItem
 	currentPackage    string
 }
 
@@ -65,6 +88,8 @@ func NewBuilder() *Builder {
 		typeAliases:       make(map[string]ast.Expression),
 		genericTemplates:  make(map[string]*GenericTemplate),
 		instantiatedTypes: make(map[string]InstantiatedTypeInfo),
+		globalItems:       make(map[string]*GlobalItem),
+		worklist:          make([]*GlobalItem, 0),
 	}
 }
 
@@ -81,6 +106,8 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 			return TypeWord
 		case "int":
 			return TypeInt
+		case "const_integer":
+			return TypeConstInteger
 		default:
 			qname := b.currentPackage + "." + e.Value
 			if _, ok := b.typeDefsAST[qname]; !ok {
@@ -100,7 +127,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 			if _, ok := b.typeDefsAST[qname]; ok {
 				return Type{Expr: expr, Name: qname}
 			}
-			return Type{Expr: expr, Name: e.Value}
+			panic("unresolved:" + qname)
 		}
 	case *ast.SelectorExpression:
 		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
@@ -136,10 +163,10 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 							b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl)
 						}
 					} else {
-						panic("Generic template not found: " + rawGenericName)
+						panic("unresolved:" + rawGenericName)
 					}
 				} else {
-					panic("Generic template not found: " + rawGenericName)
+					panic("unresolved:" + rawGenericName)
 				}
 			}
 			return Type{Expr: expr, Name: instName}
@@ -323,113 +350,102 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			b.currentPackage = ps.Name.Value
 		}
 		switch s := stmt.(type) {
-
 		case *ast.TypeStatement:
+			qname := b.currentPackage + "." + s.Name.Value
+			item := &GlobalItem{QName: qname, ASTNode: s}
 			if len(s.TypeParameters) > 0 {
-				// It's a generic type, so save it to b.genericTemplates
-				qname := b.currentPackage + "." + s.Name.Value
-				var typeParams []string
-				for _, tp := range s.TypeParameters {
-					typeParams = append(typeParams, tp.Value)
-				}
-				b.genericTemplates[qname] = &GenericTemplate{
-					TypeParams: typeParams,
-					Tokens:     s.Tokens,
-				}
-			} else if st, ok := s.BaseType.(*ast.StructType); ok {
-				qname := b.currentPackage + "." + s.Name.Value
-				b.typeDefsAST[qname] = st
-				// nando-PROBLEM.  I think TypeDefOrder is not this simple.
-				b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, qname)
+				item.Kind = ItemGenericType
 			} else if s.IsAlias {
-				qname := b.currentPackage + "." + s.Name.Value
-				b.typeAliases[qname] = s.BaseType
-			} else {
-				// nando-PROBLEM
-				// Pass 0 is ignoring it.
-				// Shouldn't all types be registered in pass 0?
+				item.Kind = ItemAlias
+			} else if _, ok := s.BaseType.(*ast.StructType); ok {
+				item.Kind = ItemType
 			}
-
+			b.globalItems[qname] = item
+			b.worklist = append(b.worklist, item)
 		case *ast.ConstStatement:
 			qname := b.currentPackage + "." + s.Name.Value
-			b.constExprs[qname] = s.Value
-		default:
-			// nando-PROBLEM.   Do we need import names? function names?
-			// Other global names ignored in pass 0 .
-		}
-	}
-
-	// Pass 0.5: build struct type strings and evaluate constants
-	for _, qname := range b.Program.TypeDefOrder {
-		b.getTypeString(qname)
-	}
-
-	// First pass: register all globals, constants, and function signatures
-	b.currentPackage = ""
-	for _, stmt := range astProg.Statements {
-		switch s := stmt.(type) {
-		case *ast.PackageStatement:
-			b.currentPackage = s.Name.Value
+			item := &GlobalItem{Kind: ItemConst, QName: qname, ASTNode: s}
+			b.globalItems[qname] = item
+			b.worklist = append(b.worklist, item)
 		case *ast.VarStatement:
-			typ := b.astToIRType(s.ValueType)
-			g := &Global{Name: b.currentPackage + "." + s.Name.Value, Typ: typ}
-			b.globals[g.Name] = g
-			b.Program.Globals = append(b.Program.Globals, g)
-		case *ast.ConstStatement:
-			// nando-PROBLEM.  const definitions may involve
-			// consts and sizeof types we have not seen yet.
-			// Must detect circularities.
 			qname := b.currentPackage + "." + s.Name.Value
-			val := b.EvalConst(&ast.Identifier{Value: qname})
-			b.consts[qname] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
+			item := &GlobalItem{Kind: ItemVar, QName: qname, ASTNode: s}
+			b.globalItems[qname] = item
+			b.worklist = append(b.worklist, item)
 		case *ast.FuncStatement:
-			if len(s.TypeParameters) > 0 {
-				qname := b.currentPackage + "." + s.Name.Value
-				if s.Receiver != nil {
-					var rawBase string
-					var findRawBase func(expr ast.Expression)
-					findRawBase = func(expr ast.Expression) {
-						switch e := expr.(type) {
-						case *ast.PointerType:
-							findRawBase(e.Elt)
-						case *ast.IndexExpression:
-							if ident, ok := e.Left.(*ast.Identifier); ok {
-								rawBase = ident.Value
-							}
-						case *ast.Identifier:
-							rawBase = e.Value
+			var qname string
+			if s.Receiver != nil {
+				var rawBase string
+				var findRawBase func(expr ast.Expression)
+				findRawBase = func(expr ast.Expression) {
+					switch e := expr.(type) {
+					case *ast.PointerType:
+						findRawBase(e.Elt)
+					case *ast.IndexExpression:
+						if ident, ok := e.Left.(*ast.Identifier); ok {
+							rawBase = ident.Value
 						}
+					case *ast.Identifier:
+						rawBase = e.Value
 					}
-					findRawBase(s.Receiver.Type)
-					qname = b.currentPackage + "." + rawBase + "_" + s.Name.Value
 				}
-				var typeParams []string
-				for _, tp := range s.TypeParameters {
-					typeParams = append(typeParams, tp.Value)
-				}
-				b.genericTemplates[qname] = &GenericTemplate{
-					TypeParams: typeParams,
-					Tokens:     s.Tokens,
-				}
-				continue
+				findRawBase(s.Receiver.Type)
+				qname = b.currentPackage + "." + rawBase + "_" + s.Name.Value
+			} else {
+				qname = b.currentPackage + "." + s.Name.Value
 			}
-			b.registerFunc(s)
+			item := &GlobalItem{QName: qname, ASTNode: s}
+			if len(s.TypeParameters) > 0 {
+				item.Kind = ItemGenericFunc
+			} else {
+				item.Kind = ItemFunc
+			}
+			b.globalItems[qname] = item
+			b.worklist = append(b.worklist, item)
 		}
 	}
 
-	// Pass 2: build functionsbodies
-	// nando-GOOD.  Do build function bodies after all consts,
-	// types, and vars are understood.
-	// TODO:  Should we be lazy at this point, and only compile
-	// function bodies that are reachable from main()?
-	b.currentPackage = ""
-	for _, stmt := range astProg.Statements {
-		if ps, ok := stmt.(*ast.PackageStatement); ok {
-			b.currentPackage = ps.Name.Value
-		}
-		if s, ok := stmt.(*ast.FuncStatement); ok {
-			if len(s.TypeParameters) > 0 {
+	for {
+		madeProgress := false
+		allResolved := true
+
+		for i := 0; i < len(b.worklist); i++ {
+			item := b.worklist[i]
+			if item.Resolved {
 				continue
+			}
+			allResolved = false
+
+			err := b.tryResolve(item)
+			if err == nil {
+				item.Resolved = true
+				madeProgress = true
+			} else {
+				item.Blocker = err.Error()
+			}
+		}
+
+		if allResolved {
+			break
+		}
+		if !madeProgress {
+			fmt.Println("Error: Circular dependency or unresolved items detected:")
+			for _, item := range b.worklist {
+				if !item.Resolved {
+					fmt.Printf("  %s (%v) depends on: %s\n", item.QName, item.Kind, item.Blocker)
+				}
+			}
+			panic("Unresolved globals in compilation")
+		}
+	}
+
+	b.currentPackage = ""
+	for _, item := range b.worklist {
+		if item.Kind == ItemFunc {
+			s := item.ASTNode.(*ast.FuncStatement)
+			parts := strings.SplitN(item.QName, ".", 2)
+			if len(parts) == 2 {
+				b.currentPackage = parts[0]
 			}
 			if s.Body != nil {
 				b.buildFunc(s)
@@ -1641,11 +1657,11 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 			target = cExpr
 			targetName = e.Value
 		} else {
-			panic("unknown constant: " + e.Value)
+			panic("unresolved:" + e.Value)
 		}
 
 		if b.evaluatingConst[targetName] {
-			panic("circular dependency detected for constant: " + targetName)
+			panic("unresolved:" + targetName)
 		}
 		b.evaluatingConst[targetName] = true
 		val := b.EvalConst(target)
@@ -1737,4 +1753,87 @@ func extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[stri
 			}
 		}
 	}
+}
+
+func (b *Builder) tryResolve(item *GlobalItem) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if errStr, ok := r.(string); ok && len(errStr) > 11 && errStr[:11] == "unresolved:" {
+				err = fmt.Errorf("%s", errStr[11:])
+			} else {
+				panic(r) // re-panic if it's a real bug
+			}
+		}
+	}()
+
+	parts := strings.SplitN(item.QName, ".", 2)
+	if len(parts) == 2 {
+		b.currentPackage = parts[0]
+	} else {
+		b.currentPackage = ""
+	}
+
+	switch item.Kind {
+	case ItemGenericType:
+		s := item.ASTNode.(*ast.TypeStatement)
+		var typeParams []string
+		for _, tp := range s.TypeParameters {
+			typeParams = append(typeParams, tp.Value)
+		}
+		b.genericTemplates[item.QName] = &GenericTemplate{
+			TypeParams: typeParams,
+			Tokens:     s.Tokens,
+		}
+	case ItemAlias:
+		s := item.ASTNode.(*ast.TypeStatement)
+		b.typeAliases[item.QName] = s.BaseType
+		// try to resolve the base type to make sure it's valid
+		b.astToIRType(s.BaseType)
+	case ItemUnknown:
+		// Fallback for types that are not struct, not alias, etc.
+		// Historically ignored in pass 0.
+	case ItemType:
+		s := item.ASTNode.(*ast.TypeStatement)
+		st := s.BaseType.(*ast.StructType)
+		b.typeDefsAST[item.QName] = st
+
+		// Ensure TypeDefOrder only contains resolved ones in order
+		found := false
+		for _, n := range b.Program.TypeDefOrder {
+			if n == item.QName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, item.QName)
+		}
+		b.getTypeString(item.QName) // resolves sizes
+	case ItemConst:
+		s := item.ASTNode.(*ast.ConstStatement)
+		b.constExprs[item.QName] = s.Value
+		val := b.EvalConst(&ast.Identifier{Value: item.QName})
+		b.consts[item.QName] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
+	case ItemVar:
+		s := item.ASTNode.(*ast.VarStatement)
+		typ := b.astToIRType(s.ValueType)
+		g := &Global{Name: item.QName, Typ: typ}
+		b.globals[g.Name] = g
+		b.Program.Globals = append(b.Program.Globals, g)
+	case ItemGenericFunc:
+		s := item.ASTNode.(*ast.FuncStatement)
+		var typeParams []string
+		for _, tp := range s.TypeParameters {
+			typeParams = append(typeParams, tp.Value)
+		}
+		b.genericTemplates[item.QName] = &GenericTemplate{
+			TypeParams: typeParams,
+			Tokens:     s.Tokens,
+		}
+	case ItemFunc:
+		s := item.ASTNode.(*ast.FuncStatement)
+		b.registerFunc(s)
+	}
+
+	return nil
 }

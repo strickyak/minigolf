@@ -64,6 +64,16 @@ The compiler follows a standard multi-pass architecture:
 6.  **Instruction Selection & Register Allocation:** Lowers the SSA IR into machine-specific instructions and assigns physical registers (or lowers to another IR like LLVM or WebAssembly).
 7.  **Code Emission:** Generates the final executable or object code.
 
+### 3.1 Top-Level Dependency Resolution (Fixpoint Iteration)
+
+Because MiniGolf (like Go) allows arbitrary forward declarations, the frontend uses a **Fixpoint Dependency Resolver** rather than a rigid linear multi-pass system. 
+
+When generating the IR, the compiler orchestrates global structures through the following dynamic process:
+1.  **Identify Phase:** Scans the AST to classify all top-level statements into a generic `GlobalItem` struct mapping (`ItemConst`, `ItemType`, `ItemFunc`, `ItemAlias`, `ItemGenericFunc`, etc.) and adds them to a `worklist`.
+2.  **Resolution Loops:** The builder iterates over the `worklist` continuously. If an item encounters an unresolved dependency (e.g., a `const` calculation relying on the `sizeof` a `struct` that hasn't been mapped, or a type alias waiting on its base type), the system intercepts the failure as an `"unresolved"` panic, gracefully catching and bypassing the item for the next iteration cycle.
+3.  **Dynamic Expansion:** The worklist can grow dynamically. When the algorithm resolves a generic template instantiation (e.g., `slice[byte]`), it immediately injects the newly formed `Type` AST back into the `worklist` pipeline, allowing trailing dependents to map effortlessly to the fresh definitions.
+4.  **Stability:** The loop executes until a fixed point is reached (all variables/types resolve successfully) or no forward progress is made (yielding a deterministic circular dependency stack trace detailing exactly which items block each other).
+
 ## 4. Intermediate Representation (SSA Form)
 
 The core of the optimization pipeline relies on an SSA representation where every variable is assigned exactly once. This property vastly simplifies data-flow analysis.
