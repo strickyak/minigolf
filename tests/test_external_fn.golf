@@ -8,6 +8,6 @@ func xyz() {
 }
 
 func main() {
-    println("ok")
-    xyz()
+	println("ok")
+	xyz()
 }

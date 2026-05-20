@@ -322,6 +322,7 @@ type IndexExpression struct {
 	Token   token.Token // The '[' token
 	Left    Expression
 	Indices []Expression
+	IsSlice bool
 }
 
 func (e *IndexExpression) expressionNode()        {}

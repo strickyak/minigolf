@@ -1,6 +1,8 @@
 package lexer
 
 import (
+	"strconv"
+
 	"github.com/strickyak/minigolf/token"
 )
 
@@ -158,6 +160,36 @@ func (l *Lexer) nextToken() token.Token {
 		tok.Literal = l.readString()
 		tok.Line = startLine
 		tok.Column = startCol
+	case '\'':
+		l.readChar() // consume opening '
+		var charVal byte
+		if l.ch == '\\' {
+			l.readChar()
+			switch l.ch {
+			case 'n':
+				charVal = '\n'
+			case 't':
+				charVal = '\t'
+			case 'r':
+				charVal = '\r'
+			case '\\':
+				charVal = '\\'
+			case '\'':
+				charVal = '\''
+			default:
+				charVal = l.ch
+			}
+		} else {
+			charVal = l.ch
+		}
+		tok.Type = token.INT
+		tok.Literal = strconv.Itoa(int(charVal))
+		tok.Line = startLine
+		tok.Column = startCol
+		l.readChar() // consume the character
+		if l.ch != '\'' {
+			tok = l.newToken(token.ILLEGAL, l.ch, startLine, startCol)
+		}
 	case 0:
 		tok.Literal = ""
 		tok.Type = token.EOF

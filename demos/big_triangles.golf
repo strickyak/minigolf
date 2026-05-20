@@ -9,22 +9,22 @@ var big_count big.Dec
 var big_sum big.Dec
 
 func main() {
-    big_one.SetSmall(1)
+	big_one.SetSmall(1)
 
 	var count word = 1
-    big_count.SetSmall(1)
+	big_count.SetSmall(1)
 
 	var sum word = 0
-    big_sum.SetSmall(0)
+	big_sum.SetSmall(0)
 
 	for count < limit {
 		sum = sum + count
-        big_sum.Add(&big_sum, &big_count)
+		big_sum.Add(&big_sum, &big_count)
 
 		print("Triangle number", count, "is", sum, ", or bigly ")
-        big_sum.Print()
+		big_sum.Print()
 
 		count = count + 1
-        big_count.Add(&big_count, &big_one)
+		big_count.Add(&big_count, &big_one)
 	}
 }

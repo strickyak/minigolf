@@ -1197,7 +1197,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case "sub":
 			b.buf.WriteString("\tsubd ,s++\n")
 			b.popBytes(2)
-		case "mul", "div", "mod", "shl", "shr":
+		case "mul":
+			// TODO: get a 16-bit MUL subroutine.
+			// FOR NOW: assume args are positive, under 256.
+			b.buf.WriteString("\tlda 1,s\t; load low byte of Right into A\n")
+			b.buf.WriteString("\tmul\t; unsigned multiply A * B, result in D\n")
+			b.buf.WriteString("\tleas 2,s\n")
+			b.popBytes(2)
+		case "div", "mod", "shl", "shr":
 			b.buf.WriteString(fmt.Sprintf("\t; unimplemented %s\n", i.Op))
 			b.buf.WriteString("\tleas 2,s\n")
 			b.popBytes(2)
@@ -1382,6 +1389,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.flushRegisters()
 		if i.Name == "print" || i.Name == "println" {
 			b.emitPrint(i.Name == "println", i.Args)
+		} else if i.Name == "exit" {
+			b.buf.WriteString("\tfcb 1\n")
 		}
 
 	case *ir.Cast:

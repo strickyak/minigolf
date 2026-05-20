@@ -7,11 +7,11 @@ type Apple struct {
 }
 
 func (a *Apple) Print(n word) {
-    //print("Apple ", n, " at ", word(a), ": ")
-    //print("worms word at ", word(&a.worms), " is ", a.worms, " ; ")
-    //print("spots int at ", word(&a.spots), " is ", a.spots, " ; ")
-    //print("seeds byte at ", word(&a.seeds), " is ", a.seeds, " ; ")
-    //println(".")
+	//print("Apple ", n, " at ", word(a), ": ")
+	//print("worms word at ", word(&a.worms), " is ", a.worms, " ; ")
+	//print("spots int at ", word(&a.spots), " is ", a.spots, " ; ")
+	//print("seeds byte at ", word(&a.seeds), " is ", a.seeds, " ; ")
+	//println(".")
 }
 
 var red Apple
@@ -31,21 +31,21 @@ func main() {
 	print(green.spots)
 	println(green.seeds)
 
-red.Print(1)
+	red.Print(1)
 	Inc(&red.worms)
-red.Print(2)
+	red.Print(2)
 	Inc(&red.spots)
-red.Print(3)
+	red.Print(3)
 	Inc(&red.seeds)
-red.Print(4)
+	red.Print(4)
 
-green.Print(10)
+	green.Print(10)
 	Inc(&green.worms)
-green.Print(11)
+	green.Print(11)
 	Inc(&green.spots)
-green.Print(12)
+	green.Print(12)
 	Inc(&green.seeds)
-green.Print(13)
+	green.Print(13)
 
 	print(red.worms)
 	print(red.spots)

@@ -52,6 +52,7 @@ func New() *Analyzer {
 	// Built-ins
 	global.Define("print", "func")
 	global.Define("println", "func")
+	global.Define("exit", "func")
 	global.Define("sizeof", "func")
 	global.Define("byte", "type")
 	global.Define("word", "type")
@@ -75,6 +76,9 @@ func (a *Analyzer) exprToString(expr ast.Expression) string {
 		qname := a.currentPackage + "." + e.Value
 		if _, ok := a.globalScope.symbols[qname]; ok {
 			return qname
+		}
+		if _, ok := a.globalScope.symbols["prelude."+e.Value]; ok {
+			return "prelude." + e.Value
 		}
 		return e.Value
 	case *ast.SelectorExpression:
@@ -246,9 +250,13 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) {
 		if _, ok := a.currentScope.Resolve(qname); ok {
 			return
 		}
-		if _, ok := a.currentScope.Resolve(e.Value); !ok {
-			a.errors = append(a.errors, fmt.Sprintf("undefined identifier: %s", e.Value))
+		if _, ok := a.currentScope.Resolve(e.Value); ok {
+			return
 		}
+		if _, ok := a.currentScope.Resolve("prelude." + e.Value); ok {
+			return
+		}
+		a.errors = append(a.errors, fmt.Sprintf("undefined identifier: %s", e.Value))
 	case *ast.InfixExpression:
 		a.analyzeExpression(e.Left)
 		a.analyzeExpression(e.Right)

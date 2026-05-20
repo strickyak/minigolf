@@ -10,5 +10,5 @@ type Chunk struct {
 var FreeList *Chunk
 
 func main() {
-    println( sizeof[Chunk]() )
+	println(sizeof[Chunk]())
 }

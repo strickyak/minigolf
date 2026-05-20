@@ -3,6 +3,9 @@ package prelude
 const Source = `
 package prelude
 
+type uint = word
+type string = slice[byte]
+
 func peek[T any](addr word) T {
 	return *((*T)(addr))
 }
@@ -16,10 +19,6 @@ func peekw(addr word) word { return peek[word](addr) }
 
 func pokeb(addr word, value byte) { poke[byte](addr, value) }
 func pokew(addr word, value word) { poke[word](addr, value) }
-
-/*
-// type string = slice[byte]
-*/
 
 type memslice struct {
 	Base word
@@ -66,6 +65,11 @@ func (o *memslice) Chop(start word, limit word) memslice {
 
 type slice[T any] struct {
 	guts memslice
+}
+
+func (o *slice[T]) Address(i word) word {
+	p := i * sizeof[T]()
+    return o.guts.Address(p)
 }
 
 func (o *slice[T]) Get(i word) T {

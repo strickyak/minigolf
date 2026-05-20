@@ -8,22 +8,22 @@ func Nil[T any]() *T {
 
 type Chunk struct {
 	Next *Chunk
-	Rest [SZ-sizeof[*Chunk]()]byte
+	Rest [SZ - sizeof[*Chunk]()]byte
 }
 
 var FreeList *Chunk
 
 func main() {
 
-    if 20 <= sizeof[Chunk]() && sizeof[Chunk]() <= 32 {
-        println("Good")
-    } else {
-        println("Bad")
-    }
+	if 20 <= sizeof[Chunk]() && sizeof[Chunk]() <= 32 {
+		println("Good")
+	} else {
+		println("Bad")
+	}
 
 	if FreeList == Nil[Chunk]() {
 		println(100)
 	} else {
 		println(200)
-    }
+	}
 }

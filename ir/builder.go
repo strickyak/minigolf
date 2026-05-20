@@ -1140,6 +1140,56 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		base := b.eval(e.Left)
 		idx := b.buildExpr(e.Indices[0])
 
+		if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
+			isPtr := base.Typ.IsAPointer()
+			var baseType string
+			if isPtr {
+				baseType = base.Typ.PointedType().Name
+			} else {
+				baseType = base.Typ.Name
+			}
+			methodName := "Get"
+			if e.IsSlice {
+				methodName = "Chop"
+			}
+			funcName := MangleName(baseType) + "_" + methodName
+
+			if _, exists := b.funcs[funcName]; !exists {
+				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+					rawGenericFuncName := instInfo.RawGenericName + "_" + methodName
+					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+						parts := strings.SplitN(baseType, ".", 2)
+						b.instantiateGenericFunc(parts[0]+"."+methodName, rawGenericFuncName, instInfo.ArgTyps, tmpl)
+					}
+				}
+			}
+
+			if f, exists := b.funcs[funcName]; exists {
+				var receiverVal Value
+				if isPtr {
+					if base.IsLValue {
+						receiverVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, e)
+					} else {
+						receiverVal = base.Value
+					}
+				} else {
+					if base.IsLValue {
+						receiverVal = base.Address
+					} else {
+						panic("Cannot call method on non-lvalue struct")
+					}
+				}
+				args := []Value{receiverVal, idx}
+				if e.IsSlice && len(e.Indices) == 2 {
+					idx2 := b.buildExpr(e.Indices[1])
+					args = append(args, idx2)
+				}
+				val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
+			}
+			panic("Slice " + methodName + " method not found: " + funcName)
+		}
+
 		var eltTyp Type
 		if base.Typ.IsAnArray() {
 			eltTyp = base.Typ.ArrayElementType()
@@ -1492,7 +1542,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 
 		if ident, ok := e.Function.(*ast.Identifier); ok {
-			if ident.Value == "print" || ident.Value == "println" {
+			if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" {
 				args := []Value{}
 				for _, arg := range e.Arguments {
 					args = append(args, b.buildExpr(arg))
@@ -1550,6 +1600,59 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
 		}
 		if e.Operator == "&" {
+			if idxExpr, ok := e.Right.(*ast.IndexExpression); ok {
+				base := b.eval(idxExpr.Left)
+				if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
+					idx := b.buildExpr(idxExpr.Indices[0])
+					isPtr := base.Typ.IsAPointer()
+					var baseType string
+					if isPtr {
+						baseType = base.Typ.PointedType().Name
+					} else {
+						baseType = base.Typ.Name
+					}
+					funcName := MangleName(baseType) + "_Address"
+
+					if _, exists := b.funcs[funcName]; !exists {
+						if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+							rawGenericFuncName := instInfo.RawGenericName + "_Address"
+							if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+								parts := strings.SplitN(baseType, ".", 2)
+								b.instantiateGenericFunc(parts[0]+".Address", rawGenericFuncName, instInfo.ArgTyps, tmpl)
+							}
+						}
+					}
+
+					args := []Value{}
+					if isPtr {
+						if base.IsLValue {
+							receiverVal := b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, e)
+							args = append(args, receiverVal)
+						} else {
+							args = append(args, base.Value)
+						}
+					} else {
+						if base.IsLValue {
+							args = append(args, base.Address)
+						} else {
+							panic("Cannot call method on non-lvalue struct")
+						}
+					}
+					args = append(args, idx)
+
+					funcObj := b.funcs[funcName]
+					call := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: funcObj, Args: args}, e)
+
+					// Determine element type
+					eltType := TypeByte
+					if instInfo, ok := b.instantiatedTypes[baseType]; ok && len(instInfo.ArgTyps) > 0 {
+						eltType = instInfo.ArgTyps[0]
+					}
+
+					return ExprResult{IsLValue: false, Value: call, Typ: eltType.PointerTo()}
+				}
+			}
+
 			res := b.eval(e.Right)
 			if !res.IsLValue {
 				panic(fmt.Sprintf("Cannot take address of expression: %T", e.Right))
@@ -1716,6 +1819,53 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 			val = b.coerceType(val, targetType)
 			b.writeVariable(ident.Value, b.currentBlock, val)
 			return
+		}
+	}
+
+	if idxExpr, ok := lhs.(*ast.IndexExpression); ok {
+		base := b.eval(idxExpr.Left)
+		if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
+			idx := b.buildExpr(idxExpr.Indices[0])
+			isPtr := base.Typ.IsAPointer()
+			var baseType string
+			if isPtr {
+				baseType = base.Typ.PointedType().Name
+			} else {
+				baseType = base.Typ.Name
+			}
+			funcName := MangleName(baseType) + "_Put"
+
+			if _, exists := b.funcs[funcName]; !exists {
+				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+					rawGenericFuncName := instInfo.RawGenericName + "_Put"
+					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+						parts := strings.SplitN(baseType, ".", 2)
+						b.instantiateGenericFunc(parts[0]+".Put", rawGenericFuncName, instInfo.ArgTyps, tmpl)
+					}
+				}
+			}
+
+			if f, exists := b.funcs[funcName]; exists {
+				var receiverVal Value
+				if isPtr {
+					if base.IsLValue {
+						receiverVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, lhs)
+					} else {
+						receiverVal = base.Value
+					}
+				} else {
+					if base.IsLValue {
+						receiverVal = base.Address
+					} else {
+						panic("Cannot call method on non-lvalue struct")
+					}
+				}
+				val = b.coerceType(val, f.Parameters[2].Typ)
+				args := []Value{receiverVal, idx, val}
+				b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Func: f, Args: args}, lhs)
+				return
+			}
+			panic("Slice Put method not found: " + funcName)
 		}
 	}
 

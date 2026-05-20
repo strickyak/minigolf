@@ -1,0 +1,58 @@
+package main
+
+var buf [100]byte
+
+func main() {
+	var a slice[byte]
+	a.Base = word(&buf)
+	a.Cap = 10
+	a.Len = 3
+
+	buf[0] = 'H'
+	buf[1] = 'i'
+	buf[2] = '!'
+
+	println(a[0])
+	println(a[1])
+	println(a[2])
+
+	var v slice[word]
+	v.Base = 50 + word(&buf)
+	v.Cap = 4
+	v.Len = 3
+
+	v[0] = 100
+	v[1] = 222
+	v[2] = 888
+
+	println(v[0])
+	println(v[1])
+	println(v[2])
+
+	v0 := v[0:2]
+	v9 := v[1:3]
+
+	println(v0[0])
+	println(v0[1])
+	println(v9[0])
+	println(v9[1])
+
+	println(v0.Cap)
+	println(v9.Cap)
+	println(v0.Len)
+	println(v9.Len)
+
+	println(peekw(word(&buf) + 50 + 0*sizeof[word]()))
+	println(peekw(word(&buf) + 50 + 1*sizeof[word]()))
+	println(peekw(word(&buf) + 50 + 2*sizeof[word]()))
+
+	println(word(&v[2]) - word(&buf[50]) - 2*sizeof[word]()) // zero
+	v[2]++
+	println(v[0])
+	println(v[1])
+	println(v[2])
+	v[1]--
+	println(v[0])
+	println(v[1])
+	println(v[2])
+}

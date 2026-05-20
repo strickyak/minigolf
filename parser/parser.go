@@ -906,10 +906,17 @@ func (p *Parser) parseIndexExpression(left ast.Expression) ast.Expression {
 	p.nextToken()
 	exp.Indices = append(exp.Indices, p.parseExpression(LOWEST))
 
-	for p.peekTokenIs(token.COMMA) {
-		p.nextToken() // skip comma
-		p.nextToken() // next expression
+	if p.peekTokenIs(token.COLON) {
+		exp.IsSlice = true
+		p.nextToken() // move to COLON
+		p.nextToken() // skip COLON
 		exp.Indices = append(exp.Indices, p.parseExpression(LOWEST))
+	} else {
+		for p.peekTokenIs(token.COMMA) {
+			p.nextToken() // skip comma
+			p.nextToken() // next expression
+			exp.Indices = append(exp.Indices, p.parseExpression(LOWEST))
+		}
 	}
 
 	if !p.expectPeek(token.RBRACKET) {

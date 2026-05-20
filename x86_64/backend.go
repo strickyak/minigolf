@@ -693,6 +693,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.BuiltinCall:
 		if i.Name == "print" || i.Name == "println" {
 			b.emitPrint(i.Name == "println", i.Args)
+		} else if i.Name == "exit" {
+			b.buf.WriteString("\tud2\n")
 		}
 	case *ir.Cast:
 		b.loadVal(i.Operand, "rax")

@@ -15,16 +15,15 @@ var FreeList *Chunk
 
 func main() {
 
-    
-    if 22 <= sizeof[Chunk]() && sizeof[Chunk]() <= 32 {
-        println("Good")
-    } else {
-        println("Bad")
-    }
+	if 22 <= sizeof[Chunk]() && sizeof[Chunk]() <= 32 {
+		println("Good")
+	} else {
+		println("Bad")
+	}
 
 	if FreeList == Nil[Chunk]() {
 		println(100)
 	} else {
 		println(200)
-    }
+	}
 }
