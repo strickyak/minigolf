@@ -32,6 +32,8 @@ type Transpiler struct {
 	genericTemplates  map[string]*GenericTemplate
 	instantiatedTypes map[string]InstantiatedTypeInfoC
 	irBuilder         *ir.Builder
+	loopCounter       int
+	continueTargets   []string
 }
 
 type InstantiatedTypeInfoC struct {
@@ -949,8 +951,10 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		if s.Condition != nil {
 			condStr = t.emitExprStr(s.Condition)
 		}
+		t.continueTargets = append(t.continueTargets, "")
 		t.buf.WriteString(fmt.Sprintf("while (%s) ", condStr))
 		t.emitStatement(s.Body)
+		t.continueTargets = t.continueTargets[:len(t.continueTargets)-1]
 	case *ast.For3Statement:
 		t.buf.WriteString("{\n")
 		t.pushScope()
@@ -962,10 +966,19 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			condStr = t.emitExprStr(s.Condition)
 		}
 		t.buf.WriteString(fmt.Sprintf("while (%s) {\n", condStr))
+		
+		t.loopCounter++
+		contLabel := fmt.Sprintf("__continue_%d", t.loopCounter)
+		t.continueTargets = append(t.continueTargets, contLabel)
+
 		for _, bStmt := range s.Body.Statements {
 			t.buf.WriteString("\t")
 			t.emitStatement(bStmt)
 		}
+		
+		t.continueTargets = t.continueTargets[:len(t.continueTargets)-1]
+		t.buf.WriteString(contLabel + ":;\n")
+
 		if s.Increment != nil {
 			t.buf.WriteString("\t")
 			t.emitStatement(s.Increment)
@@ -997,10 +1010,19 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			}
 			t.buf.WriteString(fmt.Sprintf("%s limit_val = %s;\n", ctype, limitVal))
 			t.buf.WriteString(fmt.Sprintf("while (%s < limit_val) {\n", loopVar))
+
+			t.loopCounter++
+			contLabel := fmt.Sprintf("__continue_%d", t.loopCounter)
+			t.continueTargets = append(t.continueTargets, contLabel)
+
 			for _, bStmt := range s.Body.Statements {
 				t.buf.WriteString("\t")
 				t.emitStatement(bStmt)
 			}
+			
+			t.continueTargets = t.continueTargets[:len(t.continueTargets)-1]
+			t.buf.WriteString(contLabel + ":;\n")
+
 			t.buf.WriteString(fmt.Sprintf("\t%s++;\n", loopVar))
 			t.buf.WriteString("}\n")
 		} else {
@@ -1020,6 +1042,19 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			t.buf.WriteString(fmt.Sprintf("return (%s){ %s };\n", structTyp, strings.Join(vals, ", ")))
 		} else {
 			t.buf.WriteString("return;\n")
+		}
+	case *ast.BreakStatement:
+		t.buf.WriteString("break;\n")
+	case *ast.ContinueStatement:
+		if len(t.continueTargets) > 0 {
+			target := t.continueTargets[len(t.continueTargets)-1]
+			if target == "" {
+				t.buf.WriteString("continue;\n")
+			} else {
+				t.buf.WriteString(fmt.Sprintf("goto %s;\n", target))
+			}
+		} else {
+			t.buf.WriteString("continue;\n")
 		}
 	case *ast.ExpressionStatement:
 		t.buf.WriteString(t.emitExprStr(s.Expression))

@@ -72,6 +72,8 @@ const (
 	FOR     = "FOR"
 	RANGE   = "RANGE"
 	RETURN  = "RETURN"
+	BREAK   = "BREAK"
+	CONTINUE= "CONTINUE"
 )
 
 var keywords = map[string]TokenType{
@@ -87,6 +89,8 @@ var keywords = map[string]TokenType{
 	"for":     FOR,
 	"range":   RANGE,
 	"return":  RETURN,
+	"break":   BREAK,
+	"continue":CONTINUE,
 }
 
 func LookupIdent(ident string) TokenType {

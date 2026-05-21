@@ -202,6 +202,22 @@ func (s *ReturnStatement) statementNode()         {}
 func (s *ReturnStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ReturnStatement) GetToken() *token.Token { return &s.Token }
 
+type BreakStatement struct {
+	Token token.Token // The 'break' token
+}
+
+func (s *BreakStatement) statementNode()         {}
+func (s *BreakStatement) TokenLiteral() string   { return s.Token.Literal }
+func (s *BreakStatement) GetToken() *token.Token { return &s.Token }
+
+type ContinueStatement struct {
+	Token token.Token // The 'continue' token
+}
+
+func (s *ContinueStatement) statementNode()         {}
+func (s *ContinueStatement) TokenLiteral() string   { return s.Token.Literal }
+func (s *ContinueStatement) GetToken() *token.Token { return &s.Token }
+
 // ExpressionStatement allows expressions (like function calls: `print(x)`) to stand alone
 type ExpressionStatement struct {
 	Token      token.Token // The first token of the expression

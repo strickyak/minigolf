@@ -59,6 +59,9 @@ type Builder struct {
 	globalItems       map[string]*GlobalItem
 	worklist          []*GlobalItem
 	currentPackage    string
+
+	breakStack    []*BasicBlock
+	continueStack []*BasicBlock
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -978,7 +981,11 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(bodyBlk)
 
 		b.currentBlock = bodyBlk
+		b.breakStack = append(b.breakStack, endBlk)
+		b.continueStack = append(b.continueStack, headerBlk)
 		b.buildBlock(s.Body)
+		b.breakStack = b.breakStack[:len(b.breakStack)-1]
+		b.continueStack = b.continueStack[:len(b.continueStack)-1]
 		if b.currentBlock.Terminator == nil {
 			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk}, s)
 			b.addEdge(b.currentBlock, headerBlk)
@@ -1019,7 +1026,11 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(bodyBlk)
 
 		b.currentBlock = bodyBlk
+		b.breakStack = append(b.breakStack, endBlk)
+		b.continueStack = append(b.continueStack, postBlk)
 		b.buildBlock(s.Body)
+		b.breakStack = b.breakStack[:len(b.breakStack)-1]
+		b.continueStack = b.continueStack[:len(b.continueStack)-1]
 
 		if b.currentBlock.Terminator == nil {
 			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: postBlk}, s)
@@ -1085,7 +1096,11 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(bodyBlk)
 
 		b.currentBlock = bodyBlk
+		b.breakStack = append(b.breakStack, endBlk)
+		b.continueStack = append(b.continueStack, postBlk)
 		b.buildBlock(s.Body)
+		b.breakStack = b.breakStack[:len(b.breakStack)-1]
+		b.continueStack = b.continueStack[:len(b.continueStack)-1]
 
 		if b.currentBlock.Terminator == nil {
 			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: postBlk}, s)
@@ -1133,6 +1148,30 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			}
 		}
 		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Val: val}, s)
+	case *ast.BreakStatement:
+		b.addInstr(&SourceMarker{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Comment:         fmt.Sprintf("Line %d: break", s.Token.Line),
+		}, s)
+		if len(b.breakStack) == 0 {
+			log.Panicf("break statement outside of a loop at line %d", s.Token.Line)
+		}
+		targetBlk := b.breakStack[len(b.breakStack)-1]
+		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: targetBlk}, s)
+		b.addEdge(b.currentBlock, targetBlk)
+		b.currentBlock = b.newBlock() // Unreachable block
+	case *ast.ContinueStatement:
+		b.addInstr(&SourceMarker{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Comment:         fmt.Sprintf("Line %d: continue", s.Token.Line),
+		}, s)
+		if len(b.continueStack) == 0 {
+			log.Panicf("continue statement outside of a loop at line %d", s.Token.Line)
+		}
+		targetBlk := b.continueStack[len(b.continueStack)-1]
+		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: targetBlk}, s)
+		b.addEdge(b.currentBlock, targetBlk)
+		b.currentBlock = b.newBlock() // Unreachable block
 	}
 }
 

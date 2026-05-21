@@ -1,0 +1,19 @@
+test for break
+0
+1
+2
+3
+4
+test for continue
+0
+1
+3
+4
+test for range continue
+0
+2
+3
+test for simple continue
+1
+3
+done
