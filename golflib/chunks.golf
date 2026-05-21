@@ -26,15 +26,9 @@ func Init() {
 	}
 }
 
-func panic(w word) {
-	println("\n***PANIC***\n")
-	for true {
-	}
-}
-
 func Alloc() word {
 	if FreeList == Nil[Chunk]() {
-		panic(0)
+		panic(11)
 	}
 	z := FreeList
 	FreeList = z.Next

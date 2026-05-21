@@ -2,6 +2,7 @@ package m6809
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"log"
 	"sort"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/strickyak/minigolf/ir"
 )
+
+var GLOBAL_VAR_OFFSET = flag.Int("global_var_offset", 16, "must be positive, so address 0 is not used, that is nil")
 
 func align(sz int) int {
 	if sz == 0 {
@@ -341,28 +344,46 @@ func (b *Backend) getSlot(id int, typ string) int {
 func (b *Backend) Generate(program *ir.Program) string {
 	b.program = program
 	b.buf.WriteString("\tpragma cescapes\n")
-	b.buf.WriteString("\tpragma undefextern\n")
-	b.buf.WriteString("\tsection code\n")
+	//no-section// b.buf.WriteString("\tpragma undefextern\n")
+	//no-section// b.buf.WriteString("\tsection code\n")
 
 	b.globalOffsets = make(map[string]int)
 	if !b.globalsAtY && len(program.Globals) > 0 {
-		b.dataBuf.WriteString("\tsection data\n")
+		//no-section// b.dataBuf.WriteString("\tsection data ; start program.Globals\n")
+		addr := *GLOBAL_VAR_OFFSET
 		for _, g := range program.Globals {
-			b.dataBuf.WriteString(fmt.Sprintf("\texport v_%s\n", g.Name))
-			b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
+
 			if g.IsInit {
+				//no-section// b.dataBuf.WriteString("\n\tsection code\n")
+				//no-section// b.dataBuf.WriteString(fmt.Sprintf("\texport v_%s\n", g.Name))
+
+				b.dataBuf.WriteString(fmt.Sprintf("*** global var init: name=%q type=%q init=%#v\n", g.Name, g.Typ.Name, g.InitString))
+				b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
 				for i := 0; i < len(g.InitString); i++ {
-					b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d\n", g.InitString[i]))
+					x := g.InitString[i]
+					c := byte('~')
+					if ' ' <= x && x < '~' {
+						c = x
+					}
+					b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d ; [%d] <%c>\n", g.InitString[i], i, c))
 				}
 			} else {
+				//no-section// b.dataBuf.WriteString("\n\tsection data\n")
+				//no-section// b.dataBuf.WriteString(fmt.Sprintf("\texport v_%s\n", g.Name))
+
 				size := b.getTypeSize(g.Typ.Name)
-				for j := 0; j < size; j++ {
-					b.dataBuf.WriteString("\tfcb 0\n")
-				}
+				// Use `equ` to avoid producing 0 bytes which do not belong in our ROM image.
+				b.dataBuf.WriteString(fmt.Sprintf("v_%s\tequ\t%d\t; size=%d type=%q [no init]\n\n", g.Name, addr, size, g.Typ.Name))
+				addr += size
+				/*
+				   for j := 0; j < size; j++ {
+				       b.dataBuf.WriteString("\tfcb 0\n")
+				   }
+				*/
 			}
 		}
 	} else if b.globalsAtY {
-		offset := 0
+		offset := *GLOBAL_VAR_OFFSET
 		for _, g := range program.Globals {
 			b.globalOffsets[g.Name] = offset
 			if g.IsInit {
@@ -373,6 +394,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 			}
 		}
 	}
+	//no-section// b.dataBuf.WriteString("\tsection code ; finished program.Globals\n")
 
 	for _, f := range program.Functions {
 		if len(f.Blocks) > 0 {
@@ -380,7 +402,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 		}
 	}
 
-	b.buf.WriteString("\n\texport _main\n")
+	//no-section// b.buf.WriteString("\n\texport _main\n")
 	b.buf.WriteString("_main:\n")
 	if b.picMode {
 		b.buf.WriteString("\tlbsr f_main\n")
@@ -431,7 +453,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 	}
 
-	b.buf.WriteString(fmt.Sprintf("\n\texport f_%s\n", f.Name))
+	//no-section// b.buf.WriteString(fmt.Sprintf("\n\texport f_%s\n", f.Name))
 	b.buf.WriteString(fmt.Sprintf("f_%s:\n", f.Name))
 	if b.useFramePointer {
 		b.buf.WriteString("\tpshs u\n")
@@ -527,7 +549,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 				retSize := b.getTypeSize(term.Val.Type().Name)
 				if retSize <= 2 {
 					b.loadVal(term.Val)
-					if term.Val.Type().Equals(ir.TypeWord) {
+					if retSize == 2 {
 						b.buf.WriteString("\ttfr d,x\n")
 					}
 				} else {
@@ -1379,18 +1401,12 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.popBytes(pushedBytes)
 		}
 
-		switch i.Typ.Name {
-		case "word":
+		if retSize == 2 {
 			b.buf.WriteString("\ttfr x,d\n")
-		case "byte":
+		} else if retSize == 1 {
 			b.buf.WriteString("\tclra\n")
-		case "void":
-			// Do nothing
-		default:
-			if retSize <= 2 && i.Typ.IsAPointer() {
-				b.buf.WriteString("\ttfr x,d\n")
-			}
 		}
+
 		if !i.Typ.Equals(ir.TypeVoid) && retSize <= 2 {
 			b.storeResult(id)
 		}
@@ -1443,7 +1459,7 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"%s\"\n", fmtLabel, format))
 	} else {
 		if b.dataBuf.Len() == 0 {
-			b.dataBuf.WriteString("\tsection data\n")
+			//no-section// b.dataBuf.WriteString("\tsection data\n")
 		}
 		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"%s\"\n", fmtLabel, format))
 	}

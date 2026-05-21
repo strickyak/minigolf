@@ -58,15 +58,20 @@ func cleanOutput(out string) []string {
 	var result []string
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			result = append(result, trimmed)
+		if strings.HasPrefix(trimmed, "#") {
+			// Allow debug comments starting with '#' that do not affect output comparison.
+			continue
 		}
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
 	}
 	return result
 }
 
 func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
-	tmpDir := filepath.Join("_tmp", backend+"_"+filepath.Base(sourceFile))
+	tmpDir := filepath.Join("_tmp", backend+"_"+filepath.Base(sourceFile)+".dir")
 	os.MkdirAll(tmpDir, 0777)
 
 	ext := ".c"
@@ -82,6 +87,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 
 	// Compile demo file using minigo
 	cmd := exec.Command("go", "run", "main.go", "-m="+backend, "-o", midFile, "-I=golflib", sourceFile)
+	t.Logf("Running: %v", cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile with minigo -m=%s: %v\nOutput: %s", backend, err, out)
 	}
@@ -91,28 +97,10 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 
 	switch backend {
 	case "m6809":
-		/*
-		           t.Logf("Running scripts/run-6809-at-4000.sh with %q", midFile)
-		   	    cmd = exec.Command("sh", "-c", fmt.Sprintf("sh scripts/run-6809-at-4000.sh %q >/tmp/out 2>/tmp/err", midFile))
-		   	    if out, err := cmd.CombinedOutput(); err != nil {
-		               t.Fatalf("Failed scripts/run-6809-at-4000.sh %s\nOutput: %s", midFile, out)
-		   	    }
-		           t.Logf("/tmp/out: %q", Value(exec.Command("cat", "-n", "/tmp/out").CombinedOutput()))
-		           t.Logf("/tmp/err: %q", Value(exec.Command("cat", "-n", "/tmp/err").CombinedOutput()))
-
-		           tmp_out := Value(os.ReadFile("/tmp/out"))
-		           tmp_err := Value(os.ReadFile("/tmp/err"))
-		           stdout.Write(tmp_out)
-		           stderr.Write(tmp_err)
-		           t.Logf("tmp stdout: %q", tmp_out)
-		           t.Logf("tmp stderr: %q", tmp_err)
-		           t.Logf("stdout: %q", stdout.String())
-		           t.Logf("stderr: %q", stderr.String())
-		*/
-
-		cmd = exec.Command("sh", "scripts/run-6809-at-4000.sh", midFile)
+		cmd = exec.Command("sh", "run9.sh", midFile)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
+		t.Logf("Running: %v", cmd)
 		if err := cmd.Run(); err != nil {
 			t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
 		}
@@ -120,6 +108,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	default:
 		// Compile generated code with gcc
 		cmd = exec.Command("gcc", "-o", exeFile, midFile)
+		t.Logf("Running: %v", cmd)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("Failed to compile C code with gcc for backend %s: %v\nOutput: %s", backend, err, out)
 		}

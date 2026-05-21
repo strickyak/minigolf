@@ -180,13 +180,16 @@ func main() {
 			os.Exit(1)
 		}
 		defer logFile.Close()
-		logger = log.New(logFile, "minigo: ", log.Lshortfile)
+		logger = log.New(logFile, "minigolf: ", log.Lshortfile)
 	} else {
-		logger = log.New(os.Stderr, "minigo: ", log.Lshortfile)
+		logger = log.New(os.Stderr, "minigolf: ", log.Lshortfile)
 	}
 
 	logger.Printf("Starting whole-program compilation")
 	logger.Printf("Target architecture: %s", *archFlag)
+	logger.Printf("FramePointer: %v", *framePointerFlag)
+	logger.Printf("Globals-at-Y: %v", *globalsAtYFlag)
+	logger.Printf("Position-Independent Code: %v", *picFlag)
 	logger.Printf("Output object file: %s", *outFlag)
 	logger.Printf("import path: %v", importDirPath)
 	logger.Printf("Source files: %v", sourceFiles)

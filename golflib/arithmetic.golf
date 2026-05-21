@@ -1,0 +1,45 @@
+package arithmetic
+
+func mul_word(a word, b word) word {
+	var sum word
+	if a < b {
+		for i := range a {
+			sum = sum + b
+		}
+	} else {
+		for i := range b {
+			sum = sum + a
+		}
+	}
+	return sum
+}
+
+func div_word(a0 word, b word) word {
+	a := a0
+	if b == 0 {
+		panic(1002)
+	}
+	if b == 1 {
+		return a
+	}
+	z := 0
+	for a >= b {
+		a = a - b
+		z++
+	}
+	return z
+}
+
+func mod_word(a0 word, b word) word {
+	a := a0
+	if b == 0 {
+		panic(1004)
+	}
+	if b == 1 {
+		return 0
+	}
+	for a >= b {
+		a = a - b
+	}
+	return a
+}

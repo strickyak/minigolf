@@ -1,0 +1,107 @@
+set -ex
+
+case "$1" in 
+    *.golf )
+        go run main.go -m M6809 -o _tmp/main.asm  -I golflib  "$1" >&2
+        ;;
+    *.s | *.asm )
+        cp -fv "$1" _tmp/main.asm >&2
+        ;;
+    * )
+        echo "BAD EXTENSION: Expected .golf or .s or .asm: '$1'" >&2
+        exit 13
+        ;;
+esac
+
+cd _tmp
+
+cat >cstart.asm <<'HERE'
+	pragma cescapes
+	* pragma undefextern
+    * pragma undefextern
+    * pragma importundefexport
+
+    org $8000
+
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+
+    lds  #$8000
+
+*emulator-zeros*    * Clear lower half of memory
+*emulator-zeros*    clra
+*emulator-zeros*    clrb
+*emulator-zeros*    ldx  #$8000
+*emulator-zeros*cstart_loop:
+*emulator-zeros*    std ,x
+*emulator-zeros*    leax -2,x
+*emulator-zeros*    bne cstart_loop
+    
+cstart_continue_to_main:
+    clra
+    clrb
+    tfr d,x
+    tfr d,y
+    tfr d,u
+    lbsr _main
+
+__exit0:
+    clra              ; set exit status 0
+    clrb
+    tfr d,x
+
+__exit:
+    fcb  $12,$21,107  ; 1. Hyper Exit (with status in X)
+    fcb 1             ; 2. Illegal Instruction
+    nop
+    nop
+    nop
+stuck:
+    bra stuck         ; 3. Infinite Loop
+    *no-section* export entry
+    *no-section* export __exit
+    *no-section* export __exit0
+
+_printf:
+    leax 2,s
+    fcb  $12,$21,111  ; Hyper Printf
+    rts
+    *no-section* export _printf
+
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+HERE
+
+cat cstart.asm main.asm > moto.asm
+
+time - lwasm --format=raw -o'moto.rom' moto.asm
+
+#############
+
+( cd /home/strick/modoc/coco-shelf/gomar/ ; go build --tags=level1,coco1,trace gomar.go )
+
+/home/strick/modoc/coco-shelf/gomar/gomar  -write_rom_fail=1 -t=1 --entry=0x8000 -n=1 -raw_hyper_print=1   \
+         -rom_8000  /home/strick/antig/_tmp/moto.rom \
+         -internal_rom_listing   /home/strick/antig/_tmp/moto.rom.list
+

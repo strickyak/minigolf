@@ -27,6 +27,15 @@ cat >cstart.asm <<'HERE'
 
     .area .entry
 entry:
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+    daa
+
     lds  #$8000
     clra
     clrb

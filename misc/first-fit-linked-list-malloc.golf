@@ -1,0 +1,121 @@
+package main
+
+type Header struct {
+	next *Header
+	size word
+}
+
+const HEAP_SIZE = 16384
+
+var Heap [HEAP_SIZE]byte
+
+var base Header
+var freep *Header
+
+func malloc_init(heap_start *byte, heap_size word) {
+	var p *Header = (*Header)(word(heap_start))
+
+	// Calculate how many Header-sized units fit in the heap
+	p.size = heap_size / sizeof[Header]()
+	p.next = &base
+
+	base.next = p
+	base.size = 0
+	freep = &base
+}
+
+func malloc(nbytes word) *byte {
+	var p *Header
+	var prevp *Header
+	var nunits word
+
+	// Calculate how many Header units we need (including the 1 unit for metadata)
+	nunits = (nbytes+sizeof[Header]()-1)/sizeof[Header]() + 1
+
+	prevp = freep
+	if word(prevp) == 0 {
+		return (*byte)(0) // Heap wasn't initialized!
+	}
+
+	// Traverse the circularly linked free list
+	p = prevp.next
+	for {
+		if p.size >= nunits { // First-fit strategy
+			if p.size == nunits {
+				// Exactly the right size; splice it out of the free list
+				prevp.next = p.next
+			} else {
+				// Block is bigger than needed; allocate from the tail end
+				p.size = p.size - nunits
+				p = (*Header)(word(p) + p.size*sizeof[Header]())
+				p.size = nunits
+			}
+			freep = prevp
+			// Return pointer to user space (skipping past the Header)
+			return (*byte)(word(p) + sizeof[Header]())
+		}
+		if word(p) == word(freep) {
+			return (*byte)(0) // Wrapped around the list: Out of Memory!
+		}
+		prevp = p
+		p = p.next
+	}
+	return (*byte)(0)
+}
+
+func free(ap *byte) {
+	var bp *Header
+	var p *Header
+
+	if word(ap) == 0 {
+		return
+	}
+
+	// Move pointer backward to find the actual header
+	bp = (*Header)(word(ap) - sizeof[Header]())
+
+	// Find the right chronological spot in the free list to insert it
+	var done byte = 0
+	p = freep
+	for done == 0 {
+		if word(bp) > word(p) && word(bp) < word(p.next) {
+			done = 1
+		} else if word(p) >= word(p.next) && (word(bp) > word(p) || word(bp) < word(p.next)) {
+			done = 1 // Insert at the extreme beginning or end of the list
+		}
+
+		if done == 0 {
+			p = p.next
+		}
+	}
+
+	// Coalesce (merge) with the next block if they are physically adjacent
+	if word(bp)+bp.size*sizeof[Header]() == word(p.next) {
+		bp.size = bp.size + p.next.size
+		bp.next = p.next.next
+	} else {
+		bp.next = p.next
+	}
+
+	// Coalesce (merge) with the previous block if they are physically adjacent
+	if word(p)+p.size*sizeof[Header]() == word(bp) {
+		p.size = p.size + bp.size
+		p.next = bp.next
+	} else {
+		p.next = bp
+	}
+
+	freep = p
+}
+
+func main() {
+	malloc_init(&Heap[0], HEAP_SIZE)
+
+	var ptr1 *byte = malloc(100)
+	var ptr2 *byte = malloc(200)
+	var ptr3 *byte = malloc(50)
+
+	free(ptr2)
+	free(ptr1)
+	free(ptr3)
+}

@@ -16,8 +16,12 @@ func Print(node any) string {
 		}
 	}()
 
-	if reflect.ValueOf(node).IsNil() {
+	if node == nil {
 		return "<nil>"
+	}
+
+	if reflect.ValueOf(node).IsNil() {
+		return "<.nil.>"
 	}
 
 	switch n := node.(type) {

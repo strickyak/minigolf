@@ -1,7 +1,18 @@
 package main
 
+import "pre2"
+
 func main() {
-    printany( byte(88) )
-    printany( word(888) )
-    printany( "hello" )
+	pre2.init()
+
+	printany(byte(88))
+	printany(word(888))
+	printany("hello")
+	s := "one two three"
+	pre2.printany2(s[0])
+	pre2.printany2(s[1])
+	pre2.printany2(s[2])
+	pre2.printany2(s[0:3])
+	pre2.printany2(s[4:7])
+	pre2.printany2(s[8:13])
 }

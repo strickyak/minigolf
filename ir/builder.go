@@ -61,6 +61,10 @@ type Builder struct {
 	currentPackage    string
 }
 
+func (b *Builder) SetCurrentPackage(pkg string) {
+	b.currentPackage = pkg
+}
+
 type InstantiatedTypeInfo struct {
 	RawGenericName string
 	ArgTyps        []Type
@@ -95,7 +99,7 @@ func NewBuilder() *Builder {
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
 	if expr == nil {
-		panic("TODO: when is expr nil?")
+		log.Panicf("TODO: when is expr nil?")
 	}
 	switch e := expr.(type) {
 	case *ast.Identifier:
@@ -186,7 +190,8 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		name += "}"
 		return Type{Expr: expr, Name: name}
 	}
-	return TypeWord
+	log.Panicf("astToIRType NO CASE: %#v", expr)
+	panic(0)
 }
 
 func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
@@ -582,7 +587,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 
 	// Map parameters
 	for _, p := range b.currentFunc.Parameters {
-		fmt.Printf("DEBUG PARAM %s: %s\n", p.Name, p.Typ.Name)
+		fmt.Printf("#DEBUG PARAM %s: %s\n", p.Name, p.Typ.Name)
 		b.writeVariable(p.Name, b.currentBlock, p)
 	}
 
@@ -1982,6 +1987,8 @@ func extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[stri
 }
 
 func (b *Builder) tryResolve(item *GlobalItem) (err error) {
+	log.Printf("# tryResolve (%T)%v", item, item)
+
 	defer func() {
 		if r := recover(); r != nil {
 			if errStr, ok := r.(string); ok && len(errStr) > 11 && errStr[:11] == "unresolved:" {

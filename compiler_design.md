@@ -143,9 +143,10 @@ The primary focus for target architecture is the **Motorola 6809** and the **Hit
 To seamlessly link with existing C libraries built by `gcc` v4.6.4 (targeting `lwasm`), the backend strictly adheres to the GCC 6809 ABI:
 *   **Parameter Passing**: Arguments are evaluated and pushed to the hardware stack `S` in reverse order (right-to-left). However, the *first* `word`-sized argument is intercepted and passed in the `X` register, and the *first* `byte`-sized argument is passed in the `B` register.
 *   **Varargs**: When a function accepts variadic arguments (like `printf`), the last named variable prior to `...` *must* be pushed onto the stack instead of its usual register, ensuring the `va_list` library can compute physical memory offsets linearly.
-*   **Return Values**: Single return values are returned cleanly in hardware registers: `word`-sized values in `X` and `byte`-sized values in `B`.
-
-#### 6809 Stack Management (S and U Registers)
+*   **Return Values**: The backend adheres to the default convention of the `gcc` 4.6.4 compiler:
+    *   **1-byte** return values are passed back in the `B` register.
+    *   **2-byte** return values are passed back in the `X` register. (`D` is not used for 16-bit return values).
+    *   **Larger values (structs, arrays)** are handled by the caller pre-allocating space on the hardware stack (`S`) right before issuing the `jsr` call. Inside the function, the callee computes the offset past the return address to access this reserved caller memory (`b.retSlot`), and copies the resulting structure directly into the caller's stack frame before executing `rts`. After `rts`, the caller un-pushes the memory into its local variable.
 The 6809 backend utilizes a strict dual-register stack model to map infinite SSA variables to physical memory while conforming to the ABI constraints:
 *   **Hardware Stack (`S`)**: Exclusively reserved for passing parameters to external function calls and handling `jsr`/`rts` return addresses. During mathematical expression evaluation, it serves as a temporary scratchpad (e.g., operands are dynamically pushed via `std ,--s` and instantly consumed via `addd ,s++`).
 *   **User/Frame Stack (`U`)**: Re-assigned as the local function frame pointer. Upon entry, the compiler issues `pshs u` and `tfr s,u` to establish a fixed memory frame. Every SSA instruction dynamically receives a 2-byte local stack slot accessed via negative frame offsets (`-offset,u`). To unify parameter reads and eliminate register tracking complexities, ABI parameters arriving natively in `X` and `B` are immediately copied down into local `U` slots during the function prologue.

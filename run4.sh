@@ -3,19 +3,20 @@ mkdir -p _tmp
 rm -f $T.*.out
 
 echo "[ IR ] _tmp/ir" >&2
-go run main.go  -I=golflib -m=ir -o=_tmp/ir  "$@"
+(set -x; go run main.go  -I=golflib -m=ir -o=_tmp/ir  "$@" )
 
 echo "[ C ] _tmp/c.c $T.c.out" >&2
-go run main.go  -I=golflib -m=c -o=_tmp/c.c "$@"  &&  ( cd _tmp ; gcc -o c c.c ; ./c > $T.c.out )
+(set -x; go run main.go  -I=golflib -m=c -o=_tmp/c.c "$@"  &&  ( cd _tmp ; gcc -o c c.c ; ./c > $T.c.out ) )
 
 echo "[ CBE ] _tmp/cbe.c $T.cbe.out" >&2
-go run main.go  -I=golflib -m=cbe -o=_tmp/cbe.c "$@"  &&  ( cd _tmp ; gcc -o cbe cbe.c ; ./cbe > $T.cbe.out )
+(set -x; go run main.go  -I=golflib -m=cbe -o=_tmp/cbe.c "$@"  &&  ( cd _tmp ; gcc -o cbe cbe.c ; ./cbe > $T.cbe.out ) )
 
 echo "[ X86_64 ] _tmp/x.s $T.x.out" >&2
-go run main.go  -I=golflib -m=x -o=_tmp/x.s "$@"  &&  ( cd _tmp ; gcc -o x x.s ; ./x > $T.x.out )
+(set -x; go run main.go  -I=golflib -m=x -o=_tmp/x.s "$@"  &&  ( cd _tmp ; gcc -o x x.s ; ./x > $T.x.out ) )
 
 echo "[ M6809 ] _tmp/m.s $T.m.out" >&2
-go run main.go  -I=golflib -m=m -o=_tmp/m.s "$@"  &&  sh scripts/run-6809-at-4000.sh _tmp/m.s > $T.m.out
+# go run main.go  -I=golflib -m=m -o=_tmp/m.s "$@"  &&  sh scripts/run-6809-at-4000.sh _tmp/m.s > $T.m.out
+(set -x; sh run9.sh "$@" > $T.m.out )
 
 
 for x in c cbe x m

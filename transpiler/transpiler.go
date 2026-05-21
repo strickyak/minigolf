@@ -44,6 +44,13 @@ type GenericTemplate struct {
 	Tokens     []token.Token
 }
 
+func (t *Transpiler) setCurrentPackage(pkg string) {
+	t.currentPackage = pkg
+	if t.irBuilder != nil {
+		t.irBuilder.SetCurrentPackage(pkg)
+	}
+}
+
 func New() *Transpiler {
 	return &Transpiler{
 		globals:           make(map[string]string),
@@ -125,12 +132,21 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
 				rawFuncName := t.currentPackage + "." + ident.Value
+
+				// Resolve correct rawFuncName first
+				if _, ok := t.genericTemplates[rawFuncName]; !ok {
+					preludeRawFuncName := "prelude." + ident.Value
+					if _, ok := t.genericTemplates[preludeRawFuncName]; ok {
+						rawFuncName = preludeRawFuncName
+					}
+				}
+
 				var instTypStr string
 				var argTyps []string
 				for _, idx := range idxExpr.Indices {
 					argTyp := t.mapType(idx)
 					argTyps = append(argTyps, argTyp)
-					instTypStr += "_" + argTyp
+					instTypStr += "_" + strings.ReplaceAll(argTyp, "*", "_ptr")
 				}
 				funcName := fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 				funcName = strings.ReplaceAll(funcName, ".", "_")
@@ -140,6 +156,9 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 					if tmpl, ok := t.genericTemplates[rawFuncName]; ok {
 						t.instantiateGenericFuncC(funcName, rawFuncName, argTyps, tmpl)
 					}
+				}
+				if ctype, ok := t.funcTypes[strings.ReplaceAll(funcName, "_", ".")]; ok {
+					return ctype
 				}
 				if ctype, ok := t.funcTypes[funcName]; ok {
 					return ctype
@@ -204,6 +223,20 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 		if e.IsSlice {
 			return t.typeOf(e.Left)
 		}
+		baseType := t.typeOf(e.Left)
+		baseType = strings.TrimSuffix(baseType, "*")
+		if strings.HasPrefix(baseType, "t_prelude_slice_") {
+			return strings.TrimPrefix(baseType, "t_prelude_slice_")
+		}
+		if strings.HasPrefix(baseType, "t_slice_") {
+			return strings.TrimPrefix(baseType, "t_slice_")
+		}
+		if strings.HasPrefix(baseType, "t_arr_") {
+			parts := strings.SplitN(baseType, "_", 4)
+			if len(parts) == 4 {
+				return parts[3]
+			}
+		}
 	}
 	return "word"
 }
@@ -215,14 +248,14 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 	t.irBuilder.Build(program)
 
 	// First pass: find package name
-	t.currentPackage = "main" // default
+	t.setCurrentPackage("main") // default
 
 	t.typedefBuf.WriteString("// Forward type declarations\n")
 	t.funcDeclsBuf.WriteString("// Forward function declarations\n")
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
 		case *ast.PackageStatement:
-			t.currentPackage = s.Name.Value
+			t.setCurrentPackage(s.Name.Value)
 		case *ast.TypeStatement:
 			t.typeDefs[t.currentPackage+"."+s.Name.Value] = s
 			if len(s.TypeParameters) > 0 {
@@ -326,11 +359,11 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 	}
 
 	t.buf.WriteString("\n// Global variables and constants\n")
-	t.currentPackage = "main"
+	t.setCurrentPackage("main")
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
 		case *ast.PackageStatement:
-			t.currentPackage = s.Name.Value
+			t.setCurrentPackage(s.Name.Value)
 		case *ast.VarStatement:
 			valType := "word"
 			if s.ValueType != nil {
@@ -349,17 +382,25 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 			}
 			t.buf.WriteString(";\n")
 		case *ast.ConstStatement:
-			t.buf.WriteString(fmt.Sprintf("#define v_%s_%s %s\n", t.currentPackage, s.Name.Value, t.emitExprStr(s.Value)))
+			valStr := t.emitExprStr(s.Value)
+			func() {
+				defer func() {
+					recover() // ignore panics from EvalConst
+				}()
+				val := t.irBuilder.EvalConst(s.Value)
+				valStr = fmt.Sprintf("%d", val)
+			}()
+			t.buf.WriteString(fmt.Sprintf("#define v_%s_%s %s\n", t.currentPackage, s.Name.Value, valStr))
 		}
 	}
 	t.buf.WriteString("\n")
 
 	// Third pass: Implementations
-	t.currentPackage = "main"
+	t.setCurrentPackage("main")
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
 		case *ast.PackageStatement:
-			t.currentPackage = s.Name.Value
+			t.setCurrentPackage(s.Name.Value)
 		case *ast.FuncStatement:
 			if len(s.TypeParameters) > 0 {
 				continue
@@ -534,7 +575,7 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		lenVal := t.irBuilder.EvalConst(e.Length)
 		lenStr := strconv.FormatInt(lenVal, 10)
 		eltName := t.mapType(e.Elt)
-		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, eltName)
+		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, strings.ReplaceAll(eltName, "*", "_ptr"))
 
 		if !t.arrayTypes[typeName] {
 			t.arrayTypes[typeName] = true
@@ -652,7 +693,7 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 			parts = strings.SplitN(instName, "_", 2)
 		}
 		if len(parts) == 2 {
-			t.currentPackage = parts[0]
+			t.setCurrentPackage(parts[0])
 			if funcStmt.Receiver == nil {
 				funcStmt.Name.Value = parts[1]
 			}
@@ -692,7 +733,7 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 		t.buf.Reset()
 		t.buf.Write(savedBytes)
 		t.currentFunc = oldFunc
-		t.currentPackage = oldPkg
+		t.setCurrentPackage(oldPkg)
 	}
 }
 
@@ -1037,7 +1078,11 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 	case *ast.IntegerLiteral:
 		return strconv.FormatInt(e.Value, 10)
 	case *ast.StringLiteral:
-		return "\"" + e.Value + "\""
+		// Convert string literal to a slice_byte struct in C
+		// Make sure special characters are properly escaped if needed, but for now we assume they are.
+		// `len` is length of the string without quotes. Actually e.Value is unescaped, so len is just len(e.Value).
+		strLen := len(e.Value)
+		return fmt.Sprintf("(t_prelude_slice_byte){ (word)(\"%s\"), %d, %d }", e.Value, strLen, strLen)
 	case *ast.PrefixExpression:
 		if e.Operator == "&" {
 			if idxExpr, ok := e.Right.(*ast.IndexExpression); ok {
@@ -1177,23 +1222,26 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				for _, idx := range idxExpr.Indices {
 					argTyp := t.mapType(idx)
 					argTyps = append(argTyps, argTyp)
-					instTypStr += "_" + argTyp
+					instTypStr += "_" + strings.ReplaceAll(argTyp, "*", "_ptr")
 				}
+
+				// Resolve correct rawFuncName first
+				if _, ok := t.genericTemplates[rawFuncName]; !ok {
+					if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+						preludeRawFuncName := "prelude." + ident.Value
+						if _, ok := t.genericTemplates[preludeRawFuncName]; ok {
+							rawFuncName = preludeRawFuncName
+						}
+					}
+				}
+
 				funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 				funcName = strings.ReplaceAll(funcName, ".", "_")
+
 				if !t.arrayTypes[funcName] {
 					t.arrayTypes[funcName] = true
 					if tmpl, ok := t.genericTemplates[rawFuncName]; ok {
 						t.instantiateGenericFuncC(funcName, rawFuncName, argTyps, tmpl)
-					} else if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
-						preludeRawFuncName := "prelude." + ident.Value
-						if tmpl, ok := t.genericTemplates[preludeRawFuncName]; ok {
-							rawFuncName = preludeRawFuncName
-							funcName = fmt.Sprintf("prelude_%s%s", ident.Value, instTypStr)
-							funcName = strings.ReplaceAll(funcName, ".", "_")
-							t.arrayTypes[funcName] = true
-							t.instantiateGenericFuncC(funcName, rawFuncName, argTyps, tmpl)
-						}
 					}
 				}
 				isGenericFunc = true
@@ -1223,7 +1271,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 								argTyp = "word"
 							}
 							argTyps = append(argTyps, argTyp)
-							instTypStr += "_" + argTyp
+							instTypStr += "_" + strings.ReplaceAll(argTyp, "*", "_ptr")
 						}
 						funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 						funcName = strings.ReplaceAll(funcName, ".", "_")
@@ -1256,7 +1304,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 								argTyp = "word"
 							}
 							argTyps = append(argTyps, argTyp)
-							instTypStr += "_" + argTyp
+							instTypStr += "_" + strings.ReplaceAll(argTyp, "*", "_ptr")
 						}
 						funcName = fmt.Sprintf("prelude_%s%s", ident.Value, instTypStr)
 						funcName = strings.ReplaceAll(funcName, ".", "_")

@@ -267,9 +267,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		if regsIdx < len(regs) {
 			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], %s\n", b.stackOffset, regs[regsIdx]))
 			regsIdx++
-			if size > 8 && regsIdx < len(regs) {
-				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + 8], %s\n", b.stackOffset, regs[regsIdx]))
-				regsIdx++
+			for byteOffset := 8; byteOffset < size; byteOffset += 8 {
+				if regsIdx < len(regs) {
+					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + %d], %s\n", b.stackOffset, byteOffset, regs[regsIdx]))
+					regsIdx++
+				}
 			}
 		}
 	}
@@ -675,10 +677,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if regsIdx < len(regs) {
 				b.loadVal(arg, regs[regsIdx])
 				regsIdx++
-				if size > 8 && regsIdx < len(regs) {
-					addr := b.getAddr(arg)
-					b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s + 8]\n", regs[regsIdx], addr))
-					regsIdx++
+				addr := b.getAddr(arg)
+				for byteOffset := 8; byteOffset < size; byteOffset += 8 {
+					if regsIdx < len(regs) {
+						if addr != "" {
+							b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s + %d]\n", regs[regsIdx], addr, byteOffset))
+						}
+						regsIdx++
+					}
 				}
 			}
 		}

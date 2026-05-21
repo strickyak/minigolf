@@ -20,24 +20,24 @@ func pokew(addr word, value word) { poke[word](addr, value) }
 /////////////////////////////////////////////
 
 type any struct {
-    BaseAddr word
-    TypeStr  word
+	BaseAddr word
+	TypeStr  word
 }
 
 func printany(x any) {
-    ch := peekb(x.TypeStr)
-    if ch == 'b' {
-        // byte
-        println("b=", peek[byte](x.BaseAddr))
-    } else if ch == 'w' {
-        // word
-        println("w=", peek[word](x.BaseAddr))
-    } else if ch == 's' {
-        // string
-        println("s=", peek[string](x.BaseAddr))
-    } else {
-        println("?", ch, "?")
-    }
+	ch := peekb(x.TypeStr)
+	if ch == 'b' {
+		// byte
+		println("b=", peek[byte](x.BaseAddr))
+	} else if ch == 'w' {
+		// word
+		println("w=", peek[word](x.BaseAddr))
+	} else if ch == 's' {
+		// string
+		println("s=", peek[string](x.BaseAddr))
+	} else {
+		println("?", ch, "?")
+	}
 }
 
 /////////////////////////////////////////////
@@ -50,7 +50,7 @@ type slice[T any] struct {
 
 func (o *slice[T]) Address(i word) word {
 	if i >= o.Len {
-		panic()
+		panic(2001)
 	}
 	p := i * sizeof[T]()
 	return o.Base + p
@@ -59,7 +59,7 @@ func (o *slice[T]) Address(i word) word {
 func (o *slice[T]) Get(i word) T {
 	p := i * sizeof[T]()
 	if i >= o.Len {
-		panic()
+		panic(2002)
 	}
 	return peek[T](o.Base + p)
 }
@@ -67,17 +67,17 @@ func (o *slice[T]) Get(i word) T {
 func (o *slice[T]) Put(i word, x T) {
 	p := i * sizeof[T]()
 	if i >= o.Len {
-		panic()
+		panic(2003)
 	}
 	poke[T](o.Base+p, x)
 }
 
 func (o *slice[T]) Chop(start word, limit word) slice[T] {
 	if start > limit {
-		panic()
+		panic(2004)
 	}
 	if limit > o.Cap {
-		panic()
+		panic(2005)
 	}
 	var z slice[T]
 	z.Base = o.Base + start*sizeof[T]()
@@ -86,7 +86,7 @@ func (o *slice[T]) Chop(start word, limit word) slice[T] {
 	return z
 }
 
-func panic() {
-	println("\nPANIC\n")
+func panic(w word) {
+	println("\n*PANIC* why=", w)
 	exit(13)
 }
