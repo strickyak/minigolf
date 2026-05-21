@@ -24,6 +24,7 @@ type Transpiler struct {
 	arrayTypes        map[string]bool
 	funcTypes         map[string]string
 	funcRetTypes      map[string][]string
+	funcParams        map[string][]string
 	currentFunc       *ast.FuncStatement
 	currentPackage    string
 	typeDefs          map[string]*ast.TypeStatement
@@ -48,6 +49,7 @@ func New() *Transpiler {
 		globals:           make(map[string]string),
 		funcTypes:         make(map[string]string),
 		funcRetTypes:      make(map[string][]string),
+		funcParams:        make(map[string][]string),
 		genericTemplates:  make(map[string]*GenericTemplate),
 		typeDefs:          make(map[string]*ast.TypeStatement),
 		typeAliases:       make(map[string]ast.Expression),
@@ -101,7 +103,7 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 	case *ast.IntegerLiteral:
 		return "word"
 	case *ast.StringLiteral:
-		return "word"
+		return "t_prelude_slice_byte"
 	case *ast.Identifier:
 		return t.getVarType(e.Value)
 	case *ast.CallExpression:
@@ -314,6 +316,11 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 				t.funcRetTypes[t.currentPackage+"."+s.Name.Value] = retTypes
 			}
 			t.funcTypes[t.currentPackage+"."+s.Name.Value] = retType
+			var params []string
+			for _, p := range s.Parameters {
+				params = append(params, t.mapType(p.Type))
+			}
+			t.funcParams[t.currentPackage+"."+s.Name.Value] = params
 			t.funcDeclsBuf.WriteString(t.emitFuncSignatureStr(s, true))
 		}
 	}
@@ -665,6 +672,11 @@ func (t *Transpiler) instantiateGenericFuncC(instName, genericName string, argTy
 			retType = fmt.Sprintf("t_tuple_%d", len(funcStmt.ReturnTypes))
 		}
 		t.funcTypes[instName] = retType
+		var params []string
+		for _, p := range funcStmt.Parameters {
+			params = append(params, t.mapType(p.Type))
+		}
+		t.funcParams[instName] = params
 
 		funcSigDecl := t.emitFuncSignatureStr(funcStmt, true)
 		t.funcDeclsBuf.WriteString(funcSigDecl)
@@ -1261,10 +1273,17 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 		}
 
 		if isGenericFunc {
-			if len(args) == 0 && len(e.Arguments) > 0 {
-				for _, arg := range e.Arguments {
-					args = append(args, t.emitExprStr(arg))
+			args := []string{}
+			var paramTypes []string
+			if params, ok := t.funcParams[rawFuncName]; ok {
+				paramTypes = params
+			}
+			for i, arg := range e.Arguments {
+				argStr := t.emitExprStr(arg)
+				if i < len(paramTypes) && (paramTypes[i] == "t_prelude_any" || paramTypes[i] == "t_any") {
+					argStr = t.packageAsAnyC(arg, argStr)
 				}
+				args = append(args, argStr)
 			}
 			return fmt.Sprintf("f_%s(%s)", funcName, strings.Join(args, ", "))
 		}
@@ -1274,8 +1293,16 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				funcQName := pkgIdent.Value + "." + sel.Right.Value
 				if _, ok := t.funcTypes[funcQName]; ok {
 					args := []string{}
-					for _, arg := range e.Arguments {
-						args = append(args, t.emitExprStr(arg))
+					var paramTypes []string
+					if params, ok := t.funcParams[funcQName]; ok {
+						paramTypes = params
+					}
+					for i, arg := range e.Arguments {
+						argStr := t.emitExprStr(arg)
+						if i < len(paramTypes) && (paramTypes[i] == "t_prelude_any" || paramTypes[i] == "t_any") {
+							argStr = t.packageAsAnyC(arg, argStr)
+						}
+						args = append(args, argStr)
 					}
 					return fmt.Sprintf("f_%s_%s(%s)", pkgIdent.Value, sel.Right.Value, strings.Join(args, ", "))
 				}
@@ -1316,8 +1343,17 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			}
 
 			args := []string{receiverStr}
-			for _, arg := range e.Arguments {
-				args = append(args, t.emitExprStr(arg))
+			var paramTypes []string
+			if params, ok := t.funcParams[funcQNameCheck]; ok {
+				paramTypes = params
+			}
+
+			for i, arg := range e.Arguments {
+				argStr := t.emitExprStr(arg)
+				if i < len(paramTypes) && (paramTypes[i] == "t_prelude_any" || paramTypes[i] == "t_any") {
+					argStr = t.packageAsAnyC(arg, argStr)
+				}
+				args = append(args, argStr)
 			}
 			return fmt.Sprintf("f_%s_%s(%s)", pkgPart, funcName, strings.Join(args, ", "))
 		}
@@ -1333,17 +1369,32 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				return fmt.Sprintf("((%s)(%s))", ident.Value, t.emitExprStr(e.Arguments[0]))
 			}
 
-			// Normal function call
-			args := []string{}
-			for _, arg := range e.Arguments {
-				args = append(args, t.emitExprStr(arg))
-			}
 			funcName := ident.Value
 			pkgName := t.currentPackage
 			if _, ok := t.funcTypes[pkgName+"."+funcName]; !ok {
 				if _, ok := t.funcTypes["prelude."+funcName]; ok {
 					pkgName = "prelude"
 				}
+			}
+			funcQName := pkgName + "." + funcName
+
+			// Normal function call
+			args := []string{}
+			var paramTypes []string
+			if params, ok := t.funcParams[funcQName]; ok {
+				paramTypes = params
+			}
+
+			for i, arg := range e.Arguments {
+				argStr := t.emitExprStr(arg)
+				if i < len(paramTypes) && (paramTypes[i] == "t_prelude_any" || paramTypes[i] == "t_any") {
+					argStr = t.packageAsAnyC(arg, argStr)
+				}
+				args = append(args, argStr)
+			}
+
+			if pkgName == "prelude" {
+				return fmt.Sprintf("f_prelude_%s(%s)", funcName, strings.Join(args, ", "))
 			}
 			return fmt.Sprintf("f_%s_%s(%s)", pkgName, funcName, strings.Join(args, ", "))
 		}
@@ -1360,8 +1411,14 @@ func (t *Transpiler) emitPrint(newline bool, args []ast.Expression) string {
 		if strLit, ok := arg.(*ast.StringLiteral); ok {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
-			formatStrs = append(formatStrs, "%llu")
-			argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)(%s)", t.emitExprStr(arg)))
+			argTyp := t.typeOf(arg)
+			if argTyp == "t_prelude_slice_byte" || argTyp == "t_slice_byte" {
+				formatStrs = append(formatStrs, "%s")
+				argStrs = append(argStrs, fmt.Sprintf("(char*)((%s).Base)", t.emitExprStr(arg)))
+			} else {
+				formatStrs = append(formatStrs, "%llu")
+				argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)(%s)", t.emitExprStr(arg)))
+			}
 		}
 	}
 
@@ -1374,4 +1431,19 @@ func (t *Transpiler) emitPrint(newline bool, args []ast.Expression) string {
 		return fmt.Sprintf("printf(\"%s\", %s)", format, strings.Join(argStrs, ", "))
 	}
 	return fmt.Sprintf("printf(\"%s\")", format)
+}
+
+func (t *Transpiler) packageAsAnyC(arg ast.Expression, argStr string) string {
+	argTyp := t.typeOf(arg)
+	var typeChar string
+	if argTyp == "byte" || argTyp == "word" {
+		typeChar = argTyp
+	} else if strings.HasPrefix(argTyp, "t_prelude_slice_") {
+		typeChar = "slice[" + strings.TrimPrefix(argTyp, "t_prelude_slice_") + "]"
+	} else if strings.HasPrefix(argTyp, "t_slice_") {
+		typeChar = "slice[" + strings.TrimPrefix(argTyp, "t_slice_") + "]"
+	} else {
+		typeChar = argTyp
+	}
+	return fmt.Sprintf("({ __auto_type tmp = (%s); ((t_prelude_any){ (word)(&tmp), (word)(\"%s\") }); })", argStr, typeChar)
 }

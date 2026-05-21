@@ -1,0 +1,7 @@
+package main
+
+func main() {
+    printany( byte(88) )
+    printany( word(888) )
+    printany( "hello" )
+}

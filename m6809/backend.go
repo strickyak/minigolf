@@ -350,17 +350,27 @@ func (b *Backend) Generate(program *ir.Program) string {
 		for _, g := range program.Globals {
 			b.dataBuf.WriteString(fmt.Sprintf("\texport v_%s\n", g.Name))
 			b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
-			size := b.getTypeSize(g.Typ.Name)
-			for j := 0; j < size; j++ {
-				b.dataBuf.WriteString("\tfcb 0\n")
+			if g.IsInit {
+				for i := 0; i < len(g.InitString); i++ {
+					b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d\n", g.InitString[i]))
+				}
+			} else {
+				size := b.getTypeSize(g.Typ.Name)
+				for j := 0; j < size; j++ {
+					b.dataBuf.WriteString("\tfcb 0\n")
+				}
 			}
 		}
 	} else if b.globalsAtY {
 		offset := 0
 		for _, g := range program.Globals {
 			b.globalOffsets[g.Name] = offset
-			size := b.getTypeSize(g.Typ.Name)
-			offset += size
+			if g.IsInit {
+				offset += len(g.InitString)
+			} else {
+				size := b.getTypeSize(g.Typ.Name)
+				offset += size
+			}
 		}
 	}
 
@@ -1415,6 +1425,8 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		} else {
 			if arg.Type().Equals(ir.TypeInt) {
 				formatStrs = append(formatStrs, "%d")
+			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+				formatStrs = append(formatStrs, "%s")
 			} else {
 				formatStrs = append(formatStrs, "%u")
 			}

@@ -170,8 +170,10 @@ type BasicBlock struct {
 
 // Global represents a global variable in the flat namespace.
 type Global struct {
-	Name string
-	Typ  Type
+	Name       string
+	Typ        Type
+	InitString string
+	IsInit     bool
 }
 
 func (g *Global) Type() Type     { return g.Typ }

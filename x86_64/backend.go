@@ -181,8 +181,12 @@ func (b *Backend) Generate(program *ir.Program) string {
 		for _, g := range program.Globals {
 			b.dataBuf.WriteString(fmt.Sprintf("\t.globl v_%s\n", g.Name))
 			b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
-			size := b.getTypeSize(g.Typ.Name)
-			b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", size))
+			if g.IsInit {
+				b.dataBuf.WriteString(fmt.Sprintf("\t.ascii %q\n", g.InitString))
+			} else {
+				size := b.getTypeSize(g.Typ.Name)
+				b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", size))
+			}
 		}
 	}
 
@@ -718,6 +722,8 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		} else {
 			if arg.Type().Equals(ir.TypeInt) {
 				formatStrs = append(formatStrs, "%lld")
+			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+				formatStrs = append(formatStrs, "%s")
 			} else {
 				formatStrs = append(formatStrs, "%llu")
 			}
@@ -740,7 +746,16 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	regs := []string{"rsi", "rdx", "rcx", "r8", "r9"}
 	for idx, arg := range dataArgs {
 		if idx < len(regs) {
-			b.loadVal(arg, regs[idx])
+			if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+				addr := b.getAddr(arg)
+				if addr != "" {
+					b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s]\n", regs[idx], addr))
+				} else {
+					b.loadVal(arg, regs[idx])
+				}
+			} else {
+				b.loadVal(arg, regs[idx])
+			}
 		}
 	}
 

@@ -189,6 +189,55 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 	return TypeWord
 }
 
+func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
+	tmpName := fmt.Sprintf(".anytmp_%d", b.nextValueID)
+	b.varTypes[tmpName] = val.Type()
+	b.writeVariable(tmpName, b.currentBlock, val)
+	tmpLocal := b.readVariable(tmpName, b.currentBlock)
+	addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: tmpLocal}, expr)
+
+	typName := val.Type().Name
+	var typeChar string
+	if typName == "byte" || typName == "word" {
+		typeChar = typName
+	} else if strings.HasPrefix(typName, "prelude.slice_") || strings.HasPrefix(typName, "slice_") {
+		typeChar = "slice[" + strings.TrimPrefix(strings.TrimPrefix(typName, "prelude.slice_"), "slice_") + "]"
+	} else {
+		typeChar = typName
+	}
+
+	gStr := b.addStringConstant(typeChar)
+	typeStrAddr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Global: gStr}, expr)
+
+	anyTyp := Type{Name: "prelude.any"}
+	if _, ok := b.Program.TypeDefs["prelude.any"]; !ok {
+		anyTyp = Type{Name: "any"}
+	}
+
+	structVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: anyTyp}}, expr)
+
+	addrWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "bitcast", Operand: addr}, expr)
+	typeStrWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "bitcast", Operand: typeStrAddr}, expr)
+
+	structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: anyTyp}, Struct: structVal, FieldIndex: 0, Val: addrWord}, expr)
+	structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: anyTyp}, Struct: structVal, FieldIndex: 1, Val: typeStrWord}, expr)
+
+	return structVal
+}
+
+func (b *Builder) coerceCallArgs(f *Function, args []Value, expr ast.Node) {
+	for i, argVal := range args {
+		if i < len(f.Parameters) {
+			paramTyp := f.Parameters[i].Typ
+			if paramTyp.Name == "prelude.any" || paramTyp.Name == "any" {
+				args[i] = b.packageAsAny(argVal, expr)
+			} else {
+				args[i] = b.coerceType(argVal, paramTyp)
+			}
+		}
+	}
+}
+
 func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate) []token.Token {
 	var argTokensList [][]token.Token
 	for _, argTyp := range argTyps {
@@ -1184,6 +1233,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					idx2 := b.buildExpr(e.Indices[1])
 					args = append(args, idx2)
 				}
+				b.coerceCallArgs(f, args, e)
 				val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 			}
@@ -1273,8 +1323,27 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 
 	case *ast.StringLiteral:
-		val := &StringLiteral{Value: e.Value}
-		return ExprResult{IsLValue: false, Value: val, Typ: TypeByte.PointerTo()}
+		g := b.addStringConstant(e.Value)
+
+		typ := Type{Name: "prelude.slice_byte"}
+		if _, ok := b.Program.TypeDefs["prelude.slice_byte"]; !ok {
+			typ = Type{Name: "slice_byte"}
+		}
+
+		var structVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
+
+		globalAddr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Global: g}, e)
+		globalWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "bitcast", Operand: globalAddr}, e)
+
+		structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 0, Val: globalWord}, e)
+
+		length := int64(len(e.Value))
+		lenVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(length)}, e)
+
+		structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 1, Val: lenVal}, e)
+		structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 2, Val: lenVal}, e)
+
+		return ExprResult{IsLValue: false, Value: structVal, Typ: typ}
 
 	case *ast.InfixExpression:
 		if e.Operator == "&&" {
@@ -1493,6 +1562,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					for _, arg := range e.Arguments {
 						args = append(args, b.buildExpr(arg))
 					}
+					b.coerceCallArgs(f, args, expr)
 					val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
 					return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 				}
@@ -1536,6 +1606,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				for _, arg := range e.Arguments {
 					args = append(args, b.buildExpr(arg))
 				}
+				b.coerceCallArgs(f, args, expr)
 				val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
 				return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 			}
@@ -1545,7 +1616,11 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" {
 				args := []Value{}
 				for _, arg := range e.Arguments {
-					args = append(args, b.buildExpr(arg))
+					if strLit, ok := arg.(*ast.StringLiteral); ok {
+						args = append(args, &StringLiteral{Value: strLit.Value})
+					} else {
+						args = append(args, b.buildExpr(arg))
+					}
 				}
 				val := b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: ident.Value, Args: args}, expr)
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeVoid}
@@ -1586,6 +1661,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				}
 				log.Panicf("Undefined function: %s", funcName)
 			}
+			b.coerceCallArgs(f, args, expr)
 			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
 			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 		} else {
@@ -1986,4 +2062,17 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 	}
 
 	return nil
+}
+
+func (b *Builder) addStringConstant(val string) *Global {
+	name := fmt.Sprintf("str_const_%d", len(b.Program.Globals))
+	valWithNull := val + "\x00"
+	g := &Global{
+		Name:       name,
+		Typ:        Type{Name: fmt.Sprintf("[%d]byte", len(valWithNull))},
+		InitString: valWithNull,
+		IsInit:     true,
+	}
+	b.Program.Globals = append(b.Program.Globals, g)
+	return g
 }

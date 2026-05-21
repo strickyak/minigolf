@@ -124,7 +124,15 @@ func (c *CBE) Generate(program *ir.Program) string {
 	// Globals
 	for _, g := range program.Globals {
 		gName := strings.ReplaceAll(g.Name, ".", "_")
-		c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(g.Typ.Name), gName))
+		if g.IsInit {
+			var byteStrs []string
+			for i := 0; i < len(g.InitString); i++ {
+				byteStrs = append(byteStrs, fmt.Sprintf("%d", g.InitString[i]))
+			}
+			c.buf.WriteString(fmt.Sprintf("%s v_%s = { .data = { %s } };\n", c.mapType(g.Typ.Name), gName, strings.Join(byteStrs, ", ")))
+		} else {
+			c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(g.Typ.Name), gName))
+		}
 	}
 	if len(program.Globals) > 0 {
 		c.buf.WriteString("\n")
@@ -429,6 +437,9 @@ func (c *CBE) emitPrint(newline bool, args []ir.Value) string {
 			if arg.Type().Equals(ir.TypeInt) {
 				formatStrs = append(formatStrs, "%lld")
 				argStrs = append(argStrs, fmt.Sprintf("(long long)%s", c.formatVal(arg)))
+			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+				formatStrs = append(formatStrs, "%s")
+				argStrs = append(argStrs, fmt.Sprintf("(char*)(%s.f0)", c.formatVal(arg)))
 			} else {
 				formatStrs = append(formatStrs, "%llu")
 				argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)%s", c.formatVal(arg)))
