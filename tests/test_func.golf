@@ -21,6 +21,15 @@ func eval(s string, w word) word {
 	return w
 }
 
+type cmd func(word) word
+
+func thrice(f cmd, w word, n word) word {
+	for i := range n {
+		w = f(w)
+	}
+	return w
+}
+
 func main() {
 	commands[0] = func0
 	commands[1] = func1
@@ -32,4 +41,5 @@ func main() {
 	println("3 is", eval("3", 0))
 	println("123 is", eval("123", 0))
 	println("12345 is", eval("12345", 0))
+	println("thrice 4 is", thrice(func4, 0, 3))
 }

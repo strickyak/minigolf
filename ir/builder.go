@@ -411,10 +411,10 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			item := &GlobalItem{QName: qname, ASTNode: s}
 			if len(s.TypeParameters) > 0 {
 				item.Kind = ItemGenericType
-			} else if s.IsAlias {
-				item.Kind = ItemAlias
 			} else if _, ok := s.BaseType.(*ast.StructType); ok {
 				item.Kind = ItemType
+			} else {
+				item.Kind = ItemAlias
 			}
 			b.globalItems[qname] = item
 			b.worklist = append(b.worklist, item)
