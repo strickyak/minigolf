@@ -29,18 +29,14 @@ func printany(x any) {
     if ch == 'b' {
         // byte
         println("b=", peek[byte](x.BaseAddr))
+    } else if ch == 'w' {
+        // word
+        println("w=", peek[word](x.BaseAddr))
+    } else if ch == 's' {
+        // string
+        println("s=", peek[string](x.BaseAddr))
     } else {
-        if ch == 'w' {
-            // word
-            println("w=", peek[word](x.BaseAddr))
-        } else {
-            if ch == 's' {
-                // string
-                println("s=", peek[string](x.BaseAddr))
-            } else {
-                println("?", ch, "?")
-            }
-        }
+        println("?", ch, "?")
     }
 }
 
