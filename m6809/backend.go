@@ -1022,6 +1022,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.AddressOfGlobal:
 		b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfGlobal(%s)\n", b.memAccess(offset), i.Global.Name))
+	case *ir.AddressOfFunc:
+		b.buf.WriteString(fmt.Sprintf("\tldd #f_%s\n", i.Func.Name))
+		b.storeResult(id)
 	case *ir.AddressOfLocal:
 		b.flushRegisters()
 		var localOffset int
@@ -1394,6 +1397,98 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tleay ,s\t; for emitCopyXY(%d)\n", retSize))
 			b.emitCopyYX(retSize)
 			b.buf.WriteString(fmt.Sprintf("\t\t\t; done emitCopyXY(%d)\n", retSize))
+		}
+
+		if pushedBytes > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tleas %d,s  ; unpushing bytes\n", pushedBytes))
+			b.popBytes(pushedBytes)
+		}
+
+		if retSize == 2 {
+			b.buf.WriteString("\ttfr x,d\n")
+		} else if retSize == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+
+		if !i.Typ.Equals(ir.TypeVoid) && retSize <= 2 {
+			b.storeResult(id)
+		}
+
+	case *ir.IndirectCall:
+		b.flushRegisters()
+		b.buf.WriteString("\t; --- Indirect Call\n")
+		var firstWordArg ir.Value
+		var firstByteArg ir.Value
+		var firstWordIdx = -1
+		var firstByteIdx = -1
+
+		for idx, arg := range i.Args {
+			sz := b.getTypeSize(arg.Type().Name)
+			if sz == 2 && firstWordArg == nil {
+				firstWordArg = arg
+				firstWordIdx = idx
+			} else if sz == 1 && firstByteArg == nil {
+				firstByteArg = arg
+				firstByteIdx = idx
+			}
+		}
+
+		var pushedBytes int
+		b.buf.WriteString("\t; --- Setup call arguments ---\n")
+		for idx := len(i.Args) - 1; idx >= 0; idx-- {
+			if idx == firstWordIdx || idx == firstByteIdx {
+				continue
+			}
+			argSize := b.getTypeSize(i.Args[idx].Type().Name)
+			aligned := align(argSize)
+			if argSize == 1 {
+				b.loadVal(i.Args[idx])
+				b.buf.WriteString("\tstb ,--s\n")
+				b.pushBytes(aligned)
+			} else if argSize == 2 {
+				b.loadVal(i.Args[idx])
+				b.buf.WriteString("\tstd ,--s\n")
+				b.pushBytes(aligned)
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
+				b.pushBytes(aligned)
+				addr := b.getAddrStr(i.Args[idx])
+				b.emitLoadAddr("y", addr)
+				b.buf.WriteString("\tleax ,s\n")
+				b.emitCopyYX(argSize)
+			}
+			pushedBytes += aligned
+		}
+
+		retSize := 0
+		if !i.Typ.Equals(ir.TypeVoid) {
+			retSize = b.getTypeSize(i.Typ.Name)
+		}
+		if retSize > 2 {
+			aligned := align(retSize)
+			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
+			b.pushBytes(aligned)
+			pushedBytes += aligned
+		}
+
+		b.loadVal(i.FuncPtr)
+		b.buf.WriteString("\ttfr d,y\n")
+
+		if firstWordArg != nil {
+			b.loadVal(firstWordArg)
+			b.buf.WriteString("\ttfr d,x\n")
+		}
+		if firstByteArg != nil {
+			b.loadVal(firstByteArg)
+		}
+
+		b.buf.WriteString("\tjsr ,y\t\t; INDIRECT CALL\n")
+
+		if retSize > 2 {
+			dest := b.getAddrStr(i)
+			b.emitLoadAddr("x", dest)
+			b.buf.WriteString(fmt.Sprintf("\tleay ,s\t; for emitCopyXY(%d)\n", retSize))
+			b.emitCopyYX(retSize)
 		}
 
 		if pushedBytes > 0 {

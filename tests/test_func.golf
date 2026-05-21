@@ -1,0 +1,35 @@
+package main
+
+var commands [6]func(word) word
+
+func func0(w word) word { return w + 0 }
+func func1(w word) word { return w + 1 }
+func func2(w word) word { return w + 2 }
+func func3(w word) word { return w + 3 }
+func func4(w word) word { return w + 4 }
+func func5(w word) word { return w + 5 }
+
+func eval(s string, w word) word {
+	println("# eval", s, "on", w)
+	for i := range s.Len {
+		c := s[i] - '0'
+		println("### step", i, "command", c)
+		f := commands[c]
+		w = f(w)
+	}
+	println("# eval", s, "returns", w)
+	return w
+}
+
+func main() {
+	commands[0] = func0
+	commands[1] = func1
+	commands[2] = func2
+	commands[3] = func3
+	commands[4] = func4
+	commands[5] = func5
+
+	println("3 is", eval("3", 0))
+	println("123 is", eval("123", 0))
+	println("12345 is", eval("12345", 0))
+}

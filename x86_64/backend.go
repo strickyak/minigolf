@@ -517,6 +517,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.AddressOfGlobal:
 		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + v_%s]\n", i.Global.Name))
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.AddressOfFunc:
+		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + f_%s]\n", i.Func.Name))
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.AddressOfLocal:
 		var localOffset int
 		if p, ok := i.Local.(*ir.Parameter); ok {
@@ -689,6 +692,48 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 		}
 		b.buf.WriteString(fmt.Sprintf("\tcall f_%s\n", i.Func.Name))
+		if i.Typ.Equals(ir.TypeByte) {
+			b.buf.WriteString("\tmovzx rax, al\n")
+		}
+		if !i.Typ.Equals(ir.TypeVoid) {
+			if retSize <= 16 {
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+				if retSize > 8 {
+					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + 8], rdx\n", offset))
+				}
+			}
+		}
+	case *ir.IndirectCall:
+		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+		regsIdx := 0
+
+		retSize := 0
+		if !i.Typ.Equals(ir.TypeVoid) {
+			retSize = b.getTypeSize(i.Typ.Name)
+			if retSize > 16 {
+				b.buf.WriteString(fmt.Sprintf("\tlea %s, [rbp - %d]\n", regs[regsIdx], offset))
+				regsIdx++
+			}
+		}
+
+		for _, arg := range i.Args {
+			size := b.getTypeSize(arg.Type().Name)
+			if regsIdx < len(regs) {
+				b.loadVal(arg, regs[regsIdx])
+				regsIdx++
+				addr := b.getAddr(arg)
+				for byteOffset := 8; byteOffset < size; byteOffset += 8 {
+					if regsIdx < len(regs) {
+						if addr != "" {
+							b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s + %d]\n", regs[regsIdx], addr, byteOffset))
+						}
+						regsIdx++
+					}
+				}
+			}
+		}
+		b.loadVal(i.FuncPtr, "r11")
+		b.buf.WriteString("\tcall r11\n")
 		if i.Typ.Equals(ir.TypeByte) {
 			b.buf.WriteString("\tmovzx rax, al\n")
 		}

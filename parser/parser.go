@@ -81,6 +81,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseArrayType)
 	p.registerPrefix(token.STRUCT, p.parseStructType)
+	p.registerPrefix(token.FUNC, p.parseFuncType)
 	p.registerPrefix(token.RANGE, p.parseRangeExpression)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
@@ -779,6 +780,67 @@ func (p *Parser) parsePointerType() ast.Expression {
 	node := &ast.PointerType{Token: p.curToken}
 	p.nextToken()
 	node.Elt = p.parseExpression(PREFIX)
+	return node
+}
+
+func (p *Parser) parseFuncTypeParameters() []*ast.Parameter {
+	var parameters []*ast.Parameter
+
+	if p.peekTokenIs(token.RPAREN) {
+		p.nextToken()
+		return parameters
+	}
+
+	p.nextToken()
+
+	// Parse first parameter (just type)
+	param := &ast.Parameter{}
+	param.Type = p.parseExpression(LOWEST)
+	parameters = append(parameters, param)
+
+	// Parse subsequent parameters
+	for p.peekTokenIs(token.COMMA) {
+		p.nextToken() // comma
+		p.nextToken() // next expression
+
+		param := &ast.Parameter{}
+		param.Type = p.parseExpression(LOWEST)
+		parameters = append(parameters, param)
+	}
+
+	if !p.expectPeek(token.RPAREN) {
+		return nil
+	}
+
+	return parameters
+}
+
+func (p *Parser) parseFuncType() ast.Expression {
+	node := &ast.FuncType{Token: p.curToken}
+
+	if !p.expectPeek(token.LPAREN) {
+		return nil
+	}
+
+	node.Parameters = p.parseFuncTypeParameters()
+
+	if p.peekTokenIs(token.LPAREN) {
+		p.nextToken() // '('
+		for !p.peekTokenIs(token.RPAREN) {
+			p.nextToken()
+			node.ReturnTypes = append(node.ReturnTypes, p.parseExpression(LOWEST))
+			if p.peekTokenIs(token.COMMA) {
+				p.nextToken()
+			}
+		}
+		if !p.expectPeek(token.RPAREN) {
+			return nil
+		}
+	} else if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) || p.peekTokenIs(token.FUNC) {
+		p.nextToken()
+		node.ReturnTypes = []ast.Expression{p.parseExpression(LOWEST)}
+	}
+
 	return node
 }
 

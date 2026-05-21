@@ -384,6 +384,16 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		}
 		fName := strings.ReplaceAll(i.Func.Name, ".", "_")
 		return fmt.Sprintf("f_%s(%s)", fName, strings.Join(args, ", "))
+	case *ir.IndirectCall:
+		var args []string
+		var argTypes []string
+		for _, arg := range i.Args {
+			args = append(args, c.formatVal(arg))
+			argTypes = append(argTypes, c.mapType(arg.Type().Name))
+		}
+		retType := c.mapType(i.Type().Name)
+		castType := fmt.Sprintf("%s (*)(%s)", retType, strings.Join(argTypes, ", "))
+		return fmt.Sprintf("((%s)(%s))(%s)", castType, c.formatVal(i.FuncPtr), strings.Join(args, ", "))
 	case *ir.BuiltinCall:
 		if i.Name == "print" || i.Name == "println" {
 			return c.emitPrint(i.Name == "println", i.Args)
@@ -412,6 +422,9 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		return fmt.Sprintf("(&v_%s)", gName)
 	case *ir.AddressOfLocal:
 		return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
+	case *ir.AddressOfFunc:
+		fName := strings.ReplaceAll(i.Func.Name, ".", "_")
+		return fmt.Sprintf("((word)(&f_%s))", fName)
 	case *ir.AddressOfField:
 		return fmt.Sprintf("(&(%s->f%d))", c.formatVal(i.Ptr), i.FieldIndex)
 	case *ir.AddressOfElement:

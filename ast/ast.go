@@ -275,6 +275,16 @@ func (e *CallExpression) expressionNode()        {}
 func (e *CallExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *CallExpression) GetToken() *token.Token { return &e.Token }
 
+type FuncType struct {
+	Token       token.Token // The 'func' token
+	Parameters  []*Parameter
+	ReturnTypes []Expression
+}
+
+func (e *FuncType) expressionNode()        {}
+func (e *FuncType) TokenLiteral() string   { return e.Token.Literal }
+func (e *FuncType) GetToken() *token.Token { return &e.Token }
+
 type ArrayType struct {
 	Token  token.Token // The '[' token
 	Length Expression

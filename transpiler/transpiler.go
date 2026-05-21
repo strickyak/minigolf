@@ -585,11 +585,13 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 	case *ast.StructType:
 		var fields []string
 		for _, f := range e.Fields {
-			fields = append(fields, fmt.Sprintf("%s %s", t.mapType(f.Type), f.Name.Value))
+			fields = append(fields, t.mapType(f.Type)+" "+f.Name.Value)
 		}
 		return fmt.Sprintf("struct { %s; }", strings.Join(fields, "; "))
 	case *ast.PointerType:
 		return t.mapType(e.Elt) + "*"
+	case *ast.FuncType:
+		return "word"
 	}
 	return "word"
 }
@@ -1074,6 +1076,13 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 		if t.isLocal(e.Value) {
 			return fmt.Sprintf("v_%s", e.Value)
 		}
+		qname := t.currentPackage + "." + e.Value
+		if _, ok := t.funcTypes[qname]; ok {
+			return fmt.Sprintf("((word)(&f_%s_%s))", t.currentPackage, e.Value)
+		}
+		if _, ok := t.funcTypes["prelude."+e.Value]; ok {
+			return fmt.Sprintf("((word)(&f_prelude_%s))", e.Value)
+		}
 		return fmt.Sprintf("v_%s_%s", t.currentPackage, e.Value)
 	case *ast.IntegerLiteral:
 		return strconv.FormatInt(e.Value, 10)
@@ -1426,6 +1435,16 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			}
 			funcQName := pkgName + "." + funcName
 
+			if _, ok := t.funcTypes[funcQName]; !ok {
+				if _, ok2 := t.typeDefs[funcQName]; ok2 {
+					return fmt.Sprintf("((%s)(%s))", t.mapType(ident), t.emitExprStr(e.Arguments[0]))
+				}
+				if _, ok2 := t.typeDefs["prelude."+funcName]; ok2 {
+					return fmt.Sprintf("((%s)(%s))", t.mapType(&ast.Identifier{Value: "prelude." + funcName}), t.emitExprStr(e.Arguments[0]))
+				}
+				goto indirectCall
+			}
+
 			// Normal function call
 			args := []string{}
 			var paramTypes []string
@@ -1446,7 +1465,22 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			}
 			return fmt.Sprintf("f_%s_%s(%s)", pkgName, funcName, strings.Join(args, ", "))
 		}
-		return ""
+
+	indirectCall:
+		funcExprStr := t.emitExprStr(e.Function)
+		var indirectArgs []string
+		for _, arg := range e.Arguments {
+			indirectArgs = append(indirectArgs, t.emitExprStr(arg))
+		}
+		var argTypes []string
+		for range e.Arguments {
+			argTypes = append(argTypes, "word")
+		}
+		castStr := fmt.Sprintf("word (*)(%s)", strings.Join(argTypes, ", "))
+		if len(argTypes) == 0 {
+			castStr = "word (*)()"
+		}
+		return fmt.Sprintf("((%s)(%s))(%s)", castStr, funcExprStr, strings.Join(indirectArgs, ", "))
 	}
 	return ""
 }

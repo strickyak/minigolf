@@ -338,6 +338,13 @@ type AddressOfLocal struct {
 
 func (i *AddressOfLocal) Opcode() string { return "addrof_local" }
 
+type AddressOfFunc struct {
+	BaseInstruction
+	Func *Function
+}
+
+func (i *AddressOfFunc) Opcode() string { return "addrof_func" }
+
 type AddressOfField struct {
 	BaseInstruction
 	Ptr        Value
@@ -421,6 +428,14 @@ type Call struct {
 }
 
 func (i *Call) Opcode() string { return "call" }
+
+type IndirectCall struct {
+	BaseInstruction
+	FuncPtr Value
+	Args    []Value
+}
+
+func (i *IndirectCall) Opcode() string { return "indirect_call" }
 
 type BuiltinCall struct {
 	BaseInstruction

@@ -189,6 +189,8 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		}
 		name += "}"
 		return Type{Expr: expr, Name: name}
+	case *ast.FuncType:
+		return TypeWord
 	}
 	log.Panicf("astToIRType NO CASE: %#v", expr)
 	panic(0)
@@ -1164,6 +1166,14 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
 	case *ast.Identifier:
 		qname := b.currentPackage + "." + e.Value
+		if f, ok := b.funcs[qname]; ok {
+			val := b.addInstr(&AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+		}
+		if f, ok := b.funcs[e.Value]; ok {
+			val := b.addInstr(&AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+		}
 		if g, ok := b.globals[qname]; ok {
 			addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: g.Typ.PointerTo()}, Global: g}, e)
 			return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
@@ -1664,13 +1674,27 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Name: "prelude." + ident.Value}}, Op: "bitcast", Operand: arg}, expr)
 					return ExprResult{IsLValue: false, Value: val, Typ: Type{Name: "prelude." + ident.Value}}
 				}
-				log.Panicf("Undefined function: %s", funcName)
+				// It's not a typedef, treat as an indirect call from a variable holding a function!
+				funcVal := b.buildExpr(e.Function)
+				var args []Value
+				for _, arg := range e.Arguments {
+					args = append(args, b.buildExpr(arg))
+				}
+				val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: TypeWord}, FuncPtr: funcVal, Args: args}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 			}
 			b.coerceCallArgs(f, args, expr)
 			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
 			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
 		} else {
-			log.Panicf("Function is not an identifier: %v", e.Function)
+			// Treat as an indirect call!
+			funcVal := b.buildExpr(e.Function)
+			var args []Value
+			for _, arg := range e.Arguments {
+				args = append(args, b.buildExpr(arg))
+			}
+			val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: TypeWord}, FuncPtr: funcVal, Args: args}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 		}
 
 	case *ast.PrefixExpression:
