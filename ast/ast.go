@@ -18,7 +18,16 @@ type Statement interface {
 type Expression interface {
 	Node
 	expressionNode()
+	GetResolvedType() Expression
+	SetResolvedType(Expression)
 }
+
+type BaseExpression struct {
+	ResolvedType Expression
+}
+
+func (b *BaseExpression) GetResolvedType() Expression { return b.ResolvedType }
+func (b *BaseExpression) SetResolvedType(t Expression) { b.ResolvedType = t }
 
 // Program is the root node of an AST for a single file.
 type Program struct {
@@ -234,6 +243,7 @@ func (s *ExpressionStatement) GetToken() *token.Token { return &s.Token }
 // ============================================================================
 
 type Identifier struct {
+	BaseExpression
 	Token token.Token // The token.IDENT token
 	Value string
 }
@@ -243,6 +253,7 @@ func (e *Identifier) TokenLiteral() string   { return e.Token.Literal }
 func (e *Identifier) GetToken() *token.Token { return &e.Token }
 
 type IntegerLiteral struct {
+	BaseExpression
 	Token token.Token // The token.INT token
 	Value int64       // Parsed as int64, semantic analysis will enforce byte/word limits
 }
@@ -252,6 +263,7 @@ func (e *IntegerLiteral) TokenLiteral() string   { return e.Token.Literal }
 func (e *IntegerLiteral) GetToken() *token.Token { return &e.Token }
 
 type StringLiteral struct {
+	BaseExpression
 	Token token.Token
 	Value string
 }
@@ -261,6 +273,7 @@ func (e *StringLiteral) TokenLiteral() string   { return e.Token.Literal }
 func (e *StringLiteral) GetToken() *token.Token { return &e.Token }
 
 type PrefixExpression struct {
+	BaseExpression
 	Token    token.Token // The prefix token, e.g., '!' or '-'
 	Operator string
 	Right    Expression
@@ -271,6 +284,7 @@ func (e *PrefixExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *PrefixExpression) GetToken() *token.Token { return &e.Token }
 
 type InfixExpression struct {
+	BaseExpression
 	Token    token.Token // The operator token, e.g., '+', '<'
 	Left     Expression
 	Operator string
@@ -283,6 +297,7 @@ func (e *InfixExpression) GetToken() *token.Token { return &e.Token }
 
 // CallExpression handles both function calls and type casts (e.g. `byte(10)`)
 type CallExpression struct {
+	BaseExpression
 	Token     token.Token // The '(' token
 	Function  Expression  // Usually an *Identifier
 	Arguments []Expression
@@ -293,6 +308,7 @@ func (e *CallExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *CallExpression) GetToken() *token.Token { return &e.Token }
 
 type FuncType struct {
+	BaseExpression
 	Token       token.Token // The 'func' token
 	Parameters  []*Parameter
 	ReturnTypes []Expression
@@ -303,6 +319,7 @@ func (e *FuncType) TokenLiteral() string   { return e.Token.Literal }
 func (e *FuncType) GetToken() *token.Token { return &e.Token }
 
 type ArrayType struct {
+	BaseExpression
 	Token  token.Token // The '[' token
 	Length Expression
 	Elt    Expression
@@ -313,6 +330,7 @@ func (e *ArrayType) TokenLiteral() string   { return e.Token.Literal }
 func (e *ArrayType) GetToken() *token.Token { return &e.Token }
 
 type StructType struct {
+	BaseExpression
 	Token  token.Token // The 'struct' token
 	Fields []*Field
 }
@@ -327,6 +345,7 @@ func (s *StructType) TokenLiteral() string   { return s.Token.Literal }
 func (s *StructType) GetToken() *token.Token { return &s.Token }
 
 type SelectorExpression struct {
+	BaseExpression
 	Token token.Token // The '.' token
 	Left  Expression
 	Right *Identifier
@@ -337,6 +356,7 @@ func (s *SelectorExpression) TokenLiteral() string   { return s.Token.Literal }
 func (s *SelectorExpression) GetToken() *token.Token { return &s.Token }
 
 type RangeExpression struct {
+	BaseExpression
 	Token token.Token // The 'range' token
 	Value Expression
 }
@@ -346,6 +366,7 @@ func (e *RangeExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *RangeExpression) GetToken() *token.Token { return &e.Token }
 
 type IndexExpression struct {
+	BaseExpression
 	Token   token.Token // The '[' token
 	Left    Expression
 	Indices []Expression
@@ -357,6 +378,7 @@ func (e *IndexExpression) TokenLiteral() string   { return e.Token.Literal }
 func (e *IndexExpression) GetToken() *token.Token { return &e.Token }
 
 type PointerType struct {
+	BaseExpression
 	Token token.Token // The '*' token
 	Elt   Expression
 }
