@@ -1,0 +1,32 @@
+package main
+
+const BasicSource = `
+10 REM count to 100
+20 LET i = 1 
+30 PRINT i
+40 LET i = i + 1
+50 IF i <> 101 THEN 30
+60 GOTO 70
+70 END
+`
+
+// Integer Variables A to Z are variable number 0 to 25.
+var IntVars [26]int
+// String Variables A$ to Z$ are variable number 26 to 51.
+var StrVars [26]string
+
+type Line struct {
+    Num uint // Line number
+    Topic uint // variable number assigned, GOTO target, IF/THEN target
+    Expr Expression // expr printed, assigned, or predicate of IF
+    Remark string   // contents of REM statement
+}
+
+var Lines slice[Line]
+
+func main() {
+    NewProgram()                  // clear all lines and vars
+    CompileProgram(BasicSource)   // Create the Lines structure
+    ListProgram()                 // list it, from the Lines structures
+    RunProgram()
+}
