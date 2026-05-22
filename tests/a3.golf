@@ -8,8 +8,6 @@ var pointers [N]*byte
 
 func main() {
 	println("start")
-	pre2.init()
-	println("inited")
 
 	for k := range N {
 		println("round", k)

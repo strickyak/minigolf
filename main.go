@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
@@ -63,6 +64,9 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Pr
 	var program *ast.Program
 	imported := make(map[string]bool)
 
+	var initFuncsByModule = make(map[string][]string)
+	var initCounter int
+
 	// Build new path with initial directory on the front.
 	mainDirname := filepath.Dir(mainSourceFile)
 	path := []string{mainDirname}
@@ -107,6 +111,14 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Pr
 					imported[s] = false
 				}
 			}
+			if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
+				if funcStmt.Name.Value == "init" {
+					initName := fmt.Sprintf("init_%d", initCounter)
+					initCounter++
+					funcStmt.Name.Value = initName
+					initFuncsByModule[overridePackage] = append(initFuncsByModule[overridePackage], initName)
+				}
+			}
 		}
 
 		if program == nil {
@@ -132,6 +144,54 @@ MORE:
 			goto MORE
 		}
 	}
+
+	var moduleNames []string
+	for mod := range initFuncsByModule {
+		moduleNames = append(moduleNames, mod)
+	}
+	sort.Strings(moduleNames)
+
+	var allInitCalls []ast.Statement
+	for _, mod := range moduleNames {
+		for _, initName := range initFuncsByModule[mod] {
+			var funcExpr ast.Expression
+			if mod == "main" {
+				funcExpr = &ast.Identifier{Value: initName}
+			} else {
+				funcExpr = &ast.SelectorExpression{
+					Left:  &ast.Identifier{Value: mod},
+					Right: &ast.Identifier{Value: initName},
+				}
+			}
+			callExpr := &ast.CallExpression{
+				Function: funcExpr,
+			}
+			exprStmt := &ast.ExpressionStatement{
+				Expression: callExpr,
+			}
+			allInitCalls = append(allInitCalls, exprStmt)
+		}
+	}
+
+	if len(allInitCalls) > 0 {
+		var mainFunc *ast.FuncStatement
+		var mainPackage string
+		for _, stmt := range program.Statements {
+			if pkgStmt, ok := stmt.(*ast.PackageStatement); ok {
+				mainPackage = pkgStmt.Name.Value
+			}
+			if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
+				if mainPackage == "main" && funcStmt.Name.Value == "main" {
+					mainFunc = funcStmt
+					break
+				}
+			}
+		}
+		if mainFunc != nil && mainFunc.Body != nil {
+			mainFunc.Body.Statements = append(allInitCalls, mainFunc.Body.Statements...)
+		}
+	}
+
 	return program
 }
 

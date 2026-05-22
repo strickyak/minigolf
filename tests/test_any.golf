@@ -3,11 +3,10 @@ package main
 import "pre2"
 
 func main() {
-	pre2.init()
-
 	printany(byte(88))
 	printany(word(888))
 	printany("hello")
+
 	s := "one two three"
 	pre2.printany2(s[0])
 	pre2.printany2(s[1])

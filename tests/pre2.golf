@@ -173,7 +173,7 @@ func init() {
 }
 
 func main() {
-	init()
+	// init()
 	s := "one two three"
 	printany2(s[0:3])
 	printany2(s[4:7])
