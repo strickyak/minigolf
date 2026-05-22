@@ -218,6 +218,9 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 		}
 		return "word"
 	case *ast.InfixExpression:
+		if e.Operator == "==" || e.Operator == "!=" || e.Operator == "<" || e.Operator == "<=" || e.Operator == ">" || e.Operator == ">=" {
+			return "byte"
+		}
 		return t.typeOf(e.Left)
 	case *ast.PointerType:
 		return t.mapType(e.Elt) + "*"
@@ -248,6 +251,114 @@ func (t *Transpiler) Transpile(program *ast.Program) string {
 	t.arrayTypes = make(map[string]bool)
 	t.irBuilder = ir.NewBuilder()
 	t.irBuilder.Build(program)
+
+	// Pass 0: Collect generic templates and aliases
+	t.setCurrentPackage("main")
+	for _, stmt := range program.Statements {
+		switch s := stmt.(type) {
+		case *ast.PackageStatement:
+			t.setCurrentPackage(s.Name.Value)
+		case *ast.TypeStatement:
+			if len(s.TypeParameters) > 0 {
+				qname := t.currentPackage + "." + s.Name.Value
+				var typeParams []string
+				for _, tp := range s.TypeParameters {
+					typeParams = append(typeParams, tp.Value)
+				}
+				t.genericTemplates[qname] = &GenericTemplate{
+					TypeParams: typeParams,
+					Tokens:     s.Tokens,
+				}
+			}
+			if s.IsAlias {
+				t.typeAliases[t.currentPackage+"."+s.Name.Value] = s.BaseType
+			}
+		case *ast.FuncStatement:
+			if len(s.TypeParameters) > 0 {
+				qname := t.currentPackage + "." + s.Name.Value
+				if s.Receiver != nil {
+					var rawBase string
+					var findRawBase func(expr ast.Expression)
+					findRawBase = func(expr ast.Expression) {
+						switch e := expr.(type) {
+						case *ast.PointerType:
+							findRawBase(e.Elt)
+						case *ast.IndexExpression:
+							if ident, ok := e.Left.(*ast.Identifier); ok {
+								rawBase = ident.Value
+							}
+						case *ast.Identifier:
+							rawBase = e.Value
+						}
+					}
+					findRawBase(s.Receiver.Type)
+					qname = t.currentPackage + "." + rawBase + "_" + s.Name.Value
+				}
+				var typeParams []string
+				for _, tp := range s.TypeParameters {
+					typeParams = append(typeParams, tp.Value)
+				}
+				t.genericTemplates[qname] = &GenericTemplate{
+					TypeParams: typeParams,
+					Tokens:     s.Tokens,
+				}
+			}
+		}
+	}
+
+	// Pass 0: Collect generic templates and aliases
+	t.setCurrentPackage("main")
+	for _, stmt := range program.Statements {
+		switch s := stmt.(type) {
+		case *ast.PackageStatement:
+			t.setCurrentPackage(s.Name.Value)
+		case *ast.TypeStatement:
+			if len(s.TypeParameters) > 0 {
+				qname := t.currentPackage + "." + s.Name.Value
+				var typeParams []string
+				for _, tp := range s.TypeParameters {
+					typeParams = append(typeParams, tp.Value)
+				}
+				t.genericTemplates[qname] = &GenericTemplate{
+					TypeParams: typeParams,
+					Tokens:     s.Tokens,
+				}
+			}
+			if s.IsAlias {
+				t.typeAliases[t.currentPackage+"."+s.Name.Value] = s.BaseType
+			}
+		case *ast.FuncStatement:
+			if len(s.TypeParameters) > 0 {
+				qname := t.currentPackage + "." + s.Name.Value
+				if s.Receiver != nil {
+					var rawBase string
+					var findRawBase func(expr ast.Expression)
+					findRawBase = func(expr ast.Expression) {
+						switch e := expr.(type) {
+						case *ast.PointerType:
+							findRawBase(e.Elt)
+						case *ast.IndexExpression:
+							if ident, ok := e.Left.(*ast.Identifier); ok {
+								rawBase = ident.Value
+							}
+						case *ast.Identifier:
+							rawBase = e.Value
+						}
+					}
+					findRawBase(s.Receiver.Type)
+					qname = t.currentPackage + "." + rawBase + "_" + s.Name.Value
+				}
+				var typeParams []string
+				for _, tp := range s.TypeParameters {
+					typeParams = append(typeParams, tp.Value)
+				}
+				t.genericTemplates[qname] = &GenericTemplate{
+					TypeParams: typeParams,
+					Tokens:     s.Tokens,
+				}
+			}
+		}
+	}
 
 	// First pass: find package name
 	t.setCurrentPackage("main") // default
@@ -1211,6 +1322,28 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 	case *ast.PointerType:
 		return fmt.Sprintf("(*%s)", t.emitExprStr(e.Elt))
 	case *ast.InfixExpression:
+		if e.Operator == "<<" || e.Operator == ">>" {
+			return fmt.Sprintf("((%s) %s (%s))", t.emitExprStr(e.Left), e.Operator, t.emitExprStr(e.Right))
+		}
+		leftType := t.typeOf(e.Left)
+		if leftType == "t_prelude_slice_byte" || leftType == "t_prelude_string" || leftType == "t_slice_byte" || leftType == "t_string" {
+			leftStr := t.emitExprStr(e.Left)
+			rightStr := t.emitExprStr(e.Right)
+			if e.Operator == "==" {
+				return fmt.Sprintf("f_prelude_streq(%s, %s)", leftStr, rightStr)
+			} else if e.Operator == "!=" {
+				return fmt.Sprintf("(!f_prelude_streq(%s, %s))", leftStr, rightStr)
+			} else {
+				return fmt.Sprintf("(f_prelude_strcmp(%s, %s) %s 0)", leftStr, rightStr, e.Operator)
+			}
+		}
+		if strings.HasPrefix(leftType, "t_") && !strings.HasSuffix(leftType, "*") && !strings.HasPrefix(leftType, "t_slice_") && !strings.HasPrefix(leftType, "t_prelude_slice_") {
+			if e.Operator == "==" {
+				return fmt.Sprintf("f_prelude_memeq((byte*)&(%s), (byte*)&(%s), sizeof(%s))", t.emitExprStr(e.Left), t.emitExprStr(e.Right), leftType)
+			} else if e.Operator == "!=" {
+				return fmt.Sprintf("(!f_prelude_memeq((byte*)&(%s), (byte*)&(%s), sizeof(%s)))", t.emitExprStr(e.Left), t.emitExprStr(e.Right), leftType)
+			}
+		}
 		return fmt.Sprintf("(%s %s %s)", t.emitExprStr(e.Left), e.Operator, t.emitExprStr(e.Right))
 	case *ast.IndexExpression:
 		baseType := t.typeOf(e.Left)

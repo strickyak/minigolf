@@ -19,6 +19,57 @@ func pokew(addr word, value word) { poke[word](addr, value) }
 
 /////////////////////////////////////////////
 
+func memcmp(a *byte, b *byte, n word) int {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va < vb {
+			return -1
+		}
+		if va > vb {
+			return 1
+		}
+	}
+	return 0
+}
+
+func memeq(a *byte, b *byte, n word) byte {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va != vb {
+			return 0
+		}
+	}
+	return 1
+}
+func strcmp(a string, b string) int {
+	n := a.Len
+	if b.Len < n {
+		n = b.Len
+	}
+	c := memcmp((*byte)(a.Base), (*byte)(b.Base), n)
+	if c != 0 {
+		return c
+	}
+	if a.Len < b.Len {
+		return -1
+	}
+	if a.Len > b.Len {
+		return 1
+	}
+	return 0
+}
+
+func streq(a string, b string) byte {
+	if a.Len != b.Len {
+		return 0
+	}
+	return memeq((*byte)(a.Base), (*byte)(b.Base), a.Len)
+}
+
+/////////////////////////////////////////////
+
 type any struct {
 	BaseAddr word
 	TypeStr  word

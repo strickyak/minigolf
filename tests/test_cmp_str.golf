@@ -1,0 +1,24 @@
+package main
+
+func main() {
+	println("one" < "two")
+	println("one" <= "two")
+	println("one" == "two")
+	println("one" != "two")
+	println("one" > "two")
+	println("one" >= "two")
+
+	println("two" < "three")
+	println("two" <= "three")
+	println("two" == "three")
+	println("two" != "three")
+	println("two" > "three")
+	println("two" >= "three")
+
+	println("four" < "fourty")
+	println("four" <= "fourty")
+	println("four" == "fourty")
+	println("four" != "fourty")
+	println("four" > "fourty")
+	println("four" >= "fourty")
+}

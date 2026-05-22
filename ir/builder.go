@@ -235,6 +235,18 @@ func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
 	return structVal
 }
 
+func (b *Builder) getAddress(val Value, expr ast.Node) Value {
+	if addrOp, ok := val.(*LoadPtr); ok {
+		return addrOp.Ptr
+	}
+	tmpName := fmt.Sprintf(".addrtmp_%d", b.nextValueID)
+	b.nextValueID++
+	b.varTypes[tmpName] = val.Type()
+	b.writeVariable(tmpName, b.currentBlock, val)
+	tmpLocal := b.readVariable(tmpName, b.currentBlock)
+	return b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: tmpLocal}, expr)
+}
+
 func (b *Builder) coerceCallArgs(f *Function, args []Value, expr ast.Node) {
 	for i, argVal := range args {
 		if i < len(f.Parameters) {
@@ -1506,22 +1518,72 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		case "/":
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "div", Left: left, Right: right}, expr)
 		case "==":
-			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: left, Right: right}, expr)
+			if typ.Name == "prelude.slice_byte" || typ.Name == "slice_byte" {
+				f := b.funcs["prelude.streq"]
+				args := []Value{left, right}
+				b.coerceCallArgs(f, args, expr)
+				val = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeByte}, Func: f, Args: args}, expr)
+			} else if typ.IsAStruct() || typ.IsAnArray() {
+				f := b.funcs["prelude.memeq"]
+				leftAddr := b.getAddress(left, expr)
+				rightAddr := b.getAddress(right, expr)
+				sizeof := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: typ}, expr)
+				leftBytePtr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Op: "bitcast", Operand: leftAddr}, expr)
+				rightBytePtr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Op: "bitcast", Operand: rightAddr}, expr)
+				args := []Value{leftBytePtr, rightBytePtr, sizeof}
+				b.coerceCallArgs(f, args, expr)
+				val = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeByte}, Func: f, Args: args}, expr)
+			} else {
+				val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: left, Right: right}, expr)
+			}
 			typ = TypeByte
 		case "!=":
-			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: left, Right: right}, expr)
+			if typ.Name == "prelude.slice_byte" || typ.Name == "slice_byte" {
+				f := b.funcs["prelude.streq"]
+				args := []Value{left, right}
+				b.coerceCallArgs(f, args, expr)
+				callVal := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeByte}, Func: f, Args: args}, expr)
+				zero := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, expr)
+				val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: callVal, Right: zero}, expr)
+			} else if typ.IsAStruct() || typ.IsAnArray() {
+				f := b.funcs["prelude.memeq"]
+				leftAddr := b.getAddress(left, expr)
+				rightAddr := b.getAddress(right, expr)
+				sizeof := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: typ}, expr)
+				leftBytePtr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Op: "bitcast", Operand: leftAddr}, expr)
+				rightBytePtr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Op: "bitcast", Operand: rightAddr}, expr)
+				args := []Value{leftBytePtr, rightBytePtr, sizeof}
+				b.coerceCallArgs(f, args, expr)
+				callVal := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeByte}, Func: f, Args: args}, expr)
+				zero := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, expr)
+				val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: callVal, Right: zero}, expr)
+			} else {
+				val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: left, Right: right}, expr)
+			}
 			typ = TypeByte
-		case "<":
-			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lt", Left: left, Right: right}, expr)
-			typ = TypeByte
-		case "<=":
-			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lte", Left: left, Right: right}, expr)
-			typ = TypeByte
-		case ">":
-			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "gt", Left: left, Right: right}, expr)
-			typ = TypeByte
-		case ">=":
-			val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "gte", Left: left, Right: right}, expr)
+		case "<", "<=", ">", ">=":
+			if typ.Name == "prelude.slice_byte" || typ.Name == "slice_byte" {
+				f := b.funcs["prelude.strcmp"]
+				args := []Value{left, right}
+				b.coerceCallArgs(f, args, expr)
+				callVal := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f, Args: args}, expr) // Note: strcmp returns int (word in minigolf usually)
+				zero := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, expr)
+				one := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1}, expr)
+				negOne := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "sub", Left: zero, Right: one}, expr)
+
+				if e.Operator == "<" {
+					val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: callVal, Right: negOne}, expr)
+				} else if e.Operator == "<=" {
+					val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: callVal, Right: one}, expr)
+				} else if e.Operator == ">" {
+					val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: callVal, Right: one}, expr)
+				} else if e.Operator == ">=" {
+					val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: callVal, Right: negOne}, expr)
+				}
+			} else {
+				opMap := map[string]string{"<": "lt", "<=": "lte", ">": "gt", ">=": "gte"}
+				val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: opMap[e.Operator], Left: left, Right: right}, expr)
+			}
 			typ = TypeByte
 		default:
 			log.Panicf("NO CASE operator %q expr (%T)%v", e.Operator, e, e)
@@ -1774,6 +1836,18 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			val := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: right, Right: falseVal}, expr)
 			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
 		}
+		if e.Operator == "-" {
+			right := b.buildExpr(e.Right)
+			typ := right.Type()
+			var zero Value
+			if typ.Equals(TypeByte) {
+				zero = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, expr)
+			} else {
+				zero = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, expr)
+			}
+			val := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "sub", Left: zero, Right: right}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: typ}
+		}
 		if e.Operator == "&" {
 			if idxExpr, ok := e.Right.(*ast.IndexExpression); ok {
 				base := b.eval(idxExpr.Left)
@@ -1846,7 +1920,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 	default:
 		log.Panicf("NO CASE: Builder.eval: expr (%T)%v", expr, expr)
 	}
-	panic("Not Reached")
+	panic(fmt.Sprintf("Not Reached in eval: %T %v", expr, expr))
 }
 
 func (b *Builder) getTypeString(qname string) Type {
