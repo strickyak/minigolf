@@ -1,33 +1,11 @@
 package pre2
 
-import "arithmetic"
-
 func mul(a word, b word) word {
-	return arithmetic.mul_word(a, b)
+	return mul_word(a, b)
 }
 
 func div(dividend word, divisor word) word {
-	return arithmetic.div_word(dividend, divisor)
-}
-
-// strdup uses the arg's Len and allocates a copy of the string, with NUL-termination past its Len
-func strdup(a string) string {
-	n := a.Len
-	p := word(malloc(n + 1))
-	for i := range n {
-		pokeb(p+i, a[i])
-	}
-	pokeb(p+n, 0) // NUL-terminate.
-	var z string
-	z.Base = p
-	z.Len = n
-	z.Cap = n + 1
-	return z
-}
-
-func strfree(a string) {
-	p := (*byte)(a.Base)
-	free(p)
+	return div_word(dividend, divisor)
 }
 
 func printany2(x any) {
@@ -51,129 +29,7 @@ func printany2(x any) {
 
 ////////////////////////////////////////////////////
 
-type MallocHeader struct {
-	next *MallocHeader
-	size word
-}
-
-const HEAP_SIZE = 1 * 1024 * sizeof[word]() // 2K on M6809
-
-var Heap [HEAP_SIZE]byte
-
-var base MallocHeader
-var freep *MallocHeader
-
-func malloc_init(heap_start *byte, heap_size word) {
-	var p *MallocHeader = (*MallocHeader)(word(heap_start))
-
-	// Calculate how many MallocHeader-sized units fit in the heap
-	p.size = div(heap_size, sizeof[MallocHeader]())
-	p.next = &base
-
-	base.next = p
-	base.size = 0
-	freep = &base
-}
-
-const TOO_BIG = 300 // Assume an error, if malloc more than this big.
-
-func malloc(nbytes word) *byte {
-	var p *MallocHeader
-	var prevp *MallocHeader
-	var nunits word
-
-	if nbytes > TOO_BIG {
-		panic(nbytes)
-	}
-
-	// Calculate how many MallocHeader units we need (including the 1 unit for metadata)
-	nunits = div((nbytes+sizeof[MallocHeader]()-1), sizeof[MallocHeader]()) + 1
-
-	prevp = freep
-	if word(prevp) == 0 {
-		panic(4001)
-		return (*byte)(0) // Heap wasn't initialized!
-	}
-
-	// Traverse the circularly linked free list
-	p = prevp.next
-	for {
-		if p.size >= nunits { // First-fit strategy
-			if p.size == nunits {
-				// Exactly the right size; splice it out of the free list
-				prevp.next = p.next
-			} else {
-				// Block is bigger than needed; allocate from the tail end
-				p.size = p.size - nunits
-				p = (*MallocHeader)(word(p) + mul(p.size, sizeof[MallocHeader]()))
-				p.size = nunits
-			}
-			freep = prevp
-			// Return pointer to user space (skipping past the MallocHeader)
-			return (*byte)(word(p) + sizeof[MallocHeader]())
-		}
-		if word(p) == word(freep) {
-			panic(4002)
-			return (*byte)(0) // Wrapped around the list: Out of Memory!
-		}
-		prevp = p
-		p = p.next
-	}
-	panic(4003)
-	return (*byte)(0)
-}
-
-func free(ap *byte) {
-	var bp *MallocHeader
-	var p *MallocHeader
-
-	if word(ap) == 0 {
-		return
-	}
-
-	// Move pointer backward to find the actual header
-	bp = (*MallocHeader)(word(ap) - sizeof[MallocHeader]())
-
-	// Find the right chronological spot in the free list to insert it
-	var done byte = 0
-	p = freep
-	for done == 0 {
-		if word(bp) > word(p) && word(bp) < word(p.next) {
-			done = 1
-		} else if word(p) >= word(p.next) && (word(bp) > word(p) || word(bp) < word(p.next)) {
-			done = 1 // Insert at the extreme beginning or end of the list
-		}
-
-		if done == 0 {
-			p = p.next
-		}
-	}
-
-	// Coalesce (merge) with the next block if they are physically adjacent
-	if word(bp)+mul(bp.size, sizeof[MallocHeader]()) == word(p.next) {
-		bp.size = bp.size + p.next.size
-		bp.next = p.next.next
-	} else {
-		bp.next = p.next
-	}
-
-	// Coalesce (merge) with the previous block if they are physically adjacent
-	if word(p)+mul(p.size, sizeof[MallocHeader]()) == word(bp) {
-		p.size = p.size + bp.size
-		p.next = bp.next
-	} else {
-		p.next = bp
-	}
-
-	freep = p
-}
-
-func init() {
-	malloc_init(&Heap[0], HEAP_SIZE)
-}
-
 func main() {
-	// init()
 	s := "one two three"
 	printany2(s[0:3])
 	printany2(s[4:7])

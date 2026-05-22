@@ -99,9 +99,9 @@ time - lwasm --format=raw -o'moto.rom' moto.asm
 
 #############
 
-( cd /home/strick/modoc/coco-shelf/gomar/ ; go build --tags=level1,coco1,trace gomar.go )
+( cd /home/strick/modoc/coco-shelf/gomar/ ; go build --tags=noos,coco0,trace gomar.go )
 
 /home/strick/modoc/coco-shelf/gomar/gomar  -write_rom_fail=1 -t=1 --entry=0x8000 -n=1 -raw_hyper_print=1   \
-         -rom_8000  /home/strick/antig/_tmp/moto.rom \
-         -internal_rom_listing   /home/strick/antig/_tmp/moto.rom.list
+         -big_rom  /home/strick/antig/_tmp/moto.rom \
+         -external_rom_listing   /home/strick/antig/_tmp/moto.rom.list
 

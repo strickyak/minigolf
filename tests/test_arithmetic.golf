@@ -1,14 +1,12 @@
 package main
 
-import "arithmetic"
-
 func main() {
-	println(0, "mul", 44, "is", arithmetic.mul_word(0, 44))
-	println(1, "mul", 44, "is", arithmetic.mul_word(1, 44))
-	println(2, "mul", 44, "is", arithmetic.mul_word(2, 44))
-	println(33, "mul", 44, "is", arithmetic.mul_word(33, 44))
-	println(99, "div", 7, "is", arithmetic.div_word(99, 7))
-	println(99, "mod", 5, "is", arithmetic.mod_word(99, 5))
+	println(0, "mul", 44, "is", mul_word(0, 44))
+	println(1, "mul", 44, "is", mul_word(1, 44))
+	println(2, "mul", 44, "is", mul_word(2, 44))
+	println(33, "mul", 44, "is", mul_word(33, 44))
+	println(99, "div", 7, "is", div_word(99, 7))
+	println(99, "mod", 5, "is", mod_word(99, 5))
 	/*
 	   println(0, "mul", 44, "is", 0*44)
 	   println(1, "mul", 44, "is", 1*44)

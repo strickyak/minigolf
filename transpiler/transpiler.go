@@ -120,19 +120,29 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 			if ident.Value == "byte" || ident.Value == "word" {
 				return ident.Value
 			}
+			if ident.Value == "len" || ident.Value == "cap" {
+				return "word"
+			}
 			if ctype, ok := t.funcTypes[t.currentPackage+"."+ident.Value]; ok {
+				return ctype
+			}
+			if ctype, ok := t.funcTypes["prelude."+ident.Value]; ok {
 				return ctype
 			}
 			qname := t.currentPackage + "." + ident.Value
 			if _, ok := t.typeDefs[qname]; ok {
 				return t.mapType(ident)
 			}
+			return "word"
 		}
 		if ptrType, ok := e.Function.(*ast.PointerType); ok {
 			return t.mapType(ptrType)
 		}
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+				if ident.Value == "sizeof" {
+					return "word"
+				}
 				rawFuncName := t.currentPackage + "." + ident.Value
 
 				// Resolve correct rawFuncName first
@@ -165,8 +175,38 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 				if ctype, ok := t.funcTypes[funcName]; ok {
 					return ctype
 				}
+				return "word"
 			}
 		}
+		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+				funcName := sel.Right.Value
+				qname := pkgIdent.Value + "." + funcName
+				if ctype, ok := t.funcTypes[qname]; ok {
+					return ctype
+				}
+				qname2 := t.currentPackage + "." + funcName
+				if ctype, ok := t.funcTypes[qname2]; ok {
+					return ctype
+				}
+				if ctype, ok := t.funcTypes["prelude."+funcName]; ok {
+					return ctype
+				}
+				return "word"
+			} else {
+				// It's a method call. We need to resolve the method's return type.
+				baseType := t.typeOf(sel.Left)
+				baseType = strings.TrimPrefix(baseType, "t_")
+				baseType = strings.TrimSuffix(baseType, "*")
+				baseType = strings.Replace(baseType, "_", ".", 1)
+				methodQName := baseType + "." + sel.Right.Value
+				if ctype, ok := t.funcTypes[methodQName]; ok {
+					return ctype
+				}
+				return "word"
+			}
+		}
+		return "word"
 	case *ast.PrefixExpression:
 		if e.Operator == "&" {
 			res := t.typeOf(e.Right) + "*"

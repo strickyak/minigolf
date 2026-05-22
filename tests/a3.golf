@@ -1,7 +1,5 @@
 package main
 
-import "pre2"
-
 const N = 8
 
 var pointers [N]*byte
@@ -13,12 +11,12 @@ func main() {
 		println("round", k)
 
 		for i := range N {
-			pointers[i] := pre2.malloc(10 * i)
+			pointers[i] := malloc(10 * i)
 			// println(word(pointers[i]), "malloc", i)
 		}
 		for i := range N {
 			// println(word(pointers[i]), "free", i)
-			pre2.free(pointers[i])
+			free(pointers[i])
 		}
 	}
 
