@@ -1342,6 +1342,8 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				return fmt.Sprintf("f_prelude_memeq((byte*)&(%s), (byte*)&(%s), sizeof(%s))", t.emitExprStr(e.Left), t.emitExprStr(e.Right), leftType)
 			} else if e.Operator == "!=" {
 				return fmt.Sprintf("(!f_prelude_memeq((byte*)&(%s), (byte*)&(%s), sizeof(%s)))", t.emitExprStr(e.Left), t.emitExprStr(e.Right), leftType)
+			} else if e.Operator == "<" || e.Operator == "<=" || e.Operator == ">" || e.Operator == ">=" {
+				panic(fmt.Sprintf("Ordering operator %s not supported for struct or array", e.Operator))
 			}
 		}
 		return fmt.Sprintf("(%s %s %s)", t.emitExprStr(e.Left), e.Operator, t.emitExprStr(e.Right))

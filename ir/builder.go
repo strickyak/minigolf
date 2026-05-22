@@ -1580,6 +1580,8 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				} else if e.Operator == ">=" {
 					val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: callVal, Right: negOne}, expr)
 				}
+			} else if typ.IsAStruct() || typ.IsAnArray() {
+				panic(fmt.Sprintf("Ordering operator %s not supported for struct or array", e.Operator))
 			} else {
 				opMap := map[string]string{"<": "lt", "<=": "lte", ">": "gt", ">=": "gte"}
 				val = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: opMap[e.Operator], Left: left, Right: right}, expr)
