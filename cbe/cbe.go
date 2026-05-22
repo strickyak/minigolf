@@ -377,7 +377,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 				expectedTyp := i.Func.Parameters[idx].Typ.Name
 				argTyp := arg.Type().Name
 				if (ir.Type{Name: expectedTyp}).IsAPointer() && !(ir.Type{Name: argTyp}).IsAPointer() {
-					argStr = "(&" + argStr + ")"
+					argStr = fmt.Sprintf("(%s)(%s)", c.mapType(expectedTyp), argStr)
 				}
 			}
 			args = append(args, argStr)

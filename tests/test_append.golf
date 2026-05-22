@@ -1,0 +1,28 @@
+package main
+
+var a slice[byte]
+var b slice[word]
+var c slice[string]
+
+func main() {
+	for i := range 20 {
+		a.Append(i + i)
+	}
+
+	for i := range 20 {
+		b.Append(i + i)
+	}
+	for i := range 10 {
+		c.Append("hello")
+	}
+
+	for i, x := range a {
+		println(i, x)
+	}
+	for i, x := range b {
+		println(i, x)
+	}
+	for i, x := range c {
+		println(i, x)
+	}
+}
