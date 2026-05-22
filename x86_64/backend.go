@@ -784,13 +784,13 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 
 	format := strings.Join(formatStrs, " ")
 	if newline {
-		format += "\\n"
+		format += "\n"
 	}
 
 	if b.dataBuf.Len() == 0 {
 		b.dataBuf.WriteString(".data\n")
 	}
-	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"%s\"\n", fmtLabel, format))
+	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string %q\n", fmtLabel, format))
 
 	b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", fmtLabel))
 

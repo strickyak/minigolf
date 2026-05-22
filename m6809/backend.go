@@ -1547,16 +1547,16 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 
 	format := strings.Join(formatStrs, " ")
 	if newline {
-		format += "\\n"
+		format += "\n"
 	}
 
 	if b.picMode {
-		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"%s\"\n", fmtLabel, format))
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", fmtLabel, format))
 	} else {
 		if b.dataBuf.Len() == 0 {
 			//no-section// b.dataBuf.WriteString("\tsection data\n")
 		}
-		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"%s\"\n", fmtLabel, format))
+		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", fmtLabel, format))
 	}
 
 	for i := len(dataArgs) - 1; i >= 0; i-- {

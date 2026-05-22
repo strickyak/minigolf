@@ -1308,7 +1308,7 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 		// Make sure special characters are properly escaped if needed, but for now we assume they are.
 		// `len` is length of the string without quotes. Actually e.Value is unescaped, so len is just len(e.Value).
 		strLen := len(e.Value)
-		return fmt.Sprintf("(t_prelude_slice_byte){ (word)(\"%s\"), %d, %d }", e.Value, strLen, strLen)
+		return fmt.Sprintf("(t_prelude_slice_byte){ (word)(%q), %d, %d }", e.Value, strLen, strLen)
 	case *ast.PrefixExpression:
 		if e.Operator == "&" {
 			if idxExpr, ok := e.Right.(*ast.IndexExpression); ok {
@@ -1755,13 +1755,13 @@ func (t *Transpiler) emitPrint(newline bool, args []ast.Expression) string {
 
 	format := strings.Join(formatStrs, " ")
 	if newline {
-		format += "\\n"
+		format += "\n"
 	}
 
 	if len(argStrs) > 0 {
-		return fmt.Sprintf("printf(\"%s\", %s)", format, strings.Join(argStrs, ", "))
+		return fmt.Sprintf("printf(%q, %s)", format, strings.Join(argStrs, ", "))
 	}
-	return fmt.Sprintf("printf(\"%s\")", format)
+	return fmt.Sprintf("printf(%q)", format)
 }
 
 func (t *Transpiler) packageAsAnyC(arg ast.Expression, argStr string) string {

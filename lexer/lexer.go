@@ -160,6 +160,11 @@ func (l *Lexer) nextToken() token.Token {
 		tok.Literal = l.readString()
 		tok.Line = startLine
 		tok.Column = startCol
+	case '`':
+		tok.Type = token.STRING
+		tok.Literal = l.readRawString()
+		tok.Line = startLine
+		tok.Column = startCol
 	case '\'':
 		l.readChar() // consume opening '
 		var charVal byte
@@ -248,6 +253,24 @@ func (l *Lexer) readString() string {
 	return l.input[position:l.position]
 }
 
+func (l *Lexer) readRawString() string {
+	position := l.position + 1
+	for {
+		l.readChar()
+		if l.ch == 0 {
+			break
+		}
+		if l.ch == '\n' {
+			l.line++
+			l.column = 0
+		}
+		if l.ch == '`' {
+			break
+		}
+	}
+	return l.input[position:l.position]
+}
+
 func isLetter(ch byte) bool {
 	return 'a' <= ch && ch <= 'z' || 'A' <= ch && ch <= 'Z' || ch == '_'
 }
@@ -294,22 +317,24 @@ func Lex(input, filename string) []token.Token {
 	l := New(input, filename)
 	var tokens []token.Token
 	var prev token.Token
+	var prevEndLine int
 
 	for {
 		tok := l.nextToken()
 
 		// Automatic Semicolon Insertion (ASI)
 		if len(tokens) > 0 {
-			if tok.Line > prev.Line || tok.Type == token.EOF {
+			if tok.Line > prevEndLine || tok.Type == token.EOF {
 				if prev.Type == token.IDENT || prev.Type == token.INT || prev.Type == token.STRING ||
 					prev.Type == token.RETURN || prev.Type == token.RPAREN || prev.Type == token.RBRACE || prev.Type == token.RBRACKET {
-					tokens = append(tokens, token.Token{Type: token.SEMICOLON, Literal: ";", Line: prev.Line, Column: prev.Column + len(prev.Literal), Filename: l.filename})
+					tokens = append(tokens, token.Token{Type: token.SEMICOLON, Literal: ";", Line: prevEndLine, Column: prev.Column + len(prev.Literal), Filename: l.filename})
 				}
 			}
 		}
 
 		tokens = append(tokens, tok)
 		prev = tok
+		prevEndLine = l.line
 		if tok.Type == token.EOF {
 			break
 		}

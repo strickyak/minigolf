@@ -462,11 +462,11 @@ func (c *CBE) emitPrint(newline bool, args []ir.Value) string {
 
 	format := strings.Join(formatStrs, " ")
 	if newline {
-		format += "\\n"
+		format += "\n"
 	}
 
 	if len(argStrs) > 0 {
-		return fmt.Sprintf("printf(\"%s\", %s)", format, strings.Join(argStrs, ", "))
+		return fmt.Sprintf("printf(%q, %s)", format, strings.Join(argStrs, ", "))
 	}
-	return fmt.Sprintf("printf(\"%s\")", format)
+	return fmt.Sprintf("printf(%q)", format)
 }
