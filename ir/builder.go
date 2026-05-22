@@ -1057,9 +1057,16 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 
 		limitVal := b.buildExpr(s.RangeValue)
 		typ := limitVal.Type()
+		isSlice := strings.HasPrefix(typ.Name, "prelude.slice_") || strings.HasPrefix(typ.Name, "slice_")
+
+		if isSlice {
+			limitVal = b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: limitVal, FieldIndex: 2}, s) // Len
+		}
 
 		var zero Value
-		if typ.Equals(TypeByte) {
+		idxTyp := TypeWord
+		if !isSlice && typ.Equals(TypeByte) {
+			idxTyp = TypeByte
 			zero = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, s)
 		} else {
 			zero = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, s)
@@ -1067,7 +1074,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 
 		ident, ok := s.Key.(*ast.Identifier)
 		if ok && s.IsDecl {
-			b.varTypes[ident.Value] = typ
+			b.varTypes[ident.Value] = idxTyp
 		}
 		if ok {
 			b.writeVariable(ident.Value, b.currentBlock, zero)
@@ -1096,6 +1103,21 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(bodyBlk)
 
 		b.currentBlock = bodyBlk
+
+		if isSlice && s.Value != nil {
+			valIdent, valOk := s.Value.(*ast.Identifier)
+			if valOk {
+				idxExpr := &ast.IndexExpression{
+					Left:    s.RangeValue,
+					Indices: []ast.Expression{ident},
+				}
+				valRes := b.buildExpr(idxExpr)
+				if s.IsDecl {
+					b.varTypes[valIdent.Value] = valRes.Type()
+				}
+				b.writeVariable(valIdent.Value, b.currentBlock, valRes)
+			}
+		}
 		b.breakStack = append(b.breakStack, endBlk)
 		b.continueStack = append(b.continueStack, postBlk)
 		b.buildBlock(s.Body)
@@ -1113,12 +1135,12 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		if ok {
 			currentI := b.readVariable(ident.Value, postBlk)
 			var one Value
-			if typ.Equals(TypeByte) {
+			if idxTyp.Equals(TypeByte) {
 				one = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, s)
 			} else {
 				one = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1}, s)
 			}
-			nextI := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "add", Left: currentI, Right: one}, s)
+			nextI := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: idxTyp}, Op: "add", Left: currentI, Right: one}, s)
 			b.writeVariable(ident.Value, postBlk, nextI)
 		}
 		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk}, s)
@@ -1683,6 +1705,15 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				arg := b.buildExpr(e.Arguments[0])
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: arg}, expr)
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
+			}
+			if ident.Value == "len" || ident.Value == "cap" {
+				arg := b.buildExpr(e.Arguments[0])
+				fieldIdx := 2 // Len
+				if ident.Value == "cap" {
+					fieldIdx = 1 // Cap
+				}
+				val := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: arg, FieldIndex: fieldIdx}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 			}
 			if ident.Value == "word" {
 				arg := b.buildExpr(e.Arguments[0])

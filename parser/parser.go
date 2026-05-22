@@ -637,9 +637,14 @@ func (p *Parser) parseForStatement() ast.Statement {
 	if assignStmt, ok := firstStmt.(*ast.AssignStatement); ok {
 		if len(assignStmt.Values) == 1 {
 			if rangeExpr, ok := assignStmt.Values[0].(*ast.RangeExpression); ok {
+				var valExpr ast.Expression
+				if len(assignStmt.Names) > 1 {
+					valExpr = assignStmt.Names[1]
+				}
 				stmt := &ast.ForRangeStatement{
 					Token:      startToken,
 					Key:        assignStmt.Names[0],
+					Value:      valExpr,
 					IsDecl:     assignStmt.Token.Type == token.DECLARE,
 					RangeValue: rangeExpr.Value,
 				}

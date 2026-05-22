@@ -60,37 +60,37 @@ const (
 	RBRACKET = "]"
 
 	// Keywords
-	PACKAGE = "PACKAGE"
-	IMPORT  = "IMPORT"
-	CONST   = "CONST"
-	TYPE    = "TYPE"
-	STRUCT  = "STRUCT"
-	VAR     = "VAR"
-	FUNC    = "FUNC"
-	IF      = "IF"
-	ELSE    = "ELSE"
-	FOR     = "FOR"
-	RANGE   = "RANGE"
-	RETURN  = "RETURN"
-	BREAK   = "BREAK"
-	CONTINUE= "CONTINUE"
+	PACKAGE  = "PACKAGE"
+	IMPORT   = "IMPORT"
+	CONST    = "CONST"
+	TYPE     = "TYPE"
+	STRUCT   = "STRUCT"
+	VAR      = "VAR"
+	FUNC     = "FUNC"
+	IF       = "IF"
+	ELSE     = "ELSE"
+	FOR      = "FOR"
+	RANGE    = "RANGE"
+	RETURN   = "RETURN"
+	BREAK    = "BREAK"
+	CONTINUE = "CONTINUE"
 )
 
 var keywords = map[string]TokenType{
-	"package": PACKAGE,
-	"import":  IMPORT,
-	"const":   CONST,
-	"type":    TYPE,
-	"struct":  STRUCT,
-	"var":     VAR,
-	"func":    FUNC,
-	"if":      IF,
-	"else":    ELSE,
-	"for":     FOR,
-	"range":   RANGE,
-	"return":  RETURN,
-	"break":   BREAK,
-	"continue":CONTINUE,
+	"package":  PACKAGE,
+	"import":   IMPORT,
+	"const":    CONST,
+	"type":     TYPE,
+	"struct":   STRUCT,
+	"var":      VAR,
+	"func":     FUNC,
+	"if":       IF,
+	"else":     ELSE,
+	"for":      FOR,
+	"range":    RANGE,
+	"return":   RETURN,
+	"break":    BREAK,
+	"continue": CONTINUE,
 }
 
 func LookupIdent(ident string) TokenType {

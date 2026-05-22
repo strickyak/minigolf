@@ -966,7 +966,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			condStr = t.emitExprStr(s.Condition)
 		}
 		t.buf.WriteString(fmt.Sprintf("while (%s) {\n", condStr))
-		
+
 		t.loopCounter++
 		contLabel := fmt.Sprintf("__continue_%d", t.loopCounter)
 		t.continueTargets = append(t.continueTargets, contLabel)
@@ -975,7 +975,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			t.buf.WriteString("\t")
 			t.emitStatement(bStmt)
 		}
-		
+
 		t.continueTargets = t.continueTargets[:len(t.continueTargets)-1]
 		t.buf.WriteString(contLabel + ":;\n")
 
@@ -991,13 +991,22 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		t.pushScope()
 		limitVal := t.emitExprStr(s.RangeValue)
 		ctype := t.typeOf(s.RangeValue)
+		isSlice := strings.HasPrefix(ctype, "t_prelude_slice_") || strings.HasPrefix(ctype, "t_slice_") || ctype == "t_prelude_string" || ctype == "t_string"
+
+		if isSlice {
+			limitVal = fmt.Sprintf("(%s).Len", limitVal)
+		}
 
 		ident, ok := s.Key.(*ast.Identifier)
 		var loopVar string
 		if ok {
+			varDeclType := ctype
+			if isSlice {
+				varDeclType = "word"
+			}
 			if s.IsDecl {
-				t.addLocal(ident.Value, ctype)
-				t.buf.WriteString(fmt.Sprintf("%s v_%s = 0;\n", ctype, ident.Value))
+				t.addLocal(ident.Value, varDeclType)
+				t.buf.WriteString(fmt.Sprintf("%s v_%s = 0;\n", varDeclType, ident.Value))
 				loopVar = fmt.Sprintf("v_%s", ident.Value)
 			} else {
 				if t.isLocal(ident.Value) {
@@ -1008,18 +1017,40 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 					loopVar = fmt.Sprintf("v_%s_%s", t.currentPackage, ident.Value)
 				}
 			}
-			t.buf.WriteString(fmt.Sprintf("%s limit_val = %s;\n", ctype, limitVal))
+			t.buf.WriteString(fmt.Sprintf("%s limit_val = %s;\n", varDeclType, limitVal))
 			t.buf.WriteString(fmt.Sprintf("while (%s < limit_val) {\n", loopVar))
 
 			t.loopCounter++
 			contLabel := fmt.Sprintf("__continue_%d", t.loopCounter)
 			t.continueTargets = append(t.continueTargets, contLabel)
 
+			if isSlice && s.Value != nil {
+				valIdent, valOk := s.Value.(*ast.Identifier)
+				if valOk {
+					idxExpr := &ast.IndexExpression{
+						Left:    s.RangeValue,
+						Indices: []ast.Expression{ident},
+					}
+					valRes := t.emitExprStr(idxExpr)
+					valType := t.typeOf(idxExpr)
+					if s.IsDecl {
+						t.addLocal(valIdent.Value, valType)
+						t.buf.WriteString(fmt.Sprintf("\t%s v_%s = %s;\n", valType, valIdent.Value, valRes))
+					} else {
+						if t.isLocal(valIdent.Value) {
+							t.buf.WriteString(fmt.Sprintf("\tv_%s = %s;\n", valIdent.Value, valRes))
+						} else {
+							t.buf.WriteString(fmt.Sprintf("\tv_%s_%s = %s;\n", t.currentPackage, valIdent.Value, valRes))
+						}
+					}
+				}
+			}
+
 			for _, bStmt := range s.Body.Statements {
 				t.buf.WriteString("\t")
 				t.emitStatement(bStmt)
 			}
-			
+
 			t.continueTargets = t.continueTargets[:len(t.continueTargets)-1]
 			t.buf.WriteString(contLabel + ":;\n")
 
@@ -1459,6 +1490,14 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			if ident.Value == "byte" || ident.Value == "word" {
 				// C-style cast
 				return fmt.Sprintf("((%s)(%s))", ident.Value, t.emitExprStr(e.Arguments[0]))
+			}
+			if ident.Value == "len" || ident.Value == "cap" {
+				field := "Len"
+				if ident.Value == "cap" {
+					field = "Cap"
+				}
+				argStr := t.emitExprStr(e.Arguments[0])
+				return fmt.Sprintf("(%s).%s", argStr, field)
 			}
 
 			funcName := ident.Value

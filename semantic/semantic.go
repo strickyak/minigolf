@@ -54,6 +54,8 @@ func New() *Analyzer {
 	global.Define("println", "func")
 	global.Define("exit", "func")
 	global.Define("sizeof", "func")
+	global.Define("len", "func")
+	global.Define("cap", "func")
 	global.Define("byte", "type")
 	global.Define("word", "type")
 	global.Define("int", "type")
@@ -231,7 +233,38 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				a.analyzeBlock(s.Alternative)
 			}
 		case *ast.ForStatement:
-			a.analyzeExpression(s.Condition)
+			if s.Condition != nil {
+				a.analyzeExpression(s.Condition)
+			}
+			a.analyzeBlock(s.Body)
+		case *ast.For3Statement:
+			if s.Init != nil {
+				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Init}})
+			}
+			if s.Condition != nil {
+				a.analyzeExpression(s.Condition)
+			}
+			if s.Increment != nil {
+				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Increment}})
+			}
+			a.analyzeBlock(s.Body)
+		case *ast.ForRangeStatement:
+			if s.IsDecl {
+				if ident, ok := s.Key.(*ast.Identifier); ok {
+					a.currentScope.Define(ident.Value, "word")
+				}
+				if s.Value != nil {
+					if ident, ok := s.Value.(*ast.Identifier); ok {
+						a.currentScope.Define(ident.Value, "word")
+					}
+				}
+			} else {
+				a.analyzeExpression(s.Key)
+				if s.Value != nil {
+					a.analyzeExpression(s.Value)
+				}
+			}
+			a.analyzeExpression(s.RangeValue)
 			a.analyzeBlock(s.Body)
 		case *ast.ReturnStatement:
 			for _, rv := range s.ReturnValues {

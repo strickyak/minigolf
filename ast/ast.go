@@ -184,6 +184,7 @@ func (s *IncDecStatement) GetToken() *token.Token { return &s.Token }
 type ForRangeStatement struct {
 	Token      token.Token // The 'for' token
 	Key        Expression  // The identifier assigned (e.g. `i`)
+	Value      Expression  // Optional identifier for value (e.g. `v` in `i, v := range`)
 	IsDecl     bool        // true if `:=`, false if `=`
 	RangeValue Expression  // e.g. `byte(5)`
 	Body       *BlockStatement

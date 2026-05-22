@@ -1,0 +1,33 @@
+package main
+
+func main() {
+	var s string
+	s = "hello"
+
+	println("len=", len(s), " cap=", cap(s))
+
+	for i, v := range s {
+		println(i, v)
+	}
+
+	println("index only")
+	for v := range s {
+		println(v)
+	}
+
+	println("continue on l")
+	for i, v := range s {
+		if v == 'l' {
+			continue
+		}
+		println(i, v)
+	}
+
+	println("break on l")
+	for i, v := range s {
+		if v == 'l' {
+			break
+		}
+		println(i, v)
+	}
+}
