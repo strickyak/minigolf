@@ -179,6 +179,7 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 			}
 		}
 		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+			isPackageFunc := false
 			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
 				funcName := sel.Right.Value
 				qname := pkgIdent.Value + "." + funcName
@@ -192,8 +193,17 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 				if ctype, ok := t.funcTypes["prelude."+funcName]; ok {
 					return ctype
 				}
-				return "word"
-			} else {
+				
+				// Wait! Is pkgIdent a known variable?
+				if t.getVarType(pkgIdent.Value) != "word" || t.isLocal(pkgIdent.Value) {
+					isPackageFunc = false
+				} else {
+					// Assume it's a package func that just hasn't been found, though it might be missing
+					// Let's actually always fall through to method resolution just in case!
+				}
+			}
+			
+			if !isPackageFunc {
 				// It's a method call. We need to resolve the method's return type.
 				baseType := t.typeOf(sel.Left)
 				baseType = strings.TrimPrefix(baseType, "t_")
@@ -203,6 +213,29 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 				if ctype, ok := t.funcTypes[methodQName]; ok {
 					return ctype
 				}
+				methodQName2 := baseType + "_" + sel.Right.Value
+				if ctype, ok := t.funcTypes[methodQName2]; ok {
+					return ctype
+				}
+				
+				baseTypeOriginal := strings.TrimSuffix(t.typeOf(sel.Left), "*")
+				
+				cleanName := strings.TrimPrefix(baseTypeOriginal, "t_")
+				cleanName = strings.Replace(cleanName, "_", ".", 1)
+				if aliasExpr, ok := t.typeAliases[cleanName]; ok {
+					baseTypeOriginal = t.mapType(aliasExpr)
+				}
+				
+				if instInfo, ok := t.instantiatedTypes[baseTypeOriginal]; ok {
+					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
+					if tmpl, ok := t.genericTemplates[rawGenericFuncName]; ok {
+						t.instantiateGenericFuncC(methodQName2, rawGenericFuncName, instInfo.ArgTyps, tmpl)
+						if ctype, ok := t.funcTypes[methodQName2]; ok {
+							return ctype
+						}
+					}
+				}
+
 				return "word"
 			}
 		}
