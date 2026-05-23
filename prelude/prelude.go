@@ -22,6 +22,19 @@ func pokew(addr word, value word) { poke[word](addr, value) }
 
 /////////////////////////////////////////////
 
+func clear[T any](p *T) {
+    addr := word(p)
+    for i := range sizeof[T]() {
+        pokeb(addr + i, 0)
+    }
+}
+func memset(p *byte, x byte, n word) {
+    addr := word(p)
+    for i := range n {
+        pokeb(i + addr, x)
+    }
+}
+
 func memcmp(a *byte, b *byte, n word) int {
 	for i := word(0); i < n; i++ {
 		va := peekb(word(a) + i)
