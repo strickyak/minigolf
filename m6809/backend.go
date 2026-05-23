@@ -412,7 +412,8 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString("\tldx #0\n")
 	b.buf.WriteString("\trts\n")
 
-	return b.buf.String() + "\n" + b.rodataBuf.String() + "\n" + b.dataBuf.String()
+	rawCode := b.buf.String() + "\n" + b.rodataBuf.String() + "\n" + b.dataBuf.String()
+	return peepholeOptimize(rawCode)
 }
 
 func (b *Backend) emitFunc(f *ir.Function) {
