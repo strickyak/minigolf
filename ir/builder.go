@@ -855,6 +855,8 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 
 func (b *Builder) buildStatement(stmt ast.Statement) {
 	switch s := stmt.(type) {
+	case *ast.BlockStatement:
+		b.buildBlock(s)
 	case *ast.VarStatement:
 		typ := b.astToIRType(s.ValueType)
 		b.varTypes[s.Name.Value] = typ

@@ -1,0 +1,14 @@
+package main
+
+func missing_func()
+
+func main() {
+	if 0 {
+		missing_func()
+	}
+	if 1 {
+		println("Hello world")
+	} else {
+		missing_func()
+	}
+}

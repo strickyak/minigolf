@@ -330,6 +330,7 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 }
 
 func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
+	var newStatements []ast.Statement
 	for _, stmt := range b.Statements {
 		switch s := stmt.(type) {
 		case *ast.VarStatement:
@@ -370,6 +371,18 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 		case *ast.IfStatement:
 			s.Condition = foldExpression(s.Condition)
 			a.analyzeExpression(s.Condition)
+			
+			if intLit, ok := s.Condition.(*ast.IntegerLiteral); ok {
+				if intLit.Value != 0 {
+					a.analyzeBlock(s.Consequence)
+					newStatements = append(newStatements, s.Consequence)
+				} else if s.Alternative != nil {
+					a.analyzeBlock(s.Alternative)
+					newStatements = append(newStatements, s.Alternative)
+				}
+				continue // DEAD BRANCH ELIMINATED
+			}
+			
 			a.analyzeBlock(s.Consequence)
 			if s.Alternative != nil {
 				a.analyzeBlock(s.Alternative)
@@ -448,7 +461,9 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			s.Name = foldExpression(s.Name)
 			a.analyzeExpression(s.Name)
 		}
+		newStatements = append(newStatements, stmt)
 	}
+	b.Statements = newStatements
 }
 
 func (a *Analyzer) substituteGenericTokens(argTyps []ast.Expression, tmpl *GenericTemplate) []token.Token {
