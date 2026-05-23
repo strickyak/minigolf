@@ -86,11 +86,11 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	exeFile := filepath.Join(tmpDir, "out.exe")
 
 	// Compile demo file using minigolf
-    compiler := filepath.Join("_tmp", fmt.Sprintf("minigolf.%d" , os.Getpid()))
-    _, err := os.Stat(compiler)
-    if err != nil {
-	    exec.Command("go", "build", "-o", compiler, "main.go").Run()
-    }
+	compiler := filepath.Join("_tmp", fmt.Sprintf("minigolf.%d", os.Getpid()))
+	_, err := os.Stat(compiler)
+	if err != nil {
+		exec.Command("go", "build", "-o", compiler, "main.go").Run()
+	}
 
 	cmd := exec.Command(compiler, "-m="+backend, "-o", midFile, "-I=golflib", sourceFile)
 	t.Logf("Running: %v", cmd)

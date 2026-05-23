@@ -145,7 +145,7 @@ func (a *Analyzer) markReachable(qname string) {
 
 func (a *Analyzer) Analyze(program *ast.Program) {
 	a.program = program
-	
+
 	// Pass 1a: Collect generic templates
 	a.currentPackage = ""
 	for _, stmt := range program.Statements {
@@ -165,14 +165,14 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			if len(s.TypeParameters) > 0 {
 				qname := a.currentPackage + "." + s.Name.Value
 				if s.Receiver != nil {
-				    // Simplified for pass 1a
-				    if pt, ok := s.Receiver.Type.(*ast.PointerType); ok {
-				        if idx, ok := pt.Elt.(*ast.IndexExpression); ok {
-				            if id, ok := idx.Left.(*ast.Identifier); ok {
-				                qname = a.currentPackage + "." + id.Value + "_" + s.Name.Value
-				            }
-				        }
-				    }
+					// Simplified for pass 1a
+					if pt, ok := s.Receiver.Type.(*ast.PointerType); ok {
+						if idx, ok := pt.Elt.(*ast.IndexExpression); ok {
+							if id, ok := idx.Left.(*ast.Identifier); ok {
+								qname = a.currentPackage + "." + id.Value + "_" + s.Name.Value
+							}
+						}
+					}
 				}
 				var tparams []string
 				for _, tp := range s.TypeParameters {
@@ -212,12 +212,12 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			}
 
 			if len(s.TypeParameters) == 0 {
-			    var retTypes []ast.Expression
-			    for _, r := range s.ReturnTypes {
-				    retTypes = append(retTypes, r)
-			    }
-			    ft := &ast.FuncType{Parameters: s.Parameters, ReturnTypes: retTypes}
-			    a.globalScope.Define(qname, ft)
+				var retTypes []ast.Expression
+				for _, r := range s.ReturnTypes {
+					retTypes = append(retTypes, r)
+				}
+				ft := &ast.FuncType{Parameters: s.Parameters, ReturnTypes: retTypes}
+				a.globalScope.Define(qname, ft)
 			}
 			a.funcMap[qname] = s
 
@@ -239,7 +239,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				// Don't analyze base type for generic templates until instantiated
 				a.globalScope.Define(qname, s.BaseType)
 			} else {
-			    a.globalScope.Define(qname, builtinType(qname))
+				a.globalScope.Define(qname, builtinType(qname))
 			}
 		}
 	}
@@ -292,12 +292,12 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				}
 				qname = qname + "_" + fs.Name.Value
 			}
-			
+
 			if len(fs.TypeParameters) > 0 {
-			    reachableStatements = append(reachableStatements, stmt)
-			    continue
+				reachableStatements = append(reachableStatements, stmt)
+				continue
 			}
-			
+
 			if !a.reachableFuncs[qname] {
 
 				continue // DEAD CODE ELIMINATED!
@@ -414,7 +414,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 					a.analyzeExpression(s.Value)
 				}
 			}
-			
+
 			if s.Value != nil {
 				baseTypStr := exprToString(rangeTyp)
 				if strings.HasPrefix(baseTypStr, "prelude.slice_") || strings.HasPrefix(baseTypStr, "slice_") {
@@ -434,7 +434,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 					}
 				}
 			}
-			
+
 			a.analyzeBlock(s.Body)
 		case *ast.ReturnStatement:
 			for i, rv := range s.ReturnValues {
@@ -562,7 +562,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 		t2 := a.analyzeExpression(e.Right)
 		if e.Operator == "==" || e.Operator == "!=" || e.Operator == "<" || e.Operator == ">" || e.Operator == "<=" || e.Operator == ">=" {
 			typ = WordType
-			
+
 			// ir.Builder uses prelude helpers for comparing slices and structs
 			t1Str := exprToString(t1)
 			if t1Str == "slice_byte" || t1Str == "prelude.slice_byte" || t1Str == "string" {
@@ -640,7 +640,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 
 		var leftTyp ast.Expression = UnknownType
 		if qname == "" {
-		    leftTyp = a.analyzeExpression(e.Left)
+			leftTyp = a.analyzeExpression(e.Left)
 		}
 
 		for _, idx := range e.Indices {
@@ -660,7 +660,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			if arrTyp, ok := leftTyp.(*ast.ArrayType); ok {
 				typ = arrTyp.Elt
 			}
-			
+
 			// ir.Builder will compile index expressions to a call to Address (or Put, Get, Chop).
 			// We must ensure they are instantiated and marked reachable so their
 			// dependencies (like prelude.mul_word) aren't dropped.
@@ -672,11 +672,11 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 				} else {
 					eltTypeStr = strings.TrimPrefix(baseTypStr, "slice_")
 				}
-				
+
 				if typ == UnknownType || typ == nil {
 					typ = builtinType(eltTypeStr)
 				}
-				
+
 				methodsToInstantiate := []string{"Address", "Put", "Get", "Chop"}
 				for _, m := range methodsToInstantiate {
 					instName := baseTypStr + "_" + m

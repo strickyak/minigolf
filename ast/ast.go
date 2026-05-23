@@ -26,7 +26,7 @@ type BaseExpression struct {
 	ResolvedType Expression
 }
 
-func (b *BaseExpression) GetResolvedType() Expression { return b.ResolvedType }
+func (b *BaseExpression) GetResolvedType() Expression  { return b.ResolvedType }
 func (b *BaseExpression) SetResolvedType(t Expression) { b.ResolvedType = t }
 
 // Program is the root node of an AST for a single file.

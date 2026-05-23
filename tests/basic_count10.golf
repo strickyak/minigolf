@@ -4,27 +4,29 @@ var BasicSource string
 
 // Integer Variables A to Z are variable number 0 to 25.
 var IntVars [26]word
+
 // String Variables A$ to Z$ are variable number 26 to 51.
 var StrVars [26]string
 
 type Expression struct {
-    Op byte // 'I'=int, 'V'=var, '+'=add, '-'=sub, '!'=neq
-    LIsVar byte
-    LVal word
-    RIsVar byte
-    RVal word
+	Op     byte // 'I'=int, 'V'=var, '+'=add, '-'=sub, '!'=neq
+	LIsVar byte
+	LVal   word
+	RIsVar byte
+	RVal   word
 }
 
 type Line struct {
-    Num word // Line number
-    Cmd byte // 'R'em, 'L'et, 'P'rint, 'I'f, 'G'oto, 'E'nd
-    Topic word // variable number assigned, GOTO target, IF/THEN target
-    Expr Expression // expr printed, assigned, or predicate of IF
-    Remark string   // contents of REM statement
+	Num    word       // Line number
+	Cmd    byte       // 'R'em, 'L'et, 'P'rint, 'I'f, 'G'oto, 'E'nd
+	Topic  word       // variable number assigned, GOTO target, IF/THEN target
+	Expr   Expression // expr printed, assigned, or predicate of IF
+	Remark string     // contents of REM statement
 }
 
 var Lines [100]Line
 var NumLines word
+
 /*
 func NewProgram() {
     for i := word(0); i < NumLines; i++ {
@@ -41,172 +43,192 @@ func NewProgram() {
 */
 
 func isSpace(c byte) byte {
-    if c == ' ' { return 1 }
-    if c == '\t' { return 1 }
-    if c == '\r' { return 1 }
-    return 0
+	if c == ' ' {
+		return 1
+	}
+	if c == '\t' {
+		return 1
+	}
+	if c == '\r' {
+		return 1
+	}
+	return 0
 }
 
 func isAlpha(c byte) byte {
-    if c >= 'a' {
-        if c <= 'z' { return 1 }
-    }
-    if c >= 'A' {
-        if c <= 'Z' { return 1 }
-    }
-    return 0
+	if c >= 'a' {
+		if c <= 'z' {
+			return 1
+		}
+	}
+	if c >= 'A' {
+		if c <= 'Z' {
+			return 1
+		}
+	}
+	return 0
 }
 
 func getVarIndex(tok string) word {
-    c := tok.Get(0)
-    if c >= 'a' {
-        if c <= 'z' { return word(c - 'a') }
-    }
-    return word(c - 'A')
+	c := tok.Get(0)
+	if c >= 'a' {
+		if c <= 'z' {
+			return word(c - 'a')
+		}
+	}
+	return word(c - 'A')
 }
 
 func atoi(s string) word {
-    var sum word = 0
-    for i := word(0); i < s.Len; i++ {
-        c := s.Get(i)
-        if c >= '0' {
-            if c <= '9' {
-                sum = sum * 10 + word(c - '0')
-            }
-        }
-    }
-    return sum
+	var sum word = 0
+	for i := word(0); i < s.Len; i++ {
+		c := s.Get(i)
+		if c >= '0' {
+			if c <= '9' {
+				sum = sum*10 + word(c-'0')
+			}
+		}
+	}
+	return sum
 }
 
 func parseExpr2(tokens slice[string], start word, end word) Expression {
-    var e Expression
-    numToks := end - start
-    if numToks == 1 {
-        tok := tokens.Get(start)
-        if isAlpha(tok.Get(0)) != 0 {
-            e.Op = 'V'
-            e.LIsVar = 1
-            e.LVal = getVarIndex(tok)
-        } else {
-            e.Op = 'I'
-            e.LIsVar = 0
-            e.LVal = atoi(tok)
-        }
-    } else if numToks == 3 {
-        tok1 := tokens.Get(start)
-        tok2 := tokens.Get(start+1)
-        tok3 := tokens.Get(start+2)
-        
-        if tok2.Get(0) == '+' {
-            e.Op = '+'
-        } else if tok2.Get(0) == '-' {
-            e.Op = '-'
-        } else if tok2.Get(0) == '<' {
-            e.Op = '!' // <>
-        }
-        
-        if isAlpha(tok1.Get(0)) != 0 {
-            e.LIsVar = 1
-            e.LVal = getVarIndex(tok1)
-        } else {
-            e.LIsVar = 0
-            e.LVal = atoi(tok1)
-        }
-        
-        if isAlpha(tok3.Get(0)) != 0 {
-            e.RIsVar = 1
-            e.RVal = getVarIndex(tok3)
-        } else {
-            e.RIsVar = 0
-            e.RVal = atoi(tok3)
-        }
-    }
-    return e
+	var e Expression
+	numToks := end - start
+	if numToks == 1 {
+		tok := tokens.Get(start)
+		if isAlpha(tok.Get(0)) != 0 {
+			e.Op = 'V'
+			e.LIsVar = 1
+			e.LVal = getVarIndex(tok)
+		} else {
+			e.Op = 'I'
+			e.LIsVar = 0
+			e.LVal = atoi(tok)
+		}
+	} else if numToks == 3 {
+		tok1 := tokens.Get(start)
+		tok2 := tokens.Get(start + 1)
+		tok3 := tokens.Get(start + 2)
+
+		if tok2.Get(0) == '+' {
+			e.Op = '+'
+		} else if tok2.Get(0) == '-' {
+			e.Op = '-'
+		} else if tok2.Get(0) == '<' {
+			e.Op = '!' // <>
+		}
+
+		if isAlpha(tok1.Get(0)) != 0 {
+			e.LIsVar = 1
+			e.LVal = getVarIndex(tok1)
+		} else {
+			e.LIsVar = 0
+			e.LVal = atoi(tok1)
+		}
+
+		if isAlpha(tok3.Get(0)) != 0 {
+			e.RIsVar = 1
+			e.RVal = getVarIndex(tok3)
+		} else {
+			e.RIsVar = 0
+			e.RVal = atoi(tok3)
+		}
+	}
+	return e
 }
 
 func parseExpr(tokens slice[string], start word) Expression {
-    return parseExpr2(tokens, start, tokens.Len)
+	return parseExpr2(tokens, start, tokens.Len)
 }
 
 func CompileProgram(source string) {
-    n := source.Len
-    var i word = 0
-    for i < n {
-        for i < n {
-            if source.Get(i) != '\n' { break }
-            i++
-        }
-        if i >= n {
-            break
-        }
-        start := i
-        for i < n {
-            if source.Get(i) == '\n' { break }
-            i++
-        }
-        lineStr := source.Chop(start, i)
-        compileLine(lineStr)
-    }
+	n := source.Len
+	var i word = 0
+	for i < n {
+		for i < n {
+			if source.Get(i) != '\n' {
+				break
+			}
+			i++
+		}
+		if i >= n {
+			break
+		}
+		start := i
+		for i < n {
+			if source.Get(i) == '\n' {
+				break
+			}
+			i++
+		}
+		lineStr := source.Chop(start, i)
+		compileLine(lineStr)
+	}
 }
 
 func compileLine(lineStr string) {
-    var tokens slice[string]
-    n := lineStr.Len
-    var i word = 0
-    for i < n {
-        for i < n {
-            if isSpace(lineStr.Get(i)) == 0 { break }
-            i++
-        }
-        if i >= n {
-            break
-        }
-        start := i
-        for i < n {
-            if isSpace(lineStr.Get(i)) != 0 { break }
-            i++
-        }
-        tokens.Append(lineStr.Chop(start, i))
-    }
-    
-    if tokens.Len == 0 {
-        return
-    }
-    
-    var line Line
-    line.Num = word(atoi(tokens.Get(0)))
-    cmdStr := tokens.Get(1)
-    
-    if streq(cmdStr, "REM") != 0 {
-        line.Cmd = 'R'
-        line.Remark = strdup(lineStr)
-    } else if streq(cmdStr, "LET") != 0 {
-        line.Cmd = 'L'
-        varName := tokens.Get(2)
-        line.Topic = word(getVarIndex(varName))
-        line.Expr = parseExpr(tokens, 4)
-    } else if streq(cmdStr, "PRINT") != 0 {
-        line.Cmd = 'P'
-        line.Expr = parseExpr(tokens, 2)
-    } else if streq(cmdStr, "IF") != 0 {
-        line.Cmd = 'I'
-        var thenIdx word = 1
-        for thenIdx < tokens.Len {
-            if streq(tokens.Get(thenIdx), "THEN") != 0 {
-                break
-            }
-            thenIdx++
-        }
-        line.Expr = parseExpr2(tokens, 2, thenIdx)
-        line.Topic = word(atoi(tokens.Get(thenIdx+1)))
-    } else if streq(cmdStr, "GOTO") != 0 {
-        line.Cmd = 'G'
-        line.Topic = word(atoi(tokens.Get(2)))
-    } else if streq(cmdStr, "END") != 0 {
-        line.Cmd = 'E'
-    }
-    Lines[NumLines] = line
-    NumLines++
+	var tokens slice[string]
+	n := lineStr.Len
+	var i word = 0
+	for i < n {
+		for i < n {
+			if isSpace(lineStr.Get(i)) == 0 {
+				break
+			}
+			i++
+		}
+		if i >= n {
+			break
+		}
+		start := i
+		for i < n {
+			if isSpace(lineStr.Get(i)) != 0 {
+				break
+			}
+			i++
+		}
+		tokens.Append(lineStr.Chop(start, i))
+	}
+
+	if tokens.Len == 0 {
+		return
+	}
+
+	var line Line
+	line.Num = word(atoi(tokens.Get(0)))
+	cmdStr := tokens.Get(1)
+
+	if streq(cmdStr, "REM") != 0 {
+		line.Cmd = 'R'
+		line.Remark = strdup(lineStr)
+	} else if streq(cmdStr, "LET") != 0 {
+		line.Cmd = 'L'
+		varName := tokens.Get(2)
+		line.Topic = word(getVarIndex(varName))
+		line.Expr = parseExpr(tokens, 4)
+	} else if streq(cmdStr, "PRINT") != 0 {
+		line.Cmd = 'P'
+		line.Expr = parseExpr(tokens, 2)
+	} else if streq(cmdStr, "IF") != 0 {
+		line.Cmd = 'I'
+		var thenIdx word = 1
+		for thenIdx < tokens.Len {
+			if streq(tokens.Get(thenIdx), "THEN") != 0 {
+				break
+			}
+			thenIdx++
+		}
+		line.Expr = parseExpr2(tokens, 2, thenIdx)
+		line.Topic = word(atoi(tokens.Get(thenIdx + 1)))
+	} else if streq(cmdStr, "GOTO") != 0 {
+		line.Cmd = 'G'
+		line.Topic = word(atoi(tokens.Get(2)))
+	} else if streq(cmdStr, "END") != 0 {
+		line.Cmd = 'E'
+	}
+	Lines[NumLines] = line
+	NumLines++
 }
 
 /*
@@ -231,84 +253,84 @@ func ListProgram() {
 */
 
 func evalExpr(e Expression) word {
-    if e.Op == 'I' {
-        return e.LVal
-    }
-    if e.Op == 'V' {
-        return IntVars[e.LVal]
-    }
-    
-    var l word
-    var r word
-    if e.LIsVar != 0 {
-        l = IntVars[e.LVal]
-    } else {
-        l = e.LVal
-    }
-    if e.RIsVar != 0 {
-        r = IntVars[e.RVal]
-    } else {
-        r = e.RVal
-    }
-    
-    if e.Op == '+' {
-        return l + r
-    }
-    if e.Op == '-' {
-        return l - r
-    }
-    if e.Op == '!' { // <>
-        if l != r {
-            return 1
-        }
-        return 0
-    }
-    return 0
+	if e.Op == 'I' {
+		return e.LVal
+	}
+	if e.Op == 'V' {
+		return IntVars[e.LVal]
+	}
+
+	var l word
+	var r word
+	if e.LIsVar != 0 {
+		l = IntVars[e.LVal]
+	} else {
+		l = e.LVal
+	}
+	if e.RIsVar != 0 {
+		r = IntVars[e.RVal]
+	} else {
+		r = e.RVal
+	}
+
+	if e.Op == '+' {
+		return l + r
+	}
+	if e.Op == '-' {
+		return l - r
+	}
+	if e.Op == '!' { // <>
+		if l != r {
+			return 1
+		}
+		return 0
+	}
+	return 0
 }
 
 func findLine(num word) word {
-    for i := word(0); i < NumLines; i++ {
-        if Lines[i].Num == num {
-            return i
-        }
-    }
-    return NumLines
+	for i := word(0); i < NumLines; i++ {
+		if Lines[i].Num == num {
+			return i
+		}
+	}
+	return NumLines
 }
 
 func RunProgram() {
-    var pc word = 0
-    for pc < NumLines {
-        line := Lines[pc]
-        cmd := line.Cmd
-        if cmd == 'R' {
-            pc++
-        } else if cmd == 'L' {
-            val := evalExpr(line.Expr)
-            IntVars[line.Topic] = val
-            pc++
-        } else if cmd == 'P' {
-            val := evalExpr(line.Expr)
-            println(val)
-            pc++
-        } else if cmd == 'I' {
-            val := evalExpr(line.Expr)
-            if val != 0 {
-                pc = findLine(line.Topic)
-            } else {
-                pc++
-            }
-        } else if cmd == 'G' {
-            pc = findLine(line.Topic)
-        } else if cmd == 'E' {
-            break
-        } else {
-            pc++
-        }
-    }
+	var pc word = 0
+	for pc < NumLines {
+		line := Lines[pc]
+		cmd := line.Cmd
+		if cmd == 'R' {
+			pc++
+		} else if cmd == 'L' {
+			val := evalExpr(line.Expr)
+			IntVars[line.Topic] = val
+			pc++
+		} else if cmd == 'P' {
+			val := evalExpr(line.Expr)
+			println(val)
+			pc++
+		} else if cmd == 'I' {
+			val := evalExpr(line.Expr)
+			if val != 0 {
+				pc = findLine(line.Topic)
+			} else {
+				pc++
+			}
+		} else if cmd == 'G' {
+			pc = findLine(line.Topic)
+		} else if cmd == 'E' {
+			break
+		} else {
+			pc++
+		}
+	}
 }
 
 func main() {
-    BasicSource = `
+	BasicSource = `
 10 REM count to 10
 20 LET i = 1 
 30 PRINT i
@@ -317,9 +339,9 @@ func main() {
 60 GOTO 70
 70 END
 `
-    // NewProgram()
-    CompileProgram(BasicSource)
-    // println("Compiled lines:", NumLines)
-    // ListProgram()
-    RunProgram()
+	// NewProgram()
+	CompileProgram(BasicSource)
+	// println("Compiled lines:", NumLines)
+	// ListProgram()
+	RunProgram()
 }

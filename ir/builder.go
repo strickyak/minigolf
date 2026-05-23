@@ -577,9 +577,9 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
 		paramIdx++
 	}
-    if strings.Contains(f.Name, "mul_word") {
-        fmt.Printf("DEBUG IR registerFunc final: f.Name=%q\n", f.Name)
-    }
+	if strings.Contains(f.Name, "mul_word") {
+		fmt.Printf("DEBUG IR registerFunc final: f.Name=%q\n", f.Name)
+	}
 	b.funcs[f.Name] = f
 	b.Program.Functions = append(b.Program.Functions, f)
 }
