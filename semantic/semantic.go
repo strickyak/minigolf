@@ -371,7 +371,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 		case *ast.IfStatement:
 			s.Condition = foldExpression(s.Condition)
 			a.analyzeExpression(s.Condition)
-			
+
 			if intLit, ok := s.Condition.(*ast.IntegerLiteral); ok {
 				if intLit.Value != 0 {
 					a.analyzeBlock(s.Consequence)
@@ -382,7 +382,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				}
 				continue // DEAD BRANCH ELIMINATED
 			}
-			
+
 			a.analyzeBlock(s.Consequence)
 			if s.Alternative != nil {
 				a.analyzeBlock(s.Alternative)
