@@ -85,11 +85,17 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	midFile := filepath.Join(tmpDir, "out"+ext)
 	exeFile := filepath.Join(tmpDir, "out.exe")
 
-	// Compile demo file using minigo
-	cmd := exec.Command("go", "run", "main.go", "-m="+backend, "-o", midFile, "-I=golflib", sourceFile)
+	// Compile demo file using minigolf
+    compiler := filepath.Join("_tmp", fmt.Sprintf("minigolf.%d" , os.Getpid()))
+    _, err := os.Stat(compiler)
+    if err != nil {
+	    exec.Command("go", "build", "-o", compiler, "main.go").Run()
+    }
+
+	cmd := exec.Command(compiler, "-m="+backend, "-o", midFile, "-I=golflib", sourceFile)
 	t.Logf("Running: %v", cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to compile with minigo -m=%s: %v\nOutput: %s", backend, err, out)
+		t.Fatalf("Failed to compile with %q -m=%s: %v\nOutput: %s", compiler, backend, err, out)
 	}
 
 	var stdout bytes.Buffer

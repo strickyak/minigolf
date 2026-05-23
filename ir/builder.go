@@ -487,6 +487,13 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			}
 			allResolved = false
 
+			parts := strings.SplitN(item.QName, ".", 2)
+			if len(parts) == 2 {
+				b.currentPackage = parts[0]
+			} else {
+				b.currentPackage = ""
+			}
+
 			err := b.tryResolve(item)
 			if err == nil {
 				item.Resolved = true
@@ -570,6 +577,9 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
 		paramIdx++
 	}
+    if strings.Contains(f.Name, "mul_word") {
+        fmt.Printf("DEBUG IR registerFunc final: f.Name=%q\n", f.Name)
+    }
 	b.funcs[f.Name] = f
 	b.Program.Functions = append(b.Program.Functions, f)
 }
@@ -1267,12 +1277,26 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
 			}
 		}
+		if f, ok := b.funcs["prelude."+e.Value]; ok {
+			val := b.addInstr(&AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+		}
+		if g, ok := b.globals["prelude."+e.Value]; ok {
+			addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: g.Typ.PointerTo()}, Global: g}, e)
+			return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
+		}
+		if c, ok := b.consts["prelude."+e.Value]; ok {
+			if cw, ok := c.(*ConstWord); ok {
+				val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: cw.Val}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
+			}
+		}
 		if typ, ok := b.varTypes[e.Value]; ok {
 			val := b.readVariable(e.Value, b.currentBlock)
 			addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: val}, e)
 			return ExprResult{IsLValue: true, Address: addr, Typ: typ}
 		}
-		panic(fmt.Sprintf("Identifier not found: %s", e.Value))
+		panic(fmt.Sprintf("Identifier not found: %s (qname=%s, currentPackage=%s)", e.Value, qname, b.currentPackage))
 	case *ast.IndexExpression:
 		base := b.eval(e.Left)
 		idx := b.buildExpr(e.Indices[0])
