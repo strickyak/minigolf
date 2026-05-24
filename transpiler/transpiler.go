@@ -123,6 +123,10 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 			if ident.Value == "len" || ident.Value == "cap" {
 				return "word"
 			}
+			fullName := ident.FullName()
+			if ctype, ok := t.funcTypes[fullName]; ok {
+				return ctype
+			}
 			if ctype, ok := t.funcTypes[t.currentPackage+"."+ident.Value]; ok {
 				return ctype
 			}
@@ -130,8 +134,14 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 				return ctype
 			}
 			qname := t.currentPackage + "." + ident.Value
+			if strings.Contains(fullName, ".") {
+				qname = fullName
+			}
 			if _, ok := t.typeDefs[qname]; ok {
-				return t.mapType(ident)
+				return t.mapType(&ast.Identifier{Value: qname})
+			}
+			if _, ok := t.typeDefs["prelude."+ident.Value]; ok {
+				return t.mapType(&ast.Identifier{Value: "prelude." + ident.Value})
 			}
 			return "word"
 		}
@@ -254,32 +264,32 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 		}
 		return t.typeOf(e.Right)
 	case *ast.SelectorExpression:
-		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
-			qname := t.getVarType(pkgIdent.Value)
-			qname = strings.TrimSuffix(qname, "*")
+		qname := t.typeOf(e.Left)
+		qname = strings.TrimSuffix(qname, "*")
 
-			// Extract struct name from mangled t_pkg_StructName
-			structName := strings.TrimPrefix(qname, "t_")
-			structName = strings.Replace(structName, "_", ".", 1)
+		// Extract struct name from mangled t_pkg_StructName
+		structName := strings.TrimPrefix(qname, "t_")
+		structName = strings.Replace(structName, "_", ".", 1)
 
-			if st, ok := t.typeDefs[structName]; ok {
-				if structType, ok := st.BaseType.(*ast.StructType); ok {
-					for _, f := range structType.Fields {
-						if f.Name.Value == e.Right.Value {
-							if ident, ok := f.Type.(*ast.Identifier); ok {
-								if ident.Value == "byte" || ident.Value == "word" {
-									return ident.Value
-								}
-								if ident.Value == "int" {
-									return "intptr_t"
-								}
+		if st, ok := t.typeDefs[structName]; ok {
+			if structType, ok := st.BaseType.(*ast.StructType); ok {
+				for _, f := range structType.Fields {
+					if f.Name.Value == e.Right.Value {
+						if ident, ok := f.Type.(*ast.Identifier); ok {
+							if ident.Value == "byte" || ident.Value == "word" {
+								return ident.Value
 							}
-							return t.mapType(f.Type)
+							if ident.Value == "int" {
+								return "intptr_t"
+							}
 						}
+						return t.mapType(f.Type)
 					}
 				}
 			}
+		}
 
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
 			qname2 := t.currentPackage + "." + e.Right.Value
 			if ctype, ok := t.globals[qname2]; ok {
 				return ctype
@@ -287,7 +297,13 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 			if ctype, ok := t.funcTypes[qname2]; ok {
 				return ctype
 			}
-			return "word"
+			qname3 := pkgIdent.Value + "." + e.Right.Value
+			if ctype, ok := t.globals[qname3]; ok {
+				return ctype
+			}
+			if ctype, ok := t.funcTypes[qname3]; ok {
+				return ctype
+			}
 		}
 		return "word"
 	case *ast.InfixExpression:
@@ -500,6 +516,24 @@ func (t *Transpiler) Transpile(program *ast.Program, resolveCallback func(ast.No
 				continue
 			}
 			retType := "void"
+			funcName := s.Name.Value
+			if s.Receiver != nil {
+				recvType := t.mapType(s.Receiver.Type)
+				baseType := recvType
+				baseType = strings.TrimSuffix(baseType, "*")
+				if strings.HasPrefix(baseType, "t_"+t.currentPackage+"_") {
+					baseType = baseType[len("t_"+t.currentPackage+"_"):]
+				} else {
+					if strings.HasPrefix(baseType, "t_") {
+						parts := strings.SplitN(baseType[2:], "_", 2)
+						if len(parts) == 2 {
+							baseType = parts[0] + "_" + parts[1]
+						}
+					}
+				}
+				funcName = baseType + "_" + funcName
+			}
+
 			if len(s.ReturnTypes) == 1 {
 				retType = t.mapType(s.ReturnTypes[0])
 			} else if len(s.ReturnTypes) > 1 {
@@ -510,36 +544,17 @@ func (t *Transpiler) Transpile(program *ast.Program, resolveCallback func(ast.No
 					fields = append(fields, fmt.Sprintf("%s f%d", mapped, i))
 					retTypes = append(retTypes, mapped)
 				}
-				funcName := s.Name.Value
-				if s.Receiver != nil {
-					recvType := t.mapType(s.Receiver.Type)
-					baseType := recvType
-					baseType = strings.TrimSuffix(baseType, "*")
-					if strings.HasPrefix(baseType, "t_"+t.currentPackage+"_") {
-						baseType = baseType[len("t_"+t.currentPackage+"_"):]
-					} else {
-						// It might be from another package?
-						// In transpiler, recvType has format t_pkg_Type
-						if strings.HasPrefix(baseType, "t_") {
-							parts := strings.SplitN(baseType[2:], "_", 2)
-							if len(parts) == 2 {
-								baseType = parts[0] + "_" + parts[1]
-							}
-						}
-					}
-					funcName = baseType + "_" + funcName
-				}
 				structName := fmt.Sprintf("f_%s_%s_returns", t.currentPackage, funcName)
 				retType = fmt.Sprintf("struct %s", structName)
 				t.typedefBuf.WriteString(fmt.Sprintf("%s { %s; };\n", retType, strings.Join(fields, "; ")))
-				t.funcRetTypes[t.currentPackage+"."+s.Name.Value] = retTypes
+				t.funcRetTypes[t.currentPackage+"."+funcName] = retTypes
 			}
-			t.funcTypes[t.currentPackage+"."+s.Name.Value] = retType
+			t.funcTypes[t.currentPackage+"."+funcName] = retType
 			var params []string
 			for _, p := range s.Parameters {
 				params = append(params, t.mapType(p.Type))
 			}
-			t.funcParams[t.currentPackage+"."+s.Name.Value] = params
+			t.funcParams[t.currentPackage+"."+funcName] = params
 			t.funcDeclsBuf.WriteString(t.emitFuncSignatureStr(s, true))
 		}
 	}
@@ -1672,6 +1687,9 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 					if tmpl, ok := t.genericTemplates[rawGenericFuncName]; ok {
 						t.instantiateGenericFuncC(funcQNameCheck, rawGenericFuncName, instInfo.ArgTyps, tmpl)
 					}
+				}
+				if _, exists := t.funcTypes[funcQNameCheck]; !exists {
+					goto indirectCall
 				}
 			}
 

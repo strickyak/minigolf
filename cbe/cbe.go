@@ -50,9 +50,9 @@ func (c *CBE) mapType(typ string) string {
 
 		if !c.arrayTypes[typeName] {
 			c.arrayTypes[typeName] = true
-			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s data[%s]; } %s;\n", eltName, lenStr, typeName))
+			c.typedefBuf.WriteString(fmt.Sprintf("struct %s { %s data[%s]; };\n", typeName, eltName, lenStr))
 		}
-		return typeName
+		return "struct " + typeName
 	}
 	if (ir.Type{Name: typ}).IsAStruct() {
 		content := typ[7 : len(typ)-1]
@@ -77,12 +77,12 @@ func (c *CBE) mapType(typ string) string {
 					fIdx++
 				}
 			}
-			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct { %s} %s;\n", fields, typeName))
+			c.typedefBuf.WriteString(fmt.Sprintf("struct %s { %s};\n", typeName, fields))
 		}
-		return typeName
+		return "struct " + typeName
 	}
 	// Assume it's a named struct type if it reaches here
-	return ir.MangleName(typ)
+	return "struct " + ir.MangleName(typ)
 }
 
 func (c *CBE) Generate(program *ir.Program) string {
@@ -91,19 +91,29 @@ func (c *CBE) Generate(program *ir.Program) string {
 		typStr := program.TypeDefs[name]
 		if typStr.IsAStruct() {
 			nameSanitized := c.mapType(name)
-			c.typedefBuf.WriteString(fmt.Sprintf("typedef struct %s %s;\n", nameSanitized, nameSanitized))
+			c.typedefBuf.WriteString(fmt.Sprintf("%s;\n", nameSanitized))
 		}
 	}
 
 	// Struct types bodies
+	var pending []string
 	for _, name := range program.TypeDefOrder {
-		typStr := program.TypeDefs[name]
-		if typStr.IsAStruct() {
+		if program.TypeDefs[name].IsAStruct() {
+			pending = append(pending, name)
+		}
+	}
+
+	for len(pending) > 0 {
+		var nextPending []string
+		madeProgress := false
+		for _, name := range pending {
+			typStr := program.TypeDefs[name]
 			content := typStr.Name[7 : len(typStr.Name)-1]
-			var fields string
+
+			// Check dependencies
+			canEmit := true
 			depth := 0
 			start := 0
-			fIdx := 0
 			for i := 0; i < len(content); i++ {
 				if content[i] == '{' {
 					depth++
@@ -111,14 +121,69 @@ func (c *CBE) Generate(program *ir.Program) string {
 					depth--
 				} else if content[i] == ';' && depth == 0 {
 					fTyp := content[start:i]
-					fields += fmt.Sprintf("%s f%d; ", c.mapType(fTyp), fIdx)
-					fIdx++
+					if !strings.HasSuffix(fTyp, "*") {
+						for _, p := range pending {
+							if p == fTyp && p != name {
+								canEmit = false
+								break
+							}
+						}
+					}
 					start = i + 1
 				}
 			}
-			nameSanitized := c.mapType(name)
-			c.typedefBuf.WriteString(fmt.Sprintf("struct %s { %s};\n", nameSanitized, fields))
+
+			if canEmit {
+				nameSanitized := c.mapType(name)
+				var fields string
+				depth = 0
+				start = 0
+				fIdx := 0
+				for i := 0; i < len(content); i++ {
+					if content[i] == '{' {
+						depth++
+					} else if content[i] == '}' {
+						depth--
+					} else if content[i] == ';' && depth == 0 {
+						fTyp := content[start:i]
+						fields += fmt.Sprintf("%s f%d; ", c.mapType(fTyp), fIdx)
+						fIdx++
+						start = i + 1
+					}
+				}
+				c.typedefBuf.WriteString(fmt.Sprintf("%s { %s};\n", nameSanitized, fields))
+				madeProgress = true
+			} else {
+				nextPending = append(nextPending, name)
+			}
 		}
+		if !madeProgress {
+			// Cycle detected or unresolvable dependencies; just emit remaining in current order
+			for _, name := range pending {
+				typStr := program.TypeDefs[name]
+				content := typStr.Name[7 : len(typStr.Name)-1]
+				nameSanitized := c.mapType(name)
+				var fields string
+				depth := 0
+				start := 0
+				fIdx := 0
+				for i := 0; i < len(content); i++ {
+					if content[i] == '{' {
+						depth++
+					} else if content[i] == '}' {
+						depth--
+					} else if content[i] == ';' && depth == 0 {
+						fTyp := content[start:i]
+						fields += fmt.Sprintf("%s f%d; ", c.mapType(fTyp), fIdx)
+						fIdx++
+						start = i + 1
+					}
+				}
+				c.typedefBuf.WriteString(fmt.Sprintf("%s { %s};\n", nameSanitized, fields))
+			}
+			break
+		}
+		pending = nextPending
 	}
 
 	// Globals

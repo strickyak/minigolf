@@ -1,0 +1,188 @@
+package main
+
+// Node for S-Expression
+type Node struct {
+    Flags   byte
+    Kind    byte
+    Symbol  string
+    Number  int
+    Primative func(expr *Node, context *Node)
+    Left    *Node  // The CAR
+    Right   *Node  // The CDR
+}
+
+const UsedFlag = 1  // allocated
+const MarkFlag = 1  // seen by garbage collection
+
+const SymbolKind = 1
+const NumberKind = 2
+const PairKind = 3
+const PrimativeKind = 4
+
+const SZ = 200
+var Pool [SZ]Node
+var Next uint // pool index
+// Leave these alone:
+var Empty string
+var NIL *Node // A zeroed pointer is NIL, i.e. (*Node)0
+
+func Advance() {
+    Next++
+    if Next >= SZ { panic(9001) } // OOM
+}
+func AllocNode() *Node {
+    for Pool[Next].Flags & UsedFlag {
+        Advance()
+    }
+    clear[main.Node](&Pool[Next])
+    Pool[Next].Flags = UsedFlag  // allocated
+    z := &Pool[Next]
+    Advance()
+    return z
+}
+
+func NewSymbol(s string) *Node {
+    p := AllocNode()
+    p.Kind = SymbolKind
+    p.Symbol = s
+    return p
+}
+
+var CAR *Node
+var CDR *Node
+var CONS *Node
+var EQ *Node
+var ATOMP *Node
+var COND *Node
+var EVAL *Node
+var PLUS *Node
+var MINUS *Node
+var QUOTE *Node
+
+func init() {
+    CAR = NewSymbol("car")
+    CDR = NewSymbol("cdr")
+    EQ = NewSymbol("eq")
+    ATOMP = NewSymbol("atomp")
+    COND = NewSymbol("cond")
+    EVAL = NewSymbol("eval")
+    PLUS = NewSymbol("plus")
+    MINUS = NewSymbol("minus")
+    QUOTE = NewSymbol("quote")
+}
+
+func Lookup(symbol *Node, context *Node) *Node {
+    p := context
+    for p != NIL {
+        if p == symbol {
+            return p.Right.Left
+        }
+        p = p.Right.Right
+    }
+    panic(9010) // Symbol not found
+}
+
+func Eval(expr *Node, context *Node) *Node {
+    if expr == NIL {
+        return NIL
+    }
+    if expr.Kind == SymbolKind {
+        return Lookup(expr, context)
+    }
+    if expr.Kind == NumberKind {
+        return expr
+    }
+    if expr.Kind == PrimativeKind {
+        return expr
+    }
+    if expr.Kind == PairKind {
+        first := expr.Left
+        rest := expr.Right
+        if first == QUOTE {
+            return rest
+        }
+        if first == CONS {
+            // Cons is a special form; it does not eval its args automatically.
+            pred := Eval(rest.Left, context)
+            if pred != NIL {  // Only NIL is false.
+                return Eval(rest.Right.Left, context) // if True
+            } else {
+                return Eval(rest.Right.Right.Left, context) // if False
+            }
+        }
+        if first.Kind == PrimativeKind {
+            return first.Primative(rest, context)
+        }
+        if first.Kind == SymbolKind {
+            lambda := Lookup(expr, context)
+            args := rest
+            return ApplyLambdaToArgs(lambda, args, context)
+        }
+        panic(9020) // bad CAR in eval of dotted pair
+    }
+}
+
+func Cons(left *Node, right *Node) *Node {
+    p := AllocNode();
+    p.Kind = PairKind
+    p.Left = left
+    p.Right = right
+    return p
+}
+
+func ApplyLambdaToArgs(lambda *Node, args *Node, context *Node) *Node {
+    formals := lambda.Right.Left
+    body := lambda.Right.Right.Left
+    p := context
+
+    for formals != NIL {
+        p = Cons(Eval(args.Left, context), p)
+        p = Cons(formals.Left, p)
+        formals = formals.Right
+        args = args.Right
+    }
+    return Eval(body, p)
+}
+
+func (o *Node) Print() {
+    if o == NIL {
+        println("NIL")
+    }
+    if o.Kind == SymbolKind {
+        println(o.Symbol)
+    }
+    if o.Kind == NumberKind {
+        println(o.Number)
+    }
+    if o.Kind == PrimativeKind {
+        println("<Primative>")
+    }
+    if o.Kind == PairKind {
+        print("(")
+        o.Left.Print()
+
+        for o.Right != NIL {
+            if o.Right.Kind == PairKind {
+                o.Right.Left.Print()
+                o = o.Right
+            } else {
+                print(" . ")
+                o.Right.Print()
+                break
+            }
+        }
+        println(")")
+    }
+}
+
+func main() {
+    println("---")
+    Cons(PLUS, NIL).Print()
+    println("---")
+    Cons(QUOTE, Cons(PLUS, NIL)).Print()
+    println("---")
+    Eval(Cons(QUOTE, Cons(PLUS, NIL)), NIL).Print()
+    println("---")
+    println(Eval(Cons(QUOTE, Cons(PLUS, NIL)), NIL).Left.Symbol)
+    println("---")
+}
