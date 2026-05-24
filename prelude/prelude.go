@@ -185,6 +185,24 @@ func (o *slice[T]) Chop(start word, limit word) slice[T] {
 	return z
 }
 
+// makeslice[T](n) is like make([]T, n) in golang.
+func makeslice[T any](n word) slice[T] {
+    var z slice[T]
+    if n == 0 {
+        return z
+    }
+    z.Base := zalloc( n * sizeof[T]() )
+    z.Len = n
+    z.Cap = n
+    return z
+}
+
+// freeslice frees a malloced slice's contents, if it was made by Appending a zero slice, or by makeslice.
+func freeslice[T](a slice[T]) {
+	p := (*byte)(a.Base)
+	free(p)
+}
+
 /////////////////////////////////////////////
 
 func panic(w word) {
@@ -248,6 +266,7 @@ func strdup(a string) string {
 		pokeb(p+i, a[i])
 	}
 	pokeb(p+n, 0) // NUL-terminate.
+
 	var z string
 	z.Base = p
 	z.Len = n
