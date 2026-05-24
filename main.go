@@ -277,8 +277,20 @@ func main() {
 		os.Exit(0)
 	}
 
+	resolver := semantic.NewResolver()
+	resolver.Resolve(program)
+	resolveCallback := func(node ast.Node, defPkg string) ast.Node {
+		if stmt, ok := node.(ast.Statement); ok {
+			return resolver.ResolveGenericInst(stmt, defPkg)
+		}
+		if expr, ok := node.(ast.Expression); ok {
+			return resolver.ResolveGenericInstExpr(expr, defPkg)
+		}
+		return node
+	}
+
 	// 3. Perform semantic analysis & type checking.
-	analyzer := semantic.New()
+	analyzer := semantic.New(resolver)
 	analyzer.Analyze(program)
 	if len(analyzer.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Semantic errors:")
@@ -290,7 +302,7 @@ func main() {
 
 	// Flag -m=ir : emit SSA IR and exit cleanly
 	if *archFlag == "IR" {
-		builder := ir.NewBuilder()
+		builder := ir.NewBuilder(resolveCallback)
 		irProg := builder.Build(program)
 		irCode := ir.PrintProgram(irProg)
 
@@ -308,7 +320,7 @@ func main() {
 
 	// Flag -m=cbe : Generate C from IR and exit cleanly
 	if *archFlag == "CBE" {
-		builder := ir.NewBuilder()
+		builder := ir.NewBuilder(resolveCallback)
 		irProg := builder.Build(program)
 
 		backend := cbe.New()
@@ -328,7 +340,7 @@ func main() {
 
 	// Flag -m=x86_64 : Generate X86_64 assembly from IR and exit cleanly
 	if *archFlag == "X86_64" || *archFlag == "X86-64" || *archFlag == "X" {
-		builder := ir.NewBuilder()
+		builder := ir.NewBuilder(resolveCallback)
 		irProg := builder.Build(program)
 
 		backend := x86_64.New()
@@ -348,7 +360,7 @@ func main() {
 
 	// Flag -m=6809 : Generate M6809 assembly from IR and exit cleanly
 	if *archFlag == "6809" || *archFlag == "M6809" || *archFlag == "M" {
-		builder := ir.NewBuilder()
+		builder := ir.NewBuilder(resolveCallback)
 		irProg := builder.Build(program)
 
 		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)
@@ -369,7 +381,7 @@ func main() {
 	// Flag -m=C : transpile AST to C and exit cleanly
 	if *archFlag == "C" || *archFlag == "C99" {
 		tr := transpiler.New()
-		cCode := tr.Transpile(program)
+		cCode := tr.Transpile(program, resolveCallback)
 
 		header := fmt.Sprintf("/*\n * Starting whole-program compilation\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + cCode

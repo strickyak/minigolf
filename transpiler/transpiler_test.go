@@ -6,6 +6,7 @@ import (
 
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/parser"
+	"github.com/strickyak/minigolf/semantic"
 )
 
 func TestTranspiler(t *testing.T) {
@@ -44,8 +45,11 @@ func TestTranspiler(t *testing.T) {
 		t.Fatalf("Parser errors: %v", p.Errors())
 	}
 
+	res := semantic.NewResolver()
+	res.Resolve(program)
+
 	tr := New()
-	output := tr.Transpile(program)
+	output := tr.Transpile(program, nil)
 
 	if len(output) == 0 {
 		t.Fatalf("Transpiler returned empty string")

@@ -57,6 +57,7 @@ type Analyzer struct {
 	funcMap          map[string]*ast.FuncStatement
 	reachableFuncs   map[string]bool
 	queue            []string
+	resolver         *Resolver
 }
 
 func builtinType(name string) ast.Expression {
@@ -69,7 +70,7 @@ var ByteType = builtinType("byte")
 var AnyType = builtinType("any")
 var FuncTypeBuiltin = builtinType("func")
 
-func New() *Analyzer {
+func New(resolver *Resolver) *Analyzer {
 	global := NewScope(nil)
 	// Built-ins
 	global.Define("print", FuncTypeBuiltin)
@@ -94,6 +95,7 @@ func New() *Analyzer {
 		funcMap:          make(map[string]*ast.FuncStatement),
 		reachableFuncs:   make(map[string]bool),
 		queue:            []string{},
+		resolver:         resolver,
 	}
 }
 
@@ -107,7 +109,7 @@ func exprToString(expr ast.Expression) string {
 	}
 	switch e := expr.(type) {
 	case *ast.Identifier:
-		return e.Value
+		return e.FullName()
 	case *ast.ArrayType:
 		return "slice_" + exprToString(e.Elt)
 	case *ast.PointerType:
@@ -484,11 +486,11 @@ func (a *Analyzer) substituteGenericTokens(argTyps []ast.Expression, tmpl *Gener
 	return res
 }
 
-func (a *Analyzer) instantiateGeneric(instName string, qname string, argTyps []ast.Expression) {
+func (a *Analyzer) instantiateGeneric(instName string, rawGenericName string, argTyps []ast.Expression) {
 	if _, ok := a.globalScope.Resolve(instName); ok {
 		return
 	} // Already instantiated
-	tmpl, ok := a.genericTemplates[qname]
+	tmpl, ok := a.genericTemplates[rawGenericName]
 	if !ok {
 		return
 	}
@@ -496,6 +498,14 @@ func (a *Analyzer) instantiateGeneric(instName string, qname string, argTyps []a
 	subTokens := a.substituteGenericTokens(argTyps, tmpl)
 	p := parser.New(subTokens)
 	stmt := p.ParseStatementForGeneric()
+
+	// Resolve names in the instantiated template using the package where it was defined
+	genParts := strings.SplitN(rawGenericName, ".", 2)
+	defPkg := "main"
+	if len(genParts) == 2 {
+		defPkg = genParts[0]
+	}
+	stmt = a.resolver.ResolveGenericInst(stmt, defPkg)
 
 	if ts, ok := stmt.(*ast.TypeStatement); ok {
 		ts.Name.Value = strings.TrimPrefix(instName, a.currentPackage+".")
@@ -533,29 +543,22 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 	case *ast.StringLiteral:
 		typ = &ast.ArrayType{Elt: ByteType}
 	case *ast.Identifier:
-		qname := a.currentPackage + "." + e.Value
+		fullName := e.FullName()
 
 		if sym, ok := a.currentScope.Resolve(e.Value); ok {
 			typ = sym.Type
 			if isFuncType(typ) {
 				a.markReachable(sym.Name)
 			}
-		} else if sym, ok := a.globalScope.Resolve(qname); ok {
+		} else if sym, ok := a.globalScope.Resolve(fullName); ok {
 			typ = sym.Type
 			if isFuncType(typ) {
 				a.markReachable(sym.Name)
 			}
-		} else if sym, ok := a.globalScope.Resolve("prelude." + e.Value); ok {
-			typ = sym.Type
-			if isFuncType(typ) {
-				a.markReachable(sym.Name)
-			}
-		} else if _, ok := a.genericTemplates[qname]; ok {
+		} else if _, ok := a.genericTemplates[fullName]; ok {
 			typ = builtinType("func") // It's a generic template func or type
-		} else if _, ok := a.genericTemplates["prelude."+e.Value]; ok {
-			typ = builtinType("func") // It's a prelude generic template
 		} else {
-			a.errors = append(a.errors, fmt.Sprintf("undefined identifier: %s", e.Value))
+			a.errors = append(a.errors, fmt.Sprintf("undefined identifier: %s (resolved as %s)", e.Value, fullName))
 		}
 	case *ast.InfixExpression:
 		t1 := a.analyzeExpression(e.Left)
@@ -565,7 +568,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 
 			// ir.Builder uses prelude helpers for comparing slices and structs
 			t1Str := exprToString(t1)
-			if t1Str == "slice_byte" || t1Str == "prelude.slice_byte" || t1Str == "string" {
+			if t1Str == "slice_byte" || t1Str == "prelude.slice_byte" || t1Str == "string" || t1Str == "prelude.string" {
 				if e.Operator == "==" || e.Operator == "!=" {
 					a.markReachable("prelude.streq")
 				} else {
@@ -631,10 +634,8 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 	case *ast.IndexExpression:
 		qname := ""
 		if id, ok := e.Left.(*ast.Identifier); ok {
-			if _, ok := a.genericTemplates[a.currentPackage+"."+id.Value]; ok {
-				qname = a.currentPackage + "." + id.Value
-			} else if _, ok := a.genericTemplates["prelude."+id.Value]; ok {
-				qname = "prelude." + id.Value
+			if _, ok := a.genericTemplates[id.FullName()]; ok {
+				qname = id.FullName()
 			}
 		}
 

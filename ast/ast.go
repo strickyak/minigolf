@@ -244,8 +244,21 @@ func (s *ExpressionStatement) GetToken() *token.Token { return &s.Token }
 
 type Identifier struct {
 	BaseExpression
-	Token token.Token // The token.IDENT token
-	Value string
+	Token      token.Token // The token.IDENT token
+	Value      string
+	Package    string
+	ShortName  string
+	IsResolved bool
+}
+
+func (e *Identifier) FullName() string {
+	if !e.IsResolved || e.Package == "" || e.Package == "builtin" {
+		if e.ShortName != "" {
+			return e.ShortName
+		}
+		return e.Value
+	}
+	return e.Package + "." + e.ShortName
 }
 
 func (e *Identifier) expressionNode()        {}

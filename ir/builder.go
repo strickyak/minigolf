@@ -62,6 +62,7 @@ type Builder struct {
 
 	breakStack    []*BasicBlock
 	continueStack []*BasicBlock
+	resolveCallback  func(node ast.Node, defPkg string) ast.Node
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -78,7 +79,7 @@ type GenericTemplate struct {
 	Tokens     []token.Token
 }
 
-func NewBuilder() *Builder {
+func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node) *Builder {
 	return &Builder{
 		Program:           &Program{TypeDefs: make(map[string]Type)},
 		currentDef:        make(map[*BasicBlock]map[string]Value),
@@ -97,6 +98,7 @@ func NewBuilder() *Builder {
 		instantiatedTypes: make(map[string]InstantiatedTypeInfo),
 		globalItems:       make(map[string]*GlobalItem),
 		worklist:          make([]*GlobalItem, 0),
+		resolveCallback:   resolveCallback,
 	}
 }
 
@@ -116,7 +118,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		case "const_integer":
 			return TypeConstInteger
 		default:
-			qname := b.currentPackage + "." + e.Value
+			qname := e.FullName()
 			if _, ok := b.typeDefsAST[qname]; !ok {
 				if _, okAlias := b.typeAliases[qname]; !okAlias {
 					if _, ok := b.typeDefsAST["prelude."+e.Value]; ok {
@@ -137,18 +139,13 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 			panic("unresolved:" + qname)
 		}
 	case *ast.SelectorExpression:
-		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
-			return Type{Expr: expr, Name: pkgIdent.Value + "." + e.Right.Value}
-		}
+		// We shouldn't hit package lookups here anymore since ResolveNames collapsed them!
+		// If we hit it, it's a field lookup type? MiniGolf doesn't support nested structs by selector yet.
 		return TypeWord
 	case *ast.IndexExpression:
 		var rawGenericName string
 		if ident, ok := e.Left.(*ast.Identifier); ok {
-			rawGenericName = b.currentPackage + "." + ident.Value
-		} else if sel, ok := e.Left.(*ast.SelectorExpression); ok {
-			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
-				rawGenericName = pkgIdent.Value + "." + sel.Right.Value
-			}
+			rawGenericName = ident.FullName()
 		}
 
 		if rawGenericName != "" {
@@ -325,6 +322,12 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 		}
 	}
 
+	parts := strings.SplitN(genericName, ".", 2)
+	defPkg := parts[0]
+	if b.resolveCallback != nil {
+		baseTypeAST = b.resolveCallback(baseTypeAST, defPkg).(ast.Expression)
+	}
+
 	if st, ok := baseTypeAST.(*ast.StructType); ok {
 		b.typeDefsAST[instName] = st
 		b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, instName)
@@ -351,6 +354,14 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 	p := parser.New(newTokens)
 	stmt := p.ParseStatementForGeneric()
 
+	genParts := strings.SplitN(genericName, ".", 2)
+	defPkg := "main"
+	if len(genParts) == 2 {
+		defPkg = genParts[0]
+	}
+	if b.resolveCallback != nil {
+		stmt = b.resolveCallback(stmt, defPkg).(ast.Statement)
+	}
 	if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
 		oldPkg := b.currentPackage
 		parts := strings.SplitN(instName, ".", 2)
@@ -576,9 +587,6 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		typ := b.astToIRType(p.Type)
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
 		paramIdx++
-	}
-	if strings.Contains(f.Name, "mul_word") {
-		fmt.Printf("DEBUG IR registerFunc final: f.Name=%q\n", f.Name)
 	}
 	b.funcs[f.Name] = f
 	b.Program.Functions = append(b.Program.Functions, f)
@@ -1250,44 +1258,20 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: uint64(e.Value)}, e)
 		return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
 	case *ast.Identifier:
-		qname := b.currentPackage + "." + e.Value
-		if f, ok := b.funcs[qname]; ok {
+		if e.Value == "nil" {
+			return ExprResult{IsLValue: false, Value: &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, Typ: TypeWord}
+		}
+		
+		fullName := e.FullName()
+		if f, ok := b.funcs[fullName]; ok {
 			val := b.addInstr(&AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}, e)
 			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 		}
-		if f, ok := b.funcs[e.Value]; ok {
-			val := b.addInstr(&AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}, e)
-			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
-		}
-		if g, ok := b.globals[qname]; ok {
+		if g, ok := b.globals[fullName]; ok {
 			addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: g.Typ.PointerTo()}, Global: g}, e)
 			return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
 		}
-		if g, ok := b.globals[e.Value]; ok {
-			addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: g.Typ.PointerTo()}, Global: g}, e)
-			return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
-		}
-		if c, ok := b.consts[qname]; ok {
-			if cw, ok := c.(*ConstWord); ok {
-				val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: cw.Val}, e)
-				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
-			}
-		}
-		if c, ok := b.consts[e.Value]; ok {
-			if cw, ok := c.(*ConstWord); ok {
-				val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: cw.Val}, e)
-				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
-			}
-		}
-		if f, ok := b.funcs["prelude."+e.Value]; ok {
-			val := b.addInstr(&AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}, e)
-			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
-		}
-		if g, ok := b.globals["prelude."+e.Value]; ok {
-			addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: g.Typ.PointerTo()}, Global: g}, e)
-			return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
-		}
-		if c, ok := b.consts["prelude."+e.Value]; ok {
+		if c, ok := b.consts[fullName]; ok {
 			if cw, ok := c.(*ConstWord); ok {
 				val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: cw.Val}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
@@ -1298,7 +1282,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: val}, e)
 			return ExprResult{IsLValue: true, Address: addr, Typ: typ}
 		}
-		panic(fmt.Sprintf("Identifier not found: %s (qname=%s, currentPackage=%s)", e.Value, qname, b.currentPackage))
+		panic(fmt.Sprintf("Identifier not found: %s (fullName=%s, currentPackage=%s)", e.Value, fullName, b.currentPackage))
 	case *ast.IndexExpression:
 		base := b.eval(e.Left)
 		idx := b.buildExpr(e.Indices[0])
@@ -1372,20 +1356,6 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 
 	case *ast.SelectorExpression:
-		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
-			qname := pkgIdent.Value + "." + e.Right.Value
-			if g, ok := b.globals[qname]; ok {
-				addr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: g.Typ.PointerTo()}, Global: g}, e)
-				return ExprResult{IsLValue: true, Address: addr, Typ: g.Typ}
-			}
-			if c, ok := b.consts[qname]; ok {
-				if cw, ok := c.(*ConstWord); ok {
-					val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: cw.Val}, e)
-					return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
-				}
-			}
-		}
-
 		base := b.eval(e.Left)
 		isPtr := base.Typ.IsAPointer()
 		var structName string
@@ -1638,11 +1608,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					val := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, expr)
 					return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 				}
-				rawFuncName = b.currentPackage + "." + ident.Value
-			} else if sel, ok := idxExpr.Left.(*ast.SelectorExpression); ok {
-				if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
-					rawFuncName = pkgIdent.Value + "." + sel.Right.Value
-				}
+				rawFuncName = ident.FullName()
 			}
 			if rawFuncName != "" {
 				var instTypStr string
@@ -1656,21 +1622,12 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				if _, ok := b.funcs[funcName]; !ok {
 					if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
 						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
-					} else if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
-						builtinRawFuncName := "prelude." + ident.Value
-						if tmpl, ok := b.genericTemplates[builtinRawFuncName]; ok {
-							rawFuncName = builtinRawFuncName
-							funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
-							if _, ok := b.funcs[funcName]; !ok {
-								b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
-							}
-						}
 					}
 				}
 				isGenericFunc = true
 			}
 		} else if ident, ok := e.Function.(*ast.Identifier); ok {
-			rawFuncName = b.currentPackage + "." + ident.Value
+			rawFuncName = ident.FullName()
 			if _, ok := b.funcs[rawFuncName]; !ok {
 				if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
 					p := parser.New(tmpl.Tokens)
@@ -1721,18 +1678,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 
 		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
-			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
-				qname := pkgIdent.Value + "." + sel.Right.Value
-				if f, exists := b.funcs[qname]; exists {
-					var args []Value
-					for _, arg := range e.Arguments {
-						args = append(args, b.buildExpr(arg))
-					}
-					b.coerceCallArgs(f, args, expr)
-					val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
-					return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
-				}
-			}
+
 
 			base := b.eval(sel.Left)
 			isPtr := base.Typ.IsAPointer()
@@ -1815,8 +1761,10 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			for _, arg := range e.Arguments {
 				args = append(args, b.buildExpr(arg))
 			}
-			funcName := ident.Value
-			if _, ok := b.funcs[b.currentPackage+"."+funcName]; ok {
+			funcName := ident.FullName()
+			if _, ok := b.funcs[funcName]; ok {
+				// Found by exact full name
+			} else if _, ok := b.funcs[b.currentPackage+"."+funcName]; ok {
 				funcName = b.currentPackage + "." + funcName
 			} else if _, ok := b.funcs["prelude."+funcName]; ok {
 				funcName = "prelude." + funcName

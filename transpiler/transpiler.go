@@ -319,10 +319,10 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 	return "word"
 }
 
-func (t *Transpiler) Transpile(program *ast.Program) string {
+func (t *Transpiler) Transpile(program *ast.Program, resolveCallback func(ast.Node, string) ast.Node) string {
 	// Initialize
 	t.arrayTypes = make(map[string]bool)
-	t.irBuilder = ir.NewBuilder()
+	t.irBuilder = ir.NewBuilder(resolveCallback)
 	t.irBuilder.Build(program)
 
 	// Pass 0: Collect generic templates and aliases
@@ -1326,12 +1326,19 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 		if t.isLocal(e.Value) {
 			return fmt.Sprintf("v_%s", e.Value)
 		}
+		fullName := e.FullName()
+		if _, ok := t.funcTypes[fullName]; ok {
+			return fmt.Sprintf("((word)(&f_%s))", strings.ReplaceAll(fullName, ".", "_"))
+		}
 		qname := t.currentPackage + "." + e.Value
 		if _, ok := t.funcTypes[qname]; ok {
 			return fmt.Sprintf("((word)(&f_%s_%s))", t.currentPackage, e.Value)
 		}
 		if _, ok := t.funcTypes["prelude."+e.Value]; ok {
 			return fmt.Sprintf("((word)(&f_prelude_%s))", e.Value)
+		}
+		if fullName != e.Value {
+			return fmt.Sprintf("v_%s", strings.ReplaceAll(fullName, ".", "_"))
 		}
 		return fmt.Sprintf("v_%s_%s", t.currentPackage, e.Value)
 	case *ast.IntegerLiteral:
@@ -1708,11 +1715,18 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				return fmt.Sprintf("(%s).%s", argStr, field)
 			}
 
+			fullName := ident.FullName()
 			funcName := ident.Value
 			pkgName := t.currentPackage
-			if _, ok := t.funcTypes[pkgName+"."+funcName]; !ok {
-				if _, ok := t.funcTypes["prelude."+funcName]; ok {
-					pkgName = "prelude"
+			if strings.Contains(fullName, ".") {
+				parts := strings.SplitN(fullName, ".", 2)
+				pkgName = parts[0]
+				funcName = parts[1]
+			} else {
+				if _, ok := t.funcTypes[pkgName+"."+funcName]; !ok {
+					if _, ok := t.funcTypes["prelude."+funcName]; ok {
+						pkgName = "prelude"
+					}
 				}
 			}
 			funcQName := pkgName + "." + funcName
