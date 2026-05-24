@@ -13,13 +13,8 @@ const ListKind = 3
 
 var NIL *Node
 
-var Pool [200]Node
-var NextNode word
-
 func AllocNode() *Node {
-	p := &Pool[NextNode]
-	NextNode++
-	return p
+	return (*Node)(zalloc(sizeof[Node]()))
 }
 
 var parseStr string
@@ -204,18 +199,9 @@ type Def struct {
 	Body slice[word]
 }
 
-var DefPool [20]Def
-var NextDef word
+var Definitions slice[Def]
 
-func AllocDef() *Def {
-	p := &DefPool[NextDef]
-	NextDef++
-	return p
-}
-
-var Definitions slice[word]
-
-func Eval(prog slice[word], stack *slice[word]) {
+func Eval(prog slice[word], stack slice[word]) slice[word] {
 	for i := word(0); i < prog.Len; i++ {
 		node := (*Node)(prog.Get(i))
 
@@ -269,7 +255,7 @@ func Eval(prog slice[word], stack *slice[word]) {
 					// map executes the program for each element
 					var mapStack slice[word]
 					mapStack.Append(lstNode.List.Get(j))
-					Eval(progNode.List, &mapStack)
+					mapStack = Eval(progNode.List, mapStack)
 					// push all results to resList
 					for k := range mapStack.Len {
 						resList.List.Append(mapStack.Get(k))
@@ -291,19 +277,19 @@ func Eval(prog slice[word], stack *slice[word]) {
 					body.Append(prog.Get(j))
 				}
 
-				def := AllocDef()
+				var def Def
 				def.Name = nameNode.Symbol
 				def.Body = body
-				Definitions.Append(word(def))
+				Definitions.Append(def)
 
 				break // consume the rest of the program
 			} else {
 				// Check if it's a defined function
 				var found byte = 0
 				for j := range Definitions.Len {
-					def := (*Def)(Definitions.Get(j))
+					def := Definitions.Get(j)
 					if def.Name == sym {
-						Eval(def.Body, stack)
+						stack = Eval(def.Body, stack)
 						found = 1
 						break
 					}
@@ -315,6 +301,7 @@ func Eval(prog slice[word], stack *slice[word]) {
 			}
 		}
 	}
+	return stack
 }
 
 func main() {
@@ -324,35 +311,35 @@ func main() {
 	// Example 1: 2 3 +
 	print("Example 1: 2 3 + => ")
 	stack.Len = 0
-	Eval(Parse("2 3 +"), &stack)
+	stack = Eval(Parse("2 3 +"), stack)
 	printStack(stack)
 
 	// Example 2: 2 3 + dup *
 	print("Example 2: 2 3 + dup * => ")
 	stack.Len = 0
-	Eval(Parse("2 3 + dup *"), &stack)
+	stack = Eval(Parse("2 3 + dup *"), stack)
 	printStack(stack)
 
 	// Example 3: [1 2 3] [4 5 6 7] concat
 	print("Example 3: [1 2 3] [4 5 6 7] concat => ")
 	stack.Len = 0
-	Eval(Parse("[1 2 3] [4 5 6 7] concat"), &stack)
+	stack = Eval(Parse("[1 2 3] [4 5 6 7] concat"), stack)
 	printStack(stack)
 
 	// Example 4: [1 2 3 4] [dup *] map
 	print("Example 4: [1 2 3 4] [dup *] map => ")
 	stack.Len = 0
-	Eval(Parse("[1 2 3 4] [dup *] map"), &stack)
+	stack = Eval(Parse("[1 2 3 4] [dup *] map"), stack)
 	printStack(stack)
 
-	if 1 {
+	if 0 {
 		// Example 5: square == dup *
 		print("Example 5: square == dup * => ")
 		stack.Len = 0
-		Eval(Parse("square == dup *"), &stack)
+		stack = Eval(Parse("square == dup *"), stack)
 		print("Defined! Now testing 5 square => ")
 		stack.Len = 0
-		Eval(Parse("5 square"), &stack)
+		stack = Eval(Parse("5 square"), stack)
 		printStack(stack)
 	}
 }

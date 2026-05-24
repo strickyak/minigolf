@@ -264,15 +264,18 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 		b.stackOffset += aligned
 		b.paramSlots[p.Name] = b.stackOffset
-		if regsIdx < len(regs) {
-			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], %s\n", b.stackOffset, regs[regsIdx]))
-			regsIdx++
-			for byteOffset := 8; byteOffset < size; byteOffset += 8 {
-				if regsIdx < len(regs) {
-					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + %d], %s\n", b.stackOffset, byteOffset, regs[regsIdx]))
-					regsIdx++
-				}
+
+		words := aligned / 8
+		for w := 0; w < words; w++ {
+			byteOffset := w * 8
+			if regsIdx < 6 {
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + %d], %s\n", b.stackOffset, byteOffset, regs[regsIdx]))
+			} else {
+				stackArgOffset := 16 + (regsIdx-6)*8
+				b.buf.WriteString(fmt.Sprintf("\tmov r10, qword ptr [rbp + %d]\n", stackArgOffset))
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d + %d], r10\n", b.stackOffset, byteOffset))
 			}
+			regsIdx++
 		}
 	}
 
@@ -664,34 +667,72 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.Call:
 		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-		regsIdx := 0
-
 		retSize := 0
 		if !i.Typ.Equals(ir.TypeVoid) {
 			retSize = b.getTypeSize(i.Typ.Name)
-			if retSize > 16 {
-				b.buf.WriteString(fmt.Sprintf("\tlea %s, [rbp - %d]\n", regs[regsIdx], offset))
-				regsIdx++
+		}
+
+		totalWords := 0
+		if retSize > 16 {
+			totalWords++
+		}
+		for _, arg := range i.Args {
+			size := b.getTypeSize(arg.Type().Name)
+			totalWords += (size + 7) / 8
+		}
+
+		extraWords := 0
+		if totalWords > 6 {
+			extraWords = totalWords - 6
+		}
+		paddingWords := extraWords % 2
+		stackSub := (extraWords + paddingWords) * 8
+		if stackSub > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tsub rsp, %d\n", stackSub))
+		}
+
+		wordIdx := 0
+
+		if retSize > 16 {
+			if wordIdx < 6 {
+				b.buf.WriteString(fmt.Sprintf("\tlea %s, [rbp - %d]\n", regs[wordIdx], offset))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tlea rax, [rbp - %d]\n", offset))
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rsp + %d], rax\n", (wordIdx-6)*8))
 			}
+			wordIdx++
 		}
 
 		for _, arg := range i.Args {
 			size := b.getTypeSize(arg.Type().Name)
-			if regsIdx < len(regs) {
-				b.loadVal(arg, regs[regsIdx])
-				regsIdx++
-				addr := b.getAddr(arg)
-				for byteOffset := 8; byteOffset < size; byteOffset += 8 {
-					if regsIdx < len(regs) {
-						if addr != "" {
-							b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s + %d]\n", regs[regsIdx], addr, byteOffset))
-						}
-						regsIdx++
+			words := (size + 7) / 8
+			addr := b.getAddr(arg)
+			for w := 0; w < words; w++ {
+				if w == 0 {
+					b.loadVal(arg, "r10")
+				} else {
+					if addr != "" {
+						b.buf.WriteString(fmt.Sprintf("\tmov r10, qword ptr [%s + %d]\n", addr, w*8))
+					} else {
+						b.buf.WriteString("\tmov r10, 0\n")
 					}
 				}
+
+				if wordIdx < 6 {
+					b.buf.WriteString(fmt.Sprintf("\tmov %s, r10\n", regs[wordIdx]))
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rsp + %d], r10\n", (wordIdx-6)*8))
+				}
+				wordIdx++
 			}
 		}
+
 		b.buf.WriteString(fmt.Sprintf("\tcall f_%s\n", i.Func.Name))
+
+		if stackSub > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tadd rsp, %d\n", stackSub))
+		}
+
 		if i.Typ.Equals(ir.TypeByte) {
 			b.buf.WriteString("\tmovzx rax, al\n")
 		}
@@ -705,35 +746,73 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.IndirectCall:
 		regs := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-		regsIdx := 0
-
 		retSize := 0
 		if !i.Typ.Equals(ir.TypeVoid) {
 			retSize = b.getTypeSize(i.Typ.Name)
-			if retSize > 16 {
-				b.buf.WriteString(fmt.Sprintf("\tlea %s, [rbp - %d]\n", regs[regsIdx], offset))
-				regsIdx++
+		}
+
+		totalWords := 0
+		if retSize > 16 {
+			totalWords++
+		}
+		for _, arg := range i.Args {
+			size := b.getTypeSize(arg.Type().Name)
+			totalWords += (size + 7) / 8
+		}
+
+		extraWords := 0
+		if totalWords > 6 {
+			extraWords = totalWords - 6
+		}
+		paddingWords := extraWords % 2
+		stackSub := (extraWords + paddingWords) * 8
+		if stackSub > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tsub rsp, %d\n", stackSub))
+		}
+
+		wordIdx := 0
+
+		if retSize > 16 {
+			if wordIdx < 6 {
+				b.buf.WriteString(fmt.Sprintf("\tlea %s, [rbp - %d]\n", regs[wordIdx], offset))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tlea rax, [rbp - %d]\n", offset))
+				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rsp + %d], rax\n", (wordIdx-6)*8))
 			}
+			wordIdx++
 		}
 
 		for _, arg := range i.Args {
 			size := b.getTypeSize(arg.Type().Name)
-			if regsIdx < len(regs) {
-				b.loadVal(arg, regs[regsIdx])
-				regsIdx++
-				addr := b.getAddr(arg)
-				for byteOffset := 8; byteOffset < size; byteOffset += 8 {
-					if regsIdx < len(regs) {
-						if addr != "" {
-							b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s + %d]\n", regs[regsIdx], addr, byteOffset))
-						}
-						regsIdx++
+			words := (size + 7) / 8
+			addr := b.getAddr(arg)
+			for w := 0; w < words; w++ {
+				if w == 0 {
+					b.loadVal(arg, "r10")
+				} else {
+					if addr != "" {
+						b.buf.WriteString(fmt.Sprintf("\tmov r10, qword ptr [%s + %d]\n", addr, w*8))
+					} else {
+						b.buf.WriteString("\tmov r10, 0\n")
 					}
 				}
+
+				if wordIdx < 6 {
+					b.buf.WriteString(fmt.Sprintf("\tmov %s, r10\n", regs[wordIdx]))
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rsp + %d], r10\n", (wordIdx-6)*8))
+				}
+				wordIdx++
 			}
 		}
+
 		b.loadVal(i.FuncPtr, "r11")
 		b.buf.WriteString("\tcall r11\n")
+
+		if stackSub > 0 {
+			b.buf.WriteString(fmt.Sprintf("\tadd rsp, %d\n", stackSub))
+		}
+
 		if i.Typ.Equals(ir.TypeByte) {
 			b.buf.WriteString("\tmovzx rax, al\n")
 		}
