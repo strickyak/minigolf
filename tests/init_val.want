@@ -1,0 +1,4 @@
+Apple{ worms: 15 color: yellow seeds: 4095 weight: -77 }
+Apple{ worms: 10 color: green seeds: 10000 weight: -55 }
+Apple{ worms: 95 color: mauve seeds: 9999 weight: -99 }
+Apple{ worms: 80 color: teal seeds: 888 weight: -88 }

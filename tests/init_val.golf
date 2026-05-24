@@ -1,0 +1,25 @@
+package main
+
+type Apple struct {
+	worms  byte
+	color  string
+	seeds  uint
+	weight int
+}
+
+func (a *Apple) Print() {
+	println("Apple{ worms:", a.worms, "color:", a.color, "seeds:", a.seeds, "weight:", a.weight, "}")
+}
+
+var a = Apple{worms: 15, weight: -77, seeds: 4095, color: "yellow"}
+var b = Apple{10, "green", 10000, -55}
+
+func main() {
+	var c = Apple{worms: 95, weight: -99, seeds: 9999, color: "mauve"}
+	d := Apple{80, "teal", 888, -88}
+
+	a.Print()
+	b.Print()
+	c.Print()
+	d.Print()
+}

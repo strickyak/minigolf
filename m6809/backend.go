@@ -359,13 +359,17 @@ func (b *Backend) Generate(program *ir.Program) string {
 
 				b.dataBuf.WriteString(fmt.Sprintf("*** global var init: name=%q type=%q init=%#v\n", g.Name, g.Typ.Name, g.InitString))
 				b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
-				for i := 0; i < len(g.InitString); i++ {
-					x := g.InitString[i]
-					c := byte('~')
-					if ' ' <= x && x < '~' {
-						c = x
+				if g.InitVal != nil {
+					b.emitData(g.InitVal)
+				} else {
+					for i := 0; i < len(g.InitString); i++ {
+						x := g.InitString[i]
+						c := byte('~')
+						if ' ' <= x && x < '~' {
+							c = x
+						}
+						b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d ; [%d] <%c>\n", g.InitString[i], i, c))
 					}
-					b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d ; [%d] <%c>\n", g.InitString[i], i, c))
 				}
 			} else {
 				//no-section// b.dataBuf.WriteString("\n\tsection data\n")
@@ -387,7 +391,11 @@ func (b *Backend) Generate(program *ir.Program) string {
 		for _, g := range program.Globals {
 			b.globalOffsets[g.Name] = offset
 			if g.IsInit {
-				offset += len(g.InitString)
+				if g.InitVal != nil {
+					offset += b.getTypeSize(g.Typ.Name)
+				} else {
+					offset += len(g.InitString)
+				}
 			} else {
 				size := b.getTypeSize(g.Typ.Name)
 				offset += size
@@ -1536,7 +1544,7 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
 			if arg.Type().Equals(ir.TypeInt) {
-				formatStrs = append(formatStrs, "%d")
+				fmt.Printf("DEBUG m6809 arg is TypeInt!\n"); formatStrs = append(formatStrs, "%d")
 			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
 				formatStrs = append(formatStrs, "%s")
 			} else {
@@ -1610,4 +1618,21 @@ func (b *Backend) emitMul16() {
 
 	fmt.Fprintln(&b.buf, "\t tfr x,d")
 	fmt.Fprintln(&b.buf, "\t leas 4,s // END emitMul16(D,X)->D }")
+}
+
+func (b *Backend) emitData(val ir.Value) {
+	switch v := val.(type) {
+	case *ir.ConstByte:
+		b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d\n", v.Val))
+	case *ir.ConstWord:
+		b.dataBuf.WriteString(fmt.Sprintf("\tfdb %d\n", v.Val))
+	case *ir.AddressOfGlobal:
+		b.dataBuf.WriteString(fmt.Sprintf("\tfdb v_%s\n", v.Global.Name))
+	case *ir.ConstStruct:
+		for _, f := range v.Fields {
+			b.emitData(f)
+		}
+	default:
+		log.Panicf("unsupported init value type %T", val)
+	}
 }

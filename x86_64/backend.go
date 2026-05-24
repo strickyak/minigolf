@@ -182,7 +182,11 @@ func (b *Backend) Generate(program *ir.Program) string {
 			b.dataBuf.WriteString(fmt.Sprintf("\t.globl v_%s\n", g.Name))
 			b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
 			if g.IsInit {
-				b.dataBuf.WriteString(fmt.Sprintf("\t.ascii %q\n", g.InitString))
+				if g.InitVal != nil {
+					b.emitData(g.InitVal)
+				} else {
+					b.dataBuf.WriteString(fmt.Sprintf("\t.ascii %q\n", g.InitString))
+				}
 			} else {
 				size := b.getTypeSize(g.Typ.Name)
 				b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", size))
@@ -891,4 +895,60 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 
 	b.buf.WriteString("\txor eax, eax\n")
 	b.buf.WriteString("\tcall printf@PLT\n")
+}
+
+func (b *Backend) emitData(val ir.Value) {
+	switch v := val.(type) {
+	case *ir.ConstByte:
+		b.dataBuf.WriteString(fmt.Sprintf("\t.byte %d\n", v.Val))
+	case *ir.ConstWord:
+		b.dataBuf.WriteString(fmt.Sprintf("\t.quad %d\n", v.Val))
+	case *ir.AddressOfGlobal:
+		b.dataBuf.WriteString(fmt.Sprintf("\t.quad v_%s\n", v.Global.Name))
+	case *ir.ConstStruct:
+		structName := v.Type().Name
+		if def, ok := b.program.TypeDefs[structName]; ok {
+			structName = def.Name
+		}
+		content := ""
+		if strings.HasPrefix(structName, "struct{") {
+			content = structName[7 : len(structName)-1]
+		}
+		
+		byteOffset := 0
+		depth := 0
+		start := 0
+		fIdx := 0
+		
+		for idx := 0; idx < len(content); idx++ {
+			if content[idx] == '{' {
+				depth++
+			} else if content[idx] == '}' {
+				depth--
+			} else if content[idx] == ';' && depth == 0 {
+				fTyp := content[start:idx]
+				sz := b.getTypeSize(fTyp)
+				align := b.getTypeAlignment(fTyp)
+				
+				paddedOffset := alignVal(byteOffset, align)
+				if paddedOffset > byteOffset {
+					b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", paddedOffset - byteOffset))
+				}
+				byteOffset = paddedOffset
+				
+				b.emitData(v.Fields[fIdx])
+				
+				byteOffset += sz
+				fIdx++
+				start = idx + 1
+			}
+		}
+		
+		structSize := b.getTypeSize(v.Type().Name)
+		if structSize > byteOffset {
+			b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", structSize - byteOffset))
+		}
+	default:
+		log.Panicf("unsupported init value type %T", val)
+	}
 }

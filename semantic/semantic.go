@@ -744,6 +744,14 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 				}
 			}
 		}
+	case *ast.CompositeLit:
+		typ = e.Type
+		for _, el := range e.Elements {
+			a.analyzeExpression(el)
+		}
+	case *ast.KeyValueExpr:
+		// Key is a field name, not evaluated!
+		a.analyzeExpression(e.Value)
 	}
 
 	expr.SetResolvedType(typ)

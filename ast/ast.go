@@ -399,3 +399,24 @@ type PointerType struct {
 func (pt *PointerType) expressionNode()        {}
 func (pt *PointerType) TokenLiteral() string   { return pt.Token.Literal }
 func (pt *PointerType) GetToken() *token.Token { return &pt.Token }
+
+type KeyValueExpr struct {
+	BaseExpression
+	Key   Expression
+	Value Expression
+}
+
+func (e *KeyValueExpr) expressionNode()        {}
+func (e *KeyValueExpr) TokenLiteral() string   { return e.Key.TokenLiteral() }
+func (e *KeyValueExpr) GetToken() *token.Token { return e.Key.GetToken() }
+
+type CompositeLit struct {
+	BaseExpression
+	Type     Expression // The type being instantiated
+	Token    token.Token // The '{' token
+	Elements []Expression // List of expressions or KeyValueExpr
+}
+
+func (e *CompositeLit) expressionNode()        {}
+func (e *CompositeLit) TokenLiteral() string   { return e.Token.Literal }
+func (e *CompositeLit) GetToken() *token.Token { return &e.Token }

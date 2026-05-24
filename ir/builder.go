@@ -63,6 +63,7 @@ type Builder struct {
 	breakStack      []*BasicBlock
 	continueStack   []*BasicBlock
 	resolveCallback func(node ast.Node, defPkg string) ast.Node
+	varInitStatements []*GlobalItem
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -542,6 +543,27 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 		}
 	}
 
+	if len(b.varInitStatements) > 0 {
+		b.buildSyntheticInit()
+		
+		mainFunc := b.funcs["main"]
+		if mainFunc != nil && len(mainFunc.Blocks) > 0 {
+			initFunc := b.funcs["init_main"]
+			callInstr := &Call{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Func: initFunc}
+			
+			// We need a unique ID for callInstr
+			maxID := 0
+			for _, instr := range mainFunc.Blocks[0].Instructions {
+				if instr.GetID() > maxID {
+					maxID = instr.GetID()
+				}
+			}
+			callInstr.SetID(maxID + 1000)
+			
+			mainFunc.Blocks[0].Instructions = append([]Instruction{callInstr}, mainFunc.Blocks[0].Instructions...)
+		}
+	}
+
 	return b.Program
 }
 
@@ -866,13 +888,25 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 	case *ast.BlockStatement:
 		b.buildBlock(s)
 	case *ast.VarStatement:
-		typ := b.astToIRType(s.ValueType)
-		b.varTypes[s.Name.Value] = typ
+		var typ Type
 		var val Value
-		if s.Value != nil {
+		
+		if s.ValueType != nil {
+			typ = b.astToIRType(s.ValueType)
+			if s.Value != nil {
+				val = b.buildExpr(s.Value)
+				val = b.coerceType(val, typ)
+			}
+		} else if s.Value != nil {
 			val = b.buildExpr(s.Value)
-			val = b.coerceType(val, typ)
+			typ = val.Type()
 		} else {
+			panic("variable declaration without type or value")
+		}
+		
+		b.varTypes[s.Name.Value] = typ
+
+		if val == nil {
 			switch typ.Name {
 			case "byte":
 				val = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, s)
@@ -1588,6 +1622,43 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 		return ExprResult{IsLValue: false, Value: val, Typ: typ}
 
+	case *ast.CompositeLit:
+		typ := b.astToIRType(e.Type)
+		var val Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
+		
+		st, ok := b.typeDefsAST[typ.Name]
+		if !ok {
+			panic("Composite literal on unknown struct type: " + typ.Name)
+		}
+
+		fieldIdxMap := make(map[string]int)
+		for i, f := range st.Fields {
+			fieldIdxMap[f.Name.Value] = i
+		}
+
+		for i, el := range e.Elements {
+			var fieldIdx int
+			var valExpr ast.Expression
+
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				if ident, isIdent := kv.Key.(*ast.Identifier); isIdent {
+					fieldIdx = fieldIdxMap[ident.Value]
+				} else {
+					panic("Key must be identifier")
+				}
+				valExpr = kv.Value
+			} else {
+				fieldIdx = i
+				valExpr = el
+			}
+
+			fieldVal := b.buildExpr(valExpr)
+			fTyp := b.astToIRType(st.Fields[fieldIdx].Type)
+			fieldVal = b.coerceType(fieldVal, fTyp)
+			val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: val, FieldIndex: fieldIdx, Val: fieldVal}, e)
+		}
+		return ExprResult{IsLValue: false, Value: val, Typ: typ}
+
 	case *ast.CallExpression:
 		if ptrType, ok := e.Function.(*ast.PointerType); ok {
 			targetTyp := b.astToIRType(ptrType)
@@ -2192,10 +2263,32 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		b.consts[item.QName] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
 	case ItemVar:
 		s := item.ASTNode.(*ast.VarStatement)
-		typ := b.astToIRType(s.ValueType)
+		var typ Type
+		if s.ValueType != nil {
+			typ = b.astToIRType(s.ValueType)
+		} else if s.Value != nil {
+			if lit, ok := s.Value.(*ast.CompositeLit); ok {
+				typ = b.astToIRType(lit.Type)
+			} else if _, ok := s.Value.(*ast.IntegerLiteral); ok {
+				typ = TypeWord
+			} else if _, ok := s.Value.(*ast.StringLiteral); ok {
+				if _, ok := b.Program.TypeDefs["prelude.slice_byte"]; ok {
+					typ = Type{Name: "prelude.slice_byte"}
+				} else {
+					typ = Type{Name: "slice_byte"}
+				}
+			} else {
+				panic("Cannot infer type for global variable: " + item.QName)
+			}
+		} else {
+			panic("Global variable without type must have a value: " + item.QName)
+		}
 		g := &Global{Name: item.QName, Typ: typ}
 		b.globals[g.Name] = g
 		b.Program.Globals = append(b.Program.Globals, g)
+		if s.Value != nil {
+			b.varInitStatements = append(b.varInitStatements, item)
+		}
 	case ItemGenericFunc:
 		s := item.ASTNode.(*ast.FuncStatement)
 		var typeParams []string
@@ -2225,4 +2318,203 @@ func (b *Builder) addStringConstant(val string) *Global {
 	}
 	b.Program.Globals = append(b.Program.Globals, g)
 	return g
+}
+
+func (t Type) ArrayLength() int {
+	idx := strings.Index(t.Name, "]")
+	if idx != -1 && strings.HasPrefix(t.Name, "[") {
+		length, _ := strconv.Atoi(t.Name[1:idx])
+		return length
+	}
+	return 0
+}
+
+func (b *Builder) isConstantExpr(expr ast.Expression) bool {
+	switch e := expr.(type) {
+	case *ast.IntegerLiteral:
+		return true
+	case *ast.StringLiteral:
+		return true
+	case *ast.PrefixExpression:
+		if e.Operator == "-" || e.Operator == "+" {
+			return b.isConstantExpr(e.Right)
+		}
+		return false
+	case *ast.CompositeLit:
+		for _, el := range e.Elements {
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				if !b.isConstantExpr(kv.Value) {
+					return false
+				}
+			} else {
+				if !b.isConstantExpr(el) {
+					return false
+				}
+			}
+		}
+		return true
+	case *ast.Identifier:
+		fullName := e.FullName()
+		if _, ok := b.consts[fullName]; ok {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+func (b *Builder) zeroConstant(typ Type) Value {
+	if typ.Equals(TypeByte) {
+		return &ConstByte{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
+	}
+	if typ.Equals(TypeWord) || typ.Equals(TypeInt) || typ.Equals(TypeUint) {
+		return &ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
+	}
+	if typ.IsAStruct() {
+		st, ok := b.typeDefsAST[typ.Name]
+		if !ok {
+			panic("unknown struct type for zeroing: " + typ.Name)
+		}
+		var fields []Value
+		for _, f := range st.Fields {
+			fTyp := b.astToIRType(f.Type)
+			fields = append(fields, b.zeroConstant(fTyp))
+		}
+		return &ConstStruct{BaseInstruction: BaseInstruction{Typ: typ}, Fields: fields}
+	}
+	if typ.IsAnArray() {
+		var fields []Value
+		eltTyp := typ.ArrayElementType()
+		length := typ.ArrayLength()
+		for i := 0; i < length; i++ {
+			fields = append(fields, b.zeroConstant(eltTyp))
+		}
+		return &ConstStruct{BaseInstruction: BaseInstruction{Typ: typ}, Fields: fields}
+	}
+	return &ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
+}
+
+func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
+	switch e := expr.(type) {
+	case *ast.IntegerLiteral:
+		if targetTyp.Equals(TypeByte) {
+			return &ConstByte{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: uint8(e.Value)}
+		}
+		return &ConstWord{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: uint64(e.Value)}
+	case *ast.StringLiteral:
+		g := b.addStringConstant(e.Value)
+		length := int64(len(e.Value))
+		lenVal := &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(length)}
+		return &ConstStruct{
+			BaseInstruction: BaseInstruction{Typ: targetTyp},
+			Fields: []Value{
+				&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Global: g},
+				lenVal,
+				lenVal,
+			},
+		}
+	case *ast.PrefixExpression:
+		if e.Operator == "-" {
+			val := b.evalConstantExpr(e.Right, targetTyp)
+			if cw, ok := val.(*ConstWord); ok {
+				return &ConstWord{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: uint64(-int64(cw.Val))}
+			}
+			if cb, ok := val.(*ConstByte); ok {
+				return &ConstByte{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: uint8(-int8(cb.Val))}
+			}
+		} else if e.Operator == "+" {
+			return b.evalConstantExpr(e.Right, targetTyp)
+		}
+	case *ast.Identifier:
+		fullName := e.FullName()
+		if c, ok := b.consts[fullName]; ok {
+			if cw, ok := c.(*ConstWord); ok {
+				if targetTyp.Equals(TypeByte) {
+					return &ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: uint8(cw.Val)}
+				}
+				return &ConstWord{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: cw.Val}
+			}
+		}
+	case *ast.CompositeLit:
+		st, ok := b.typeDefsAST[targetTyp.Name]
+		if !ok {
+			panic("constant struct of unknown type " + targetTyp.Name)
+		}
+		fieldIdxMap := make(map[string]int)
+		for i, f := range st.Fields {
+			fieldIdxMap[f.Name.Value] = i
+		}
+		
+		fields := make([]Value, len(st.Fields))
+		for i, el := range e.Elements {
+			fieldIdx := i
+			var valExpr ast.Expression
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				ident := kv.Key.(*ast.Identifier)
+				fieldIdx = fieldIdxMap[ident.Value]
+				valExpr = kv.Value
+			} else {
+				valExpr = el
+			}
+			fTyp := b.astToIRType(st.Fields[fieldIdx].Type)
+			fields[fieldIdx] = b.evalConstantExpr(valExpr, fTyp)
+		}
+		for i, f := range fields {
+			if f == nil {
+				fTyp := b.astToIRType(st.Fields[i].Type)
+				fields[i] = b.zeroConstant(fTyp)
+			}
+		}
+		return &ConstStruct{BaseInstruction: BaseInstruction{Typ: targetTyp}, Fields: fields}
+	}
+	panic(fmt.Sprintf("Not a constant or unsupported constant expr: %T", expr))
+}
+
+func (b *Builder) buildSyntheticInit() {
+	f := &Function{Name: "init_main", ReturnType: TypeVoid}
+	b.funcs[f.Name] = f
+	b.Program.Functions = append(b.Program.Functions, f)
+
+	oldFunc := b.currentFunc
+	b.currentFunc = f
+	b.nextValueID = 1
+	b.nextBlockID = 1
+	b.currentDef = make(map[*BasicBlock]map[string]Value)
+	b.sealedBlocks = make(map[*BasicBlock]bool)
+	b.incompletePhis = make(map[*BasicBlock]map[string]*Phi)
+	b.varTypes = make(map[string]Type)
+
+	entry := b.newBlock()
+	b.currentBlock = entry
+	b.sealBlock(entry)
+
+	for _, item := range b.varInitStatements {
+		s := item.ASTNode.(*ast.VarStatement)
+		g := b.globals[item.QName]
+		
+		var val Value
+		if b.isConstantExpr(s.Value) {
+			constVal := b.evalConstantExpr(s.Value, g.Typ)
+			
+			constName := fmt.Sprintf(".const_struct_%d", len(b.Program.Globals))
+			constGlobal := &Global{
+				Name: constName,
+				Typ: g.Typ,
+				InitVal: constVal,
+				IsInit: true,
+			}
+			b.globals[constName] = constGlobal
+			b.Program.Globals = append(b.Program.Globals, constGlobal)
+			
+			val = b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: constGlobal}, s)
+		} else {
+			val = b.buildExpr(s.Value)
+			val = b.coerceType(val, g.Typ)
+		}
+		
+		b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, s)
+	}
+
+	b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, nil)
+	b.currentFunc = oldFunc
 }

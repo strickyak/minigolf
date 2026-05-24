@@ -298,6 +298,17 @@ func (r *Resolver) resolveExpression(expr ast.Expression) ast.Expression {
 	case *ast.PointerType:
 		e.Elt = r.resolveExpression(e.Elt)
 		return e
+	case *ast.CompositeLit:
+		e.Type = r.resolveExpression(e.Type)
+		for i, el := range e.Elements {
+			e.Elements[i] = r.resolveExpression(el)
+		}
+		return e
+	case *ast.KeyValueExpr:
+		// Key is a field name, not a variable, so don't resolve it!
+		// But wait! If Key is not resolved, that's fine.
+		e.Value = r.resolveExpression(e.Value)
+		return e
 	}
 	return expr
 }

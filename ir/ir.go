@@ -173,6 +173,7 @@ type Global struct {
 	Name       string
 	Typ        Type
 	InitString string
+	InitVal Value
 	IsInit     bool
 }
 
@@ -405,6 +406,13 @@ type SourceMarker struct {
 }
 
 func (i *SourceMarker) Opcode() string { return "source_marker" }
+
+type ConstStruct struct {
+	BaseInstruction
+	Fields []Value
+}
+
+func (i *ConstStruct) Opcode() string { return "const_struct" }
 
 // --- SSA Primitives ---
 

@@ -45,6 +45,7 @@ var precedences = map[token.TokenType]int{
 	token.LPAREN:   CALL,
 	token.LBRACKET: INDEX,
 	token.DOT:      INDEX,
+	token.LBRACE:   CALL,
 }
 
 type Parser struct {
@@ -58,6 +59,8 @@ type Parser struct {
 
 	prefixParseFns map[token.TokenType]prefixParseFn
 	infixParseFns  map[token.TokenType]infixParseFn
+
+	allowCompositeLit bool
 }
 
 type prefixParseFn func() ast.Expression
@@ -68,6 +71,7 @@ func New(tokens []token.Token) *Parser {
 		tokens: tokens,
 		pos:    0,
 		errors: []string{},
+		allowCompositeLit: true,
 	}
 
 	p.prefixParseFns = make(map[token.TokenType]prefixParseFn)
@@ -106,6 +110,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerInfix(token.LPAREN, p.parseCallExpression)
 	p.registerInfix(token.LBRACKET, p.parseIndexExpression)
 	p.registerInfix(token.DOT, p.parseSelectorExpression)
+	p.registerInfix(token.LBRACE, p.parseCompositeLit)
 
 	// Read two tokens, so curToken and peekToken are both set
 	p.nextToken()
@@ -318,7 +323,9 @@ func (p *Parser) parseVarStatement() *ast.VarStatement {
 
 	if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) {
 		p.nextToken()
+		p.allowCompositeLit = false
 		stmt.ValueType = p.parseExpression(LOWEST)
+		p.allowCompositeLit = true
 	}
 
 	if p.peekTokenIs(token.ASSIGN) {
@@ -400,7 +407,9 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 		p.nextToken() // '('
 		for !p.peekTokenIs(token.RPAREN) {
 			p.nextToken()
+			p.allowCompositeLit = false
 			stmt.ReturnTypes = append(stmt.ReturnTypes, p.parseExpression(LOWEST))
+			p.allowCompositeLit = true
 			if p.peekTokenIs(token.COMMA) {
 				p.nextToken()
 			}
@@ -410,7 +419,9 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 		}
 	} else if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) {
 		p.nextToken()
+		p.allowCompositeLit = false
 		stmt.ReturnTypes = []ast.Expression{p.parseExpression(LOWEST)}
+		p.allowCompositeLit = true
 	}
 
 	if p.peekTokenIs(token.LBRACE) {
@@ -454,7 +465,11 @@ func (p *Parser) parseFunctionParameters() []*ast.Parameter {
 		param.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
 		p.nextToken()
+		
+		p.allowCompositeLit = false
 		param.Type = p.parseExpression(LOWEST)
+		p.allowCompositeLit = true
+		
 		parameters = append(parameters, param)
 	}
 
@@ -589,7 +604,10 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 	stmt := &ast.IfStatement{Token: p.curToken}
 
 	p.nextToken()
+	
+	p.allowCompositeLit = false
 	stmt.Condition = p.parseExpression(LOWEST)
+	p.allowCompositeLit = true
 
 	if !p.expectPeek(token.LBRACE) {
 		return nil
@@ -631,7 +649,9 @@ func (p *Parser) parseForStatement() ast.Statement {
 
 	var firstStmt ast.Statement
 	if !p.curTokenIs(token.SEMICOLON) {
+		p.allowCompositeLit = false
 		firstStmt = p.parseStatement()
+		p.allowCompositeLit = true
 	}
 
 	if assignStmt, ok := firstStmt.(*ast.AssignStatement); ok {
@@ -662,7 +682,9 @@ func (p *Parser) parseForStatement() ast.Statement {
 		p.nextToken() // Skip first semicolon
 
 		if !p.curTokenIs(token.SEMICOLON) {
+			p.allowCompositeLit = false
 			stmt.Condition = p.parseExpression(LOWEST)
+			p.allowCompositeLit = true
 			if !p.expectPeek(token.SEMICOLON) {
 				return nil
 			}
@@ -671,7 +693,9 @@ func (p *Parser) parseForStatement() ast.Statement {
 		p.nextToken() // Skip second semicolon
 
 		if !p.curTokenIs(token.LBRACE) {
+			p.allowCompositeLit = false
 			stmt.Increment = p.parseStatement()
+			p.allowCompositeLit = true
 			if !p.expectPeek(token.LBRACE) {
 				return nil
 			}
@@ -683,7 +707,9 @@ func (p *Parser) parseForStatement() ast.Statement {
 
 	stmt := &ast.ForStatement{Token: startToken}
 	if exprStmt, ok := firstStmt.(*ast.ExpressionStatement); ok {
+		p.allowCompositeLit = false
 		stmt.Condition = exprStmt.Expression
+		p.allowCompositeLit = true
 	}
 
 	if !p.expectPeek(token.LBRACE) {
@@ -741,8 +767,11 @@ func (p *Parser) parseExpression(precedence int) ast.Expression {
 }
 
 func (p *Parser) peekPrecedence() int {
-	if p, ok := precedences[p.peekToken.Type]; ok {
-		return p
+	if prec, ok := precedences[p.peekToken.Type]; ok {
+		if p.peekToken.Type == token.LBRACE && !p.allowCompositeLit {
+			return LOWEST
+		}
+		return prec
 	}
 	return LOWEST
 }
@@ -931,6 +960,33 @@ func (p *Parser) registerPrefix(tokenType token.TokenType, fn prefixParseFn) {
 
 func (p *Parser) registerInfix(tokenType token.TokenType, fn infixParseFn) {
 	p.infixParseFns[tokenType] = fn
+}
+
+func (p *Parser) parseCompositeLit(left ast.Expression) ast.Expression {
+	lit := &ast.CompositeLit{Token: p.curToken, Type: left}
+	p.nextToken()
+
+	for !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
+		var el ast.Expression
+		if p.peekTokenIs(token.COLON) {
+			key := p.parseExpression(LOWEST)
+			p.nextToken() // skip to ':'
+			p.nextToken() // skip past ':'
+			val := p.parseExpression(LOWEST)
+			el = &ast.KeyValueExpr{Key: key, Value: val}
+		} else {
+			el = p.parseExpression(LOWEST)
+		}
+		lit.Elements = append(lit.Elements, el)
+
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken()
+			p.nextToken()
+		} else {
+			p.nextToken()
+		}
+	}
+	return lit
 }
 
 func (p *Parser) parseArrayType() ast.Expression {

@@ -331,6 +331,8 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 				return parts[3]
 			}
 		}
+	case *ast.CompositeLit:
+		return t.mapType(e.Type)
 	}
 	return "word"
 }
@@ -569,6 +571,11 @@ func (t *Transpiler) Transpile(program *ast.Program, resolveCallback func(ast.No
 			valType := "word"
 			if s.ValueType != nil {
 				valType = t.mapType(s.ValueType)
+			} else if s.Value != nil {
+				inferred := t.typeOf(s.Value)
+				if inferred != "word" && inferred != "" {
+					valType = inferred
+				}
 			}
 			t.globals[t.currentPackage+"."+s.Name.Value] = valType
 			t.buf.WriteString(fmt.Sprintf("%s v_%s_%s", valType, t.currentPackage, s.Name.Value))
@@ -1016,6 +1023,11 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		valType := "word"
 		if s.ValueType != nil {
 			valType = t.mapType(s.ValueType)
+		} else if s.Value != nil {
+			inferred := t.typeOf(s.Value)
+			if inferred != "word" && inferred != "" {
+				valType = inferred
+			}
 		}
 		t.addLocal(s.Name.Value, valType)
 		t.buf.WriteString(fmt.Sprintf("%s v_%s", valType, s.Name.Value))
@@ -1795,6 +1807,21 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			castStr = "word (*)()"
 		}
 		return fmt.Sprintf("((%s)(%s))(%s)", castStr, funcExprStr, strings.Join(indirectArgs, ", "))
+	case *ast.CompositeLit:
+		var elems []string
+		for _, el := range e.Elements {
+			if kv, ok := el.(*ast.KeyValueExpr); ok {
+				if ident, isIdent := kv.Key.(*ast.Identifier); isIdent {
+					elems = append(elems, fmt.Sprintf(".%s = %s", ident.Value, t.emitExprStr(kv.Value)))
+				} else {
+					elems = append(elems, t.emitExprStr(kv.Value))
+				}
+			} else {
+				elems = append(elems, t.emitExprStr(el))
+			}
+		}
+		typStr := t.mapType(e.Type)
+		return fmt.Sprintf("(%s){ %s }", typStr, strings.Join(elems, ", "))
 	}
 	return ""
 }
@@ -1811,6 +1838,9 @@ func (t *Transpiler) emitPrint(newline bool, args []ast.Expression) string {
 			if argTyp == "t_prelude_slice_byte" || argTyp == "t_slice_byte" {
 				formatStrs = append(formatStrs, "%s")
 				argStrs = append(argStrs, fmt.Sprintf("(char*)((%s).Base)", t.emitExprStr(arg)))
+			} else if argTyp == "intptr_t" || argTyp == "int" {
+				formatStrs = append(formatStrs, "%lld")
+				argStrs = append(argStrs, fmt.Sprintf("(long long)(%s)", t.emitExprStr(arg)))
 			} else {
 				formatStrs = append(formatStrs, "%llu")
 				argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)(%s)", t.emitExprStr(arg)))

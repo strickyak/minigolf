@@ -190,11 +190,15 @@ func (c *CBE) Generate(program *ir.Program) string {
 	for _, g := range program.Globals {
 		gName := strings.ReplaceAll(g.Name, ".", "_")
 		if g.IsInit {
-			var byteStrs []string
-			for i := 0; i < len(g.InitString); i++ {
-				byteStrs = append(byteStrs, fmt.Sprintf("%d", g.InitString[i]))
+			if g.InitVal != nil {
+				c.buf.WriteString(fmt.Sprintf("%s v_%s = %s;\n", c.mapType(g.Typ.Name), gName, c.formatVal(g.InitVal)))
+			} else {
+				var byteStrs []string
+				for i := 0; i < len(g.InitString); i++ {
+					byteStrs = append(byteStrs, fmt.Sprintf("%d", g.InitString[i]))
+				}
+				c.buf.WriteString(fmt.Sprintf("%s v_%s = { .data = { %s } };\n", c.mapType(g.Typ.Name), gName, strings.Join(byteStrs, ", ")))
 			}
-			c.buf.WriteString(fmt.Sprintf("%s v_%s = { .data = { %s } };\n", c.mapType(g.Typ.Name), gName, strings.Join(byteStrs, ", ")))
 		} else {
 			c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapType(g.Typ.Name), gName))
 		}
@@ -362,6 +366,22 @@ func (c *CBE) formatVal(v ir.Value) string {
 		return "v_" + gName
 	case *ir.StringLiteral:
 		return fmt.Sprintf("%q", val.Value)
+	case *ir.ConstByte:
+		return fmt.Sprintf("%d", val.Val)
+	case *ir.ConstWord:
+		return fmt.Sprintf("%dULL", val.Val)
+	case *ir.ConstStruct:
+		var fields []string
+		for _, f := range val.Fields {
+			fields = append(fields, c.formatVal(f))
+		}
+		return fmt.Sprintf("{ %s }", strings.Join(fields, ", "))
+	case *ir.AddressOfGlobal:
+		gName := strings.ReplaceAll(val.Global.Name, ".", "_")
+		return fmt.Sprintf("(&v_%s)", gName)
+	case *ir.AddressOfFunc:
+		fName := strings.ReplaceAll(val.Func.Name, ".", "_")
+		return fmt.Sprintf("((word)(&f_%s))", fName)
 	case ir.Instruction:
 		return fmt.Sprintf("v%d", val.(interface{ GetID() int }).GetID())
 	default:
@@ -375,7 +395,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 	case *ir.ConstByte:
 		return fmt.Sprintf("%d", i.Val)
 	case *ir.ConstWord:
-		return fmt.Sprintf("%d", i.Val)
+		return fmt.Sprintf("%dULL", i.Val)
 	case *ir.Sizeof:
 		return fmt.Sprintf("sizeof(%s)", c.mapType(i.TargetTyp.Name))
 	case *ir.Load:
@@ -485,8 +505,20 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 	case *ir.AddressOfGlobal:
 		gName := strings.ReplaceAll(i.Global.Name, ".", "_")
 		return fmt.Sprintf("(&v_%s)", gName)
+	case *ir.ConstStruct:
+		var fields []string
+		for _, f := range i.Fields {
+			fields = append(fields, c.formatVal(f))
+		}
+		return fmt.Sprintf("{ %s }", strings.Join(fields, ", "))
 	case *ir.AddressOfLocal:
-		return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
+		if p, ok := i.Local.(*ir.Parameter); ok {
+			return fmt.Sprintf("(&v_%s)", p.Name)
+		} else if inst, ok := i.Local.(ir.Instruction); ok {
+			return fmt.Sprintf("(&v%d)", inst.GetID())
+		} else {
+			return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
+		}
 	case *ir.AddressOfFunc:
 		fName := strings.ReplaceAll(i.Func.Name, ".", "_")
 		return fmt.Sprintf("((word)(&f_%s))", fName)
