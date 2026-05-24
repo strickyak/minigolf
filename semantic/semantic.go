@@ -138,6 +138,7 @@ func isFuncType(typ ast.Expression) bool {
 
 func (a *Analyzer) markReachable(qname string) {
 	if !a.reachableFuncs[qname] {
+		fmt.Printf("DEBUG: marking reachable %s\n", qname)
 		a.reachableFuncs[qname] = true
 		a.queue = append(a.queue, qname)
 	}
@@ -299,7 +300,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			}
 
 			if !a.reachableFuncs[qname] {
-
+				fmt.Printf("DEBUG: stripping %s\n", qname)
 				continue // DEAD CODE ELIMINATED!
 			}
 		}
@@ -443,7 +444,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 						if !strings.HasPrefix(instName, "prelude.") {
 							instName = "prelude." + instName
 						}
-						a.instantiateGenericFunc(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)})
+						a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)})
 					}
 				}
 			}
@@ -483,7 +484,7 @@ func (a *Analyzer) substituteGenericTokens(argTyps []ast.Expression, tmpl *Gener
 	return res
 }
 
-func (a *Analyzer) instantiateGenericType(instName string, qname string, argTyps []ast.Expression) {
+func (a *Analyzer) instantiateGeneric(instName string, qname string, argTyps []ast.Expression) {
 	if _, ok := a.globalScope.Resolve(instName); ok {
 		return
 	} // Already instantiated
@@ -501,23 +502,7 @@ func (a *Analyzer) instantiateGenericType(instName string, qname string, argTyps
 		ts.TypeParameters = nil
 		a.globalScope.Define(instName, ts.BaseType)
 		a.program.Statements = append(a.program.Statements, ts)
-	}
-}
-
-func (a *Analyzer) instantiateGenericFunc(instName string, qname string, argTyps []ast.Expression) {
-	if _, ok := a.globalScope.Resolve(instName); ok {
-		return
-	}
-	tmpl, ok := a.genericTemplates[qname]
-	if !ok {
-		return
-	}
-
-	subTokens := a.substituteGenericTokens(argTyps, tmpl)
-	p := parser.New(subTokens)
-	stmt := p.ParseStatementForGeneric()
-
-	if fs, ok := stmt.(*ast.FuncStatement); ok {
+	} else if fs, ok := stmt.(*ast.FuncStatement); ok {
 		// Keep original name and receiver
 		fs.TypeParameters = nil
 		a.program.Statements = append(a.program.Statements, fs)
@@ -669,7 +654,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 				instName += "_" + exprToString(idx) // Simplified
 			}
 
-			a.instantiateGenericType(instName, qname, e.Indices)
+			a.instantiateGeneric(instName, qname, e.Indices)
 			typ = builtinType(instName)
 		} else {
 			if arrTyp, ok := leftTyp.(*ast.ArrayType); ok {
@@ -698,7 +683,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 					if !strings.HasPrefix(instName, "prelude.") {
 						instName = "prelude." + instName
 					}
-					a.instantiateGenericFunc(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)})
+					a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)})
 				}
 			}
 		}
@@ -729,6 +714,9 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			if sym, ok := a.globalScope.Resolve(methodName); ok {
 				typ = sym.Type
 				a.markReachable(methodName)
+			} else if sym, ok := a.globalScope.Resolve(a.currentPackage + "." + methodName); ok {
+				typ = sym.Type
+				a.markReachable(sym.Name)
 			} else if sym, ok := a.globalScope.Resolve("prelude." + methodName); ok {
 				typ = sym.Type
 				a.markReachable(sym.Name)
@@ -747,7 +735,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 					if !strings.HasPrefix(instName, "prelude.") {
 						instName = "prelude." + instName
 					}
-					a.instantiateGenericFunc(instName, qname, []ast.Expression{builtinType(eltTypeStr)})
+					a.instantiateGeneric(instName, qname, []ast.Expression{builtinType(eltTypeStr)})
 
 					if sym, ok := a.globalScope.Resolve(instName); ok {
 						typ = sym.Type
