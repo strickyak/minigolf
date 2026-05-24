@@ -13,9 +13,9 @@ func peepholeOptimize(asm string) string {
 
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
-		
+
 		trimmed := strings.TrimSpace(line)
-        
+
 		codePart := trimmed
 		if idx := strings.Index(codePart, ";"); idx != -1 {
 			codePart = strings.TrimSpace(codePart[:idx])
@@ -56,7 +56,7 @@ func peepholeOptimize(asm string) string {
 				out[prevIdx] = "\ttfr d,x\t; peephole: pshs d + puls x"
 				continue
 			}
-            
+
 			// Redundant TFR
 			if codePart == "tfr x,d" && prevCode == "tfr d,x" {
 				continue
@@ -79,7 +79,7 @@ func peepholeOptimize(asm string) string {
 					continue // redundant load
 				}
 			}
-            
+
 			// Branch to Next Instruction
 			if strings.HasPrefix(prevCode, "bra ") || strings.HasPrefix(prevCode, "lbra ") || strings.HasPrefix(prevCode, "jmp ") {
 				fields := strings.Fields(prevCode)
