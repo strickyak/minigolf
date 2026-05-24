@@ -1,0 +1,356 @@
+package main
+
+type Node struct {
+    Kind byte
+    Number int
+    Symbol string
+    List slice[word]
+}
+
+const SymbolKind = 1
+const NumberKind = 2
+const ListKind = 3
+
+var NIL *Node
+
+var Pool [200]Node
+var NextNode word
+
+func AllocNode() *Node {
+    p := &Pool[NextNode]
+    NextNode++
+    return p
+}
+
+var parseStr string
+var parseIdx word
+
+func skipSpace() {
+    for parseIdx < len(parseStr) {
+        c := parseStr[parseIdx]
+        if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
+            parseIdx++
+        } else {
+            break
+        }
+    }
+}
+
+func parseNumber() *Node {
+    n := 0
+    sign := 1
+    if parseStr[parseIdx] == '-' {
+        sign = -1
+        parseIdx++
+    }
+    for parseIdx < len(parseStr) {
+        c := parseStr[parseIdx]
+        if c >= '0' && c <= '9' {
+            n = n * 10 + (c - '0')
+            parseIdx++
+        } else {
+            break
+        }
+    }
+    
+    p := AllocNode()
+    p.Kind = NumberKind
+    p.Number = n * sign
+    return p
+}
+
+var InternedSymbols slice[word]
+
+func Intern(s string) *Node {
+    for i := range InternedSymbols.Len {
+        symNode := (*Node)(InternedSymbols.Get(i))
+        if s == symNode.Symbol {
+            return symNode
+        }
+    }
+    p := AllocNode()
+    p.Kind = SymbolKind
+    p.Symbol = s
+    InternedSymbols.Append(word(p))
+    return p
+}
+
+func parseSymbol() *Node {
+    start := parseIdx
+    for parseIdx < len(parseStr) {
+        c := parseStr[parseIdx]
+        if c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '[' || c == ']' {
+            break
+        }
+        parseIdx++
+    }
+    s := parseStr[start:parseIdx]
+    return Intern(s)
+}
+
+func parseList() *Node {
+    // Expects to be called right after '['
+    var lst slice[word]
+    
+    for {
+        skipSpace()
+        if parseIdx >= len(parseStr) {
+            break
+        }
+        if parseStr[parseIdx] == ']' {
+            parseIdx++
+            break
+        }
+        
+        node := parseExpr()
+        lst.Append(word(node))
+    }
+    
+    p := AllocNode()
+    p.Kind = ListKind
+    p.List = lst
+    return p
+}
+
+func parseExpr() *Node {
+    skipSpace()
+    if parseIdx >= len(parseStr) {
+        return NIL
+    }
+    
+    c := parseStr[parseIdx]
+    if c == '[' {
+        parseIdx++
+        return parseList()
+    }
+    
+    if c >= '0' && c <= '9' {
+        return parseNumber()
+    }
+    
+    if c == '-' && parseIdx+1 < len(parseStr) && parseStr[parseIdx+1] >= '0' && parseStr[parseIdx+1] <= '9' {
+        return parseNumber()
+    }
+    
+    return parseSymbol()
+}
+
+func Parse(s string) slice[word] {
+    parseStr = s
+    parseIdx = 0
+    
+    var prog slice[word]
+    
+    for {
+        skipSpace()
+        if parseIdx >= len(parseStr) {
+            break
+        }
+        node := parseExpr()
+        if node != NIL {
+            prog.Append(word(node))
+        }
+    }
+    
+    return prog
+}
+
+func PrintNode(o *Node) {
+    if o == NIL {
+        print("NIL")
+    } else if o.Kind == SymbolKind {
+        print(o.Symbol)
+    } else if o.Kind == NumberKind {
+        print(o.Number)
+    } else if o.Kind == ListKind {
+        print("[")
+        for i := range o.List.Len {
+            if i > 0 {
+                print(" ")
+            }
+            n := (*Node)(o.List.Get(i))
+            PrintNode(n)
+        }
+        print("]")
+    }
+}
+
+func printStack(stack slice[word]) {
+    for i := range stack.Len {
+        if i > 0 {
+            print(" ")
+        }
+        n := (*Node)(stack.Get(i))
+        PrintNode(n)
+    }
+    println()
+}
+
+// Built-in functions dictionary
+var Builtins slice[word]
+
+func RegisterBuiltins() {
+    Builtins.Append(word(Intern("+")))
+    Builtins.Append(word(Intern("*")))
+    Builtins.Append(word(Intern("dup")))
+    Builtins.Append(word(Intern("concat")))
+    Builtins.Append(word(Intern("map")))
+    Builtins.Append(word(Intern("==")))
+}
+
+// Global dictionary for defined operations (square == dup *)
+type Def struct {
+    Name string
+    Body slice[word]
+}
+var DefPool [20]Def
+var NextDef word
+
+func AllocDef() *Def {
+    p := &DefPool[NextDef]
+    NextDef++
+    return p
+}
+var Definitions slice[word]
+
+func Eval(prog slice[word], stack *slice[word]) {
+    for i := word(0); i < prog.Len; i++ {
+        node := (*Node)(prog.Get(i))
+        
+        if node.Kind == NumberKind || node.Kind == ListKind {
+            stack.Append(word(node))
+        } else if node.Kind == SymbolKind {
+            sym := node.Symbol
+            
+            // Check if it's a built-in
+            if sym == "+" {
+                b := (*Node)(stack.Get(stack.Len-1))
+                a := (*Node)(stack.Get(stack.Len-2))
+                stack.Len = stack.Len - 2
+                res := AllocNode()
+                res.Kind = NumberKind
+                res.Number = a.Number + b.Number
+                stack.Append(word(res))
+            } else if sym == "*" {
+                b := (*Node)(stack.Get(stack.Len-1))
+                a := (*Node)(stack.Get(stack.Len-2))
+                stack.Len = stack.Len - 2
+                res := AllocNode()
+                res.Kind = NumberKind
+                res.Number = a.Number * b.Number
+                stack.Append(word(res))
+            } else if sym == "dup" {
+                a := (*Node)(stack.Get(stack.Len-1))
+                stack.Append(word(a))
+            } else if sym == "concat" {
+                b := (*Node)(stack.Get(stack.Len-1))
+                a := (*Node)(stack.Get(stack.Len-2))
+                stack.Len = stack.Len - 2
+                res := AllocNode()
+                res.Kind = ListKind
+                for j := range a.List.Len {
+                    res.List.Append(a.List.Get(j))
+                }
+                for j := range b.List.Len {
+                    res.List.Append(b.List.Get(j))
+                }
+                stack.Append(word(res))
+            } else if sym == "map" {
+                progNode := (*Node)(stack.Get(stack.Len-1)) // quoted program
+                lstNode := (*Node)(stack.Get(stack.Len-2))  // list
+                stack.Len = stack.Len - 2
+                
+                resList := AllocNode()
+                resList.Kind = ListKind
+                
+                for j := range lstNode.List.Len {
+                    // map executes the program for each element
+                    var mapStack slice[word]
+                    mapStack.Append(lstNode.List.Get(j))
+                    Eval(progNode.List, &mapStack)
+                    // push all results to resList
+                    for k := range mapStack.Len {
+                        resList.List.Append(mapStack.Get(k))
+                    }
+                }
+                stack.Append(word(resList))
+            } else if sym == "==" {
+                // "==" in Joy evaluates the RHS and binds it to LHS name
+                // e.g. square == dup *
+                // Here we cheat a bit and intercept the definition.
+                // Actually the parser just parsed 'square' '==' 'dup' '*'.
+                // If it's evaluated, we can define 'square' as the rest of the program!
+                
+                nameNode := (*Node)(stack.Get(stack.Len-1))
+                stack.Len = stack.Len - 1
+                
+                var body slice[word]
+                for j := i + 1; j < prog.Len; j++ {
+                    body.Append(prog.Get(j))
+                }
+                
+                def := AllocDef()
+                def.Name = nameNode.Symbol
+                def.Body = body
+                Definitions.Append(word(def))
+                
+                break // consume the rest of the program
+            } else {
+                // Check if it's a defined function
+                var found byte = 0
+                for j := range Definitions.Len {
+                    def := (*Def)(Definitions.Get(j))
+                    if def.Name == sym {
+                        Eval(def.Body, stack)
+                        found = 1
+                        break
+                    }
+                }
+                if found == 0 {
+                    // push the symbol itself (unrecognized)
+                    stack.Append(word(node))
+                }
+            }
+        }
+    }
+}
+
+func main() {
+    RegisterBuiltins()
+    var stack slice[word]
+
+    // Example 1: 2 3 +
+    print("Example 1: 2 3 + => ")
+    stack.Len = 0
+    Eval(Parse("2 3 +"), &stack)
+    printStack(stack)
+
+    // Example 2: 2 3 + dup *
+    print("Example 2: 2 3 + dup * => ")
+    stack.Len = 0
+    Eval(Parse("2 3 + dup *"), &stack)
+    printStack(stack)
+
+    // Example 3: [1 2 3] [4 5 6 7] concat
+    print("Example 3: [1 2 3] [4 5 6 7] concat => ")
+    stack.Len = 0
+    Eval(Parse("[1 2 3] [4 5 6 7] concat"), &stack)
+    printStack(stack)
+
+    // Example 4: [1 2 3 4] [dup *] map
+    print("Example 4: [1 2 3 4] [dup *] map => ")
+    stack.Len = 0
+    Eval(Parse("[1 2 3 4] [dup *] map"), &stack)
+    printStack(stack)
+
+    if 1 {
+        // Example 5: square == dup *
+        print("Example 5: square == dup * => ")
+        stack.Len = 0
+        Eval(Parse("square == dup *"), &stack)
+        print("Defined! Now testing 5 square => ")
+        stack.Len = 0
+        Eval(Parse("5 square"), &stack)
+        printStack(stack)
+    }
+}
