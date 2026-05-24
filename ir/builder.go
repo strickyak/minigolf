@@ -60,9 +60,9 @@ type Builder struct {
 	worklist          []*GlobalItem
 	currentPackage    string
 
-	breakStack    []*BasicBlock
-	continueStack []*BasicBlock
-	resolveCallback  func(node ast.Node, defPkg string) ast.Node
+	breakStack      []*BasicBlock
+	continueStack   []*BasicBlock
+	resolveCallback func(node ast.Node, defPkg string) ast.Node
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -1261,7 +1261,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		if e.Value == "nil" {
 			return ExprResult{IsLValue: false, Value: &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, Typ: TypeWord}
 		}
-		
+
 		fullName := e.FullName()
 		if f, ok := b.funcs[fullName]; ok {
 			val := b.addInstr(&AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}, e)
@@ -1678,7 +1678,6 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 
 		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
-
 
 			base := b.eval(sel.Left)
 			isPtr := base.Typ.IsAPointer()
