@@ -1544,7 +1544,8 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 			formatStrs = append(formatStrs, strLit.Value)
 		} else {
 			if arg.Type().Equals(ir.TypeInt) {
-				fmt.Printf("DEBUG m6809 arg is TypeInt!\n"); formatStrs = append(formatStrs, "%d")
+				fmt.Printf("DEBUG m6809 arg is TypeInt!\n")
+				formatStrs = append(formatStrs, "%d")
 			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
 				formatStrs = append(formatStrs, "%s")
 			} else {

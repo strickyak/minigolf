@@ -60,9 +60,9 @@ type Builder struct {
 	worklist          []*GlobalItem
 	currentPackage    string
 
-	breakStack      []*BasicBlock
-	continueStack   []*BasicBlock
-	resolveCallback func(node ast.Node, defPkg string) ast.Node
+	breakStack        []*BasicBlock
+	continueStack     []*BasicBlock
+	resolveCallback   func(node ast.Node, defPkg string) ast.Node
 	varInitStatements []*GlobalItem
 }
 
@@ -545,12 +545,12 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 
 	if len(b.varInitStatements) > 0 {
 		b.buildSyntheticInit()
-		
+
 		mainFunc := b.funcs["main"]
 		if mainFunc != nil && len(mainFunc.Blocks) > 0 {
 			initFunc := b.funcs["init_main"]
 			callInstr := &Call{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Func: initFunc}
-			
+
 			// We need a unique ID for callInstr
 			maxID := 0
 			for _, instr := range mainFunc.Blocks[0].Instructions {
@@ -559,7 +559,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 				}
 			}
 			callInstr.SetID(maxID + 1000)
-			
+
 			mainFunc.Blocks[0].Instructions = append([]Instruction{callInstr}, mainFunc.Blocks[0].Instructions...)
 		}
 	}
@@ -890,7 +890,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 	case *ast.VarStatement:
 		var typ Type
 		var val Value
-		
+
 		if s.ValueType != nil {
 			typ = b.astToIRType(s.ValueType)
 			if s.Value != nil {
@@ -903,7 +903,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		} else {
 			panic("variable declaration without type or value")
 		}
-		
+
 		b.varTypes[s.Name.Value] = typ
 
 		if val == nil {
@@ -1625,7 +1625,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 	case *ast.CompositeLit:
 		typ := b.astToIRType(e.Type)
 		var val Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
-		
+
 		st, ok := b.typeDefsAST[typ.Name]
 		if !ok {
 			panic("Composite literal on unknown struct type: " + typ.Name)
@@ -2444,7 +2444,7 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 		for i, f := range st.Fields {
 			fieldIdxMap[f.Name.Value] = i
 		}
-		
+
 		fields := make([]Value, len(st.Fields))
 		for i, el := range e.Elements {
 			fieldIdx := i
@@ -2491,27 +2491,27 @@ func (b *Builder) buildSyntheticInit() {
 	for _, item := range b.varInitStatements {
 		s := item.ASTNode.(*ast.VarStatement)
 		g := b.globals[item.QName]
-		
+
 		var val Value
 		if b.isConstantExpr(s.Value) {
 			constVal := b.evalConstantExpr(s.Value, g.Typ)
-			
+
 			constName := fmt.Sprintf(".const_struct_%d", len(b.Program.Globals))
 			constGlobal := &Global{
-				Name: constName,
-				Typ: g.Typ,
+				Name:    constName,
+				Typ:     g.Typ,
 				InitVal: constVal,
-				IsInit: true,
+				IsInit:  true,
 			}
 			b.globals[constName] = constGlobal
 			b.Program.Globals = append(b.Program.Globals, constGlobal)
-			
+
 			val = b.addInstr(&Load{BaseInstruction: BaseInstruction{Typ: g.Typ}, Global: constGlobal}, s)
 		} else {
 			val = b.buildExpr(s.Value)
 			val = b.coerceType(val, g.Typ)
 		}
-		
+
 		b.addInstr(&Store{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Global: g, Val: val}, s)
 	}
 

@@ -68,9 +68,9 @@ type infixParseFn func(ast.Expression) ast.Expression
 
 func New(tokens []token.Token) *Parser {
 	p := &Parser{
-		tokens: tokens,
-		pos:    0,
-		errors: []string{},
+		tokens:            tokens,
+		pos:               0,
+		errors:            []string{},
 		allowCompositeLit: true,
 	}
 
@@ -465,11 +465,11 @@ func (p *Parser) parseFunctionParameters() []*ast.Parameter {
 		param.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
 		p.nextToken()
-		
+
 		p.allowCompositeLit = false
 		param.Type = p.parseExpression(LOWEST)
 		p.allowCompositeLit = true
-		
+
 		parameters = append(parameters, param)
 	}
 
@@ -604,7 +604,7 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 	stmt := &ast.IfStatement{Token: p.curToken}
 
 	p.nextToken()
-	
+
 	p.allowCompositeLit = false
 	stmt.Condition = p.parseExpression(LOWEST)
 	p.allowCompositeLit = true

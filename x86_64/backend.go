@@ -914,12 +914,12 @@ func (b *Backend) emitData(val ir.Value) {
 		if strings.HasPrefix(structName, "struct{") {
 			content = structName[7 : len(structName)-1]
 		}
-		
+
 		byteOffset := 0
 		depth := 0
 		start := 0
 		fIdx := 0
-		
+
 		for idx := 0; idx < len(content); idx++ {
 			if content[idx] == '{' {
 				depth++
@@ -929,24 +929,24 @@ func (b *Backend) emitData(val ir.Value) {
 				fTyp := content[start:idx]
 				sz := b.getTypeSize(fTyp)
 				align := b.getTypeAlignment(fTyp)
-				
+
 				paddedOffset := alignVal(byteOffset, align)
 				if paddedOffset > byteOffset {
-					b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", paddedOffset - byteOffset))
+					b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", paddedOffset-byteOffset))
 				}
 				byteOffset = paddedOffset
-				
+
 				b.emitData(v.Fields[fIdx])
-				
+
 				byteOffset += sz
 				fIdx++
 				start = idx + 1
 			}
 		}
-		
+
 		structSize := b.getTypeSize(v.Type().Name)
 		if structSize > byteOffset {
-			b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", structSize - byteOffset))
+			b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", structSize-byteOffset))
 		}
 	default:
 		log.Panicf("unsupported init value type %T", val)

@@ -173,7 +173,7 @@ type Global struct {
 	Name       string
 	Typ        Type
 	InitString string
-	InitVal Value
+	InitVal    Value
 	IsInit     bool
 }
 

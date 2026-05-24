@@ -412,8 +412,8 @@ func (e *KeyValueExpr) GetToken() *token.Token { return e.Key.GetToken() }
 
 type CompositeLit struct {
 	BaseExpression
-	Type     Expression // The type being instantiated
-	Token    token.Token // The '{' token
+	Type     Expression   // The type being instantiated
+	Token    token.Token  // The '{' token
 	Elements []Expression // List of expressions or KeyValueExpr
 }
 
