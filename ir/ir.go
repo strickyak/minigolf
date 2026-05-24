@@ -518,3 +518,10 @@ func (f *Function) MangledName() string {
 func (g *Global) MangledName() string {
 	return MangleName(g.Name)
 }
+
+type ConstArray struct {
+	BaseInstruction
+	Elements []Value
+}
+
+func (i *ConstArray) Opcode() string { return "const_array" }

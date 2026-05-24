@@ -376,6 +376,12 @@ func (c *CBE) formatVal(v ir.Value) string {
 			fields = append(fields, c.formatVal(f))
 		}
 		return fmt.Sprintf("{ %s }", strings.Join(fields, ", "))
+	case *ir.ConstArray:
+		var elems []string
+		for _, el := range val.Elements {
+			elems = append(elems, c.formatVal(el))
+		}
+		return fmt.Sprintf("{ %s }", strings.Join(elems, ", "))
 	case *ir.AddressOfGlobal:
 		gName := strings.ReplaceAll(val.Global.Name, ".", "_")
 		return fmt.Sprintf("(&v_%s)", gName)
@@ -511,6 +517,12 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			fields = append(fields, c.formatVal(f))
 		}
 		return fmt.Sprintf("{ %s }", strings.Join(fields, ", "))
+	case *ir.ConstArray:
+		var elems []string
+		for _, el := range i.Elements {
+			elems = append(elems, c.formatVal(el))
+		}
+		return fmt.Sprintf("{ %s }", strings.Join(elems, ", "))
 	case *ir.AddressOfLocal:
 		if p, ok := i.Local.(*ir.Parameter); ok {
 			return fmt.Sprintf("(&v_%s)", p.Name)

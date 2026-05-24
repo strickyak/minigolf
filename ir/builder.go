@@ -190,6 +190,8 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		}
 		name += "}"
 		return Type{Expr: expr, Name: name}
+	case *ast.CompositeLit:
+		return b.astToIRType(e.Type)
 	case *ast.FuncType:
 		return TypeWord
 	}
@@ -1124,9 +1126,14 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		limitVal := b.buildExpr(s.RangeValue)
 		typ := limitVal.Type()
 		isSlice := strings.HasPrefix(typ.Name, "prelude.slice_") || strings.HasPrefix(typ.Name, "slice_")
+		isArray := strings.HasPrefix(typ.Name, "[")
 
 		if isSlice {
 			limitVal = b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: limitVal, FieldIndex: 2}, s) // Len
+		} else if isArray {
+			var arrayLen int
+			fmt.Sscanf(typ.Name, "[%d]", &arrayLen)
+			limitVal = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(arrayLen)}, s)
 		}
 
 		var zero Value
@@ -1170,7 +1177,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 
 		b.currentBlock = bodyBlk
 
-		if isSlice && s.Value != nil {
+		if (isSlice || isArray) && s.Value != nil {
 			valIdent, valOk := s.Value.(*ast.Identifier)
 			if valOk {
 				idxExpr := &ast.IndexExpression{
@@ -1656,6 +1663,27 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			fTyp := b.astToIRType(st.Fields[fieldIdx].Type)
 			fieldVal = b.coerceType(fieldVal, fTyp)
 			val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: val, FieldIndex: fieldIdx, Val: fieldVal}, e)
+		}
+		return ExprResult{IsLValue: false, Value: val, Typ: typ}
+
+	case *ast.ArrayType:
+		typ := b.astToIRType(e)
+		var val Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
+		if comp, ok := e.Elt.(*ast.CompositeLit); ok {
+			var arrayLen int
+			var eltTypStr string
+			fmt.Sscanf(typ.Name, "[%d]%s", &arrayLen, &eltTypStr)
+			eltTyp := b.astToIRType(&ast.Identifier{Value: eltTypStr})
+
+			for i, el := range comp.Elements {
+				if i >= arrayLen {
+					panic("too many elements in array literal")
+				}
+				eltVal := b.buildExpr(el)
+				eltVal = b.coerceType(eltVal, eltTyp)
+				idxVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(i)}, e)
+				val = b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: typ}, Array: val, Index: idxVal, Val: eltVal}, e)
+			}
 		}
 		return ExprResult{IsLValue: false, Value: val, Typ: typ}
 
@@ -2269,6 +2297,8 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		} else if s.Value != nil {
 			if lit, ok := s.Value.(*ast.CompositeLit); ok {
 				typ = b.astToIRType(lit.Type)
+			} else if arrLit, ok := s.Value.(*ast.ArrayType); ok {
+				typ = b.astToIRType(arrLit)
 			} else if _, ok := s.Value.(*ast.IntegerLiteral); ok {
 				typ = TypeWord
 			} else if _, ok := s.Value.(*ast.StringLiteral); ok {
@@ -2435,7 +2465,33 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 				return &ConstWord{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: cw.Val}
 			}
 		}
+	case *ast.ArrayType:
+		if comp, ok := e.Elt.(*ast.CompositeLit); ok {
+			return b.evalConstantExpr(comp, targetTyp)
+		}
 	case *ast.CompositeLit:
+		if strings.HasPrefix(targetTyp.Name, "[") {
+			// Array literal
+			var arrayLen int
+			var eltTypStr string
+			fmt.Sscanf(targetTyp.Name, "[%d]%s", &arrayLen, &eltTypStr)
+			eltTyp := b.astToIRType(&ast.Identifier{Value: eltTypStr})
+
+			elements := make([]Value, arrayLen)
+			for i, el := range e.Elements {
+				if i >= arrayLen {
+					panic("too many elements in array literal")
+				}
+				elements[i] = b.evalConstantExpr(el, eltTyp)
+			}
+			for i := range elements {
+				if elements[i] == nil {
+					elements[i] = b.zeroConstant(eltTyp)
+				}
+			}
+			return &ConstArray{BaseInstruction: BaseInstruction{Typ: targetTyp}, Elements: elements}
+		}
+
 		st, ok := b.typeDefsAST[targetTyp.Name]
 		if !ok {
 			panic("constant struct of unknown type " + targetTyp.Name)

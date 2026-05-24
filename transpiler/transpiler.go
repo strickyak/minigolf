@@ -333,6 +333,8 @@ func (t *Transpiler) typeOf(expr ast.Expression) string {
 		}
 	case *ast.CompositeLit:
 		return t.mapType(e.Type)
+	case *ast.ArrayType:
+		return t.mapType(e)
 	}
 	return "word"
 }
@@ -800,6 +802,8 @@ func (t *Transpiler) mapType(expr ast.Expression) string {
 		return t.mapType(e.Elt) + "*"
 	case *ast.FuncType:
 		return "word"
+	case *ast.CompositeLit:
+		return t.mapType(e.Type)
 	}
 	return "word"
 }
@@ -1203,16 +1207,22 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		limitVal := t.emitExprStr(s.RangeValue)
 		ctype := t.typeOf(s.RangeValue)
 		isSlice := strings.HasPrefix(ctype, "t_prelude_slice_") || strings.HasPrefix(ctype, "t_slice_") || ctype == "t_prelude_string" || ctype == "t_string"
+		isArray := strings.HasPrefix(ctype, "t_arr_")
 
 		if isSlice {
 			limitVal = fmt.Sprintf("(%s).Len", limitVal)
+		} else if isArray {
+			parts := strings.SplitN(ctype, "_", 4)
+			if len(parts) >= 3 {
+				limitVal = parts[2]
+			}
 		}
 
 		ident, ok := s.Key.(*ast.Identifier)
 		var loopVar string
 		if ok {
 			varDeclType := ctype
-			if isSlice {
+			if isSlice || isArray {
 				varDeclType = "word"
 			}
 			if s.IsDecl {
@@ -1235,7 +1245,7 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 			contLabel := fmt.Sprintf("__continue_%d", t.loopCounter)
 			t.continueTargets = append(t.continueTargets, contLabel)
 
-			if isSlice && s.Value != nil {
+			if (isSlice || isArray) && s.Value != nil {
 				valIdent, valOk := s.Value.(*ast.Identifier)
 				if valOk {
 					idxExpr := &ast.IndexExpression{
@@ -1807,6 +1817,15 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 			castStr = "word (*)()"
 		}
 		return fmt.Sprintf("((%s)(%s))(%s)", castStr, funcExprStr, strings.Join(indirectArgs, ", "))
+	case *ast.ArrayType:
+		if comp, ok := e.Elt.(*ast.CompositeLit); ok {
+			var elems []string
+			for _, el := range comp.Elements {
+				elems = append(elems, t.emitExprStr(el))
+			}
+			typStr := t.mapType(e)
+			return fmt.Sprintf("(%s){ %s }", typStr, strings.Join(elems, ", "))
+		}
 	case *ast.CompositeLit:
 		var elems []string
 		for _, el := range e.Elements {

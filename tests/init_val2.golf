@@ -1,0 +1,25 @@
+package main
+
+var a = [2]uint{111, 222}
+var b = [3]uint{444, 555, 666}
+
+func main() {
+	var c = [4]int{-3, 5, -7, 9}
+	d := [4]int{-8, 6, -1, 0}
+
+	for i, x := range a {
+		println(i, x)
+	}
+	println("--")
+	for i, x := range b {
+		println(i, x)
+	}
+	println("--")
+	for i, x := range c {
+		println(i, x)
+	}
+	println("--")
+	for i, x := range d {
+		println(i, x)
+	}
+}
