@@ -2,17 +2,17 @@ package main
 
 // Node for S-Expression
 type Node struct {
-    Flags   byte
-    Kind    byte
-    Symbol  string
-    Number  int
-    Primative func(expr *Node, context *Node)
-    Left    *Node  // The CAR
-    Right   *Node  // The CDR
+	Flags     byte
+	Kind      byte
+	Symbol    string
+	Number    int
+	Primative func(expr *Node, context *Node)
+	Left      *Node // The CAR
+	Right     *Node // The CDR
 }
 
-const UsedFlag = 1  // allocated
-const MarkFlag = 1  // seen by garbage collection
+const UsedFlag = 1 // allocated
+const MarkFlag = 1 // seen by garbage collection
 
 const SymbolKind = 1
 const NumberKind = 2
@@ -20,6 +20,7 @@ const PairKind = 3
 const PrimativeKind = 4
 
 const SZ = 200
+
 var Pool [SZ]Node
 var Next uint // pool index
 // Leave these alone:
@@ -27,36 +28,38 @@ var Empty string
 var NIL *Node // A zeroed pointer is NIL, i.e. (*Node)0
 
 func Advance() {
-    Next++
-    if Next >= SZ { panic(9001) } // OOM
+	Next++
+	if Next >= SZ {
+		panic(9001)
+	} // OOM
 }
 func AllocNode() *Node {
-    for Pool[Next].Flags & UsedFlag {
-        Advance()
-    }
-    clear[main.Node](&Pool[Next])
-    Pool[Next].Flags = UsedFlag  // allocated
-    z := &Pool[Next]
-    Advance()
-    return z
+	for Pool[Next].Flags & UsedFlag {
+		Advance()
+	}
+	clear[main.Node](&Pool[Next])
+	Pool[Next].Flags = UsedFlag // allocated
+	z := &Pool[Next]
+	Advance()
+	return z
 }
 
 var InternedSymbols *Node // A linked list of interned symbols
 
 func Intern(s string) *Node {
-    p := InternedSymbols
-    for p != NIL {
-        symNode := p.Left
-        if s == symNode.Symbol {
-            return symNode
-        }
-        p = p.Right
-    }
-    p = AllocNode()
-    p.Kind = SymbolKind
-    p.Symbol = s
-    InternedSymbols = Cons(p, InternedSymbols)
-    return p
+	p := InternedSymbols
+	for p != NIL {
+		symNode := p.Left
+		if s == symNode.Symbol {
+			return symNode
+		}
+		p = p.Right
+	}
+	p = AllocNode()
+	p.Kind = SymbolKind
+	p.Symbol = s
+	InternedSymbols = Cons(p, InternedSymbols)
+	return p
 }
 
 /*
@@ -77,225 +80,233 @@ var MINUS *Node
 var QUOTE *Node
 
 func init() {
-    CAR = Intern("car")
-    CDR = Intern("cdr")
-    EQ = Intern("eq")
-    ATOMP = Intern("atomp")
-    COND = Intern("cond")
-    EVAL = Intern("eval")
-    PLUS = Intern("plus")
-    MINUS = Intern("minus")
-    QUOTE = Intern("quote")
+	CAR = Intern("car")
+	CDR = Intern("cdr")
+	EQ = Intern("eq")
+	ATOMP = Intern("atomp")
+	COND = Intern("cond")
+	EVAL = Intern("eval")
+	PLUS = Intern("plus")
+	MINUS = Intern("minus")
+	QUOTE = Intern("quote")
 }
 
 func Lookup(symbol *Node, context *Node) *Node {
-    p := context
-    for p != NIL {
-        if p == symbol {
-            return p.Right.Left
-        }
-        p = p.Right.Right
-    }
-    panic(9010) // Symbol not found
+	p := context
+	for p != NIL {
+		if p == symbol {
+			return p.Right.Left
+		}
+		p = p.Right.Right
+	}
+	panic(9010) // Symbol not found
 }
 
 func Eval(expr *Node, context *Node) *Node {
-    if expr == NIL {
-        return NIL
-    }
-    if expr.Kind == SymbolKind {
-        return Lookup(expr, context)
-    }
-    if expr.Kind == NumberKind {
-        return expr
-    }
-    if expr.Kind == PrimativeKind {
-        return expr
-    }
-    if expr.Kind == PairKind {
-        first := expr.Left
-        rest := expr.Right
-        if first == QUOTE {
-            return rest
-        }
-        if first == CONS {
-            // Cons is a special form; it does not eval its args automatically.
-            pred := Eval(rest.Left, context)
-            if pred != NIL {  // Only NIL is false.
-                return Eval(rest.Right.Left, context) // if True
-            } else {
-                return Eval(rest.Right.Right.Left, context) // if False
-            }
-        }
-        if first.Kind == PrimativeKind {
-            return first.Primative(rest, context)
-        }
-        if first.Kind == SymbolKind {
-            lambda := Lookup(expr, context)
-            args := rest
-            return ApplyLambdaToArgs(lambda, args, context)
-        }
-        panic(9020) // bad CAR in eval of dotted pair
-    }
-    panic(9090) // notreached
-    return NIL // notreached
+	if expr == NIL {
+		return NIL
+	}
+	if expr.Kind == SymbolKind {
+		return Lookup(expr, context)
+	}
+	if expr.Kind == NumberKind {
+		return expr
+	}
+	if expr.Kind == PrimativeKind {
+		return expr
+	}
+	if expr.Kind == PairKind {
+		first := expr.Left
+		rest := expr.Right
+		if first == QUOTE {
+			return rest
+		}
+		if first == CONS {
+			// Cons is a special form; it does not eval its args automatically.
+			pred := Eval(rest.Left, context)
+			if pred != NIL { // Only NIL is false.
+				return Eval(rest.Right.Left, context) // if True
+			} else {
+				return Eval(rest.Right.Right.Left, context) // if False
+			}
+		}
+		if first.Kind == PrimativeKind {
+			return first.Primative(rest, context)
+		}
+		if first.Kind == SymbolKind {
+			lambda := Lookup(expr, context)
+			args := rest
+			return ApplyLambdaToArgs(lambda, args, context)
+		}
+		panic(9020) // bad CAR in eval of dotted pair
+	}
+	panic(9090) // notreached
+	return NIL  // notreached
 }
 
 func Cons(left *Node, right *Node) *Node {
-    p := AllocNode();
-    p.Kind = PairKind
-    p.Left = left
-    p.Right = right
-    return p
+	p := AllocNode()
+	p.Kind = PairKind
+	p.Left = left
+	p.Right = right
+	return p
 }
 
 func ApplyLambdaToArgs(lambda *Node, args *Node, context *Node) *Node {
-    formals := lambda.Right.Left
-    body := lambda.Right.Right.Left
-    p := context
+	formals := lambda.Right.Left
+	body := lambda.Right.Right.Left
+	p := context
 
-    for formals != NIL {
-        p = Cons(Eval(args.Left, context), p)
-        p = Cons(formals.Left, p)
-        formals = formals.Right
-        args = args.Right
-    }
-    return Eval(body, p)
+	for formals != NIL {
+		p = Cons(Eval(args.Left, context), p)
+		p = Cons(formals.Left, p)
+		formals = formals.Right
+		args = args.Right
+	}
+	return Eval(body, p)
 }
 
 func (o *Node) Print() {
-    if o == NIL {
-        println("NIL")
-    }
-    if o.Kind == SymbolKind {
-        println(o.Symbol)
-    }
-    if o.Kind == NumberKind {
-        println(o.Number)
-    }
-    if o.Kind == PrimativeKind {
-        println("<Primative>")
-    }
-    if o.Kind == PairKind {
-        print("(")
-        o.Left.Print()
+	if o == NIL {
+		println("NIL")
+	}
+	if o.Kind == SymbolKind {
+		println(o.Symbol)
+	}
+	if o.Kind == NumberKind {
+		println(o.Number)
+	}
+	if o.Kind == PrimativeKind {
+		println("<Primative>")
+	}
+	if o.Kind == PairKind {
+		print("(")
+		o.Left.Print()
 
-        for o.Right != NIL {
-            if o.Right.Kind == PairKind {
-                print(" ")
-                o.Right.Left.Print()
-                o = o.Right
-            } else {
-                print(" . ")
-                o.Right.Print()
-                break
-            }
-        }
-        println(")")
-    }
+		for o.Right != NIL {
+			if o.Right.Kind == PairKind {
+				print(" ")
+				o.Right.Left.Print()
+				o = o.Right
+			} else {
+				print(" . ")
+				o.Right.Print()
+				break
+			}
+		}
+		println(")")
+	}
 }
 
 var parseStr string
 var parseIdx word
 
 func skipSpace() {
-    for parseIdx < len(parseStr) {
-        c := parseStr[parseIdx]
-        if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
-            parseIdx++
-        } else {
-            break
-        }
-    }
+	for parseIdx < len(parseStr) {
+		c := parseStr[parseIdx]
+		if c == ' ' || c == '\n' || c == '\r' || c == '\t' {
+			parseIdx++
+		} else {
+			break
+		}
+	}
 }
 
 func parseNumber() *Node {
-    n := 0
-    sign := 1
-    if parseStr[parseIdx] == '-' {
-        sign = -1
-        parseIdx++
-    }
-    for parseIdx < len(parseStr) {
-        c := parseStr[parseIdx]
-        if c >= '0' && c <= '9' {
-            n = n * 10 + (c - '0')
-            parseIdx++
-        } else {
-            break
-        }
-    }
-    p := AllocNode()
-    p.Kind = NumberKind
-    p.Number = n * sign
-    return p
+	n := 0
+	sign := 1
+	if parseStr[parseIdx] == '-' {
+		sign = -1
+		parseIdx++
+	}
+	for parseIdx < len(parseStr) {
+		c := parseStr[parseIdx]
+		if c >= '0' && c <= '9' {
+			n = n*10 + (c - '0')
+			parseIdx++
+		} else {
+			break
+		}
+	}
+	p := AllocNode()
+	p.Kind = NumberKind
+	p.Number = n * sign
+	return p
 }
 
 func parseSymbol() *Node {
-    start := parseIdx
-    for parseIdx < len(parseStr) {
-        c := parseStr[parseIdx]
-        if c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '(' || c == ')' {
-            break
-        }
-        parseIdx++
-    }
-    return Intern(parseStr[start:parseIdx])
+	start := parseIdx
+	for parseIdx < len(parseStr) {
+		c := parseStr[parseIdx]
+		if c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '(' || c == ')' {
+			break
+		}
+		parseIdx++
+	}
+	return Intern(parseStr[start:parseIdx])
 }
 
 func parseList() *Node {
-    skipSpace()
-    if parseIdx >= len(parseStr) { return NIL }
-    if parseStr[parseIdx] == ')' {
-        parseIdx++
-        return NIL
-    }
-    first := parseSExp()
-    skipSpace()
-    if parseIdx < len(parseStr) && parseStr[parseIdx] == '.' {
-        parseIdx++
-        rest := parseSExp()
-        skipSpace()
-        if parseIdx < len(parseStr) && parseStr[parseIdx] == ')' {
-            parseIdx++
-        }
-        return Cons(first, rest)
-    }
-    rest := parseList()
-    return Cons(first, rest)
+	skipSpace()
+	if parseIdx >= len(parseStr) {
+		return NIL
+	}
+	if parseStr[parseIdx] == ')' {
+		parseIdx++
+		return NIL
+	}
+	first := parseSExp()
+	skipSpace()
+	if parseIdx < len(parseStr) && parseStr[parseIdx] == '.' {
+		parseIdx++
+		rest := parseSExp()
+		skipSpace()
+		if parseIdx < len(parseStr) && parseStr[parseIdx] == ')' {
+			parseIdx++
+		}
+		return Cons(first, rest)
+	}
+	rest := parseList()
+	return Cons(first, rest)
 }
 
 func parseSExp() *Node {
-    skipSpace()
-    if parseIdx >= len(parseStr) { return NIL }
-    c := parseStr[parseIdx]
-    if c == '(' {
-        parseIdx++
-        return parseList()
-    }
-    if c >= '0' && c <= '9' { return parseNumber() }
-    if c == '-' && parseIdx+1 < len(parseStr) && parseStr[parseIdx+1] >= '0' && parseStr[parseIdx+1] <= '9' { return parseNumber() }
-    return parseSymbol()
+	skipSpace()
+	if parseIdx >= len(parseStr) {
+		return NIL
+	}
+	c := parseStr[parseIdx]
+	if c == '(' {
+		parseIdx++
+		return parseList()
+	}
+	if c >= '0' && c <= '9' {
+		return parseNumber()
+	}
+	if c == '-' && parseIdx+1 < len(parseStr) && parseStr[parseIdx+1] >= '0' && parseStr[parseIdx+1] <= '9' {
+		return parseNumber()
+	}
+	return parseSymbol()
 }
 
 func Parse(s string) *Node {
-    parseStr = s
-    parseIdx = 0
-    return parseSExp()
+	parseStr = s
+	parseIdx = 0
+	return parseSExp()
 }
 
 func main() {
-    println("---")
-    Cons(PLUS, NIL).Print()
-    println("---")
-    Cons(QUOTE, Cons(PLUS, NIL)).Print()
-    println("---")
-    Eval(Cons(QUOTE, Cons(PLUS, NIL)), NIL).Print()
-    println("---")
-    println(Eval(Cons(QUOTE, Cons(PLUS, NIL)), NIL).Left.Symbol)
-    println("---")
-    Parse("(plus 1 2)").Print()
-    println("---")
-    Parse("(cond (1 . 2) (3 . 4))").Print()
-    println("---")
+	println("---")
+	Cons(PLUS, NIL).Print()
+	println("---")
+	Cons(QUOTE, Cons(PLUS, NIL)).Print()
+	println("---")
+	Eval(Cons(QUOTE, Cons(PLUS, NIL)), NIL).Print()
+	println("---")
+	println(Eval(Cons(QUOTE, Cons(PLUS, NIL)), NIL).Left.Symbol)
+	println("---")
+	Parse("(plus 1 2)").Print()
+	println("---")
+	Parse("(cond (1 . 2) (3 . 4))").Print()
+	println("---")
 }
