@@ -24,28 +24,29 @@ const (
 )
 
 var precedences = map[token.TokenType]int{
-	token.OR:       LOGICAL_OR,
-	token.AND:      LOGICAL_AND,
-	token.EQ:       EQUALS,
-	token.NEQ:      EQUALS,
-	token.LT:       LESSGREATER,
-	token.GT:       LESSGREATER,
-	token.LTE:      LESSGREATER,
-	token.GTE:      LESSGREATER,
-	token.PLUS:     SUM,
-	token.MINUS:    SUM,
-	token.SLASH:    PRODUCT,
-	token.ASTERISK: PRODUCT,
-	token.MOD:      PRODUCT,
-	token.BIT_AND:  PRODUCT,
-	token.BIT_OR:   SUM,
-	token.BIT_XOR:  SUM,
-	token.LSHIFT:   PRODUCT,
-	token.RSHIFT:   PRODUCT,
-	token.LPAREN:   CALL,
-	token.LBRACKET: INDEX,
-	token.DOT:      INDEX,
-	token.LBRACE:   CALL,
+	token.OR:        LOGICAL_OR,
+	token.AND:       LOGICAL_AND,
+	token.EQ:        EQUALS,
+	token.NEQ:       EQUALS,
+	token.LT:        LESSGREATER,
+	token.GT:        LESSGREATER,
+	token.LTE:       LESSGREATER,
+	token.GTE:       LESSGREATER,
+	token.PLUS:      SUM,
+	token.MINUS:     SUM,
+	token.SLASH:     PRODUCT,
+	token.ASTERISK:  PRODUCT,
+	token.MOD:       PRODUCT,
+	token.BIT_AND:   PRODUCT,
+	token.BIT_OR:    SUM,
+	token.BIT_XOR:   SUM,
+	token.BIT_CLEAR: PRODUCT,
+	token.LSHIFT:    PRODUCT,
+	token.RSHIFT:    PRODUCT,
+	token.LPAREN:    CALL,
+	token.LBRACKET:  INDEX,
+	token.DOT:       INDEX,
+	token.LBRACE:    CALL,
 }
 
 type Parser struct {
@@ -105,6 +106,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerInfix(token.BIT_AND, p.parseInfixExpression)
 	p.registerInfix(token.BIT_OR, p.parseInfixExpression)
 	p.registerInfix(token.BIT_XOR, p.parseInfixExpression)
+	p.registerInfix(token.BIT_CLEAR, p.parseInfixExpression)
 	p.registerInfix(token.LSHIFT, p.parseInfixExpression)
 	p.registerInfix(token.RSHIFT, p.parseInfixExpression)
 	p.registerInfix(token.LPAREN, p.parseCallExpression)

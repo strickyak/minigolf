@@ -125,6 +125,9 @@ func (l *Lexer) nextToken() token.Token {
 		if l.peekChar() == '&' {
 			l.readChar()
 			tok = token.Token{Type: token.AND, Literal: "&&", Line: startLine, Column: startCol, Filename: l.filename}
+		} else if l.peekChar() == '^' {
+			l.readChar()
+			tok = token.Token{Type: token.BIT_CLEAR, Literal: "&^", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.BIT_AND, l.ch, startLine, startCol)
 		}

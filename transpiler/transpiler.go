@@ -1467,6 +1467,9 @@ func (t *Transpiler) emitExprStr(expr ast.Expression) string {
 				panic(fmt.Sprintf("Ordering operator %s not supported for struct or array", e.Operator))
 			}
 		}
+		if e.Operator == "&^" {
+			return fmt.Sprintf("(%s & ~%s)", t.emitExprStr(e.Left), t.emitExprStr(e.Right))
+		}
 		return fmt.Sprintf("(%s %s %s)", t.emitExprStr(e.Left), e.Operator, t.emitExprStr(e.Right))
 	case *ast.IndexExpression:
 		baseType := t.typeOf(e.Left)

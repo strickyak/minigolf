@@ -431,6 +431,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			opStr = "|"
 		case "xor":
 			opStr = "^"
+		case "andnot":
+			opStr = "& ~"
 		case "shl":
 			opStr = "<<"
 		case "shr":

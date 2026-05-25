@@ -1261,6 +1261,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		case "xor":
 			b.buf.WriteString("\teora 0,s\n\teorb 1,s\n\tleas 2,s\n")
 			b.popBytes(2)
+		case "andnot":
+			b.buf.WriteString("\tcom 0,s\n\tcom 1,s\n\tanda 0,s\n\tandb 1,s\n\tleas 2,s\n")
+			b.popBytes(2)
 		default:
 			log.Panicf("Unknown BinaryOp in M6809: %q", i.Op)
 		}

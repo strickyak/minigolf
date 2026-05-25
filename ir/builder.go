@@ -1546,6 +1546,8 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "or", Left: left, Right: right}, expr)
 		case "^":
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "xor", Left: left, Right: right}, expr)
+		case "&^":
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "andnot", Left: left, Right: right}, expr)
 		case "+":
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "add", Left: left, Right: right}, expr)
 		case "-":
@@ -2132,6 +2134,14 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 			return left * right
 		case "/":
 			return left / right
+		case "&":
+			return left & right
+		case "|":
+			return left | right
+		case "^":
+			return left ^ right
+		case "&^":
+			return left &^ right
 		}
 	case *ast.CallExpression:
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {

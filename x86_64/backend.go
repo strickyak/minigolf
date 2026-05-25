@@ -636,6 +636,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tor rax, rcx\n")
 		case "xor":
 			b.buf.WriteString("\txor rax, rcx\n")
+		case "andnot":
+			b.buf.WriteString("\tnot rcx\n\tand rax, rcx\n")
 		case "shl":
 			b.buf.WriteString("\tshl rax, cl\n")
 		case "shr":
