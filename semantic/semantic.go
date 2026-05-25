@@ -371,6 +371,21 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 					a.analyzeExpression(s.Values[i])
 				}
 			}
+		case *ast.OpAssignStatement:
+			s.Name = foldExpression(s.Name)
+			a.analyzeExpression(s.Name)
+			s.Value = foldExpression(s.Value)
+			a.analyzeExpression(s.Value)
+
+			op := s.Operator
+			if op == "*" || op == "*=" {
+				a.markReachable("prelude.mul_word")
+				a.markReachable("prelude.mul_byte")
+			} else if op == "/" || op == "/=" {
+				a.markReachable("prelude.div_word")
+			} else if op == "%" || op == "%=" {
+				a.markReachable("prelude.mod_word")
+			}
 		case *ast.IfStatement:
 			s.Condition = foldExpression(s.Condition)
 			a.analyzeExpression(s.Condition)
@@ -596,6 +611,15 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 				typ = t1
 			} else {
 				typ = t2
+			}
+
+			if e.Operator == "*" {
+				a.markReachable("prelude.mul_word")
+				a.markReachable("prelude.mul_byte")
+			} else if e.Operator == "/" {
+				a.markReachable("prelude.div_word")
+			} else if e.Operator == "%" {
+				a.markReachable("prelude.mod_word")
 			}
 		}
 	case *ast.PrefixExpression:

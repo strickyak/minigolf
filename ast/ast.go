@@ -148,6 +148,17 @@ func (s *AssignStatement) statementNode()         {}
 func (s *AssignStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *AssignStatement) GetToken() *token.Token { return &s.Token }
 
+type OpAssignStatement struct {
+	Token    token.Token // The '+=', '-=', etc token
+	Name     Expression
+	Operator string // The underlying operator ('+', '-', etc)
+	Value    Expression
+}
+
+func (s *OpAssignStatement) statementNode()         {}
+func (s *OpAssignStatement) TokenLiteral() string   { return s.Token.Literal }
+func (s *OpAssignStatement) GetToken() *token.Token { return &s.Token }
+
 type IfStatement struct {
 	Token       token.Token // The 'if' token
 	Condition   Expression

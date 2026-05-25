@@ -1248,8 +1248,36 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tmul\t; unsigned multiply A * B, result in D\n")
 			b.buf.WriteString("\tleas 2,s\n")
 			b.popBytes(2)
-		case "div", "mod", "shl", "shr":
+		case "div", "mod":
 			b.buf.WriteString(fmt.Sprintf("\t; unimplemented %s\n", i.Op))
+			b.buf.WriteString("\tleas 2,s\n")
+			b.popBytes(2)
+		case "shl":
+			b.buf.WriteString(fmt.Sprintf("\ttst 1,s\t; test shift amount\n"))
+			b.buf.WriteString(fmt.Sprintf("\tbeq shl_done_%d\n", id))
+			b.buf.WriteString(fmt.Sprintf("shl_loop_%d:\n", id))
+			b.buf.WriteString("\taslb\n")
+			if !i.Typ.Equals(ir.TypeByte) {
+				b.buf.WriteString("\trola\n")
+			}
+			b.buf.WriteString("\tdec 1,s\n")
+			b.buf.WriteString(fmt.Sprintf("\tbne shl_loop_%d\n", id))
+			b.buf.WriteString(fmt.Sprintf("shl_done_%d:\n", id))
+			b.buf.WriteString("\tleas 2,s\n")
+			b.popBytes(2)
+		case "shr":
+			b.buf.WriteString(fmt.Sprintf("\ttst 1,s\t; test shift amount\n"))
+			b.buf.WriteString(fmt.Sprintf("\tbeq shr_done_%d\n", id))
+			b.buf.WriteString(fmt.Sprintf("shr_loop_%d:\n", id))
+			if !i.Typ.Equals(ir.TypeByte) {
+				b.buf.WriteString("\tlsra\n")
+				b.buf.WriteString("\trorb\n")
+			} else {
+				b.buf.WriteString("\tlsrb\n")
+			}
+			b.buf.WriteString("\tdec 1,s\n")
+			b.buf.WriteString(fmt.Sprintf("\tbne shr_loop_%d\n", id))
+			b.buf.WriteString(fmt.Sprintf("shr_done_%d:\n", id))
 			b.buf.WriteString("\tleas 2,s\n")
 			b.popBytes(2)
 		case "and":

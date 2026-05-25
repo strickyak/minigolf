@@ -69,6 +69,9 @@ func (l *Lexer) nextToken() token.Token {
 			ch := l.ch
 			l.readChar()
 			tok = token.Token{Type: token.INC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1, Filename: l.filename}
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.ADD_ASSIGN, Literal: "+=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.PLUS, l.ch, l.line, l.column)
 		}
@@ -77,6 +80,9 @@ func (l *Lexer) nextToken() token.Token {
 			ch := l.ch
 			l.readChar()
 			tok = token.Token{Type: token.DEC, Literal: string(ch) + string(l.ch), Line: l.line, Column: l.column - 1, Filename: l.filename}
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.SUB_ASSIGN, Literal: "-=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.MINUS, l.ch, l.line, l.column)
 		}
@@ -94,20 +100,38 @@ func (l *Lexer) nextToken() token.Token {
 		} else if l.peekChar() == '*' {
 			l.skipMultiLineComment()
 			return l.nextToken()
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.DIV_ASSIGN, Literal: "/=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.SLASH, l.ch, startLine, startCol)
 		}
 	case '*':
-		tok = l.newToken(token.ASTERISK, l.ch, startLine, startCol)
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.MUL_ASSIGN, Literal: "*=", Line: startLine, Column: startCol, Filename: l.filename}
+		} else {
+			tok = l.newToken(token.ASTERISK, l.ch, startLine, startCol)
+		}
 	case '%':
-		tok = l.newToken(token.MOD, l.ch, startLine, startCol)
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.MOD_ASSIGN, Literal: "%=", Line: startLine, Column: startCol, Filename: l.filename}
+		} else {
+			tok = l.newToken(token.MOD, l.ch, startLine, startCol)
+		}
 	case '<':
 		if l.peekChar() == '=' {
 			l.readChar()
 			tok = token.Token{Type: token.LTE, Literal: "<=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else if l.peekChar() == '<' {
 			l.readChar()
-			tok = token.Token{Type: token.LSHIFT, Literal: "<<", Line: startLine, Column: startCol, Filename: l.filename}
+			if l.peekChar() == '=' {
+				l.readChar()
+				tok = token.Token{Type: token.SHL_ASSIGN, Literal: "<<=", Line: startLine, Column: startCol, Filename: l.filename}
+			} else {
+				tok = token.Token{Type: token.LSHIFT, Literal: "<<", Line: startLine, Column: startCol, Filename: l.filename}
+			}
 		} else {
 			tok = l.newToken(token.LT, l.ch, startLine, startCol)
 		}
@@ -117,7 +141,12 @@ func (l *Lexer) nextToken() token.Token {
 			tok = token.Token{Type: token.GTE, Literal: ">=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else if l.peekChar() == '>' {
 			l.readChar()
-			tok = token.Token{Type: token.RSHIFT, Literal: ">>", Line: startLine, Column: startCol, Filename: l.filename}
+			if l.peekChar() == '=' {
+				l.readChar()
+				tok = token.Token{Type: token.SHR_ASSIGN, Literal: ">>=", Line: startLine, Column: startCol, Filename: l.filename}
+			} else {
+				tok = token.Token{Type: token.RSHIFT, Literal: ">>", Line: startLine, Column: startCol, Filename: l.filename}
+			}
 		} else {
 			tok = l.newToken(token.GT, l.ch, startLine, startCol)
 		}
@@ -127,7 +156,15 @@ func (l *Lexer) nextToken() token.Token {
 			tok = token.Token{Type: token.AND, Literal: "&&", Line: startLine, Column: startCol, Filename: l.filename}
 		} else if l.peekChar() == '^' {
 			l.readChar()
-			tok = token.Token{Type: token.BIT_CLEAR, Literal: "&^", Line: startLine, Column: startCol, Filename: l.filename}
+			if l.peekChar() == '=' {
+				l.readChar()
+				tok = token.Token{Type: token.CLEAR_ASSIGN, Literal: "&^=", Line: startLine, Column: startCol, Filename: l.filename}
+			} else {
+				tok = token.Token{Type: token.BIT_CLEAR, Literal: "&^", Line: startLine, Column: startCol, Filename: l.filename}
+			}
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.AND_ASSIGN, Literal: "&=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.BIT_AND, l.ch, startLine, startCol)
 		}
@@ -135,11 +172,19 @@ func (l *Lexer) nextToken() token.Token {
 		if l.peekChar() == '|' {
 			l.readChar()
 			tok = token.Token{Type: token.OR, Literal: "||", Line: startLine, Column: startCol, Filename: l.filename}
+		} else if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.OR_ASSIGN, Literal: "|=", Line: startLine, Column: startCol, Filename: l.filename}
 		} else {
 			tok = l.newToken(token.BIT_OR, l.ch, startLine, startCol)
 		}
 	case '^':
-		tok = l.newToken(token.BIT_XOR, l.ch, startLine, startCol)
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = token.Token{Type: token.XOR_ASSIGN, Literal: "^=", Line: startLine, Column: startCol, Filename: l.filename}
+		} else {
+			tok = l.newToken(token.BIT_XOR, l.ch, startLine, startCol)
+		}
 	case ';':
 		tok = l.newToken(token.SEMICOLON, l.ch, startLine, startCol)
 	case ',':

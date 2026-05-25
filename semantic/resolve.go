@@ -177,6 +177,10 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 	case *ast.IncDecStatement:
 		s.Name = r.resolveExpression(s.Name)
 		return s
+	case *ast.OpAssignStatement:
+		s.Name = r.resolveExpression(s.Name)
+		s.Value = r.resolveExpression(s.Value)
+		return s
 	case *ast.ForRangeStatement:
 		r.pushScope()
 		if s.Key != nil {

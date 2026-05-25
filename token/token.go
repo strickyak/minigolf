@@ -46,6 +46,18 @@ const (
 	LTE = "<="
 	GTE = ">="
 
+	ADD_ASSIGN   = "+="
+	SUB_ASSIGN   = "-="
+	MUL_ASSIGN   = "*="
+	DIV_ASSIGN   = "/="
+	MOD_ASSIGN   = "%="
+	AND_ASSIGN   = "&="
+	OR_ASSIGN    = "|="
+	XOR_ASSIGN   = "^="
+	SHL_ASSIGN   = "<<="
+	SHR_ASSIGN   = ">>="
+	CLEAR_ASSIGN = "&^="
+
 	// Delimiters
 	COMMA     = ","
 	DOT       = "."

@@ -1,0 +1,64 @@
+package main
+
+var count word = 0
+
+func incCount() word {
+	count++
+	return count
+}
+
+func main() {
+	var arr [10]word
+	arr[0] = 5
+	arr[1] = 10
+	arr[2] = 20
+	arr[3] = 30
+
+	// Test double evaluation fix. `incCount()` should only be evaluated once.
+	// Index = 1, so arr[1] += 5 -> 15.
+	arr[incCount()] += 5
+
+	println("arr[1]:", arr[1])
+	println("count:", count)
+
+	var x word = 10
+	x += 5
+	println("x += 5:", x)
+	x -= 3
+	println("x -= 3:", x)
+	x *= 2
+	println("x *= 2:", x)
+	x /= 4
+	println("x /= 4:", x)
+	x %= 4
+	println("x %%= 4:", x)
+
+	var b byte = 170
+	b &= 15
+	println("b &= 15:", b)
+	b |= 128
+	println("b |= 128:", b)
+	b ^= 2
+	println("b ^= 2:", b)
+
+	b = 64
+	b <<= 1
+	println("b <<= 1:", b)
+	b >>= 2
+	println("b >>= 2:", b)
+
+	b = 255
+	b &^= 15
+	println("b &^= 15:", b)
+
+	var s slice[byte]
+	s.Append(10)
+	s.Append(20)
+	s.Append(30)
+	count = 0
+
+	// Test double evaluation fix for slice `_Get` and `_Put`
+	s[incCount()] += 5
+	println("s[1]:", s[1])
+	println("count:", count)
+}

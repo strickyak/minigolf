@@ -531,6 +531,45 @@ func (p *Parser) parseExpressionOrAssignStatement() ast.Statement {
 		return stmt
 	}
 
+	if p.peekTokenIs(token.ADD_ASSIGN) || p.peekTokenIs(token.SUB_ASSIGN) || p.peekTokenIs(token.MUL_ASSIGN) || p.peekTokenIs(token.DIV_ASSIGN) || p.peekTokenIs(token.MOD_ASSIGN) || p.peekTokenIs(token.AND_ASSIGN) || p.peekTokenIs(token.OR_ASSIGN) || p.peekTokenIs(token.XOR_ASSIGN) || p.peekTokenIs(token.SHL_ASSIGN) || p.peekTokenIs(token.SHR_ASSIGN) || p.peekTokenIs(token.CLEAR_ASSIGN) {
+		if len(lefts) > 1 {
+			return nil
+		}
+		stmt := &ast.OpAssignStatement{Name: lefts[0]}
+		stmt.Token = p.peekToken
+		switch p.peekToken.Type {
+		case token.ADD_ASSIGN:
+			stmt.Operator = "+"
+		case token.SUB_ASSIGN:
+			stmt.Operator = "-"
+		case token.MUL_ASSIGN:
+			stmt.Operator = "*"
+		case token.DIV_ASSIGN:
+			stmt.Operator = "/"
+		case token.MOD_ASSIGN:
+			stmt.Operator = "%"
+		case token.AND_ASSIGN:
+			stmt.Operator = "&"
+		case token.OR_ASSIGN:
+			stmt.Operator = "|"
+		case token.XOR_ASSIGN:
+			stmt.Operator = "^"
+		case token.SHL_ASSIGN:
+			stmt.Operator = "<<"
+		case token.SHR_ASSIGN:
+			stmt.Operator = ">>"
+		case token.CLEAR_ASSIGN:
+			stmt.Operator = "&^"
+		}
+		p.nextToken() // move to operator
+		p.nextToken() // move to first token of RHS
+		stmt.Value = p.parseExpression(LOWEST)
+		if p.peekTokenIs(token.SEMICOLON) {
+			p.nextToken()
+		}
+		return stmt
+	}
+
 	if p.peekTokenIs(token.ASSIGN) || p.peekTokenIs(token.DECLARE) {
 		stmt := &ast.AssignStatement{Names: lefts}
 		p.nextToken()

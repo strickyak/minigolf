@@ -1156,8 +1156,21 @@ func (t *Transpiler) emitStatement(stmt ast.Statement) {
 		if s.Token.Literal == "--" {
 			op = "-"
 		}
-		newVal := fmt.Sprintf("(%s %s 1)", t.emitExprStr(s.Name), op)
-		t.buf.WriteString(t.emitAssignmentStr(s.Name, newVal))
+		cTyp := t.typeOf(s.Name)
+		addrExpr := &ast.PrefixExpression{Operator: "&", Right: s.Name}
+		addrStr := t.emitExprStr(addrExpr)
+		t.buf.WriteString(fmt.Sprintf("{\n%s* tmp_ptr_%p = %s;\n*tmp_ptr_%p = *tmp_ptr_%p %s 1;\n}\n", cTyp, s, addrStr, s, s, op))
+	case *ast.OpAssignStatement:
+		op := s.Operator
+		cTyp := t.typeOf(s.Name)
+		addrExpr := &ast.PrefixExpression{Operator: "&", Right: s.Name}
+		addrStr := t.emitExprStr(addrExpr)
+		valStr := t.emitExprStr(s.Value)
+		if op == "&^" {
+			t.buf.WriteString(fmt.Sprintf("{\n%s* tmp_ptr_%p = %s;\n*tmp_ptr_%p = *tmp_ptr_%p & ~(%s);\n}\n", cTyp, s, addrStr, s, s, valStr))
+		} else {
+			t.buf.WriteString(fmt.Sprintf("{\n%s* tmp_ptr_%p = %s;\n*tmp_ptr_%p = *tmp_ptr_%p %s %s;\n}\n", cTyp, s, addrStr, s, s, op, valStr))
+		}
 	case *ast.IfStatement:
 		t.buf.WriteString(fmt.Sprintf("if (%s) ", t.emitExprStr(s.Condition)))
 		t.emitStatement(s.Consequence)

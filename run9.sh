@@ -65,35 +65,7 @@ f_prelude.mul_byte:
     tfr d,x   ; leave result in X
     rts
 
-f_prelude.shl_word:
-    lda 3,s   ; low byte of n
-    beq shl_done
-    pshs a    ; save count
-    tfr x,d   ; move x to D for shifting
-shl_loop:
-    aslb
-    rola
-    dec ,s
-    bne shl_loop
-    leas 1,s  ; pop count
-    tfr d,x   ; move result back to X
-shl_done:
-    rts
 
-f_prelude.shr_word:
-    lda 3,s   ; low byte of n
-    beq shr_done
-    pshs a    ; save count
-    tfr x,d   ; move x to D for shifting
-shr_loop:
-    lsra
-    rorb
-    dec ,s
-    bne shr_loop
-    leas 1,s  ; pop count
-    tfr d,x   ; move result back to X
-shr_done:
-    rts
 
     daa
     daa
@@ -123,7 +95,8 @@ time - lwasm --format=raw -o'moto.rom' moto.asm
 test -s /home/strick/modoc/coco-shelf/gomar/gomar0n || \
 ( cd /home/strick/modoc/coco-shelf/gomar/ ; go build -o gomar0n --tags=noos,coco0,trace gomar.go )
 
-/home/strick/modoc/coco-shelf/gomar/gomar0n  -write_rom_fail=1 -t=1 --entry=0x8000 -n=1 -raw_hyper_print=1   \
+/home/strick/modoc/coco-shelf/gomar/gomar0n  \
+        -ttl=10s \
+        -write_rom_fail=1 -t=1 --entry=0x8000 -n=1 -raw_hyper_print=1   \
          -big_rom  /home/strick/antig/_tmp/moto.rom \
          -external_rom_listing   /home/strick/antig/_tmp/moto.rom.list
-

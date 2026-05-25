@@ -961,8 +961,20 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
 			Comment:         fmt.Sprintf("Line %d: %s", s.Token.Line, s.Token.Literal),
 		}, s)
-		val := b.buildExpr(s.Name)
-		typ := val.Type()
+
+		var oldVal Value
+		var ptr Value
+		var typ Type
+		isIdent := false
+		if _, ok := s.Name.(*ast.Identifier); ok {
+			isIdent = true
+			oldVal = b.buildExpr(s.Name)
+			typ = oldVal.Type()
+		} else {
+			ptr, typ = b.buildAddressOf(s.Name)
+			oldVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: typ}, Ptr: ptr}, s)
+		}
+
 		op := "add"
 		if s.Token.Literal == "--" {
 			op = "sub"
@@ -973,8 +985,92 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		} else {
 			one = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1}, s)
 		}
-		newVal := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: op, Left: val, Right: one}, s)
-		b.assignToExpr(s.Name, newVal)
+		newVal := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: op, Left: oldVal, Right: one}, s)
+
+		if isIdent {
+			b.assignToExpr(s.Name, newVal)
+		} else {
+			b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: ptr, Val: newVal}, s)
+		}
+	case *ast.OpAssignStatement:
+		b.addInstr(&SourceMarker{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Comment:         fmt.Sprintf("Line %d: %s", s.Token.Line, s.Token.Literal),
+		}, s)
+
+		var oldVal Value
+		var ptr Value
+		var typ Type
+		isIdent := false
+		if _, ok := s.Name.(*ast.Identifier); ok {
+			isIdent = true
+			oldVal = b.buildExpr(s.Name)
+			typ = oldVal.Type()
+		} else {
+			ptr, typ = b.buildAddressOf(s.Name)
+			oldVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: typ}, Ptr: ptr}, s)
+		}
+
+		rightVal := b.buildExpr(s.Value)
+		rightVal = b.coerceType(rightVal, typ)
+
+		op := s.Operator
+		switch op {
+		case "+":
+			op = "add"
+		case "-":
+			op = "sub"
+		case "*":
+			op = "mul"
+		case "/":
+			op = "div"
+		case "%":
+			op = "mod"
+		case "&":
+			op = "and"
+		case "|":
+			op = "or"
+		case "^":
+			op = "xor"
+		case "<<":
+			op = "shl"
+		case ">>":
+			op = "shr"
+		case "&^":
+			op = "andnot"
+		}
+
+		if typ.Name == "word" && (op == "mul" || op == "div" || op == "mod") {
+			var funcName string
+			if op == "mul" {
+				funcName = "prelude.mul_word"
+			}
+			if op == "div" {
+				funcName = "prelude.div_word"
+			}
+			if op == "mod" {
+				funcName = "prelude.mod_word"
+			}
+
+			if f := b.funcs[funcName]; f != nil {
+				args := []Value{oldVal, rightVal}
+				b.coerceCallArgs(f, args, s)
+				newVal := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f, Args: args}, s)
+				if isIdent {
+					b.assignToExpr(s.Name, newVal)
+				} else {
+					b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: ptr, Val: newVal}, s)
+				}
+				break
+			}
+		}
+
+		newVal := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: op, Left: oldVal, Right: rightVal}, s)
+		if isIdent {
+			b.assignToExpr(s.Name, newVal)
+		} else {
+			b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: ptr, Val: newVal}, s)
+		}
 	case *ast.ExpressionStatement:
 		b.addInstr(&SourceMarker{
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
@@ -1548,6 +1644,10 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "xor", Left: left, Right: right}, expr)
 		case "&^":
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "andnot", Left: left, Right: right}, expr)
+		case "<<":
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "shl", Left: left, Right: right}, expr)
+		case ">>":
+			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "shr", Left: left, Right: right}, expr)
 		case "+":
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "add", Left: left, Right: right}, expr)
 		case "-":
@@ -1948,64 +2048,8 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			return ExprResult{IsLValue: false, Value: val, Typ: typ}
 		}
 		if e.Operator == "&" {
-			if idxExpr, ok := e.Right.(*ast.IndexExpression); ok {
-				base := b.eval(idxExpr.Left)
-				if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
-					idx := b.buildExpr(idxExpr.Indices[0])
-					isPtr := base.Typ.IsAPointer()
-					var baseType string
-					if isPtr {
-						baseType = base.Typ.PointedType().Name
-					} else {
-						baseType = base.Typ.Name
-					}
-					funcName := MangleName(baseType) + "_Address"
-
-					if _, exists := b.funcs[funcName]; !exists {
-						if instInfo, ok := b.instantiatedTypes[baseType]; ok {
-							rawGenericFuncName := instInfo.RawGenericName + "_Address"
-							if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
-								parts := strings.SplitN(baseType, ".", 2)
-								b.instantiateGenericFunc(parts[0]+".Address", rawGenericFuncName, instInfo.ArgTyps, tmpl)
-							}
-						}
-					}
-
-					args := []Value{}
-					if isPtr {
-						if base.IsLValue {
-							receiverVal := b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, e)
-							args = append(args, receiverVal)
-						} else {
-							args = append(args, base.Value)
-						}
-					} else {
-						if base.IsLValue {
-							args = append(args, base.Address)
-						} else {
-							panic("Cannot call method on non-lvalue struct")
-						}
-					}
-					args = append(args, idx)
-
-					funcObj := b.funcs[funcName]
-					call := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: funcObj, Args: args}, e)
-
-					// Determine element type
-					eltType := TypeByte
-					if instInfo, ok := b.instantiatedTypes[baseType]; ok && len(instInfo.ArgTyps) > 0 {
-						eltType = instInfo.ArgTyps[0]
-					}
-
-					return ExprResult{IsLValue: false, Value: call, Typ: eltType.PointerTo()}
-				}
-			}
-
-			res := b.eval(e.Right)
-			if !res.IsLValue {
-				panic(fmt.Sprintf("Cannot take address of expression: %T", e.Right))
-			}
-			return ExprResult{IsLValue: false, Value: res.Address, Typ: res.Typ.PointerTo()}
+			ptr, typ := b.buildAddressOf(e.Right)
+			return ExprResult{IsLValue: false, Value: ptr, Typ: typ.PointerTo()}
 		}
 		if e.Operator == "*" {
 			ptrVal := b.buildExpr(e.Right)
@@ -2020,6 +2064,68 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		log.Panicf("NO CASE: Builder.eval: expr (%T)%v", expr, expr)
 	}
 	panic(fmt.Sprintf("Not Reached in eval: %T %v", expr, expr))
+}
+
+func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
+	if idxExpr, ok := expr.(*ast.IndexExpression); ok {
+		base := b.eval(idxExpr.Left)
+		if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
+			idx := b.buildExpr(idxExpr.Indices[0])
+			isPtr := base.Typ.IsAPointer()
+			var baseType string
+			if isPtr {
+				baseType = base.Typ.PointedType().Name
+			} else {
+				baseType = base.Typ.Name
+			}
+			funcName := MangleName(baseType) + "_Address"
+
+			if _, exists := b.funcs[funcName]; !exists {
+				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+					rawGenericFuncName := instInfo.RawGenericName + "_Address"
+					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+						parts := strings.SplitN(baseType, ".", 2)
+						b.instantiateGenericFunc(parts[0]+".Address", rawGenericFuncName, instInfo.ArgTyps, tmpl)
+					}
+				}
+			}
+
+			args := []Value{}
+			if isPtr {
+				if base.IsLValue {
+					receiverVal := b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, expr)
+					args = append(args, receiverVal)
+				} else {
+					args = append(args, base.Value)
+				}
+			} else {
+				if base.IsLValue {
+					args = append(args, base.Address)
+				} else {
+					panic("Cannot call method on non-lvalue struct")
+				}
+			}
+			args = append(args, idx)
+
+			funcObj := b.funcs[funcName]
+			call := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: funcObj, Args: args}, expr)
+
+			// Determine element type
+			eltType := TypeByte
+			if instInfo, ok := b.instantiatedTypes[baseType]; ok && len(instInfo.ArgTyps) > 0 {
+				eltType = instInfo.ArgTyps[0]
+			}
+
+			ptrCast := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: eltType.PointerTo()}, Op: "bitcast", Operand: call}, expr)
+			return ptrCast, eltType
+		}
+	}
+
+	res := b.eval(expr)
+	if !res.IsLValue {
+		panic(fmt.Sprintf("Cannot take address of non-lvalue expression: %T", expr))
+	}
+	return res.Address, res.Typ
 }
 
 func (b *Builder) getTypeString(qname string) Type {
@@ -2140,6 +2246,10 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 			return left | right
 		case "^":
 			return left ^ right
+		case "<<":
+			return left << right
+		case ">>":
+			return left >> right
 		case "&^":
 			return left &^ right
 		}

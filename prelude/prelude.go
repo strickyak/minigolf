@@ -214,19 +214,16 @@ func panic(w word) {
 
 func mul_byte(a byte, b byte) word
 
-func shl_word(x word, n word) word
-func shr_word(x word, n word) word
-
 func mul_word(a word, b word) word {
-    a_H := byte(shr_word(a, 8))
+    a_H := byte(a >> 8)
     a_L := byte(a)
-    b_H := byte(shr_word(b, 8))
+    b_H := byte(b >> 8)
     b_L := byte(b)
     
     cross1 := mul_byte(a_H, b_L)
     cross2 := mul_byte(a_L, b_H)
     crossSum := cross1 + cross2
-    crossSumShifted := shl_word(crossSum, 8)
+    crossSumShifted := crossSum << 8
     
     low := mul_byte(a_L, b_L)
     
@@ -241,12 +238,12 @@ func div_word(a0 word, b word) word {
     var r word
     for i := range 16 {
         bit_idx := word(15) - i
-        r = shl_word(r, 1)
-        bit := shr_word(a0, bit_idx) & 1
+        r = r << 1
+        bit := (a0 >> bit_idx) & 1
         r = r | bit
         if r >= b {
             r = r - b
-            q = q | shl_word(1, bit_idx)
+            q = q | (1 << bit_idx)
         }
     }
     return q
@@ -259,8 +256,8 @@ func mod_word(a0 word, b word) word {
     var r word
     for i := range 16 {
         bit_idx := word(15) - i
-        r = shl_word(r, 1)
-        bit := shr_word(a0, bit_idx) & 1
+        r = r << 1
+        bit := (a0 >> bit_idx) & 1
         r = r | bit
         if r >= b {
             r = r - b
