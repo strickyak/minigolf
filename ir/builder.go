@@ -1551,9 +1551,32 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		case "-":
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "sub", Left: left, Right: right}, expr)
 		case "*":
-			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "mul", Left: left, Right: right}, expr)
+			if typ.Name == "word" && b.funcs["prelude.mul_word"] != nil {
+				f := b.funcs["prelude.mul_word"]
+				args := []Value{left, right}
+				b.coerceCallArgs(f, args, expr)
+				val = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f, Args: args}, expr)
+			} else {
+				val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "mul", Left: left, Right: right}, expr)
+			}
 		case "/":
-			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "div", Left: left, Right: right}, expr)
+			if typ.Name == "word" && b.funcs["prelude.div_word"] != nil {
+				f := b.funcs["prelude.div_word"]
+				args := []Value{left, right}
+				b.coerceCallArgs(f, args, expr)
+				val = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f, Args: args}, expr)
+			} else {
+				val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "div", Left: left, Right: right}, expr)
+			}
+		case "%":
+			if typ.Name == "word" && b.funcs["prelude.mod_word"] != nil {
+				f := b.funcs["prelude.mod_word"]
+				args := []Value{left, right}
+				b.coerceCallArgs(f, args, expr)
+				val = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f, Args: args}, expr)
+			} else {
+				val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "mod", Left: left, Right: right}, expr)
+			}
 		case "==":
 			if typ.Name == "prelude.slice_byte" || typ.Name == "slice_byte" {
 				f := b.funcs["prelude.streq"]

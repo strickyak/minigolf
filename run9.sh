@@ -17,9 +17,6 @@ cd _tmp
 
 cat >cstart.asm <<'HERE'
 	pragma cescapes
-	* pragma undefextern
-    * pragma undefextern
-    * pragma importundefexport
 
     org $8000
 
@@ -34,15 +31,6 @@ cat >cstart.asm <<'HERE'
 
     lds  #$8000
 
-*emulator-zeros*    * Clear lower half of memory
-*emulator-zeros*    clra
-*emulator-zeros*    clrb
-*emulator-zeros*    ldx  #$8000
-*emulator-zeros*cstart_loop:
-*emulator-zeros*    std ,x
-*emulator-zeros*    leax -2,x
-*emulator-zeros*    bne cstart_loop
-    
 cstart_continue_to_main:
     clra
     clrb
@@ -64,15 +52,48 @@ __exit:
     nop
 stuck:
     bra stuck         ; 3. Infinite Loop
-    *no-section* export entry
-    *no-section* export __exit
-    *no-section* export __exit0
 
 _printf:
     leax 2,s
     fcb  $12,$21,111  ; Hyper Printf
     rts
-    *no-section* export _printf
+
+f_prelude.mul_byte:
+    ; first byte arg is already in B
+    lda 2,s   ; get second byte arg
+    mul
+    tfr d,x   ; leave result in X
+    rts
+
+f_prelude.shl_word:
+    lda 3,s   ; low byte of n
+    beq shl_done
+    pshs a    ; save count
+    tfr x,d   ; move x to D for shifting
+shl_loop:
+    aslb
+    rola
+    dec ,s
+    bne shl_loop
+    leas 1,s  ; pop count
+    tfr d,x   ; move result back to X
+shl_done:
+    rts
+
+f_prelude.shr_word:
+    lda 3,s   ; low byte of n
+    beq shr_done
+    pshs a    ; save count
+    tfr x,d   ; move x to D for shifting
+shr_loop:
+    lsra
+    rorb
+    dec ,s
+    bne shr_loop
+    leas 1,s  ; pop count
+    tfr d,x   ; move result back to X
+shr_done:
+    rts
 
     daa
     daa

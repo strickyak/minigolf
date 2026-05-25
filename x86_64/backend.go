@@ -176,6 +176,27 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString(".intel_syntax noprefix\n")
 	b.buf.WriteString(".text\n")
 
+	b.buf.WriteString("\t.globl f_prelude.shl_word\n")
+	b.buf.WriteString("f_prelude.shl_word:\n")
+	b.buf.WriteString("\tmov rax, rdi\n")
+	b.buf.WriteString("\tmov rcx, rsi\n")
+	b.buf.WriteString("\tshl rax, cl\n")
+	b.buf.WriteString("\tret\n")
+
+	b.buf.WriteString("\t.globl f_prelude.shr_word\n")
+	b.buf.WriteString("f_prelude.shr_word:\n")
+	b.buf.WriteString("\tmov rax, rdi\n")
+	b.buf.WriteString("\tmov rcx, rsi\n")
+	b.buf.WriteString("\tshr rax, cl\n")
+	b.buf.WriteString("\tret\n")
+
+	b.buf.WriteString("\t.globl f_prelude.mul_byte\n")
+	b.buf.WriteString("f_prelude.mul_byte:\n")
+	b.buf.WriteString("\tmovzx rax, dil\n")
+	b.buf.WriteString("\tmovzx rcx, sil\n")
+	b.buf.WriteString("\timul rax, rcx\n")
+	b.buf.WriteString("\tret\n")
+
 	if len(program.Globals) > 0 {
 		b.dataBuf.WriteString(".data\n")
 		for _, g := range program.Globals {

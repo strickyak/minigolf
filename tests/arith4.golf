@@ -1,0 +1,8 @@
+package main
+
+func main() {
+	println("17 * 17 is", 17*17)
+	println("505 * 120 is", 505*120)
+	println("50000 / 23 is", 50000/23)
+	println("50000 mod 23 is", 50000%23)
+}

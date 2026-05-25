@@ -632,6 +632,10 @@ func (t *Transpiler) Transpile(program *ast.Program, resolveCallback func(ast.No
 	finalBuf.WriteString("typedef uint8_t byte;\n")
 	finalBuf.WriteString("typedef uintptr_t word;\n\n")
 
+	finalBuf.WriteString("word f_prelude_shl_word(word x, word n) { return x << n; }\n")
+	finalBuf.WriteString("word f_prelude_shr_word(word x, word n) { return x >> n; }\n")
+	finalBuf.WriteString("word f_prelude_mul_byte(byte a, byte b) { return (word)a * (word)b; }\n\n")
+
 	finalBuf.WriteString(t.typedefBuf.String())
 	finalBuf.WriteString("\n")
 	finalBuf.WriteString(t.funcDeclsBuf.String())
