@@ -31,7 +31,7 @@ func main() {
 	x /= 4
 	println("x /= 4:", x)
 	x %= 4
-	println("x %%= 4:", x)
+	println("x %= 4:", x)
 
 	var b byte = 170
 	b &= 15

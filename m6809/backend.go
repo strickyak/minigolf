@@ -1572,16 +1572,17 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 
 	for _, arg := range args {
 		if strLit, ok := arg.(*ir.StringLiteral); ok {
-			formatStrs = append(formatStrs, strLit.Value)
+			formatStrs = append(formatStrs, "%s")
+			dataArgs = append(dataArgs, strLit)
+		} else if arg.Type().Equals(ir.TypeInt) {
+			fmt.Printf("DEBUG m6809 arg is TypeInt!\n")
+			formatStrs = append(formatStrs, "%d")
+			dataArgs = append(dataArgs, arg)
+		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+			formatStrs = append(formatStrs, "%s")
+			dataArgs = append(dataArgs, arg)
 		} else {
-			if arg.Type().Equals(ir.TypeInt) {
-				fmt.Printf("DEBUG m6809 arg is TypeInt!\n")
-				formatStrs = append(formatStrs, "%d")
-			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
-				formatStrs = append(formatStrs, "%s")
-			} else {
-				formatStrs = append(formatStrs, "%u")
-			}
+			formatStrs = append(formatStrs, "%u")
 			dataArgs = append(dataArgs, arg)
 		}
 	}
@@ -1601,9 +1602,26 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	}
 
 	for i := len(dataArgs) - 1; i >= 0; i-- {
-		b.loadVal(dataArgs[i])
-		b.buf.WriteString("\tstd ,--s\n")
-		b.pushBytes(2)
+		if strLit, ok := dataArgs[i].(*ir.StringLiteral); ok {
+			b.fmtCount++
+			lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			if b.picMode {
+				b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
+			} else {
+				b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
+			}
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lbl))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lbl))
+			}
+			b.buf.WriteString("\tstx ,--s\n")
+			b.pushBytes(2)
+		} else {
+			b.loadVal(dataArgs[i])
+			b.buf.WriteString("\tstd ,--s\n")
+			b.pushBytes(2)
+		}
 	}
 
 	if b.picMode {

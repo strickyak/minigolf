@@ -875,15 +875,16 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 
 	for _, arg := range args {
 		if strLit, ok := arg.(*ir.StringLiteral); ok {
-			formatStrs = append(formatStrs, strLit.Value)
+			formatStrs = append(formatStrs, "%s")
+			dataArgs = append(dataArgs, strLit)
+		} else if arg.Type().Equals(ir.TypeInt) {
+			formatStrs = append(formatStrs, "%lld")
+			dataArgs = append(dataArgs, arg)
+		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+			formatStrs = append(formatStrs, "%s")
+			dataArgs = append(dataArgs, arg)
 		} else {
-			if arg.Type().Equals(ir.TypeInt) {
-				formatStrs = append(formatStrs, "%lld")
-			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
-				formatStrs = append(formatStrs, "%s")
-			} else {
-				formatStrs = append(formatStrs, "%llu")
-			}
+			formatStrs = append(formatStrs, "%llu")
 			dataArgs = append(dataArgs, arg)
 		}
 	}
@@ -901,23 +902,58 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", fmtLabel))
 
 	regs := []string{"rsi", "rdx", "rcx", "r8", "r9"}
+	stackArgs := 0
+
+	for i := len(dataArgs) - 1; i >= len(regs); i-- {
+		arg := dataArgs[i]
+		if strLit, ok := arg.(*ir.StringLiteral); ok {
+			b.fmtCount++
+			lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string %q\n", lbl, strLit.Value))
+			b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + %s]\n", lbl))
+			b.buf.WriteString("\tpush rax\n")
+		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+			addr := b.getAddr(arg)
+			if addr != "" {
+				b.buf.WriteString(fmt.Sprintf("\tmov rax, qword ptr [%s]\n", addr))
+				b.buf.WriteString("\tpush rax\n")
+			} else {
+				b.loadVal(arg, "rax")
+				b.buf.WriteString("\tpush rax\n")
+			}
+		} else {
+			b.loadVal(arg, "rax")
+			b.buf.WriteString("\tpush rax\n")
+		}
+		stackArgs++
+	}
+
 	for idx, arg := range dataArgs {
-		if idx < len(regs) {
-			if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
-				addr := b.getAddr(arg)
-				if addr != "" {
-					b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s]\n", regs[idx], addr))
-				} else {
-					b.loadVal(arg, regs[idx])
-				}
+		if idx >= len(regs) {
+			break
+		}
+		if strLit, ok := arg.(*ir.StringLiteral); ok {
+			b.fmtCount++
+			lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string %q\n", lbl, strLit.Value))
+			b.buf.WriteString(fmt.Sprintf("\tlea %s, [rip + %s]\n", regs[idx], lbl))
+		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+			addr := b.getAddr(arg)
+			if addr != "" {
+				b.buf.WriteString(fmt.Sprintf("\tmov %s, qword ptr [%s]\n", regs[idx], addr))
 			} else {
 				b.loadVal(arg, regs[idx])
 			}
+		} else {
+			b.loadVal(arg, regs[idx])
 		}
 	}
 
 	b.buf.WriteString("\txor eax, eax\n")
 	b.buf.WriteString("\tcall printf@PLT\n")
+	if stackArgs > 0 {
+		b.buf.WriteString(fmt.Sprintf("\tadd rsp, %d\n", stackArgs*8))
+	}
 }
 
 func (b *Backend) emitData(val ir.Value) {

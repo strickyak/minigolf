@@ -368,8 +368,6 @@ func (c *CBE) formatVal(v ir.Value) string {
 	case *ir.Global:
 		gName := strings.ReplaceAll(val.Name, ".", "_")
 		return "v_" + gName
-	case *ir.StringLiteral:
-		return fmt.Sprintf("%q", val.Value)
 	case *ir.ConstByte:
 		return fmt.Sprintf("%d", val.Val)
 	case *ir.ConstWord:
@@ -560,18 +558,17 @@ func (c *CBE) emitPrint(newline bool, args []ir.Value) string {
 
 	for _, arg := range args {
 		if strLit, ok := arg.(*ir.StringLiteral); ok {
-			formatStrs = append(formatStrs, strLit.Value)
+			formatStrs = append(formatStrs, "%s")
+			argStrs = append(argStrs, fmt.Sprintf("(char*)(%q)", strLit.Value))
+		} else if arg.Type().Equals(ir.TypeInt) {
+			formatStrs = append(formatStrs, "%lld")
+			argStrs = append(argStrs, fmt.Sprintf("(long long)%s", c.formatVal(arg)))
+		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+			formatStrs = append(formatStrs, "%s")
+			argStrs = append(argStrs, fmt.Sprintf("(char*)(%s.f0)", c.formatVal(arg)))
 		} else {
-			if arg.Type().Equals(ir.TypeInt) {
-				formatStrs = append(formatStrs, "%lld")
-				argStrs = append(argStrs, fmt.Sprintf("(long long)%s", c.formatVal(arg)))
-			} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
-				formatStrs = append(formatStrs, "%s")
-				argStrs = append(argStrs, fmt.Sprintf("(char*)(%s.f0)", c.formatVal(arg)))
-			} else {
-				formatStrs = append(formatStrs, "%llu")
-				argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)%s", c.formatVal(arg)))
-			}
+			formatStrs = append(formatStrs, "%llu")
+			argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)%s", c.formatVal(arg)))
 		}
 	}
 

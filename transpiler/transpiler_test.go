@@ -64,12 +64,18 @@ func TestTranspiler(t *testing.T) {
 		"#define v_main_limit 10",
 		"byte v_main_count = 0;",
 		"while ((v_x < v_main_limit))",
-		"printf(\"hello world %llu\", (unsigned long long)(v_x));",
-		"printf(\"sum is %llu\\n\", (unsigned long long)(f_main_sum(v_x, ((word)(v_y)))));",
 		"int main() {",
 		"\tf_main_main();",
 		"\treturn 0;",
 		"}",
+	}
+
+	if !strings.Contains(output, `printf("%s %llu", (char*)("hello world"), (unsigned long long)(v_x));`) {
+		t.Errorf("expected output to contain:\n\tprintf(\"%%s %%llu\", (char*)(\"hello world\"), (unsigned long long)(v_x));\nOutput was:\n%s", output)
+	}
+
+	if !strings.Contains(output, `printf("%s %llu\n", (char*)("sum is"), (unsigned long long)(f_main_sum(v_x, ((word)(v_y)))));`) {
+		t.Errorf("expected output to contain:\n\tprintf(\"%%s %%llu\\n\", (char*)(\"sum is\"), (unsigned long long)(f_main_sum(v_x, ((word)(v_y)))));\nOutput was:\n%s", output)
 	}
 
 	for _, sub := range expectedSubstrings {

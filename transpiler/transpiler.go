@@ -1871,7 +1871,8 @@ func (t *Transpiler) emitPrint(newline bool, args []ast.Expression) string {
 
 	for _, arg := range args {
 		if strLit, ok := arg.(*ast.StringLiteral); ok {
-			formatStrs = append(formatStrs, strLit.Value)
+			formatStrs = append(formatStrs, "%s")
+			argStrs = append(argStrs, fmt.Sprintf("(char*)(%q)", strLit.Value))
 		} else {
 			argTyp := t.typeOf(arg)
 			if argTyp == "t_prelude_slice_byte" || argTyp == "t_slice_byte" {
