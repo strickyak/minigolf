@@ -1,3 +1,4 @@
-test_no_args 
-test_one_arg 42 
-test_many_args 1 2 3 4 5 
+test_no_args
+test_one_arg 42
+test_many_args 1 2 3 4 5
+test_many_args t= slice[byte]  v= slice[byte] one t= slice[byte]  v= slice[byte] two t= byte  v= byte 3 t= word  v= word 4

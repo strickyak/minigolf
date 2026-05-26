@@ -9,8 +9,47 @@ func variadic_test(prefix string, args ...word) {
 	println()
 }
 
+func str_length(p *byte) word {
+	var length word
+	for *p {
+		length++
+		p = (*byte)(1 + word(p))
+	}
+	return length
+}
+
+func string_of_star_byte(p *byte) string {
+	var s string
+	s.Base = p
+	s.Len = str_length(p)
+	s.Cap = s.Len
+	return s
+}
+
+func variadic_test_any(prefix string, args ...any) {
+	print(prefix)
+	for i, arg := range args {
+		var typ *byte = (*byte)(arg.TypeStr)
+		var addr word = arg.BaseAddr
+		t := string_of_star_byte(typ)
+		print(" t=", t, " v=")
+		print(" ")
+		if t == "byte" {
+			print(t, peek[byte](addr))
+		} else if t == "word" {
+			print(t, peek[word](addr))
+		} else if *typ == 's' { // begins with s, i.e. slice...
+			print(t, peek[string](addr))
+		} else {
+			print("unknown")
+		}
+	}
+	println()
+}
+
 func main() {
 	variadic_test("test_no_args")
 	variadic_test("test_one_arg", 42)
 	variadic_test("test_many_args", 1, 2, 3, 4, 5)
+	variadic_test_any("test_many_args", "one", "two", byte(3), word(4))
 }

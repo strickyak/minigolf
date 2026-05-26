@@ -2176,7 +2176,12 @@ func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.N
 
 	for i := 0; i < numVarArgs; i++ {
 		idxVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(i)}, tokenNode)
-		eltVal := b.coerceType(rawArgs[varIdx+i], eltTyp)
+		var eltVal Value
+		if eltTyp.Name == "prelude.any" || eltTyp.Name == "any" {
+			eltVal = b.packageAsAny(rawArgs[varIdx+i], tokenNode)
+		} else {
+			eltVal = b.coerceType(rawArgs[varIdx+i], eltTyp)
+		}
 		arrVal = b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: arrTyp}, Array: arrVal, Index: idxVal, Val: eltVal}, tokenNode)
 	}
 
