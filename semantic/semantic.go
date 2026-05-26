@@ -514,7 +514,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 						if !strings.HasPrefix(instName, "prelude.") {
 							instName = "prelude." + instName
 						}
-						a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)})
+						a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)}, &s.Token)
 					}
 				}
 			}
@@ -537,10 +537,13 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 	b.Statements = newStatements
 }
 
-func (a *Analyzer) substituteGenericTokens(argTyps []ast.Expression, tmpl *GenericTemplate) []token.Token {
+func (a *Analyzer) substituteGenericTokens(instName string, argTyps []ast.Expression, tmpl *GenericTemplate, instantiateToken *token.Token) []token.Token {
 	var res []token.Token
 	for _, tok := range tmpl.Tokens {
 		newTok := tok
+		if instantiateToken != nil {
+			newTok.ExpandedFrom = fmt.Sprintf("expanded %s at %s:%d", instName, instantiateToken.Filename, instantiateToken.Line)
+		}
 		if tok.Type == token.IDENT {
 			for i, tp := range tmpl.TypeParams {
 				if tok.Literal == tp && i < len(argTyps) {
@@ -554,7 +557,7 @@ func (a *Analyzer) substituteGenericTokens(argTyps []ast.Expression, tmpl *Gener
 	return res
 }
 
-func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps []ast.Expression) {
+func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps []ast.Expression, instantiateToken *token.Token) {
 	fmt.Printf("DEBUG INSTANTIATE ENTER: instName=%s rawGenericName=%s\n", instName, rawGenericName)
 	if _, ok := a.funcMap[instName]; ok {
 		return
@@ -571,7 +574,7 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 	}
 	fmt.Printf("DEBUG INSTANTIATE: Found template %s\n", rawGenericName)
 
-	subTokens := a.substituteGenericTokens(argTyps, tmpl)
+	subTokens := a.substituteGenericTokens(instName, argTyps, tmpl, instantiateToken)
 	fmt.Printf("DEBUG INSTANTIATE: Tokens for %s:\n", instName)
 	for i, tok := range subTokens {
 		fmt.Printf("  %d: %s (Type: %v)\n", i, tok.Literal, tok.Type)
@@ -764,7 +767,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 				instName += "_" + a.exprToString(idx) // Simplified
 			}
 
-			a.instantiateGeneric(instName, qname, e.Indices)
+			a.instantiateGeneric(instName, qname, e.Indices, &e.Token)
 			typ = builtinType(instName)
 		} else {
 			if arrTyp, ok := leftTyp.(*ast.ArrayType); ok {
@@ -793,7 +796,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 					if !strings.HasPrefix(instName, "prelude.") {
 						instName = "prelude." + instName
 					}
-					a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)})
+					a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)}, &e.Token)
 				}
 			}
 		}
@@ -865,7 +868,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 								genericBase := strings.Join(parts[:len(parts)-1], "_")
 								if strings.HasPrefix(baseTypStr, genericBase+"_") {
 									instName := baseTypStr + "_" + e.Right.Value
-									a.instantiateGeneric(instName, rawName, argTyps)
+									a.instantiateGeneric(instName, rawName, argTyps, &e.Token)
 									if sym, ok := a.globalScope.Resolve(instName); ok {
 										typ = sym.Type
 										a.markReachable(instName)
@@ -890,7 +893,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 							if !strings.HasPrefix(instName, "prelude.") {
 								instName = "prelude." + instName
 							}
-							a.instantiateGeneric(instName, qname, []ast.Expression{builtinType(eltTypeStr)})
+							a.instantiateGeneric(instName, qname, []ast.Expression{builtinType(eltTypeStr)}, &e.Token)
 
 							if sym, ok := a.globalScope.Resolve(instName); ok {
 								typ = sym.Type
