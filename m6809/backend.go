@@ -55,6 +55,15 @@ func (b *Backend) getTypeSize(typ string) int {
 			typ = def.Name
 		}
 	}
+	if typ == "byte" {
+		return 1
+	}
+	if typ == "word" || typ == "int" || typ == "bool" || strings.HasPrefix(typ, "*") || strings.HasPrefix(typ, "func") {
+		return 2
+	}
+	if strings.HasPrefix(typ, "prelude.slice_") || strings.HasPrefix(typ, "slice_") {
+		return 6
+	}
 	if (ir.Type{Name: typ}).IsAStruct() {
 		content := typ[7 : len(typ)-1]
 		size := 0
@@ -86,7 +95,7 @@ func (b *Backend) getEltSize(arrType string) int {
 			return b.getTypeSize(arrType[idx+1:])
 		}
 	}
-	return 2
+	return b.getTypeSize(arrType)
 }
 
 func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int, int) {

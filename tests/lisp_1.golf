@@ -6,7 +6,7 @@ type Node struct {
 	Kind      byte
 	Symbol    string
 	Number    int
-	Primative func(expr *Node, context *Node)
+	Primative func(*Node, *Node) *Node
 	Left      *Node // The CAR
 	Right     *Node // The CDR
 }

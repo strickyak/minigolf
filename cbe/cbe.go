@@ -25,6 +25,9 @@ func (c *CBE) mapType(typ string) string {
 	if typ == "byte" || typ == "word" || typ == "void" || typ == "unknown" {
 		return typ
 	}
+	if strings.HasPrefix(typ, "func_ptr_") || typ == "func" {
+		return "word"
+	}
 	if typ == "const_integer" {
 		return "word"
 	}

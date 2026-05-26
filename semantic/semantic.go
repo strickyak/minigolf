@@ -144,6 +144,32 @@ func (a *Analyzer) reportError(node ast.Node, format string, args ...interface{}
 	a.errors = append(a.errors, msg)
 }
 
+func (a *Analyzer) exprToRawString(expr ast.Expression) string {
+	if expr == nil {
+		return ""
+	}
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return e.FullName()
+	case *ast.ArrayType:
+		return "slice_" + a.exprToRawString(e.Elt)
+	case *ast.PointerType:
+		return "*" + a.exprToRawString(e.Elt)
+	case *ast.SelectorExpression:
+		if pkgIdent, ok := e.Left.(*ast.Identifier); ok {
+			return pkgIdent.Value + "." + e.Right.Value
+		}
+		return a.exprToRawString(e.Left) + "." + e.Right.Value
+	case *ast.IndexExpression:
+		res := a.exprToRawString(e.Left)
+		for _, idx := range e.Indices {
+			res += "_" + a.exprToRawString(idx)
+		}
+		return res
+	}
+	return expr.TokenLiteral()
+}
+
 func (a *Analyzer) exprToString(expr ast.Expression) string {
 	expr = a.unwrapAlias(expr)
 	if expr == nil {
@@ -495,14 +521,9 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 						valTyp := UnknownType
 						if arrayTyp, ok := rangeTyp.(*ast.ArrayType); ok {
 							valTyp = arrayTyp.Elt
-						} else {
-							rangeTypStr := a.exprToString(rangeTyp)
-							if strings.HasPrefix(rangeTypStr, "prelude.slice_") {
-								eltStr := strings.TrimPrefix(rangeTypStr, "prelude.slice_")
-								valTyp = builtinType(eltStr)
-							} else if strings.HasPrefix(rangeTypStr, "slice_") {
-								eltStr := strings.TrimPrefix(rangeTypStr, "slice_")
-								valTyp = builtinType(eltStr)
+						} else if idxExpr, ok := rangeTyp.(*ast.IndexExpression); ok {
+							if baseIdent, ok := idxExpr.Left.(*ast.Identifier); ok && (baseIdent.Value == "slice" || baseIdent.Value == "prelude.slice") {
+								valTyp = idxExpr.Indices[0]
 							}
 						}
 						a.currentScope.Define(ident.Value, valTyp)
@@ -516,14 +537,17 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			}
 
 			if s.Value != nil {
-				baseTypStr := a.exprToString(rangeTyp)
-				if strings.HasPrefix(baseTypStr, "prelude.slice_") || strings.HasPrefix(baseTypStr, "slice_") {
-					var eltTypeStr string
-					if strings.HasPrefix(baseTypStr, "prelude.slice_") {
-						eltTypeStr = strings.TrimPrefix(baseTypStr, "prelude.slice_")
-					} else {
-						eltTypeStr = strings.TrimPrefix(baseTypStr, "slice_")
+				var eltTyp ast.Expression
+				if arrayTyp, ok := rangeTyp.(*ast.ArrayType); ok {
+					eltTyp = arrayTyp.Elt
+				} else if idxExpr, ok := rangeTyp.(*ast.IndexExpression); ok {
+					if baseIdent, ok := idxExpr.Left.(*ast.Identifier); ok && (baseIdent.Value == "slice" || baseIdent.Value == "prelude.slice") {
+						eltTyp = idxExpr.Indices[0]
 					}
+				}
+				
+				if eltTyp != nil {
+					baseTypStr := a.exprToString(rangeTyp)
 					methodsToInstantiate := []string{"Address", "Put", "Get", "Chop"}
 					for _, m := range methodsToInstantiate {
 						instName := baseTypStr + "_" + m
@@ -531,7 +555,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 							instName = "prelude." + instName
 						}
 						if !a.suppressErrors {
-							a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{builtinType(eltTypeStr)}, &s.Token)
+							a.instantiateGeneric(instName, "prelude.slice_"+m, []ast.Expression{eltTyp}, &s.Token)
 						}
 					}
 				}
@@ -565,7 +589,7 @@ func (a *Analyzer) substituteGenericTokens(instName string, argTyps []ast.Expres
 		if tok.Type == token.IDENT {
 			for i, tp := range tmpl.TypeParams {
 				if tok.Literal == tp && i < len(argTyps) {
-					newTok.Literal = a.exprToString(argTyps[i])
+					newTok.Literal = a.exprToRawString(argTyps[i])
 				}
 			}
 		}

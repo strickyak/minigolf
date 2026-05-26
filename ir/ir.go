@@ -39,6 +39,9 @@ var (
 )
 
 func (t Type) IsAPointer() bool {
+	if _, ok := t.Expr.(*ast.PointerType); ok {
+		return true
+	}
 	return strings.HasPrefix(t.Name, "*")
 }
 
@@ -59,6 +62,9 @@ func (t Type) PointerTo() Type {
 }
 
 func (t Type) IsAnArray() bool {
+	if _, ok := t.Expr.(*ast.ArrayType); ok {
+		return true
+	}
 	return strings.HasPrefix(t.Name, "[")
 }
 
@@ -71,7 +77,10 @@ func (t Type) ArrayElementType() Type {
 }
 
 func (t Type) IsAStruct() bool {
-	return strings.HasPrefix(t.Name, "struct{")
+	if _, ok := t.Expr.(*ast.StructType); ok {
+		return true
+	}
+	return strings.HasPrefix(t.Name, "struct{") || strings.HasPrefix(t.Name, "tuple_")
 }
 
 func GetTypeSize(typ Type) int {

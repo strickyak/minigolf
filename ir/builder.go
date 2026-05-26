@@ -104,6 +104,7 @@ func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node) *Bu
 }
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
+		if se, ok := expr.(*ast.SelectorExpression); ok { fmt.Printf("DEBUG ASTTOIRTYPE SELECTOR: %#v\n", se) }
 	if expr == nil {
 		log.Panicf("TODO: when is expr nil?")
 	}
@@ -119,18 +120,29 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		case "const_integer":
 			return TypeConstInteger
 		default:
-			qname := e.FullName()
+			var qname string
+			fullName := e.FullName()
+			if strings.Contains(fullName, ".") {
+				qname = fullName
+			} else {
+				qname = b.currentPackage + "." + fullName
+			}
 			if _, ok := b.typeDefsAST[qname]; !ok {
 				if _, okAlias := b.typeAliases[qname]; !okAlias {
-					if _, ok := b.typeDefsAST["prelude."+e.Value]; ok {
-						qname = "prelude." + e.Value
-					} else if _, ok := b.typeAliases["prelude."+e.Value]; ok {
-						qname = "prelude." + e.Value
+					if _, ok := b.typeDefsAST["prelude."+fullName]; ok {
+						qname = "prelude." + fullName
+					} else if _, okAlias := b.typeAliases["prelude."+fullName]; okAlias {
+						qname = "prelude." + fullName
+					} else if _, ok := b.typeAliases[fullName]; ok {
+						qname = fullName
 					}
 				}
 			}
 
 			if aliasExpr, ok := b.typeAliases[qname]; ok {
+				if strings.HasPrefix(qname, "func_ptr_") {
+					return Type{Expr: aliasExpr, Name: qname}
+				}
 				return b.astToIRType(aliasExpr)
 			}
 
@@ -200,13 +212,39 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		}
 		name += "}"
 		return Type{Expr: expr, Name: name}
+
 	case *ast.CompositeLit:
 		return b.astToIRType(e.Type)
 	case *ast.FuncType:
-		return TypeWord
+		return Type{Expr: expr, Name: b.SyntheticFuncName(e)}
 	}
 	log.Panicf("astToIRType NO CASE: %#v", expr)
 	panic(0)
+}
+
+func (b *Builder) SyntheticFuncName(e *ast.FuncType) string {
+	name := "func_ptr_"
+	for i, param := range e.Parameters {
+		if i > 0 {
+			name += "_"
+		}
+		name += b.astToIRType(param.Type).Name
+	}
+	name += "__"
+	for i, rt := range e.ReturnTypes {
+		if i > 0 {
+			name += "_"
+		}
+		name += b.astToIRType(rt).Name
+	}
+	// Sanitize by replacing any non-alphanumeric with underscores just in case
+	name = strings.ReplaceAll(name, ".", "_")
+	name = strings.ReplaceAll(name, "[", "_")
+	name = strings.ReplaceAll(name, "]", "_")
+	name = strings.ReplaceAll(name, "*", "ptr_")
+	
+	b.typeAliases[name] = e
+	return name
 }
 
 func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
@@ -377,6 +415,7 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 }
 
 func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token) {
+	fmt.Printf("DEBUG instantiateGenericFunc ENTER: instName=%s genericName=%s argTyps=%v\n", instName, genericName, argTyps)
 	newTokens := b.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
 
 	p := parser.New(newTokens)
@@ -462,6 +501,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 		switch s := stmt.(type) {
 		case *ast.TypeStatement:
 			qname := b.currentPackage + "." + s.Name.Value
+			if qname == "main.Command" {
+				fmt.Printf("DEBUG Build TypeStatement main.Command: BaseType is %T\n", s.BaseType)
+			}
 			item := &GlobalItem{QName: qname, ASTNode: s}
 			if len(s.TypeParameters) > 0 {
 				item.Kind = ItemGenericType
@@ -610,23 +652,7 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		}
 	}
 	f := &Function{Name: funcName}
-	if len(s.ReturnTypes) == 1 {
-		f.ReturnType = b.astToIRType(s.ReturnTypes[0])
-	} else if len(s.ReturnTypes) > 1 {
-		// Construct a synthetic return type for a multi-value return.
-		var fields []*ast.Field
-		for i, rt := range s.ReturnTypes {
-			fields = append(fields, &ast.Field{
-				Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-				Type: rt,
-			})
-		}
-		f.ReturnType = b.astToIRType(&ast.StructType{
-			Fields: fields,
-		})
-	} else {
-		f.ReturnType = TypeVoid
-	}
+	f.ReturnType = b.getFuncReturnType(s.ReturnTypes)
 	paramIdx := 0
 	if s.Receiver != nil {
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: s.Receiver.Name.Value, Typ: receiverTyp})
@@ -753,6 +779,7 @@ func (b *Builder) addInstr(instr Instruction, reference any) Instruction {
 
 // Braun et al. SSA Construction Methods
 func (b *Builder) writeVariable(variable string, block *BasicBlock, value Value) {
+	fmt.Printf("DEBUG writeVariable name=%s\n", variable)
 	if b.currentDef[block] == nil {
 		b.currentDef[block] = make(map[string]Value)
 	}
@@ -865,13 +892,14 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 	return val
 }
 
-func (b *Builder) readVariable(variable string, block *BasicBlock) Value {
+func (b *Builder) readVariable(name string, block *BasicBlock) Value {
+	fmt.Printf("DEBUG readVariable name=%s\n", name)
 	if defs, ok := b.currentDef[block]; ok {
-		if val, ok := defs[variable]; ok {
+		if val, ok := defs[name]; ok {
 			return val
 		}
 	}
-	return b.readVariableRecursive(variable, block)
+	return b.readVariableRecursive(name, block)
 }
 
 func (b *Builder) readVariableRecursive(variable string, block *BasicBlock) Value {
@@ -976,6 +1004,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 	case *ast.AssignStatement:
 		if len(s.Names) > 1 && len(s.Values) == 1 {
 			tupleVal := b.buildExpr(s.Values[0])
+			fmt.Printf("DEBUG ASSIGN tupleVal type: %#v IsStruct: %v\n", tupleVal.Type(), tupleVal.Type().IsAStruct())
 			typ := tupleVal.Type()
 			if typ.IsAStruct() {
 				// typStr := string(typ)
@@ -1989,6 +2018,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 			if _, exists := b.funcs[funcName]; !exists {
 				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+					fmt.Printf("DEBUG buildExpr call method: funcName=%s baseType=%s instInfo.ArgTyps=%v\n", funcName, baseType, instInfo.ArgTyps)
 					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
 					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
 						b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
@@ -2088,8 +2118,13 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				for _, arg := range e.Arguments {
 					args = append(args, b.buildExpr(arg))
 				}
-				val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: TypeWord}, FuncPtr: funcVal, Args: args}, expr)
-				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+				retTyp := TypeWord
+				if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
+					retTyp = b.getFuncReturnType(ft.ReturnTypes)
+				}
+
+				val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: funcVal, Args: args}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: retTyp}
 			}
 			if f.IsVariadic {
 				args = b.packVariadicArgs(f, args, expr)
@@ -2104,8 +2139,13 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			for _, arg := range e.Arguments {
 				args = append(args, b.buildExpr(arg))
 			}
-			val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: TypeWord}, FuncPtr: funcVal, Args: args}, expr)
-			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+
+			retTyp := TypeWord
+			if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
+				retTyp = b.getFuncReturnType(ft.ReturnTypes)
+			}
+			val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: funcVal, Args: args}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: retTyp}
 		}
 
 	case *ast.PrefixExpression:
@@ -2550,8 +2590,9 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		// Historically ignored in pass 0.
 	case ItemType:
 		s := item.ASTNode.(*ast.TypeStatement)
-		st := s.BaseType.(*ast.StructType)
-		b.typeDefsAST[item.QName] = st
+		if st, ok := s.BaseType.(*ast.StructType); ok {
+			b.typeDefsAST[item.QName] = st
+		}
 
 		// Ensure TypeDefOrder only contains resolved ones in order
 		found := false
@@ -2564,7 +2605,11 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		if !found {
 			b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, item.QName)
 		}
-		b.getTypeString(item.QName) // resolves sizes
+		if _, ok := s.BaseType.(*ast.StructType); ok {
+			b.getTypeString(item.QName) // resolves sizes
+		} else if _, ok := s.BaseType.(*ast.FuncType); ok {
+			b.Program.TypeDefs[item.QName] = TypeWord
+		}
 	case ItemConst:
 		s := item.ASTNode.(*ast.ConstStatement)
 		b.constExprs[item.QName] = s.Value
@@ -2638,6 +2683,29 @@ func (t Type) ArrayLength() int {
 		return length
 	}
 	return 0
+}
+
+func (b *Builder) getFuncReturnType(returnTypes []ast.Expression) Type {
+	if len(returnTypes) == 1 {
+		return b.astToIRType(returnTypes[0])
+	} else if len(returnTypes) > 1 {
+		var fields []*ast.Field
+		for i, rt := range returnTypes {
+			fields = append(fields, &ast.Field{
+				Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
+				Type: rt,
+			})
+		}
+		structTyp := &ast.StructType{Fields: fields}
+		name := "struct{"
+		for _, rt := range returnTypes {
+			name += b.astToIRType(rt).Name + ";"
+		}
+		name += "}"
+		return Type{Expr: structTyp, Name: name}
+	} else {
+		return TypeVoid
+	}
 }
 
 func (b *Builder) isConstantExpr(expr ast.Expression) bool {

@@ -1,0 +1,30 @@
+package main
+
+import "smap"
+
+type status = byte
+
+type Command = func(*Terp, string, slice[string], word) (string, status)
+
+// Terp is a Pico inTerpreter
+type Terp struct {
+	Commands smap.Smap[Command]
+	Frame    *Frame // most recent frame
+}
+
+// Frame is a stack frame or local or global vars
+type Frame struct {
+	Vars smap.Smap[string]
+}
+
+func eightCmd(t *Terp, cmd string, args slice[string], user_data word) (string, status) {
+	return "8", 0
+}
+
+func main() {
+	var terp Terp
+	var frame Frame
+	terp.Commands.Insert("eight", eightCmd)
+	terp.Frame = &frame
+	frame.Vars.Insert("size", "XXL")
+}
