@@ -2278,6 +2278,7 @@ func (b *Builder) getTypeString(qname string) Type {
 		panic("unknown type: " + qname)
 	}
 	b.evaluatingType[qname] = true
+	defer func() { b.evaluatingType[qname] = false }()
 
 	var fields []*ast.Field
 	for i, f := range st.Fields {
@@ -2290,7 +2291,6 @@ func (b *Builder) getTypeString(qname string) Type {
 		Fields: fields,
 	})
 	b.Program.TypeDefs[qname] = structType
-	b.evaluatingType[qname] = false
 	return structType
 }
 
