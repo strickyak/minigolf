@@ -5,6 +5,9 @@ package prelude
 
 type uint = word
 type string = slice[byte]
+type bool = byte
+const true = 1
+const false = 0
 
 func peek[T any](addr word) T {
 	return *((*T)(addr))
@@ -117,7 +120,7 @@ type slice[T any] struct {
 
 func (o *slice[T]) Append(x T) {
     if o.Base == 0 {
-        o.Base = word(zalloc(mul_word(8 , sizeof[T]())))
+        o.Base = word(zalloc(8 * sizeof[T]()))
         o.Cap = 8
         o.Len = 1
         o.Put(0, x)
@@ -136,7 +139,7 @@ func (o *slice[T]) Append(x T) {
     if z.Cap < 8 {
         z.Cap = 8
     }
-    z.Base = word(zalloc(mul_word(z.Cap , sizeof[T]())))
+    z.Base = word(zalloc(z.Cap * sizeof[T]()))
     z.Len = n+1
 
     for i := range n {
@@ -151,12 +154,12 @@ func (o *slice[T]) Address(i word) word {
 	if i >= o.Len {
 		panic(2001)
 	}
-	p := mul_word(i , sizeof[T]())
+	p := (i * sizeof[T]())
 	return o.Base + p
 }
 
 func (o *slice[T]) Get(i word) T {
-	p := mul_word(i , sizeof[T]())
+	p := (i * sizeof[T]())
 	if i >= o.Len {
 		panic(2002)
 	}
@@ -164,7 +167,7 @@ func (o *slice[T]) Get(i word) T {
 }
 
 func (o *slice[T]) Put(i word, x T) {
-	p := mul_word(i , sizeof[T]())
+	p := (i * sizeof[T]())
 	if i >= o.Len {
 		panic(2003)
 	}
@@ -353,7 +356,7 @@ func malloc(nbytes word) *byte {
 			} else {
 				// Block is bigger than needed; allocate from the tail end
 				p.size = p.size - nunits
-				p = (*MallocHeader)(word(p) + mul_word(p.size, sizeof[MallocHeader]()))
+				p = (*MallocHeader)(word(p) + (p.size * sizeof[MallocHeader]()))
 				p.size = nunits
 			}
 			freep = prevp
@@ -398,7 +401,7 @@ func free(ap *byte) {
 	}
 
 	// Coalesce (merge) with the next block if they are physically adjacent
-	if word(bp)+mul_word(bp.size, sizeof[MallocHeader]()) == word(p.next) {
+	if word(bp)+(bp.size * sizeof[MallocHeader]()) == word(p.next) {
 		bp.size = bp.size + p.next.size
 		bp.next = p.next.next
 	} else {
@@ -406,7 +409,7 @@ func free(ap *byte) {
 	}
 
 	// Coalesce (merge) with the previous block if they are physically adjacent
-	if word(p)+mul_word(p.size, sizeof[MallocHeader]()) == word(bp) {
+	if word(p)+(p.size * sizeof[MallocHeader]()) == word(bp) {
 		p.size = p.size + bp.size
 		p.next = bp.next
 	} else {

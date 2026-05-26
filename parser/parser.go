@@ -261,6 +261,7 @@ func (p *Parser) parseConstStatement() *ast.ConstStatement {
 }
 
 func (p *Parser) parseTypeStatement() *ast.TypeStatement {
+	startPos := p.pos - 2
 	stmt := &ast.TypeStatement{Token: p.curToken}
 
 	if !p.expectPeek(token.IDENT) {
@@ -270,22 +271,18 @@ func (p *Parser) parseTypeStatement() *ast.TypeStatement {
 
 	if p.peekTokenIs(token.LBRACKET) {
 		p.nextToken() // consume '['
-		if !p.expectPeek(token.IDENT) {
-			return nil
-		}
-		typeParam := p.curToken.Literal
-		stmt.TypeParameters = append(stmt.TypeParameters, &ast.Identifier{Token: p.curToken, Value: typeParam})
-
-		if !p.expectPeek(token.IDENT) || p.curToken.Literal != "any" {
-			p.errors = append(p.errors, "expected 'any' constraint")
-			return nil
+		for !p.peekTokenIs(token.RBRACKET) && !p.peekTokenIs(token.EOF) {
+			p.nextToken()
+			if p.curToken.Type == token.IDENT && p.curToken.Literal != "any" {
+				stmt.TypeParameters = append(stmt.TypeParameters, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+			}
 		}
 		if !p.expectPeek(token.RBRACKET) {
+			fmt.Printf("DEBUG PARSETYPE: expected ], got %s\n", p.curToken.Literal)
 			return nil
 		}
 
 		p.nextToken() // move to start of base type
-		startPos := p.pos - 2
 		stmt.BaseType = p.parseExpression(LOWEST)
 		endPos := p.pos - 1
 
@@ -312,6 +309,7 @@ func (p *Parser) ParseExpressionForGeneric() ast.Expression {
 }
 
 func (p *Parser) ParseStatementForGeneric() ast.Statement {
+	fmt.Printf("DEBUG PARSEGENERIC: curToken.Type=%s curToken.Literal=%s\n", p.curToken.Type, p.curToken.Literal)
 	return p.parseTopLevelStatement("")
 }
 

@@ -58,6 +58,7 @@ type Analyzer struct {
 	reachableFuncs   map[string]bool
 	queue            []string
 	resolver         *Resolver
+	instantiatedArgs map[string][]ast.Expression
 }
 
 func builtinType(name string) ast.Expression {
@@ -94,13 +95,23 @@ func New(resolver *Resolver) *Analyzer {
 		genericTemplates: make(map[string]*GenericTemplate),
 		funcMap:          make(map[string]*ast.FuncStatement),
 		reachableFuncs:   make(map[string]bool),
-		queue:            []string{},
+		queue:            make([]string, 0),
 		resolver:         resolver,
+		instantiatedArgs: make(map[string][]ast.Expression),
 	}
 }
 
 func (a *Analyzer) Errors() []string {
 	return a.errors
+}
+
+func (a *Analyzer) reportError(node ast.Node, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if node != nil && node.GetToken() != nil {
+		tok := node.GetToken()
+		msg = fmt.Sprintf("%s (at %s:%d)", msg, tok.Filename, tok.Line)
+	}
+	a.errors = append(a.errors, msg)
 }
 
 func exprToString(expr ast.Expression) string {
@@ -119,6 +130,12 @@ func exprToString(expr ast.Expression) string {
 			return pkgIdent.Value + "." + e.Right.Value
 		}
 		return exprToString(e.Left) + "." + e.Right.Value
+	case *ast.IndexExpression:
+		res := exprToString(e.Left)
+		for _, idx := range e.Indices {
+			res += "_" + exprToString(idx)
+		}
+		return res
 	}
 	return expr.TokenLiteral()
 }
@@ -248,17 +265,15 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 	}
 
 	if !a.hasMainPackage {
-		a.errors = append(a.errors, "missing 'package main'")
+		a.reportError(nil, "missing 'package main'")
 	}
 	if a.hasMainPackage && !a.hasMainFunc {
-		a.errors = append(a.errors, "missing 'main' function in 'package main'")
+		a.reportError(nil, "missing 'main' function in 'package main'")
 	}
 
 	// Pass 2: Reachability-driven Type Checking (DCE)
 	a.markReachable("main.main")
 	a.markReachable("prelude.init_0")
-	// Also mark all builtins as reachable so we don't accidentally drop them if someone manually defined them.
-	// Actually, just init_0 and main.main is enough for roots.
 
 	for len(a.queue) > 0 {
 		qname := a.queue[0]
@@ -320,7 +335,9 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	defer func() { a.currentScope = a.currentScope.parent }()
 
 	if s.Receiver != nil {
-		a.currentScope.Define(s.Receiver.Name.Value, a.analyzeExpression(s.Receiver.Type))
+		evaluatedType := a.analyzeExpression(s.Receiver.Type)
+		a.currentScope.Define(s.Receiver.Name.Value, evaluatedType)
+		fmt.Printf("DEBUG ANALYZEFUNC: Defined receiver %s as %s (raw: %s)\n", s.Receiver.Name.Value, exprToString(evaluatedType), exprToString(s.Receiver.Type))
 	}
 
 	for _, p := range s.Parameters {
@@ -435,6 +452,15 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 						valTyp := UnknownType
 						if arrayTyp, ok := rangeTyp.(*ast.ArrayType); ok {
 							valTyp = arrayTyp.Elt
+						} else {
+							rangeTypStr := exprToString(rangeTyp)
+							if strings.HasPrefix(rangeTypStr, "prelude.slice_") {
+								eltStr := strings.TrimPrefix(rangeTypStr, "prelude.slice_")
+								valTyp = builtinType(eltStr)
+							} else if strings.HasPrefix(rangeTypStr, "slice_") {
+								eltStr := strings.TrimPrefix(rangeTypStr, "slice_")
+								valTyp = builtinType(eltStr)
+							}
 						}
 						a.currentScope.Define(ident.Value, valTyp)
 					}
@@ -501,18 +527,34 @@ func (a *Analyzer) substituteGenericTokens(argTyps []ast.Expression, tmpl *Gener
 	return res
 }
 
-func (a *Analyzer) instantiateGeneric(instName string, rawGenericName string, argTyps []ast.Expression) {
-	if _, ok := a.globalScope.Resolve(instName); ok {
-		return
-	} // Already instantiated
-	tmpl, ok := a.genericTemplates[rawGenericName]
-	if !ok {
+func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps []ast.Expression) {
+	fmt.Printf("DEBUG INSTANTIATE ENTER: instName=%s rawGenericName=%s\n", instName, rawGenericName)
+	if _, ok := a.funcMap[instName]; ok {
 		return
 	}
+	if _, ok := a.globalScope.Resolve(instName); ok {
+		return
+	}
+ // Already instantiated
+	a.instantiatedArgs[instName] = argTyps
+	tmpl, ok := a.genericTemplates[rawGenericName]
+	if !ok {
+		fmt.Printf("DEBUG INSTANTIATE: Template %s not found in genericTemplates!\n", rawGenericName)
+		return
+	}
+	fmt.Printf("DEBUG INSTANTIATE: Found template %s\n", rawGenericName)
 
 	subTokens := a.substituteGenericTokens(argTyps, tmpl)
+	fmt.Printf("DEBUG INSTANTIATE: Tokens for %s:\n", instName)
+	for i, tok := range subTokens {
+		fmt.Printf("  %d: %s (Type: %v)\n", i, tok.Literal, tok.Type)
+	}
 	p := parser.New(subTokens)
 	stmt := p.ParseStatementForGeneric()
+	if stmt == nil {
+		fmt.Printf("DEBUG INSTANTIATE: ParseStatementForGeneric returned nil for %s\n", instName)
+		return
+	}
 
 	// Resolve names in the instantiated template using the package where it was defined
 	genParts := strings.SplitN(rawGenericName, ".", 2)
@@ -526,6 +568,7 @@ func (a *Analyzer) instantiateGeneric(instName string, rawGenericName string, ar
 		ts.Name.Value = strings.TrimPrefix(instName, a.currentPackage+".")
 		ts.TypeParameters = nil
 		a.globalScope.Define(instName, ts.BaseType)
+		fmt.Printf("DEBUG INSTANTIATE: Defined TYPE %s as %T in globalScope\n", instName, ts)
 		a.program.Statements = append(a.program.Statements, ts)
 	} else if fs, ok := stmt.(*ast.FuncStatement); ok {
 		// Keep original name and receiver
@@ -552,9 +595,19 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 
 	var typ ast.Expression = UnknownType
 
+	if _, ok := expr.(*ast.PointerType); ok {
+		fmt.Printf("DEBUG ANALYZE_EXPR_ENTER: expr is PointerType, String: %s\n", exprToString(expr))
+	} else {
+		fmt.Printf("DEBUG ANALYZE_EXPR_ENTER: expr type is %T, String: %s\n", expr, exprToString(expr))
+	}
+
 	switch e := expr.(type) {
 	case *ast.IntegerLiteral:
 		typ = WordType
+	case *ast.PointerType:
+		eltTyp := a.analyzeExpression(e.Elt)
+		fmt.Printf("DEBUG POINTER: e.Elt=%T eltTyp=%s\n", e.Elt, exprToString(eltTyp))
+		typ = &ast.PointerType{Elt: eltTyp}
 	case *ast.StringLiteral:
 		typ = &ast.ArrayType{Elt: ByteType}
 	case *ast.Identifier:
@@ -573,7 +626,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 		} else if _, ok := a.genericTemplates[fullName]; ok {
 			typ = builtinType("func") // It's a generic template func or type
 		} else {
-			a.errors = append(a.errors, fmt.Sprintf("undefined identifier: %s (resolved as %s)", e.Value, fullName))
+			a.reportError(e, "undefined identifier: %s (resolved as %s)", e.Value, fullName)
 		}
 	case *ast.InfixExpression:
 		t1 := a.analyzeExpression(e.Left)
@@ -583,6 +636,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 
 			// ir.Builder uses prelude helpers for comparing slices and structs
 			t1Str := exprToString(t1)
+			fmt.Printf("DEBUG INFIX: left=%s right=%s op=%s t1Str=%s\n", exprToString(e.Left), exprToString(e.Right), e.Operator, t1Str)
 			if t1Str == "slice_byte" || t1Str == "prelude.slice_byte" || t1Str == "string" || t1Str == "prelude.string" {
 				if e.Operator == "==" || e.Operator == "!=" {
 					a.markReachable("prelude.streq")
@@ -644,7 +698,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			typ = funcTyp
 		} else if ft, ok := funcTyp.(*ast.FuncType); ok {
 			if len(argTyps) != len(ft.Parameters) && exprToString(funcTyp) != "func" {
-				a.errors = append(a.errors, fmt.Sprintf("argument count mismatch: expected %d, got %d", len(ft.Parameters), len(argTyps)))
+				a.reportError(e, "argument count mismatch: expected %d, got %d", len(ft.Parameters), len(argTyps))
 			}
 			if len(ft.ReturnTypes) > 0 {
 				typ = ft.ReturnTypes[0]
@@ -660,6 +714,8 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 		if id, ok := e.Left.(*ast.Identifier); ok {
 			if _, ok := a.genericTemplates[id.FullName()]; ok {
 				qname = id.FullName()
+			} else if _, ok := a.genericTemplates[a.currentPackage+"."+id.FullName()]; ok {
+				qname = a.currentPackage + "." + id.FullName()
 			}
 		}
 
@@ -733,9 +789,35 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			// It's a method call or field access!
 			baseTypStr := exprToString(leftTyp)
 			baseTypStr = strings.TrimPrefix(baseTypStr, "*")
+			fmt.Printf("DEBUG SELECTOR: baseTypStr=%s e.Right.Value=%s\n", baseTypStr, e.Right.Value)
 
-			// Check for method
-			methodName := baseTypStr + "_" + e.Right.Value
+			// Check for struct field first!
+			structDef, ok := a.globalScope.Resolve(baseTypStr)
+			if !ok {
+				structDef, ok = a.globalScope.Resolve(a.currentPackage + "." + baseTypStr)
+			}
+			if ok {
+				if st, ok := structDef.Type.(*ast.StructType); ok {
+					for _, f := range st.Fields {
+						if f.Name.Value == e.Right.Value {
+							typ = f.Type
+							fmt.Printf("DEBUG STRUCT: Found field %s of type %T (%s)\n", f.Name.Value, typ, exprToString(typ))
+							break
+						}
+					}
+					if typ == UnknownType {
+						fmt.Printf("DEBUG STRUCT: Field %s not found in struct!\n", e.Right.Value)
+					}
+				} else {
+					fmt.Printf("DEBUG STRUCT: Not a StructType! It is %T\n", structDef.Type)
+				}
+			} else {
+				fmt.Printf("DEBUG STRUCT: Could not resolve %s or %s\n", baseTypStr, a.currentPackage+"."+baseTypStr)
+			}
+
+			// If not a field, check for method
+			if typ == UnknownType {
+				methodName := baseTypStr + "_" + e.Right.Value
 			if sym, ok := a.globalScope.Resolve(methodName); ok {
 				typ = sym.Type
 				a.markReachable(methodName)
@@ -746,26 +828,48 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 				typ = sym.Type
 				a.markReachable(sym.Name)
 			} else {
-				// Could be a generic method like slice_byte_Chop!
-				// We need to instantiate it.
-				if strings.HasPrefix(baseTypStr, "prelude.slice_") || strings.HasPrefix(baseTypStr, "slice_") {
-					var eltTypeStr string
-					if strings.HasPrefix(baseTypStr, "prelude.slice_") {
-						eltTypeStr = strings.TrimPrefix(baseTypStr, "prelude.slice_")
-					} else {
-						eltTypeStr = strings.TrimPrefix(baseTypStr, "slice_")
-					}
-					qname := "prelude.slice_" + e.Right.Value
-					instName := baseTypStr + "_" + e.Right.Value
-					if !strings.HasPrefix(instName, "prelude.") {
-						instName = "prelude." + instName
-					}
-					a.instantiateGeneric(instName, qname, []ast.Expression{builtinType(eltTypeStr)})
-
-					if sym, ok := a.globalScope.Resolve(instName); ok {
-						typ = sym.Type
+				// Check if the base type was instantiated as a generic type (e.g., smap.Smap_byte)
+				if argTyps, ok := a.instantiatedArgs[baseTypStr]; ok {
+					for rawName := range a.genericTemplates {
+						parts := strings.Split(rawName, "_")
+						if len(parts) >= 2 && parts[len(parts)-1] == e.Right.Value {
+							genericBase := strings.Join(parts[:len(parts)-1], "_")
+							if strings.HasPrefix(baseTypStr, genericBase+"_") {
+								instName := baseTypStr + "_" + e.Right.Value
+								a.instantiateGeneric(instName, rawName, argTyps)
+								if sym, ok := a.globalScope.Resolve(instName); ok {
+									typ = sym.Type
+									a.markReachable(instName)
+								}
+								break
+							}
+						}
 					}
 				}
+
+				// Fallback for prelude slices which are built-in generics without explicit struct templates
+				if typ == UnknownType {
+					if strings.HasPrefix(baseTypStr, "prelude.slice_") || strings.HasPrefix(baseTypStr, "slice_") {
+						var eltTypeStr string
+						if strings.HasPrefix(baseTypStr, "prelude.slice_") {
+							eltTypeStr = strings.TrimPrefix(baseTypStr, "prelude.slice_")
+						} else {
+							eltTypeStr = strings.TrimPrefix(baseTypStr, "slice_")
+						}
+						qname := "prelude.slice_" + e.Right.Value
+						instName := baseTypStr + "_" + e.Right.Value
+						if !strings.HasPrefix(instName, "prelude.") {
+							instName = "prelude." + instName
+						}
+						a.instantiateGeneric(instName, qname, []ast.Expression{builtinType(eltTypeStr)})
+
+						if sym, ok := a.globalScope.Resolve(instName); ok {
+							typ = sym.Type
+							a.markReachable(instName)
+						}
+					}
+				}
+			}
 			}
 		}
 	case *ast.CompositeLit:

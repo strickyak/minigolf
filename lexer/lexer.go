@@ -42,7 +42,7 @@ func (l *Lexer) peekChar() byte {
 }
 
 func (l *Lexer) nextToken() token.Token {
-	var tok token.Token
+	tok := token.Token{Filename: l.filename}
 
 	l.skipWhitespace()
 

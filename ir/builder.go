@@ -316,7 +316,7 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 	newTokens := b.substituteGenericTokens(argTyps, tmpl)
 
 	p := parser.New(newTokens)
-	baseTypeAST := p.ParseExpressionForGeneric()
+	stmt := p.ParseStatementForGeneric()
 
 	if len(p.Errors()) > 0 {
 		fmt.Printf("Parser errors during generic instantiation of %s:\n", instName)
@@ -328,8 +328,14 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 	parts := strings.SplitN(genericName, ".", 2)
 	defPkg := parts[0]
 	if b.resolveCallback != nil {
-		baseTypeAST = b.resolveCallback(baseTypeAST, defPkg).(ast.Expression)
+		stmt = b.resolveCallback(stmt, defPkg).(ast.Statement)
 	}
+
+	ts, ok := stmt.(*ast.TypeStatement)
+	if !ok {
+		panic("Generic instantiation did not produce a TypeStatement: " + instName)
+	}
+	baseTypeAST := ts.BaseType
 
 	if st, ok := baseTypeAST.(*ast.StructType); ok {
 		b.typeDefsAST[instName] = st
@@ -617,6 +623,17 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 }
 
 func (b *Builder) buildFunc(s *ast.FuncStatement) {
+	defer func() {
+		if r := recover(); r != nil {
+			tok := s.GetToken()
+			file, line := "unknown", 0
+			if tok != nil {
+				file, line = tok.Filename, tok.Line
+			}
+			panic(fmt.Sprintf("%v\n\tin buildFunc: %s (at %s:%d)", r, s.Name.Value, file, line))
+		}
+	}()
+
 	funcName := s.Name.Value
 	if s.Receiver != nil {
 		receiverTyp := b.astToIRType(s.Receiver.Type)
@@ -886,6 +903,17 @@ func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
 }
 
 func (b *Builder) buildStatement(stmt ast.Statement) {
+	defer func() {
+		if r := recover(); r != nil {
+			tok := stmt.GetToken()
+			file, line := "unknown", 0
+			if tok != nil {
+				file, line = tok.Filename, tok.Line
+			}
+			panic(fmt.Sprintf("%v\n\tin buildStatement: %T (at %s:%d)", r, stmt, file, line))
+		}
+	}()
+
 	switch s := stmt.(type) {
 	case *ast.BlockStatement:
 		b.buildBlock(s)
@@ -1378,6 +1406,17 @@ type ExprResult struct {
 }
 
 func (b *Builder) buildExpr(expr ast.Expression) Value {
+	defer func() {
+		if r := recover(); r != nil {
+			tok := expr.GetToken()
+			file, line := "unknown", 0
+			if tok != nil {
+				file, line = tok.Filename, tok.Line
+			}
+			panic(fmt.Sprintf("%v\n\tin buildExpr: %T (at %s:%d)", r, expr, file, line))
+		}
+	}()
+
 	res := b.eval(expr)
 	if res.IsLValue {
 		return b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: res.Typ}, Ptr: res.Address}, expr)
