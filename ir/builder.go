@@ -158,20 +158,30 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 
 			if _, ok := b.typeDefsAST[instName]; !ok {
 				if tmpl, ok := b.genericTemplates[rawGenericName]; ok {
-					b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl)
+					b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl, e.GetToken())
 				} else if ident, ok := e.Left.(*ast.Identifier); ok {
 					builtinRawGenericName := "prelude." + ident.Value
 					if tmpl, ok := b.genericTemplates[builtinRawGenericName]; ok {
 						rawGenericName = builtinRawGenericName
 						instName = fmt.Sprintf("%s%s", rawGenericName, instTypStr)
 						if _, ok := b.typeDefsAST[instName]; !ok {
-							b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl)
+							b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl, e.GetToken())
 						}
 					} else {
 						panic("unresolved:" + rawGenericName)
 					}
 				} else {
 					panic("unresolved:" + rawGenericName)
+				}
+			} else {
+				// Type was already instantiated by semantic phase, but we must populate instantiatedTypes
+				var argTyps []Type
+				for _, argNode := range e.Indices {
+					argTyps = append(argTyps, b.astToIRType(argNode))
+				}
+				b.instantiatedTypes[instName] = InstantiatedTypeInfo{
+					RawGenericName: rawGenericName,
+					ArgTyps:        argTyps,
 				}
 			}
 			return Type{Expr: expr, Name: instName}
@@ -260,7 +270,7 @@ func (b *Builder) coerceCallArgs(f *Function, args []Value, expr ast.Node) {
 	}
 }
 
-func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate) []token.Token {
+func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token, instName string) []token.Token {
 	var argTokensList [][]token.Token
 	for _, argTyp := range argTyps {
 
@@ -277,6 +287,11 @@ func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate)
 		}
 
 		// and add it to the list
+		for i := range argTokens {
+			if instantiateToken != nil {
+				argTokens[i].ExpandedFrom = fmt.Sprintf("expanded %s at %s:%d", instName, instantiateToken.Filename, instantiateToken.Line)
+			}
+		}
 		argTokensList = append(argTokensList, argTokens)
 	}
 
@@ -295,14 +310,18 @@ func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate)
 			}
 		}
 		if !replaced {
-			newTokens = append(newTokens, tok)
+			tokCopy := tok
+			if instantiateToken != nil {
+				tokCopy.ExpandedFrom = fmt.Sprintf("expanded %s at %s:%d", instName, instantiateToken.Filename, instantiateToken.Line)
+			}
+			newTokens = append(newTokens, tokCopy)
 		}
 	}
 	newTokens = append(newTokens, token.Token{Type: token.EOF, Literal: ""})
 	return newTokens
 }
 
-func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []ast.Expression, tmpl *GenericTemplate) {
+func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []ast.Expression, tmpl *GenericTemplate, instantiateToken *token.Token) {
 	var argTyps []Type
 	for _, argNode := range argNodes {
 		argTyps = append(argTyps, b.astToIRType(argNode))
@@ -313,7 +332,7 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 		ArgTyps:        argTyps,
 	}
 
-	newTokens := b.substituteGenericTokens(argTyps, tmpl)
+	newTokens := b.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
 
 	p := parser.New(newTokens)
 	stmt := p.ParseStatementForGeneric()
@@ -357,8 +376,8 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 	}
 }
 
-func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []Type, tmpl *GenericTemplate) {
-	newTokens := b.substituteGenericTokens(argTyps, tmpl)
+func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token) {
+	newTokens := b.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
 
 	p := parser.New(newTokens)
 	stmt := p.ParseStatementForGeneric()
@@ -629,6 +648,9 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 			file, line := "unknown", 0
 			if tok != nil {
 				file, line = tok.Filename, tok.Line
+				if tok.ExpandedFrom != "" {
+					file += " [" + tok.ExpandedFrom + "]"
+				}
 			}
 			panic(fmt.Sprintf("%v\n\tin buildFunc: %s (at %s:%d)", r, s.Name.Value, file, line))
 		}
@@ -909,6 +931,9 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			file, line := "unknown", 0
 			if tok != nil {
 				file, line = tok.Filename, tok.Line
+				if tok.ExpandedFrom != "" {
+					file += " [" + tok.ExpandedFrom + "]"
+				}
 			}
 			panic(fmt.Sprintf("%v\n\tin buildStatement: %T (at %s:%d)", r, stmt, file, line))
 		}
@@ -1307,8 +1332,9 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			valIdent, valOk := s.Value.(*ast.Identifier)
 			if valOk && valIdent.Value != "_" {
 				idxExpr := &ast.IndexExpression{
+					Token:   s.Token,
 					Left:    s.RangeValue,
-					Indices: []ast.Expression{&ast.Identifier{Value: hiddenIdxName}},
+					Indices: []ast.Expression{&ast.Identifier{Token: s.Token, Value: hiddenIdxName}},
 				}
 				valRes := b.buildExpr(idxExpr)
 				if s.IsDecl {
@@ -1412,6 +1438,9 @@ func (b *Builder) buildExpr(expr ast.Expression) Value {
 			file, line := "unknown", 0
 			if tok != nil {
 				file, line = tok.Filename, tok.Line
+				if tok.ExpandedFrom != "" {
+					file += " [" + tok.ExpandedFrom + "]"
+				}
 			}
 			panic(fmt.Sprintf("%v\n\tin buildExpr: %T (at %s:%d)", r, expr, file, line))
 		}
@@ -1486,7 +1515,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					rawGenericFuncName := instInfo.RawGenericName + "_" + methodName
 					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
 						parts := strings.SplitN(baseType, ".", 2)
-						b.instantiateGenericFunc(parts[0]+"."+methodName, rawGenericFuncName, instInfo.ArgTyps, tmpl)
+						b.instantiateGenericFunc(parts[0]+"."+methodName, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
 					}
 				}
 			}
@@ -1503,7 +1532,8 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					if base.IsLValue {
 						receiverVal = base.Address
 					} else {
-						panic("Cannot call method on non-lvalue struct")
+						log.Printf("warning: Cannot call method on non-lvalue struct %s (IndexExpression in slice). Synthesizing temporary lvalue.", base.Typ.Name)
+						receiverVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: base.Typ.PointerTo()}, Local: base.Value}, e)
 					}
 				}
 				args := []Value{receiverVal, idx}
@@ -1888,7 +1918,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 				if _, ok := b.funcs[funcName]; !ok {
 					if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
-						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
+						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, e.GetToken())
 					}
 				}
 				isGenericFunc = true
@@ -1922,7 +1952,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 						}
 						funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 						if _, ok := b.funcs[funcName]; !ok {
-							b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl)
+							b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, e.GetToken())
 						}
 						isGenericFunc = true
 					}
@@ -1960,7 +1990,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
 					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
 					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
-						b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl)
+						b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
 					}
 				}
 			}
@@ -2128,7 +2158,7 @@ func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 					rawGenericFuncName := instInfo.RawGenericName + "_Address"
 					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
 						parts := strings.SplitN(baseType, ".", 2)
-						b.instantiateGenericFunc(parts[0]+".Address", rawGenericFuncName, instInfo.ArgTyps, tmpl)
+						b.instantiateGenericFunc(parts[0]+".Address", rawGenericFuncName, instInfo.ArgTyps, tmpl, expr.GetToken())
 					}
 				}
 			}
@@ -2145,7 +2175,9 @@ func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 				if base.IsLValue {
 					args = append(args, base.Address)
 				} else {
-					panic("Cannot call method on non-lvalue struct")
+					log.Printf("warning: Cannot call method on non-lvalue struct %s (in buildAddressOf). Synthesizing temporary lvalue.", base.Typ.Name)
+					tmpAddr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: base.Typ.PointerTo()}, Local: base.Value}, expr)
+					args = append(args, tmpAddr)
 				}
 			}
 			args = append(args, idx)
@@ -2155,7 +2187,9 @@ func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 
 			// Determine element type
 			eltType := TypeByte
-			if instInfo, ok := b.instantiatedTypes[baseType]; ok && len(instInfo.ArgTyps) > 0 {
+			instInfo, ok := b.instantiatedTypes[baseType]
+			log.Printf("DEBUG buildAddressOf baseType=%q ok=%v len=%d", baseType, ok, len(instInfo.ArgTyps))
+			if ok && len(instInfo.ArgTyps) > 0 {
 				eltType = instInfo.ArgTyps[0]
 			}
 
@@ -2349,7 +2383,7 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 					rawGenericFuncName := instInfo.RawGenericName + "_Put"
 					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
 						parts := strings.SplitN(baseType, ".", 2)
-						b.instantiateGenericFunc(parts[0]+".Put", rawGenericFuncName, instInfo.ArgTyps, tmpl)
+						b.instantiateGenericFunc(parts[0]+".Put", rawGenericFuncName, instInfo.ArgTyps, tmpl, lhs.GetToken())
 					}
 				}
 			}
@@ -2366,7 +2400,8 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 					if base.IsLValue {
 						receiverVal = base.Address
 					} else {
-						panic("Cannot call method on non-lvalue struct")
+						log.Printf("warning: Cannot call method on non-lvalue struct %s (in assignToExpr). Synthesizing temporary lvalue.", base.Typ.Name)
+						receiverVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: base.Typ.PointerTo()}, Local: base.Value}, lhs)
 					}
 				}
 				val = b.coerceType(val, f.Parameters[2].Typ)

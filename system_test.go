@@ -153,16 +153,8 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	}
 }
 
-func TestSystemTriangles_C(t *testing.T) {
-	testBackend(t, "C", "demos/triangles.golf", expectedOutput)
-}
-
 func TestSystemTriangles_CBE(t *testing.T) {
 	testBackend(t, "CBE", "demos/triangles.golf", expectedOutput)
-}
-
-func TestSystemTrianglesByte_C(t *testing.T) {
-	testBackend(t, "C", "demos/triangles_byte.golf", expectedOutputByte)
 }
 
 func TestSystemTrianglesByte_CBE(t *testing.T) {
@@ -183,7 +175,7 @@ func TestSystemAllGolfFiles(t *testing.T) {
 		t.Fatalf("Failed to glob tests/*.golf: %v", err)
 	}
 
-	backends := []string{"C", "CBE", "x86_64", "m6809"}
+	backends := []string{"CBE", "x86_64", "m6809"}
 
 	for _, file := range files {
 		wantFile := strings.TrimSuffix(file, ".golf") + ".want"

@@ -18,7 +18,6 @@ import (
 	"github.com/strickyak/minigolf/parser"
 	"github.com/strickyak/minigolf/prelude"
 	"github.com/strickyak/minigolf/semantic"
-	"github.com/strickyak/minigolf/transpiler"
 	"github.com/strickyak/minigolf/x86_64"
 )
 
@@ -378,25 +377,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Flag -m=C : transpile AST to C and exit cleanly
-	if *archFlag == "C" || *archFlag == "C99" {
-		tr := transpiler.New()
-		cCode := tr.Transpile(program, resolveCallback)
-
-		header := fmt.Sprintf("/*\n * Starting whole-program compilation\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
-		finalOutput := header + cCode
-
-		err := writeOutput(*outFlag, finalOutput)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing C output: %v\n", err)
-			os.Exit(1)
-		}
-		logger.Printf("Successfully compiled to C99: %s", *outFlag)
-		os.Exit(0)
-	}
-
 	// For other values of -m, panic for now
-	panic("Architecture " + *archFlag + " not yet implemented. Use -m=C for the transpiler.")
+	panic("Architecture " + *archFlag + " not yet implemented.")
 }
 
 func writeOutput(outFlag string, finalOutput string) error {

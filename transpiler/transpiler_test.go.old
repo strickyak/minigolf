@@ -16,7 +16,7 @@ func TestTranspiler(t *testing.T) {
 	
 	const limit = 10
 	
-	type index word
+	type index = word
 	
 	var count byte = 0
 	

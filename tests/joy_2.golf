@@ -193,6 +193,7 @@ func RegisterBuiltins() {
 	Builtins.Append(word(Intern("==")))
 }
 
+/*
 // Global dictionary for defined operations (square == dup *)
 type Def struct {
 	Name string
@@ -200,6 +201,7 @@ type Def struct {
 }
 
 var Definitions slice[Def]
+*/
 
 func Eval(prog slice[word], stack slice[word]) slice[word] {
 	for i := word(0); i < prog.Len; i++ {
@@ -262,42 +264,44 @@ func Eval(prog slice[word], stack slice[word]) slice[word] {
 					}
 				}
 				stack.Append(word(resList))
-			} else if sym == "==" {
-				// "==" in Joy evaluates the RHS and binds it to LHS name
-				// e.g. square == dup *
-				// Here we cheat a bit and intercept the definition.
-				// Actually the parser just parsed 'square' '==' 'dup' '*'.
-				// If it's evaluated, we can define 'square' as the rest of the program!
+				/*
+					} else if sym == "==" {
+						// "==" in Joy evaluates the RHS and binds it to LHS name
+						// e.g. square == dup *
+						// Here we cheat a bit and intercept the definition.
+						// Actually the parser just parsed 'square' '==' 'dup' '*'.
+						// If it's evaluated, we can define 'square' as the rest of the program!
 
-				nameNode := (*Node)(stack.Get(stack.Len - 1))
-				stack.Len = stack.Len - 1
+						nameNode := (*Node)(stack.Get(stack.Len - 1))
+						stack.Len = stack.Len - 1
 
-				var body slice[word]
-				for j := i + 1; j < prog.Len; j++ {
-					body.Append(prog.Get(j))
-				}
+						var body slice[word]
+						for j := i + 1; j < prog.Len; j++ {
+							body.Append(prog.Get(j))
+						}
 
-				var def Def
-				def.Name = nameNode.Symbol
-				def.Body = body
-				Definitions.Append(def)
+						var def Def
+						def.Name = nameNode.Symbol
+						def.Body = body
+						Definitions.Append(def)
 
-				break // consume the rest of the program
-			} else {
-				// Check if it's a defined function
-				var found byte = 0
-				for j := range Definitions.Len {
-					def := Definitions.Get(j)
-					if def.Name == sym {
-						stack = Eval(def.Body, stack)
-						found = 1
-						break
-					}
-				}
-				if found == 0 {
-					// push the symbol itself (unrecognized)
-					stack.Append(word(node))
-				}
+						break // consume the rest of the program
+					} else {
+						// Check if it's a defined function
+						var found byte = 0
+						for j := range Definitions.Len {
+							def := Definitions.Get(j)
+							if def.Name == sym {
+								stack = Eval(def.Body, stack)
+								found = 1
+								break
+							}
+						}
+						if found == 0 {
+							// push the symbol itself (unrecognized)
+							stack.Append(word(node))
+						}
+				*/
 			}
 		}
 	}

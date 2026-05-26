@@ -1,0 +1,49 @@
+package main
+
+import "smap"
+
+var B smap.Smap[byte]
+var W smap.Smap[word]
+
+var numNames = [10]string{
+	"one", "two", "three", "four", "five",
+	"six", "seven", "eight", "nine", "ten",
+}
+
+func main() {
+	for i, name := range numNames {
+		B.Insert(name, byte(i+1))
+	}
+
+	for i, name := range numNames {
+		W.Insert(name, i*i)
+	}
+	x, ok := B.Lookup("zero")
+	println("zero", x, ok)
+	x, ok = B.Lookup("one")
+	println("one", x, ok)
+	x, ok = B.Lookup("nine")
+	println("nine", x, ok)
+	B.Insert("zero", 99)
+
+	println("----")
+	y, ok2 := W.Lookup("zero")
+	println("zero", y, ok2)
+	y, ok2 = W.Lookup("one")
+	println("one", y, ok2)
+	y, ok2 = W.Lookup("nine")
+	println("nine", y, ok2)
+	W.Insert("zero", 999)
+
+	println("----")
+	for i, kb := range B.Keys() {
+		x, ok := B.Lookup(kb)
+		println(i, kb, x, ok)
+	}
+
+	println("----")
+	for i, kw := range W.Keys() {
+		y, ok := W.Lookup(kw)
+		println(i, kw, y, ok)
+	}
+}

@@ -3,11 +3,12 @@ package token
 type TokenType string
 
 type Token struct {
-	Type     TokenType
-	Literal  string
-	Line     int
-	Column   int
-	Filename string
+	Type         TokenType
+	Literal      string
+	Line         int
+	Column       int
+	Filename     string
+	ExpandedFrom string
 }
 
 const (

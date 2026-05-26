@@ -1575,10 +1575,9 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 			formatStrs = append(formatStrs, "%s")
 			dataArgs = append(dataArgs, strLit)
 		} else if arg.Type().Equals(ir.TypeInt) {
-			fmt.Printf("DEBUG m6809 arg is TypeInt!\n")
 			formatStrs = append(formatStrs, "%d")
 			dataArgs = append(dataArgs, arg)
-		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
+		} else if strings.HasSuffix(arg.Type().Name, "slice_byte") {
 			formatStrs = append(formatStrs, "%s")
 			dataArgs = append(dataArgs, arg)
 		} else {
