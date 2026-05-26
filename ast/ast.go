@@ -112,6 +112,7 @@ type FuncStatement struct {
 	Parameters     []*Parameter
 	ReturnTypes    []Expression // Optional
 	Body           *BlockStatement
+	IsVariadic     bool
 }
 
 func (s *FuncStatement) statementNode()         {}
@@ -119,8 +120,9 @@ func (s *FuncStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *FuncStatement) GetToken() *token.Token { return &s.Token }
 
 type Parameter struct {
-	Name *Identifier
-	Type Expression
+	Name       *Identifier
+	Type       Expression
+	IsVariadic bool
 }
 
 // ============================================================================
@@ -336,6 +338,7 @@ type FuncType struct {
 	Token       token.Token // The 'func' token
 	Parameters  []*Parameter
 	ReturnTypes []Expression
+	IsVariadic  bool
 }
 
 func (e *FuncType) expressionNode()        {}

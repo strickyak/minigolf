@@ -637,6 +637,7 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
 		paramIdx++
 	}
+	f.IsVariadic = s.IsVariadic
 	b.funcs[f.Name] = f
 	b.Program.Functions = append(b.Program.Functions, f)
 }
@@ -685,7 +686,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 
 	// Map parameters
 	for _, p := range b.currentFunc.Parameters {
-		fmt.Printf("#DEBUG PARAM %s: %s\n", p.Name, p.Typ.Name)
+
 		b.writeVariable(p.Name, b.currentBlock, p)
 	}
 
@@ -2014,6 +2015,9 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				for _, arg := range e.Arguments {
 					args = append(args, b.buildExpr(arg))
 				}
+				if f.IsVariadic {
+					args = b.packVariadicArgs(f, args, expr)
+				}
 				b.coerceCallArgs(f, args, expr)
 				val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
 				return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
@@ -2087,6 +2091,9 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: TypeWord}, FuncPtr: funcVal, Args: args}, expr)
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 			}
+			if f.IsVariadic {
+				args = b.packVariadicArgs(f, args, expr)
+			}
 			b.coerceCallArgs(f, args, expr)
 			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
 			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
@@ -2136,7 +2143,55 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 	default:
 		log.Panicf("NO CASE: Builder.eval: expr (%T)%v", expr, expr)
 	}
+
 	panic(fmt.Sprintf("Not Reached in eval: %T %v", expr, expr))
+}
+
+func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.Node) []Value {
+	if f == nil || !f.IsVariadic || len(f.Parameters) == 0 {
+		return rawArgs
+	}
+
+	varIdx := len(f.Parameters) - 1
+	varTyp := f.Parameters[varIdx].Typ
+
+	// Assume slice_ prefix
+	eltTypName := varTyp.Name
+	if strings.HasPrefix(eltTypName, "prelude.slice_") {
+		eltTypName = strings.TrimPrefix(eltTypName, "prelude.slice_")
+	} else if strings.HasPrefix(eltTypName, "slice_") {
+		eltTypName = strings.TrimPrefix(eltTypName, "slice_")
+	} else {
+		panic("Variadic parameter type must be a slice, got: " + varTyp.Name)
+	}
+
+	eltTyp := Type{Name: eltTypName}
+	numVarArgs := len(rawArgs) - varIdx
+	if numVarArgs < 0 {
+		numVarArgs = 0
+	}
+
+	arrTyp := Type{Name: fmt.Sprintf("[%d]%s", numVarArgs, eltTyp.Name)}
+	var arrVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: arrTyp}}, tokenNode)
+
+	for i := 0; i < numVarArgs; i++ {
+		idxVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(i)}, tokenNode)
+		eltVal := b.coerceType(rawArgs[varIdx+i], eltTyp)
+		arrVal = b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: arrTyp}, Array: arrVal, Index: idxVal, Val: eltVal}, tokenNode)
+	}
+
+	arrPtr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: arrTyp.PointerTo()}, Local: arrVal}, tokenNode)
+	basePtr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: eltTyp.PointerTo()}, Op: "bitcast", Operand: arrPtr}, tokenNode)
+
+	var sliceVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: varTyp}}, tokenNode)
+	sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 0, Val: basePtr}, tokenNode)
+	lenVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(numVarArgs)}, tokenNode)
+	sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 1, Val: lenVal}, tokenNode)
+	sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 2, Val: lenVal}, tokenNode)
+
+	newArgs := append([]Value(nil), rawArgs[:varIdx]...)
+	newArgs = append(newArgs, sliceVal)
+	return newArgs
 }
 
 func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {

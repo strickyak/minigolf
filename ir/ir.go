@@ -147,6 +147,7 @@ type Function struct {
 	Parameters []*Parameter
 	ReturnType Type
 	Blocks     []*BasicBlock
+	IsVariadic bool
 }
 
 // Parameter represents a function parameter.

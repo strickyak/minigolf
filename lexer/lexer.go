@@ -190,7 +190,13 @@ func (l *Lexer) nextToken() token.Token {
 	case ',':
 		tok = l.newToken(token.COMMA, l.ch, startLine, startCol)
 	case '.':
-		tok = l.newToken(token.DOT, l.ch, startLine, startCol)
+		if l.peekChar() == '.' && l.readPosition < len(l.input) && l.input[l.readPosition] == '.' {
+			l.readChar()
+			l.readChar()
+			tok = token.Token{Type: token.ELLIPSIS, Literal: "...", Line: startLine, Column: startCol, Filename: l.filename}
+		} else {
+			tok = l.newToken(token.DOT, l.ch, startLine, startCol)
+		}
 	case '(':
 		tok = l.newToken(token.LPAREN, l.ch, startLine, startCol)
 	case ')':

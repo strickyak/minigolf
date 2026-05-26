@@ -263,7 +263,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				for _, r := range s.ReturnTypes {
 					retTypes = append(retTypes, r)
 				}
-				ft := &ast.FuncType{Parameters: s.Parameters, ReturnTypes: retTypes}
+				ft := &ast.FuncType{Parameters: s.Parameters, ReturnTypes: retTypes, IsVariadic: s.IsVariadic}
 				a.globalScope.Define(qname, ft)
 			}
 			a.funcMap[qname] = s
@@ -612,7 +612,7 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 		for _, r := range fs.ReturnTypes {
 			retTypes = append(retTypes, r)
 		}
-		ft := &ast.FuncType{Parameters: fs.Parameters, ReturnTypes: retTypes}
+		ft := &ast.FuncType{Parameters: fs.Parameters, ReturnTypes: retTypes, IsVariadic: fs.IsVariadic}
 		a.globalScope.Define(instName, ft)
 
 		// Queue the instantiated function for reachability analysis!
@@ -729,7 +729,11 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			// It's not a function call, it's a cast like slice[byte](x)
 			typ = funcTyp
 		} else if ft, ok := funcTyp.(*ast.FuncType); ok {
-			if len(argTyps) != len(ft.Parameters) && a.exprToString(funcTyp) != "func" {
+			if ft.IsVariadic {
+				if len(argTyps) < len(ft.Parameters)-1 {
+					a.reportError(e, "not enough arguments in call to %s", a.exprToString(e.Function))
+				}
+			} else if len(argTyps) != len(ft.Parameters) && a.exprToString(funcTyp) != "func" {
 				a.reportError(e, "argument count mismatch: expected %d, got %d", len(ft.Parameters), len(argTyps))
 			}
 			if len(ft.ReturnTypes) > 0 {

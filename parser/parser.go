@@ -408,6 +408,9 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 	}
 
 	stmt.Parameters = p.parseFunctionParameters()
+	if len(stmt.Parameters) > 0 && stmt.Parameters[len(stmt.Parameters)-1].IsVariadic {
+		stmt.IsVariadic = true
+	}
 
 	// Optional return type
 	if p.peekTokenIs(token.LPAREN) {
@@ -460,7 +463,17 @@ func (p *Parser) parseFunctionParameters() []*ast.Parameter {
 	param.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
 	p.nextToken()
+	if p.curTokenIs(token.ELLIPSIS) {
+		param.IsVariadic = true
+		p.nextToken()
+	}
 	param.Type = p.parseExpression(LOWEST)
+	if param.IsVariadic {
+		param.Type = &ast.IndexExpression{
+			Left:    &ast.Identifier{Token: p.curToken, Value: "slice"},
+			Indices: []ast.Expression{param.Type},
+		}
+	}
 	parameters = append(parameters, param)
 
 	// Parse subsequent parameters
@@ -473,9 +486,21 @@ func (p *Parser) parseFunctionParameters() []*ast.Parameter {
 
 		p.nextToken()
 
+		if p.curTokenIs(token.ELLIPSIS) {
+			param.IsVariadic = true
+			p.nextToken()
+		}
+
 		p.allowCompositeLit = false
 		param.Type = p.parseExpression(LOWEST)
 		p.allowCompositeLit = true
+
+		if param.IsVariadic {
+			param.Type = &ast.IndexExpression{
+				Left:    &ast.Identifier{Token: p.curToken, Value: "slice"},
+				Indices: []ast.Expression{param.Type},
+			}
+		}
 
 		parameters = append(parameters, param)
 	}
@@ -895,7 +920,17 @@ func (p *Parser) parseFuncTypeParameters() []*ast.Parameter {
 
 	// Parse first parameter (just type)
 	param := &ast.Parameter{}
+	if p.curTokenIs(token.ELLIPSIS) {
+		param.IsVariadic = true
+		p.nextToken()
+	}
 	param.Type = p.parseExpression(LOWEST)
+	if param.IsVariadic {
+		param.Type = &ast.IndexExpression{
+			Left:    &ast.Identifier{Token: p.curToken, Value: "slice"},
+			Indices: []ast.Expression{param.Type},
+		}
+	}
 	parameters = append(parameters, param)
 
 	// Parse subsequent parameters
@@ -904,7 +939,17 @@ func (p *Parser) parseFuncTypeParameters() []*ast.Parameter {
 		p.nextToken() // next expression
 
 		param := &ast.Parameter{}
+		if p.curTokenIs(token.ELLIPSIS) {
+			param.IsVariadic = true
+			p.nextToken()
+		}
 		param.Type = p.parseExpression(LOWEST)
+		if param.IsVariadic {
+			param.Type = &ast.IndexExpression{
+				Left:    &ast.Identifier{Token: p.curToken, Value: "slice"},
+				Indices: []ast.Expression{param.Type},
+			}
+		}
 		parameters = append(parameters, param)
 	}
 
@@ -923,6 +968,9 @@ func (p *Parser) parseFuncType() ast.Expression {
 	}
 
 	node.Parameters = p.parseFuncTypeParameters()
+	if len(node.Parameters) > 0 && node.Parameters[len(node.Parameters)-1].IsVariadic {
+		node.IsVariadic = true
+	}
 
 	if p.peekTokenIs(token.LPAREN) {
 		p.nextToken() // '('

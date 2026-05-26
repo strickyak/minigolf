@@ -1,0 +1,3 @@
+test_no_args 
+test_one_arg 42 
+test_many_args 1 2 3 4 5 

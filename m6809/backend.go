@@ -657,6 +657,9 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 }
 
 func (b *Backend) emitCopyYX(size int) {
+	if size == 0 {
+		return
+	}
 	b.buf.WriteString("\tpshs u\n")
 	b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", size))
 	lbl := b.nextLabel()
@@ -774,6 +777,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		destStr := b.memAccess(offset)
 		fmt.Fprintf(&b.buf, "\t\t; ZeroInit size=%d dest=%v\n", size, destStr)
 
+		if size == 0 {
+			break
+		}
+
 		if size == 1 {
 			b.buf.WriteString("\tclra\n\tclrb\n")
 			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
@@ -858,16 +865,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 		b.emitLoadAddr("y", arrayStr)
 		b.emitLoadAddr("x", destStr)
-		b.buf.WriteString("\tpshs u\n")
-		b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", arraySize))
-		lbl := b.nextLabel()
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lbl))
-		b.buf.WriteString("\tlda ,y+\n")
-		b.buf.WriteString("\tsta ,x+\n")
-		b.buf.WriteString("\tleau -1,u\n")
-		b.buf.WriteString("\tcmpu #0\n")
-		b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl))
-		b.buf.WriteString("\tpuls u\n")
+		if arraySize > 0 {
+			b.buf.WriteString("\tpshs u\n")
+			b.buf.WriteString(fmt.Sprintf("\tldu #%d\n", arraySize))
+			lbl := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+			b.buf.WriteString("\tlda ,y+\n")
+			b.buf.WriteString("\tsta ,x+\n")
+			b.buf.WriteString("\tleau -1,u\n")
+			b.buf.WriteString("\tcmpu #0\n")
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl))
+			b.buf.WriteString("\tpuls u\n")
+		}
 
 		eltSize := b.getEltSize(i.Array.Type().Name)
 		b.emitLoadAddr("x", destStr)

@@ -1,0 +1,16 @@
+package main
+
+func variadic_test(prefix string, args ...word) {
+	print(prefix)
+	for i, arg := range args {
+		print(" ")
+		print(arg)
+	}
+	println()
+}
+
+func main() {
+	variadic_test("test_no_args")
+	variadic_test("test_one_arg", 42)
+	variadic_test("test_many_args", 1, 2, 3, 4, 5)
+}
