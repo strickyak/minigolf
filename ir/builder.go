@@ -1241,11 +1241,17 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			zero = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, s)
 		}
 
+		b.nextValueID++
+		hiddenIdxName := fmt.Sprintf(".range_idx_%d", b.nextValueID)
+		b.varTypes[hiddenIdxName] = idxTyp
+		b.writeVariable(hiddenIdxName, b.currentBlock, zero)
+
 		ident, ok := s.Key.(*ast.Identifier)
-		if ok && s.IsDecl {
-			b.varTypes[ident.Value] = idxTyp
-		}
-		if ok {
+		hasUserIdent := ok && ident.Value != "_"
+		if hasUserIdent {
+			if s.IsDecl {
+				b.varTypes[ident.Value] = idxTyp
+			}
 			b.writeVariable(ident.Value, b.currentBlock, zero)
 		}
 
@@ -1258,13 +1264,9 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.addEdge(b.currentBlock, headerBlk)
 
 		b.currentBlock = headerBlk
-		var cond Value
-		if ok {
-			currentI := b.readVariable(ident.Value, headerBlk)
-			cond = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lt", Left: currentI, Right: limitVal}, s)
-		} else {
-			cond = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, s)
-		}
+		currentI := b.readVariable(hiddenIdxName, headerBlk)
+		cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "lt", Left: currentI, Right: limitVal}, s)
+
 		b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk}, s)
 		b.addEdge(headerBlk, bodyBlk)
 		b.addEdge(headerBlk, endBlk)
@@ -1275,10 +1277,10 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 
 		if (isSlice || isArray) && s.Value != nil {
 			valIdent, valOk := s.Value.(*ast.Identifier)
-			if valOk {
+			if valOk && valIdent.Value != "_" {
 				idxExpr := &ast.IndexExpression{
 					Left:    s.RangeValue,
-					Indices: []ast.Expression{ident},
+					Indices: []ast.Expression{&ast.Identifier{Value: hiddenIdxName}},
 				}
 				valRes := b.buildExpr(idxExpr)
 				if s.IsDecl {
@@ -1301,17 +1303,19 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(postBlk)
 
 		b.currentBlock = postBlk
-		if ok {
-			currentI := b.readVariable(ident.Value, postBlk)
-			var one Value
-			if idxTyp.Equals(TypeByte) {
-				one = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, s)
-			} else {
-				one = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1}, s)
-			}
-			nextI := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: idxTyp}, Op: "add", Left: currentI, Right: one}, s)
+		currentI = b.readVariable(hiddenIdxName, postBlk)
+		var one Value
+		if idxTyp.Equals(TypeByte) {
+			one = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, s)
+		} else {
+			one = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1}, s)
+		}
+		nextI := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: idxTyp}, Op: "add", Left: currentI, Right: one}, s)
+		b.writeVariable(hiddenIdxName, postBlk, nextI)
+		if hasUserIdent {
 			b.writeVariable(ident.Value, postBlk, nextI)
 		}
+
 		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: headerBlk}, s)
 		b.addEdge(b.currentBlock, headerBlk)
 

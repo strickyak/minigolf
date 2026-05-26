@@ -1,0 +1,14 @@
+package main
+
+var Left = [4]uint{22, 24, 26, 28}
+
+var Right = [2]uint{7, 13}
+
+func main() {
+	for _, a := range Left {
+		for _, b := range Right {
+			println(a, "+", b, "=", b, "+", a, "=", a+b)
+			println(a, "*", b, "=", b, "*", a, "=", a*b)
+		}
+	}
+}
