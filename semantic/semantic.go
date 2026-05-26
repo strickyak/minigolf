@@ -133,6 +133,9 @@ func (a *Analyzer) reportError(node ast.Node, format string, args ...interface{}
 	if node != nil && node.GetToken() != nil {
 		tok := node.GetToken()
 		msg = fmt.Sprintf("%s (at %s:%d)", msg, tok.Filename, tok.Line)
+		if tok.ExpandedFrom != "" {
+			msg += fmt.Sprintf(" [%s]", tok.ExpandedFrom)
+		}
 	}
 	a.errors = append(a.errors, msg)
 }

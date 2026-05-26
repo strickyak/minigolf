@@ -135,10 +135,17 @@ func (p *Parser) Errors() []string {
 	return p.errors
 }
 
-func (p *Parser) peekError(t token.TokenType) {
-	msg := fmt.Sprintf("expected next token to be %s, got %s instead at line %d:%d",
-		t, p.peekToken.Type, p.peekToken.Line, p.peekToken.Column)
+func (p *Parser) addError(tok token.Token, msg string) {
+	if tok.ExpandedFrom != "" {
+		msg += fmt.Sprintf(" [%s]", tok.ExpandedFrom)
+	}
 	p.errors = append(p.errors, msg)
+}
+
+func (p *Parser) peekError(t token.TokenType) {
+	msg := fmt.Sprintf("expected next token to be %s, got %s instead at %s line %d:%d",
+		t, p.peekToken.Type, p.peekToken.Filename, p.peekToken.Line, p.peekToken.Column)
+	p.addError(p.peekToken, msg)
 }
 
 func (p *Parser) curTokenIs(t token.TokenType) bool {
@@ -195,8 +202,8 @@ func (p *Parser) parseTopLevelStatement(overridePackage string) ast.Statement {
 	case token.SEMICOLON:
 		return nil
 	default:
-		msg := fmt.Sprintf("unexpected top-level token: %s at line %d", p.curToken.Type, p.curToken.Line)
-		p.errors = append(p.errors, msg)
+		msg := fmt.Sprintf("unexpected top-level token: %s at %s line %d", p.curToken.Type, p.curToken.Filename, p.curToken.Line)
+		p.addError(p.curToken, msg)
 		return nil
 	}
 }
@@ -823,8 +830,8 @@ func (p *Parser) curPrecedence() int {
 }
 
 func (p *Parser) noPrefixParseFnError(t token.TokenType) {
-	msg := fmt.Sprintf("no prefix parse function for %s found at line %d:%d", t, p.curToken.Line, p.curToken.Column)
-	p.errors = append(p.errors, msg)
+	msg := fmt.Sprintf("no prefix parse function for %s found at %s line %d:%d", t, p.curToken.Filename, p.curToken.Line, p.curToken.Column)
+	p.addError(p.curToken, msg)
 }
 
 func (p *Parser) parseRangeExpression() ast.Expression {
@@ -843,8 +850,8 @@ func (p *Parser) parseIntegerLiteral() ast.Expression {
 
 	value, err := strconv.ParseInt(p.curToken.Literal, 0, 64)
 	if err != nil {
-		msg := fmt.Sprintf("could not parse %q as integer at line %d:%d", p.curToken.Literal, p.curToken.Line, p.curToken.Column)
-		p.errors = append(p.errors, msg)
+		msg := fmt.Sprintf("could not parse %q as integer at %s line %d:%d", p.curToken.Literal, p.curToken.Filename, p.curToken.Line, p.curToken.Column)
+		p.addError(p.curToken, msg)
 		return nil
 	}
 
@@ -1059,7 +1066,7 @@ func (p *Parser) parseStructType() ast.Expression {
 		field := &ast.Field{}
 
 		if !p.curTokenIs(token.IDENT) {
-			p.errors = append(p.errors, fmt.Sprintf("expected field name to be IDENT, got %s", p.curToken.Type))
+			p.addError(p.curToken, fmt.Sprintf("expected field name to be IDENT, got %s at %s line %d:%d", p.curToken.Type, p.curToken.Filename, p.curToken.Line, p.curToken.Column))
 			return nil
 		}
 		field.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
