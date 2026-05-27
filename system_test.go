@@ -186,6 +186,9 @@ func TestSystemAllGolfFiles(t *testing.T) {
 		expectedStr := string(wantBytes)
 
 		for _, backend := range backends {
+            if strings.HasSuffix(file, "_nomoto.golf") && backend == "m6809" {
+                continue
+            }
 			testName := fmt.Sprintf("%s_%s", filepath.Base(file), backend)
 			t.Run(testName, func(t *testing.T) {
 				testBackend(t, backend, file, expectedStr)
