@@ -18,6 +18,8 @@ type Frame struct {
 type Command = func(string, slice[string]) (string, Status)
 
 var Commands smap.Smap[Command]
+var ProcBodies smap.Smap[string]
+var ProcArgs smap.Smap[string]
 var Current *Frame
 var Global Frame
 
@@ -299,6 +301,56 @@ func SplitIntoWords(s string) (slice[string], Status) {
 	return result, OKAY
 }
 
+func ProcCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len != 3 {
+		return strdup("proc needs 3 args"), ERROR
+	}
+	name := args.Get(0)
+	formals := args.Get(1)
+	body := args.Get(2)
+
+	ProcArgs.Insert(strdup(name), strdup(formals))
+	ProcBodies.Insert(strdup(name), strdup(body))
+	Commands.Insert(strdup(name), ExecuteProc)
+
+	return strdup(""), OKAY
+}
+
+func ExecuteProc(cmd string, args slice[string]) (string, Status) {
+	formalArgsStr, ok1 := ProcArgs.Lookup(cmd)
+	bodyStr, ok2 := ProcBodies.Lookup(cmd)
+	if !ok1 || !ok2 {
+		return strdup("proc not found"), ERROR
+	}
+
+	formals, splitStat := SplitIntoWords(formalArgsStr)
+	if splitStat != OKAY {
+		return strdup("error splitting formal args"), ERROR
+	}
+
+	if args.Len != formals.Len {
+		return strdup("wrong number of args for proc"), ERROR
+	}
+
+	var newFrame Frame
+	newFrame.Prev = Current
+	Current = &newFrame
+
+	for i := range formals.Len {
+		Current.Vars.Insert(strdup(formals.Get(i)), strdup(args.Get(i)))
+	}
+
+	res, stat := EvalCommand(bodyStr)
+
+	Current = newFrame.Prev
+
+	if stat == RETURN {
+		stat = OKAY
+	}
+
+	return res, stat
+}
+
 func LookupVar(varname string) (string, Status) {
 	value, ok := Current.Vars.Lookup(varname)
 	if !ok {
@@ -508,6 +560,7 @@ func main() {
 	Commands.Insert("if", IfCommand)
 	Commands.Insert("while", WhileCommand)
 	Commands.Insert("set", SetCommand)
+	Commands.Insert("proc", ProcCommand)
 	DumpCommands()
 
 	run1()
@@ -598,4 +651,9 @@ func run2() {
 
 	set_res3, set_stat3 := EvalCommand("set x")
 	println("final x:", set_res3, set_stat3)
+
+	println("--- proc test ---")
+	proc_script := "proc max {a b} { if {< $a $b} { set b } else { set a } }; max 10 20"
+	proc_res, proc_stat := EvalCommand(proc_script)
+	println("max 10 20:", proc_res, proc_stat)
 }
