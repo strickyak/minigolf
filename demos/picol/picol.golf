@@ -82,17 +82,43 @@ func atow(s string) (word, Status) {
 	return sum, OKAY
 }
 
-func Add(cmd string, args slice[string]) (string, Status) {
+type DyOp = func(word, word) (word, Status)
+
+var DyOps smap.Smap[DyOp]
+
+func Add(a word, b word) (word, Status) { return a+b, OKAY }
+func Sub(a word, b word) (word, Status) { return a-b, OKAY }
+func Mul(a word, b word) (word, Status) { return a*b, OKAY }
+func Div(a word, b word) (word, Status) { if b==0 { return 0, ERROR } ; return a/b, OKAY }
+func Mod(a word, b word) (word, Status) { if b==0 { return 0, ERROR } ; return a%b, OKAY }
+func EQ(a word, b word) (word, Status) { return a == b, OKAY }
+func NE(a word, b word) (word, Status) { return a != b, OKAY }
+func LT(a word, b word) (word, Status) { return a < b, OKAY }
+func GT(a word, b word) (word, Status) { return a > b, OKAY }
+func LE(a word, b word) (word, Status) { return a <= b, OKAY }
+func GE(a word, b word) (word, Status) { return a >= b, OKAY }
+
+func DyadicArith(cmd string, args slice[string]) (string, Status) {
     if args.Len != 2 {
-        return strdup("Add expected 2 args"), ERROR
+        return strdup("DyadicArith expected 2 args"), ERROR
     }
 	a, a_status := atow(args[0])
-    if a_status != OKAY { return strdup("Add: first arg not a number"), ERROR }
+    if a_status != OKAY { return strdup("DyadicArith: first arg not a number"), ERROR }
 	b, b_status := atow(args[1])
-    if b_status != OKAY { return strdup("Add: second arg not a number"), ERROR }
-	var z string
-	z = wtoa(z, a+b)
-	return z, OKAY
+    if b_status != OKAY { return strdup("DyadicArith: second arg not a number"), ERROR }
+
+    f, ok := DyOps.Lookup(cmd)
+    if !ok {
+        return strdup("DyOp not found"), ERROR
+    }
+	c, status := f(a,b)
+    if status != OKAY {
+        return strdup("arithmetic error"), status
+    }
+
+    var result slice[byte]
+	result = wtoa(result, c)
+	return strdup(result), OKAY
 }
 func Hello(cmd string, args slice[string]) (string, Status) {
 	println("#Hello <<")
@@ -102,10 +128,77 @@ func Hello(cmd string, args slice[string]) (string, Status) {
 	return result, OKAY
 }
 
-func run1() {
-	Current = &Global
-	Commands.Insert("+", Add)
+func IfCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len != 4 {
+		return strdup("if needs 4 args"), ERROR
+	}
+	predicate := args.Get(0)
+	block1 := args.Get(1)
+	block2 := args.Get(3)
 
+	predResult, status := EvalCommand(predicate)
+	if status != OKAY {
+		return predResult, status
+	}
+
+	predWord, status2 := atow(predResult)
+	if status2 != OKAY {
+		return strdup("predicate result not a number"), ERROR
+	}
+
+	if predWord == 0 {
+		return EvalCommand(block2)
+	} else {
+		return EvalCommand(block1)
+	}
+}
+
+func WhileCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len != 2 {
+		return strdup("while needs 2 args"), ERROR
+	}
+	predicate := args.Get(0)
+	block1 := args.Get(1)
+
+	for {
+		predResult, status := EvalCommand(predicate)
+		if status != OKAY {
+			return predResult, status
+		}
+
+		predWord, status2 := atow(predResult)
+		if status2 != OKAY {
+			return strdup("predicate result not a number"), ERROR
+		}
+
+		if predWord == 0 {
+			break
+		}
+
+		blockResult, status3 := EvalCommand(block1)
+		if status3 != OKAY {
+			return blockResult, status3
+		}
+	}
+	return strdup(""), OKAY
+}
+
+func SetCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len == 1 {
+		varname := args.Get(0)
+		return LookupVar(varname)
+	} else if args.Len == 2 {
+		varname := args.Get(0)
+		value := args.Get(1)
+		// We use strdup because we want to return a fresh copy, and potentially the variables map takes ownership or shares. 
+		Current.Vars.Insert(strdup(varname), strdup(value))
+		return strdup(value), OKAY
+	} else {
+		return strdup("set needs 1 or 2 args"), ERROR
+	}
+}
+
+func run1() {
 	f, ok := Commands.Lookup("+")
 	if !ok {
 		panic(666)
@@ -216,21 +309,21 @@ func LookupVar(varname string) (string, Status) {
 }
 
 func Apply(cmd string, args slice[string]) (string, Status) {
-	println("#Apply <<", cmd, args.Len)
+	println("#Apply <<", strdup(cmd), args.Len)
 	f, ok := Commands.Lookup(cmd)
 	if !ok {
-		println("#Apply e9>> not found:", cmd)
+		println("#Apply e9>> not found:", strdup(cmd))
 		return strdup("Command not found"), ERROR
 	}
 
-	println("#Apply Calling <<", cmd)
+	println("#Apply Calling <<", strdup(cmd))
 	result, status := f(cmd, args)
-	println("#Apply >>", result, status)
+	println("#Apply >>", strdup(result), status)
 	return strdup(result), status
 }
 
 func EvalCommand(command string) (string, Status) {
-	println("#EvalCommand <<", command)
+	println("#EvalCommand <<", strdup(command))
 	var result string
 	// This may be redundant, but it will not hurt, to split into commands again.
 	cmds, status := SplitIntoCommands(command)
@@ -255,12 +348,12 @@ func EvalCommand(command string) (string, Status) {
 			}
 		}
 	}
-	println("#EvalCommand ok>>", result)
+	println("#EvalCommand ok>>", strdup(result))
 	return result, OKAY
 }
 
 func SubstitutingSplitIntoWords(s string) (slice[string], Status) {
-	println("#SubstitutingSplitIntoWords <<", s)
+	println("#SubstitutingSplitIntoWords <<", strdup(s))
 	var result slice[string]
 	var i word = 0
 
@@ -381,14 +474,58 @@ func SubstitutingSplitIntoWords(s string) (slice[string], Status) {
 
 	println("#SubstitutingSplitIntoWords ok>>")
 	for r_i, r_e := range result {
-		println("#             ", r_i, ">>", r_e)
+		println("#             ", r_i, ">>", strdup(r_e))
 	}
 	return result, OKAY
 }
 
 func main() {
-	run1()
+	Current = &Global
 
+	DyOps.Insert("+", Add)
+	DyOps.Insert("-", Sub)
+	DyOps.Insert("*", Mul)
+	DyOps.Insert("/", Div)
+	DyOps.Insert("%", Mod)
+	DyOps.Insert("==", EQ)
+	DyOps.Insert("!=", NE)
+	DyOps.Insert("<", LT)
+	DyOps.Insert(">", GT)
+	DyOps.Insert("<=", LE)
+	DyOps.Insert(">=", GE)
+
+	Commands.Insert("+", DyadicArith)
+	Commands.Insert("-", DyadicArith)
+	Commands.Insert("*", DyadicArith)
+	Commands.Insert("/", DyadicArith)
+	Commands.Insert("%", DyadicArith)
+	Commands.Insert("==", DyadicArith)
+	Commands.Insert("!=", DyadicArith)
+	Commands.Insert("<", DyadicArith)
+	Commands.Insert(">", DyadicArith)
+	Commands.Insert("<=", DyadicArith)
+	Commands.Insert(">=", DyadicArith)
+	Commands.Insert("if", IfCommand)
+	Commands.Insert("while", WhileCommand)
+	Commands.Insert("set", SetCommand)
+	DumpCommands()
+
+	run1()
+	run2()
+}
+
+func DumpCommands() {
+	println("--- DUMP COMMANDS ---")
+	for i := range Commands.keys.Len {
+		k := Commands.keys.Get(i)
+		addr := Commands.values.Address(i)
+		val := peekw(addr)
+		println(i, ":", strdup(k), val)
+	}
+	println("---------------------")
+}
+
+func run2() {
 	println("--- cmds ---")
 
 	s := "cmd1 arg1; cmd2 {arg2; arg2b}; cmd3\ncmd4"
@@ -430,4 +567,35 @@ func main() {
 			println(word)
 		}
 	}
+
+	println("--- if test ---")
+	if_script1 := "if {== 1 1} {hello 1} else {hello 2}"
+	if_res1, if_stat1 := EvalCommand(if_script1)
+	println("if 1==1:", if_res1, if_stat1)
+
+	if_script2 := "if {== 1 2} {hello 1} else {hello 2}"
+	if_res2, if_stat2 := EvalCommand(if_script2)
+	println("if 1==2:", if_res2, if_stat2)
+
+	println("--- while test ---")
+	// Since we don't have variables updating properly yet, we'll just test a condition that is initially false to verify it parses and exits correctly.
+	while_script := "while {== 1 2} {hello 1}"
+	while_res, while_stat := EvalCommand(while_script)
+	println("--- set test ---")
+	set_script1 := "set x 1"
+	set_res1, set_stat1 := EvalCommand(set_script1)
+	println("set x 1:", set_res1, set_stat1)
+	
+	set_script2 := "set x"
+	set_res2, set_stat2 := EvalCommand(set_script2)
+	println("set x:", set_res2, set_stat2)
+
+	println("--- real while test ---")
+	// x is 1. while x < 3, x = x + 1, hello x
+	while_script2 := "while {< $x 3} {set x [+ $x 1]; hello $x}"
+	while_res2, while_stat2 := EvalCommand(while_script2)
+	println("while result:", while_res2, while_stat2)
+
+	set_res3, set_stat3 := EvalCommand("set x")
+	println("final x:", set_res3, set_stat3)
 }

@@ -239,8 +239,8 @@ func div_word(a0 word, b word) word {
     }
     var q word
     var r word
-    for i := range 16 {
-        bit_idx := word(15) - i
+    for i := range 64 {
+        bit_idx := word(63) - i
         r = r << 1
         bit := (a0 >> bit_idx) & 1
         r = r | bit
@@ -257,8 +257,8 @@ func mod_word(a0 word, b word) word {
         panic(1004)
     }
     var r word
-    for i := range 16 {
-        bit_idx := word(15) - i
+    for i := range 64 {
+        bit_idx := word(63) - i
         r = r << 1
         bit := (a0 >> bit_idx) & 1
         r = r | bit
@@ -299,7 +299,7 @@ type MallocHeader struct {
 	size word
 }
 
-const HEAP_SIZE = 2 * 1024 * sizeof[word]() // 4K on M6809
+const HEAP_SIZE = 16 * 1024 * 1024 // 16MB
 
 var Heap [HEAP_SIZE]byte
 
