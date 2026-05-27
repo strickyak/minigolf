@@ -58,6 +58,7 @@ type Builder struct {
 	typeAliases       map[string]ast.Expression
 	genericTemplates  map[string]*GenericTemplate
 	instantiatedTypes map[string]InstantiatedTypeInfo
+	stringConstants   map[string]*Global
 	globalItems       map[string]*GlobalItem
 	worklist          []*GlobalItem
 	currentPackage    string
@@ -99,6 +100,7 @@ func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node) *Bu
 		typeAliases:       make(map[string]ast.Expression),
 		genericTemplates:  make(map[string]*GenericTemplate),
 		instantiatedTypes: make(map[string]InstantiatedTypeInfo),
+		stringConstants:   make(map[string]*Global),
 		globalItems:       make(map[string]*GlobalItem),
 		worklist:          make([]*GlobalItem, 0),
 		resolveCallback:   resolveCallback,
@@ -2773,6 +2775,10 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 }
 
 func (b *Builder) addStringConstant(val string) *Global {
+	if existing, ok := b.stringConstants[val]; ok {
+		return existing
+	}
+
 	name := fmt.Sprintf("str_const_%d", len(b.Program.Globals))
 	valWithNull := val + "\x00"
 	g := &Global{
@@ -2782,6 +2788,7 @@ func (b *Builder) addStringConstant(val string) *Global {
 		IsInit:     true,
 	}
 	b.Program.Globals = append(b.Program.Globals, g)
+	b.stringConstants[val] = g
 	return g
 }
 
