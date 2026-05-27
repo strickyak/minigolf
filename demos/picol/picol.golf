@@ -178,6 +178,12 @@ func WhileCommand(cmd string, args slice[string]) (string, Status) {
 		}
 
 		blockResult, status3 := EvalCommand(block1)
+		if status3 == BREAK {
+			break
+		}
+		if status3 == CONTINUE {
+			continue
+		}
 		if status3 != OKAY {
 			return blockResult, status3
 		}
@@ -198,6 +204,42 @@ func SetCommand(cmd string, args slice[string]) (string, Status) {
 	} else {
 		return strdup("set needs 1 or 2 args"), ERROR
 	}
+}
+
+func ReturnCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len == 0 {
+		return strdup(""), RETURN
+	} else if args.Len == 1 {
+		return strdup(args.Get(0)), RETURN
+	}
+	return strdup("return takes 0 or 1 args"), ERROR
+}
+
+func BreakCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len == 0 {
+		return strdup(""), BREAK
+	} else if args.Len == 1 {
+		return strdup(args.Get(0)), BREAK
+	}
+	return strdup("break takes 0 or 1 args"), ERROR
+}
+
+func ContinueCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len == 0 {
+		return strdup(""), CONTINUE
+	} else if args.Len == 1 {
+		return strdup(args.Get(0)), CONTINUE
+	}
+	return strdup("continue takes 0 or 1 args"), ERROR
+}
+
+func ErrorCommand(cmd string, args slice[string]) (string, Status) {
+	if args.Len == 0 {
+		return strdup(""), ERROR
+	} else if args.Len == 1 {
+		return strdup(args.Get(0)), ERROR
+	}
+	return strdup("error takes 0 or 1 args"), ERROR
 }
 
 func run1() {
@@ -561,6 +603,10 @@ func main() {
 	Commands.Insert("while", WhileCommand)
 	Commands.Insert("set", SetCommand)
 	Commands.Insert("proc", ProcCommand)
+	Commands.Insert("return", ReturnCommand)
+	Commands.Insert("break", BreakCommand)
+	Commands.Insert("continue", ContinueCommand)
+	Commands.Insert("error", ErrorCommand)
 	DumpCommands()
 
 	run1()
@@ -656,4 +702,21 @@ func run2() {
 	proc_script := "proc max {a b} { if {< $a $b} { set b } else { set a } }; max 10 20"
 	proc_res, proc_stat := EvalCommand(proc_script)
 	println("max 10 20:", proc_res, proc_stat)
+
+	println("--- fib test ---")
+	fib_script := "proc fib n { if {< $n 3} { set n } else { + [fib [- $n 1]] [fib [- $n 2]] } }; fib 4"
+	fib_res, fib_stat := EvalCommand(fib_script)
+	println("fib 4:", fib_res, fib_stat)
+
+	println("--- loop control test ---")
+	loop_script := "set i 0; set sum 0; while {< $i 10} { set i [+ $i 1]; if {== $i 3} { continue } else {}; if {== $i 7} { break } else {}; set sum [+ $sum $i] }; set sum"
+	loop_res, loop_stat := EvalCommand(loop_script)
+	println("loop sum:", loop_res, loop_stat)
+
+	println("--- return test ---")
+	ret_script := "proc early_ret n { if {< $n 5} { return small } else { return big } }; early_ret 3"
+	ret_res, ret_stat := EvalCommand(ret_script)
+	println("early_ret 3:", ret_res, ret_stat)
+	ret_res2, ret_stat2 := EvalCommand("early_ret 10")
+	println("early_ret 10:", ret_res2, ret_stat2)
 }
