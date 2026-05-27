@@ -5,9 +5,6 @@ rm -f $T.*.out
 echo "[ IR ] _tmp/ir" >&2
 (set -x; go run main.go  -I=golflib -m=ir -o=_tmp/ir  "$@" )
 
-echo "[ C ] _tmp/c.c $T.c.out" >&2
-(set -x; go run main.go  -I=golflib -m=c -o=_tmp/c.c "$@"  &&  ( cd _tmp ; gcc -O1 -g -o c c.c ; ./c > $T.c.out ) )
-
 echo "[ CBE ] _tmp/cbe.c $T.cbe.out" >&2
 (set -x; go run main.go  -I=golflib -m=cbe -o=_tmp/cbe.c "$@"  &&  ( cd _tmp ; gcc -O1 -g -o cbe cbe.c ; ./cbe > $T.cbe.out ) )
 
@@ -19,14 +16,13 @@ echo "[ M6809 ] _tmp/m.s $T.m.out" >&2
 (set -x; sh run9.sh "$@" > $T.m.out )
 
 
-for x in c cbe x m
+for x in cbe x m
 do
     echo ==== $T.$x.out ====
     cat -n $T.$x.out
 done
 echo ========
 
-echo `md5sum $T.c.out`   `wc < $T.c.out`   >&2
 echo `md5sum $T.cbe.out` `wc < $T.cbe.out`   >&2
 echo `md5sum $T.x.out`   `wc < $T.x.out`   >&2
 echo `md5sum $T.m.out`   `wc < $T.m.out`   >&2

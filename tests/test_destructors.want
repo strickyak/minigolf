@@ -1,0 +1,10 @@
+destructor: bank takes back 1000
+destructor: bank takes back 2000
+destructor: bank takes back 1
+destructor: bank takes back 10
+destructor: bank takes back 100
+destructor: bank takes back 100
+destructor: bank takes back 200
+destructor: bank takes back 300
+destructor: bank takes back 500
+PASS

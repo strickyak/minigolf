@@ -384,7 +384,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				continue
 			}
 
-			if !a.reachableFuncs[qname] {
+			if !a.reachableFuncs[qname] && !strings.HasSuffix(qname, "_destructor") {
 				fmt.Printf("DEBUG: stripping %s\n", qname)
 				continue // DEAD CODE ELIMINATED!
 			}
@@ -545,7 +545,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 						eltTyp = idxExpr.Indices[0]
 					}
 				}
-				
+
 				if eltTyp != nil {
 					baseTypStr := a.exprToString(rangeTyp)
 					methodsToInstantiate := []string{"Address", "Put", "Get", "Chop"}

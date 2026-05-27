@@ -1,0 +1,80 @@
+package main
+
+var bank int = 30000
+
+type Loan struct {
+	amount int
+}
+
+func (l *Loan) destructor() {
+	bank = bank + l.amount
+	println("destructor: bank takes back", l.amount)
+}
+
+type NestedLoan struct {
+	loan  Loan
+	extra int
+	more  LoanArray
+}
+
+type LoanArray struct {
+	loans [3]Loan
+}
+
+func testSimpleLoan() {
+	var l Loan
+	l.amount = 1000
+	bank = bank - 1000
+}
+
+func testNestedLoan() {
+	var n NestedLoan
+	n.loan.amount = 2000
+	n.more.loans[0].amount = 1
+	n.more.loans[1].amount = 10
+	n.more.loans[2].amount = 100
+	bank = bank - 2111
+}
+
+func testArrayLoan() {
+	var arr LoanArray
+	arr.loans[0].amount = 100
+	arr.loans[1].amount = 200
+	arr.loans[2].amount = 300
+	bank = bank - 600
+}
+
+func testReturnEarly(flag bool) {
+	var l Loan
+	l.amount = 500
+	bank = bank - 500
+	if flag {
+		return
+	}
+	// Do something else
+	bank = bank + 0
+}
+
+func main() {
+	testSimpleLoan()
+	if bank != 30000 {
+		println("Failed simple loan. Bank =", bank)
+	}
+
+	testNestedLoan()
+	if bank != 30000 {
+		println("Failed nested loan. Bank =", bank)
+	}
+
+	testArrayLoan()
+	if bank != 30000 {
+		println("Failed array loan. Bank =", bank)
+	}
+
+	testReturnEarly(true)
+	if bank != 30000 {
+		println("Failed early return. Bank =", bank)
+	}
+
+	println("PASS")
+}

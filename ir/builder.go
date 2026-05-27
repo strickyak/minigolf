@@ -36,10 +36,12 @@ type GlobalItem struct {
 type Builder struct {
 	Program *Program
 
-	currentFunc  *Function
-	currentBlock *BasicBlock
-	nextValueID  int
-	nextBlockID  int
+	currentFunc          *Function
+	currentBlock         *BasicBlock
+	currentDestructBlock *BasicBlock
+	destructables        []string
+	nextValueID          int
+	nextBlockID          int
 
 	currentDef     map[*BasicBlock]map[string]Value
 	sealedBlocks   map[*BasicBlock]bool
@@ -104,7 +106,9 @@ func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node) *Bu
 }
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
-		if se, ok := expr.(*ast.SelectorExpression); ok { fmt.Printf("DEBUG ASTTOIRTYPE SELECTOR: %#v\n", se) }
+	if se, ok := expr.(*ast.SelectorExpression); ok {
+		fmt.Printf("DEBUG ASTTOIRTYPE SELECTOR: %#v\n", se)
+	}
 	if expr == nil {
 		log.Panicf("TODO: when is expr nil?")
 	}
@@ -242,7 +246,7 @@ func (b *Builder) SyntheticFuncName(e *ast.FuncType) string {
 	name = strings.ReplaceAll(name, "[", "_")
 	name = strings.ReplaceAll(name, "]", "_")
 	name = strings.ReplaceAll(name, "*", "ptr_")
-	
+
 	b.typeAliases[name] = e
 	return name
 }
@@ -449,6 +453,8 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			oldIncPhis := b.incompletePhis
 			oldVarTypes := b.varTypes
 			oldCurBlk := b.currentBlock
+			oldCurDestructBlk := b.currentDestructBlock
+			oldDestructables := b.destructables
 
 			b.buildFunc(funcStmt)
 
@@ -460,6 +466,8 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			b.incompletePhis = oldIncPhis
 			b.varTypes = oldVarTypes
 			b.currentBlock = oldCurBlk
+			b.currentDestructBlock = oldCurDestructBlk
+			b.destructables = oldDestructables
 		}
 		b.currentPackage = oldPkg
 	} else {
@@ -710,10 +718,19 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	entry := b.newBlock()
 	b.currentBlock = entry
 
+	b.currentDestructBlock = b.newBlock()
+	b.destructables = nil
+	if !b.currentFunc.ReturnType.Equals(TypeUnknown) && !b.currentFunc.ReturnType.Equals(TypeVoid) {
+		b.varTypes["__retval"] = b.currentFunc.ReturnType
+	}
+
 	// Map parameters
 	for _, p := range b.currentFunc.Parameters {
 
 		b.writeVariable(p.Name, b.currentBlock, p)
+		if b.isDestructable(p.Typ) {
+			b.destructables = append(b.destructables, p.Name)
+		}
 	}
 
 	b.sealBlock(entry)
@@ -721,8 +738,31 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.buildBlock(s.Body)
 
 	if b.currentBlock.Terminator == nil {
+		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, s)
+		b.addEdge(b.currentBlock, b.currentDestructBlock)
+	}
+
+	b.currentBlock = b.currentDestructBlock
+	if len(b.destructables) > 0 {
+		// Destruct in reverse order of declaration
+		for i := len(b.destructables) - 1; i >= 0; i-- {
+			vname := b.destructables[i]
+			val := b.readVariable(vname, b.currentBlock)
+			ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: val}, s)
+			b.emitDestruction(val.Type(), ptr, s)
+		}
+	}
+
+	if !b.currentFunc.ReturnType.Equals(TypeUnknown) && !b.currentFunc.ReturnType.Equals(TypeVoid) {
+		retVal := b.readVariable("__retval", b.currentBlock)
+		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Val: retVal}, s)
+	} else {
 		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, s)
 	}
+	b.sealBlock(b.currentDestructBlock)
+
+	b.currentDestructBlock = nil
+	b.destructables = nil
 }
 
 func (b *Builder) newBlock() *BasicBlock {
@@ -1001,6 +1041,9 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			}
 		}
 		b.writeVariable(s.Name.Value, b.currentBlock, val)
+		if b.isDestructable(typ) {
+			b.destructables = append(b.destructables, s.Name.Value)
+		}
 	case *ast.AssignStatement:
 		if len(s.Names) > 1 && len(s.Values) == 1 {
 			tupleVal := b.buildExpr(s.Values[0])
@@ -1426,7 +1469,15 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 				val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: structTyp}, Struct: val, FieldIndex: i, Val: fieldVal}, s)
 			}
 		}
-		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Val: val}, s)
+		if b.currentDestructBlock != nil {
+			if val != nil {
+				b.writeVariable("__retval", b.currentBlock, val)
+			}
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, s)
+			b.addEdge(b.currentBlock, b.currentDestructBlock)
+		} else {
+			b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Val: val}, s)
+		}
 	case *ast.BreakStatement:
 		b.addInstr(&SourceMarker{
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
@@ -2458,6 +2509,9 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 			if !exists {
 				targetType = val.Type()
 				b.varTypes[ident.Value] = targetType
+				if b.isDestructable(targetType) {
+					b.destructables = append(b.destructables, ident.Value)
+				}
 			}
 			val = b.coerceType(val, targetType)
 			b.writeVariable(ident.Value, b.currentBlock, val)
@@ -2922,4 +2976,86 @@ func (b *Builder) buildSyntheticInit() {
 
 	b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, nil)
 	b.currentFunc = oldFunc
+}
+
+func (b *Builder) isDestructable(t Type) bool {
+	if t.IsAPointer() {
+		return false
+	}
+	methodName := MangleName(t.Name) + "_destructor"
+	if _, ok := b.funcs[methodName]; ok {
+		return true
+	}
+	if t.IsAStruct() && t.Expr != nil {
+		if st, ok := t.Expr.(*ast.StructType); ok {
+			for _, field := range st.Fields {
+				fieldTyp := b.astToIRType(field.Type)
+				if b.isDestructable(fieldTyp) {
+					return true
+				}
+			}
+		}
+	}
+	if st, ok := b.typeDefsAST[t.Name]; ok {
+		for _, field := range st.Fields {
+			fieldTyp := b.astToIRType(field.Type)
+			if b.isDestructable(fieldTyp) {
+				return true
+			}
+		}
+	}
+	if t.IsAnArray() && t.Expr != nil {
+		if arr, ok := t.Expr.(*ast.ArrayType); ok {
+			elemTyp := b.astToIRType(arr.Elt)
+			if b.isDestructable(elemTyp) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (b *Builder) emitDestruction(typ Type, ptrVal Value, tokenNode ast.Node) {
+	if typ.IsAPointer() {
+		return
+	}
+	// Direct destructor
+	methodName := MangleName(typ.Name) + "_destructor"
+	if f, ok := b.funcs[methodName]; ok {
+		b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Func: f, Args: []Value{ptrVal}}, tokenNode)
+	}
+	// Struct fields
+	if typ.IsAStruct() && typ.Expr != nil {
+		if st, ok := typ.Expr.(*ast.StructType); ok {
+			for i, field := range st.Fields {
+				fieldTyp := b.astToIRType(field.Type)
+				if b.isDestructable(fieldTyp) {
+					fieldPtr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: fieldTyp.PointerTo()}, Ptr: ptrVal, FieldIndex: i}, tokenNode)
+					b.emitDestruction(fieldTyp, fieldPtr, tokenNode)
+				}
+			}
+		}
+	} else if st, ok := b.typeDefsAST[typ.Name]; ok {
+		for i, field := range st.Fields {
+			fieldTyp := b.astToIRType(field.Type)
+			if b.isDestructable(fieldTyp) {
+				fieldPtr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: fieldTyp.PointerTo()}, Ptr: ptrVal, FieldIndex: i}, tokenNode)
+				b.emitDestruction(fieldTyp, fieldPtr, tokenNode)
+			}
+		}
+	}
+	// Array elements
+	if typ.IsAnArray() && typ.Expr != nil {
+		if arr, ok := typ.Expr.(*ast.ArrayType); ok {
+			elemTyp := b.astToIRType(arr.Elt)
+			if b.isDestructable(elemTyp) {
+				lenVal := b.EvalConst(arr.Length)
+				for i := int64(0); i < lenVal; i++ {
+					idxVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(i)}, tokenNode)
+					elemPtr := b.addInstr(&AddressOfElement{BaseInstruction: BaseInstruction{Typ: elemTyp.PointerTo()}, ArrayPtr: ptrVal, Index: idxVal}, tokenNode)
+					b.emitDestruction(elemTyp, elemPtr, tokenNode)
+				}
+			}
+		}
+	}
 }
