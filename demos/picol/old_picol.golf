@@ -1,0 +1,116 @@
+package main
+
+import "smap"
+
+type Status = byte
+
+const OKAY = 0
+const ERROR = 1
+const RETURN = 2
+const BREAK = 3
+const CONTINUE = 4
+
+type Command = func(*Terp, string, slice[string], word) (string, Status)
+
+type Terp struct {
+	Commands smap.Smap[Command]
+	Frame    *Frame
+}
+
+type Frame struct {
+	Vars smap.Smap[string]
+}
+
+func wtoa(z slice[byte], w word) slice[byte] {
+	var n byte
+	var active bool
+
+	for w >= 10000 {
+		w -= 10000
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	for w >= 1000 {
+		w -= 1000
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	for w >= 100 {
+		w -= 100
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	for w >= 10 {
+		w -= 10
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	z.Append('0' + byte(w))
+	return z
+}
+
+func atow(s string) word {
+	var sum word = 0
+	for i := word(0); i < s.Len; i++ {
+		c := s.Get(i)
+		if c >= '0' {
+			if c <= '9' {
+				sum = sum*10 + word(c-'0')
+			}
+		}
+	}
+	return sum
+}
+
+func Add(t *Terp, cmd string, args slice[string], user_data word) (string, Status) {
+	a := atow(args[0])
+	b := atow(args[1])
+	var z string
+	z = wtoa(z, a+b)
+	return z, OKAY
+}
+
+func run1() {
+	var global Frame
+
+	var terp Terp
+	terp.Frame = &global
+	terp.Commands.Insert("+", Add)
+
+	f, ok := terp.Commands.Lookup("+")
+	if !ok {
+		panic("666")
+	}
+
+	var user_data word = 888
+	var args slice[string]
+	args.Append("101")
+	args.Append("1010")
+
+	result, status := f(&terp, "+", args, user_data)
+	println(result, status)
+}
+
+func main() {
+	run1()
+}

@@ -1,5 +1,12 @@
 package main
 
+func IsWhite(ch byte) byte {
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		return 1
+	}
+	return 0
+}
+
 func SplitIntoCommands(s string) slice[string] {
 	var result slice[string]
 	
@@ -63,7 +70,7 @@ func SplitIntoWords(s string) slice[string] {
 	for i < s.Len {
 		ch := s[i]
 		
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		if IsWhite(ch) != 0 {
 			i = i + 1
 		} else if ch == '{' {
 			var level int = 1
@@ -92,7 +99,7 @@ func SplitIntoWords(s string) slice[string] {
 			var start word = i
 			for i < s.Len {
 				c := s[i]
-				if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+				if IsWhite(c) != 0 {
 					// MiniGolf doesn't support break out of a for-condition loop yet? Let's use a flag or just break.
 					// I'll test if break works.
 					break
@@ -132,7 +139,7 @@ func SubstitutingSplitIntoWords(s string) slice[string] {
 	for i < s.Len {
 		ch := s[i]
 		
-		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		if IsWhite(ch) != 0 {
 			i = i + 1
 		} else if ch == '{' {
 			var level int = 1
@@ -185,7 +192,7 @@ func SubstitutingSplitIntoWords(s string) slice[string] {
 			var accum string
 			for i < s.Len {
 				c := s[i]
-				if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+				if IsWhite(c) != 0 {
 					break
 				}
 				
