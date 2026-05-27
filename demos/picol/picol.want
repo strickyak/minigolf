@@ -1,0 +1,32 @@
+1111 0
+Add: first arg not a number 1
+--- cmds ---
+cmd1 arg1
+ cmd2 {arg2; arg2b}
+ cmd3\ncmd4
+--- words ---
+word1
+word2 with spaces
+word3
+--- hello & VAR ---
+#SubstitutingSplitIntoWords << bare$var [hello in brackets] {braced $var}
+#EvalCommand << hello in brackets] {braced $var}
+#SubstitutingSplitIntoWords << hello in brackets
+#SubstitutingSplitIntoWords ok>>
+#              0 >> hello
+#              1 >> in
+#              2 >> brackets
+#Apply << hello 2
+#Apply Calling << hello
+#Hello <<
+#Hello >> Hello
+#Apply >> Hello 0
+#EvalCommand e2>> Hello 0
+#EvalCommand ok>> Hello
+#SubstitutingSplitIntoWords ok>>
+#              0 >> bareVAR
+#              1 >> Hello
+#              2 >> braced $var
+bareVAR
+Hello
+braced $var

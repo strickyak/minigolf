@@ -504,6 +504,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
 		case "word_to_ptr":
 			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), c.formatVal(i.Operand))
+		case "ptr_to_word":
+			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
 		case "bitcast":
 			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), c.formatVal(i.Operand))
 		default:

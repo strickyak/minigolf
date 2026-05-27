@@ -10,16 +10,16 @@ const RETURN = 2
 const BREAK = 3
 const CONTINUE = 4
 
-type Command = func(*Terp, string, slice[string], word) (string, Status)
-
-type Terp struct {
-	Commands smap.Smap[Command]
-	Frame    *Frame
-}
-
 type Frame struct {
 	Vars smap.Smap[string]
+	Prev *Frame
 }
+
+type Command = func(string, slice[string]) (string, Status)
+
+var Commands smap.Smap[Command]
+var Current *Frame
+var Global Frame
 
 func wtoa(z slice[byte], w word) slice[byte] {
 	var n byte
@@ -69,48 +69,365 @@ func wtoa(z slice[byte], w word) slice[byte] {
 	return z
 }
 
-func atow(s string) word {
+func atow(s string) (word, Status) {
 	var sum word = 0
 	for i := word(0); i < s.Len; i++ {
 		c := s.Get(i)
-		if c >= '0' {
-			if c <= '9' {
-				sum = sum*10 + word(c-'0')
-			}
-		}
+		if c >= '0' && c <= '9' {
+			sum = sum*10 + word(c-'0')
+		} else {
+            return 0, ERROR
+        }
 	}
-	return sum
+	return sum, OKAY
 }
 
-func Add(t *Terp, cmd string, args slice[string], user_data word) (string, Status) {
-	a := atow(args[0])
-	b := atow(args[1])
+func Add(cmd string, args slice[string]) (string, Status) {
+    if args.Len != 2 {
+        return strdup("Add expected 2 args"), ERROR
+    }
+	a, a_status := atow(args[0])
+    if a_status != OKAY { return strdup("Add: first arg not a number"), ERROR }
+	b, b_status := atow(args[1])
+    if b_status != OKAY { return strdup("Add: second arg not a number"), ERROR }
 	var z string
 	z = wtoa(z, a+b)
 	return z, OKAY
 }
+func Hello(cmd string, args slice[string]) (string, Status) {
+	println("#Hello <<")
+	result := strdup("Hello")
+
+	println("#Hello >>", result)
+	return result, OKAY
+}
 
 func run1() {
-	var global Frame
+	Current = &Global
+	Commands.Insert("+", Add)
 
-	var terp Terp
-	terp.Frame = &global
-	terp.Commands.Insert("+", Add)
-
-	f, ok := terp.Commands.Lookup("+")
+	f, ok := Commands.Lookup("+")
 	if !ok {
-		panic("666")
+		panic(666)
 	}
 
-	var user_data word = 888
-	var args slice[string]
-	args.Append("101")
-	args.Append("1010")
-
-	result, status := f(&terp, "+", args, user_data)
+	var args = slice[string]{"101", "1010"}
+	result, status := f("+", args)
 	println(result, status)
+
+	args = slice[string]{"101foo", "1010"}
+	result, status := f("+", args)
+	println(result, status)
+}
+
+func IsWhite(ch byte) byte {
+	if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+		return 1
+	}
+	return 0
+}
+
+func SplitIntoCommands(s string) (slice[string], Status) {
+	var result slice[string]
+
+	var start word = 0
+	var level int = 0
+
+	for i := range s.Len {
+		ch := s[i]
+
+		if ch == '{' {
+			level = level + 1
+		} else if ch == '}' {
+			level = level - 1
+		} else if level == 0 && (ch == ';' || ch == '\n') {
+			cmd := strdup(s.Chop(start, i))
+			result.Append(cmd)
+			start = i + 1
+		}
+	}
+
+	if start < s.Len {
+		cmd := strdup(s.Chop(start, s.Len))
+		result.Append(cmd)
+	}
+
+	return result, OKAY
+}
+
+func SplitIntoWords(s string) (slice[string], Status) {
+	var result slice[string]
+	var i word = 0
+
+	for i < s.Len {
+		ch := s[i]
+
+		if IsWhite(ch) != 0 {
+			i = i + 1
+		} else if ch == '{' {
+			var level int = 1
+			i = i + 1
+			var start word = i
+
+			for i < s.Len && level > 0 {
+				c := s[i]
+				if c == '{' {
+					level = level + 1
+				} else if c == '}' {
+					level = level - 1
+				}
+				if level > 0 {
+					i = i + 1
+				}
+			}
+
+			wordStr := strdup(s.Chop(start, i))
+			result.Append(wordStr)
+
+			if i < s.Len {
+				i = i + 1
+			}
+		} else {
+			var start word = i
+			for i < s.Len {
+				c := s[i]
+				if IsWhite(c) != 0 {
+					// MiniGolf doesn't support break out of a for-condition loop yet? Let's use a flag or just break.
+					// I'll test if break works.
+					break
+				}
+				i = i + 1
+			}
+			wordStr := strdup(s.Chop(start, i))
+			result.Append(wordStr)
+		}
+	}
+
+	return result, OKAY
+}
+
+func LookupVar(varname string) (string, Status) {
+	value, ok := Current.Vars.Lookup(varname)
+	if !ok {
+		return "no such variable", ERROR
+	}
+
+	return strdup(value), OKAY
+}
+
+func Apply(cmd string, args slice[string]) (string, Status) {
+	println("#Apply <<", cmd, args.Len)
+	f, ok := Commands.Lookup(cmd)
+	if !ok {
+		println("#Apply e9>> not found:", cmd)
+		return strdup("Command not found"), ERROR
+	}
+
+	println("#Apply Calling <<", cmd)
+	result, status := f(cmd, args)
+	println("#Apply >>", result, status)
+	return strdup(result), status
+}
+
+func EvalCommand(command string) (string, Status) {
+	println("#EvalCommand <<", command)
+	var result string
+	// This may be redundant, but it will not hurt, to split into commands again.
+	cmds, status := SplitIntoCommands(command)
+	if status != OKAY {
+		return cmds[0], status
+	}
+
+	for _, cmd := range cmds {
+
+		words, status := SubstitutingSplitIntoWords(cmd)
+		if status != OKAY {
+			println("#EvalCommand e1>>", words[0], OKAY)
+			return words[0], status
+		}
+
+		n := words.Len
+		if n > 0 {
+			result, status = Apply(words[0], words[1:n])
+			println("#EvalCommand e2>>", result, status)
+			if status != OKAY {
+				return result, status
+			}
+		}
+	}
+	println("#EvalCommand ok>>", result)
+	return result, OKAY
+}
+
+func SubstitutingSplitIntoWords(s string) (slice[string], Status) {
+	println("#SubstitutingSplitIntoWords <<", s)
+	var result slice[string]
+	var i word = 0
+
+	for i < s.Len {
+		ch := s[i]
+
+		if IsWhite(ch) != 0 {
+			i = i + 1
+		} else if ch == '{' {
+			var level int = 1
+			i = i + 1
+			var start word = i
+
+			for i < s.Len && level > 0 {
+				c := s[i]
+				if c == '{' {
+					level = level + 1
+				} else if c == '}' {
+					level = level - 1
+				}
+				if level > 0 {
+					i = i + 1
+				}
+			}
+
+			wordStr := strdup(s.Chop(start, i))
+			result.Append(wordStr)
+
+			if i < s.Len {
+				i = i + 1
+			}
+		} else if ch == '[' {
+			var level int = 1
+			i = i + 1
+			var start word = i
+
+			for i < s.Len && level > 0 {
+				c := s[i]
+				if c == '[' {
+					level = level + 1
+				} else if c == ']' {
+					level = level - 1
+				}
+				if level > 0 {
+					i = i + 1
+				}
+			}
+
+			cmd := s.Chop(start, i)
+			evalResult, evalStatus := EvalCommand(cmd)
+			if evalStatus != OKAY {
+				var errSlice slice[string]
+				errSlice.Append(evalResult)
+				println("#SubstitutingSplitIntoWords e3>>", evalResult)
+				return errSlice, evalStatus
+			}
+			result.Append(evalResult)
+
+			if i < s.Len {
+				i = i + 1
+			}
+		} else {
+			var accum string
+			for i < s.Len {
+				c := s[i]
+				if IsWhite(c) != 0 {
+					break
+				}
+
+				if c == '$' {
+					i = i + 1
+					var startVar word = i
+					for i < s.Len {
+						ch2 := s[i]
+						var isIdent bool = false
+						if ch2 >= 'a' && ch2 <= 'z' {
+							isIdent = true
+						}
+						if ch2 >= 'A' && ch2 <= 'Z' {
+							isIdent = true
+						}
+						if ch2 >= '0' && ch2 <= '9' {
+							isIdent = true
+						}
+						if ch2 == '_' {
+							isIdent = true
+						}
+						if !isIdent {
+							break
+						}
+						i = i + 1
+					}
+					if i == startVar {
+						accum.Append('$')
+					} else {
+						varname := s.Chop(startVar, i)
+						varStr, varStatus := LookupVar(varname)
+						if varStatus != OKAY {
+							var errSlice slice[string]
+							errSlice.Append(varStr)
+							return errSlice, varStatus
+						}
+						for j := range varStr.Len {
+							accum.Append(varStr[j])
+						}
+						strfree(varStr)
+					}
+				} else {
+					accum.Append(c)
+					i = i + 1
+				}
+			}
+			wordStr := strdup(accum)
+			result.Append(wordStr)
+			strfree(accum)
+		}
+	}
+
+	println("#SubstitutingSplitIntoWords ok>>")
+	for r_i, r_e := range result {
+		println("#             ", r_i, ">>", r_e)
+	}
+	return result, OKAY
 }
 
 func main() {
 	run1()
+
+	println("--- cmds ---")
+
+	s := "cmd1 arg1; cmd2 {arg2; arg2b}; cmd3\ncmd4"
+	cmds, status1 := SplitIntoCommands(s)
+	if status1 != OKAY {
+		println("Error:", cmds.Get(0))
+	} else {
+		for i := range cmds.Len {
+			cmd := cmds.Get(i)
+			println(cmd)
+		}
+	}
+
+	println("--- words ---")
+
+	s2 := "  word1   {word2 with spaces} word3  "
+	words, status2 := SplitIntoWords(s2)
+	if status2 != OKAY {
+		println("Error:", words.Get(0))
+	} else {
+		for i := range words.Len {
+			word := words.Get(i)
+			println(word)
+		}
+	}
+
+	println("--- hello & VAR ---")
+
+	Commands.Insert("hello", Hello)
+	Current.Vars.Insert("var", "VAR")
+
+	s3 := "bare$var [hello in brackets] {braced $var}"
+	substWords, status3 := SubstitutingSplitIntoWords(s3)
+	if status3 != OKAY {
+		println("Error:", substWords.Get(0))
+	} else {
+		for i := range substWords.Len {
+			word := substWords.Get(i)
+			println(word)
+		}
+	}
 }

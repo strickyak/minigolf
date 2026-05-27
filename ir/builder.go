@@ -1910,7 +1910,62 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 	case *ast.CompositeLit:
 		typ := b.astToIRType(e.Type)
-		var val Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
+		var val Value
+
+		isSliceSugar := false
+		if strings.HasPrefix(typ.Name, "prelude.slice_") {
+			hasKeys := false
+			for _, el := range e.Elements {
+				if _, ok := el.(*ast.KeyValueExpr); ok {
+					hasKeys = true
+					break
+				}
+			}
+			if !hasKeys && len(e.Elements) > 0 {
+				isSliceSugar = true
+			}
+		}
+
+		if isSliceSugar {
+			eltTypeName := strings.TrimPrefix(typ.Name, "prelude.slice_")
+			eltTyp := Type{Name: eltTypeName}
+			eltSize := b.getTypeSize(eltTyp)
+
+			sliceVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
+
+			zallocFunc, ok := b.funcs["prelude.zalloc"]
+			if !ok {
+				panic("prelude.zalloc not found")
+			}
+
+			nBytes := len(e.Elements) * eltSize
+			nBytesVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(nBytes)}, e)
+			basePtrVal := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Func: zallocFunc, Args: []Value{nBytesVal}}, e)
+			baseWordVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: basePtrVal}, e)
+
+			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 0, Val: baseWordVal}, e)
+			capVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(len(e.Elements))}, e)
+			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: capVal}, e)
+			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
+
+			arrTyp := Type{Name: "[" + strconv.Itoa(len(e.Elements)) + "]" + eltTypeName}
+			arrPtrTyp := arrTyp.PointerTo()
+			arrPtrVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: arrPtrTyp}, Op: "word_to_ptr", Operand: baseWordVal}, e)
+
+			for i, el := range e.Elements {
+				elVal := b.buildExpr(el)
+				elVal = b.coerceType(elVal, eltTyp)
+
+				idxVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(i)}, e)
+
+				elAddr := b.addInstr(&AddressOfElement{BaseInstruction: BaseInstruction{Typ: eltTyp.PointerTo()}, ArrayPtr: arrPtrVal, Index: idxVal}, e)
+				b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeUnknown}, Ptr: elAddr, Val: elVal}, e)
+			}
+
+			return ExprResult{IsLValue: false, Value: sliceVal, Typ: typ}
+		}
+
+		val = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
 
 		st, ok := b.typeDefsAST[typ.Name]
 		if !ok {
