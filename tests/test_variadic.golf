@@ -20,7 +20,7 @@ func str_length(p *byte) word {
 
 func string_of_star_byte(p *byte) string {
 	var s string
-	s.Base = p
+	s.Base = word(p)
 	s.Len = str_length(p)
 	s.Cap = s.Len
 	return s

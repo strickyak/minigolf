@@ -88,7 +88,10 @@ func New(resolver *Resolver) *Analyzer {
 	global.Define("int", builtinType("type"))
 	global.Define("uint", builtinType("type"))
 	global.Define("any", builtinType("type"))
+	global.Define("bool", builtinType("type"))
 	global.Define("string", &ast.ArrayType{Elt: ByteType}) // string is alias for slice[byte]
+	global.Define("true", WordType)
+	global.Define("false", WordType)
 
 	return &Analyzer{
 		errors:           []string{},
@@ -404,13 +407,13 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	defer func() { a.currentScope = a.currentScope.parent }()
 
 	if s.Receiver != nil {
-		evaluatedType := a.analyzeExpression(s.Receiver.Type)
-		a.currentScope.Define(s.Receiver.Name.Value, evaluatedType)
-		//fmt.Printf("DEBUG ANALYZEFUNC: Defined receiver %s as %s (raw: %s)\n", s.Receiver.Name.Value, a.exprToString(evaluatedType), a.exprToString(s.Receiver.Type))
+		a.analyzeExpression(s.Receiver.Type)
+		a.currentScope.Define(s.Receiver.Name.Value, s.Receiver.Type)
 	}
 
 	for _, p := range s.Parameters {
-		a.currentScope.Define(p.Name.Value, a.analyzeExpression(p.Type))
+		a.analyzeExpression(p.Type)
+		a.currentScope.Define(p.Name.Value, p.Type)
 	}
 
 	if s.Body != nil {
@@ -428,7 +431,8 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			}
 			typ := UnknownType
 			if s.ValueType != nil {
-				typ = a.analyzeExpression(s.ValueType)
+				a.analyzeExpression(s.ValueType)
+				typ = s.ValueType
 			} else if s.Value != nil {
 				typ = a.analyzeExpression(s.Value)
 			}
@@ -794,9 +798,12 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 				qname = id.FullName()
 			} else if _, ok := a.genericTemplates[a.currentPackage+"."+id.FullName()]; ok {
 				qname = a.currentPackage + "." + id.FullName()
+			} else if _, ok := a.genericTemplates["prelude."+id.FullName()]; ok {
+				qname = "prelude." + id.FullName()
 			}
+		} else if _, ok := e.Left.(*ast.SelectorExpression); ok {
+			// handle pkg.generic
 		}
-
 		var leftTyp ast.Expression = UnknownType
 		if qname == "" {
 			leftTyp = a.analyzeExpression(e.Left)

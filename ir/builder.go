@@ -85,7 +85,7 @@ type GenericTemplate struct {
 }
 
 func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node, wordSize int) *Builder {
-	return &Builder{
+	b := &Builder{
 		Program:           &Program{TypeDefs: make(map[string]Type)},
 		currentDef:        make(map[*BasicBlock]map[string]Value),
 		sealedBlocks:      make(map[*BasicBlock]bool),
@@ -107,6 +107,9 @@ func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node, wor
 		resolveCallback:   resolveCallback,
 		WordSize:          wordSize,
 	}
+	b.consts["true"] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: 1}
+	b.consts["false"] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: 0}
+	return b
 }
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
@@ -120,12 +123,17 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 	switch e := expr.(type) {
 	case *ast.Identifier:
 		switch e.Value {
-		case "byte":
+		case "byte", "bool":
 			return TypeByte
 		case "word", "uint":
 			return TypeWord
 		case "int":
 			return TypeInt
+		case "string":
+			return b.astToIRType(&ast.IndexExpression{
+				Left:    &ast.Identifier{Value: "slice"},
+				Indices: []ast.Expression{&ast.Identifier{Value: "byte"}},
+			})
 		case "const_integer":
 			return TypeConstInteger
 		default:

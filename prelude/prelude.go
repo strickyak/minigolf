@@ -5,11 +5,6 @@ package prelude
 
 const HEAP_SIZE = 10000 + sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * 512  // 26K on M6809, 16M on Intel
 
-type uint = word
-type string = slice[byte]
-type bool = byte
-const true = 1
-const false = 0
 
 func peek[T any](addr word) T {
 	return *((*T)(addr))
