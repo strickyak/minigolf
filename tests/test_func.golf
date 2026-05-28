@@ -10,14 +10,14 @@ func func4(w word) word { return w + 4 }
 func func5(w word) word { return w + 5 }
 
 func eval(s string, w word) word {
-	println("# eval", s, "on", w)
+	// println("# eval", s, "on", w)
 	for i := range s.Len {
 		c := s[i] - '0'
-		println("### step", i, "command", c)
+		// println("### step", i, "command", c)
 		f := commands[c]
 		w = f(w)
 	}
-	println("# eval", s, "returns", w)
+	// println("# eval", s, "returns", w)
 	return w
 }
 

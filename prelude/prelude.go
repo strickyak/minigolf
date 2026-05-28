@@ -3,6 +3,8 @@ package prelude
 const Source = `
 package prelude
 
+const HEAP_SIZE = 10000 + sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * 512  // 26K on M6809, 16M on Intel
+
 type uint = word
 type string = slice[byte]
 type bool = byte
@@ -295,11 +297,10 @@ func strfree(a string) {
 /////////////////////////////////////////////
 
 type MallocHeader struct {
-	next *MallocHeader
-	size word
+	next  *MallocHeader
+	size  word
+	magic word
 }
-
-const HEAP_SIZE = 16 * 1024 * 1024 // 16MB
 
 var Heap [HEAP_SIZE]byte
 
@@ -311,7 +312,9 @@ func malloc_init(heap_start *byte, heap_size word) {
 
 	// Calculate how many MallocHeader-sized units fit in the heap
 	p.size = div_word(heap_size, sizeof[MallocHeader]())
+	p.magic = 42424
 	p.next = &base
+	// println("#malloc_init: p.size =", p.size, heap_size, sizeof[MallocHeader]() )
 
 	base.next = p
 	base.size = 0
@@ -356,11 +359,13 @@ func malloc(nbytes word) *byte {
 			} else {
 				// Block is bigger than needed; allocate from the tail end
 				p.size = p.size - nunits
-				p = (*MallocHeader)(word(p) + (p.size * sizeof[MallocHeader]()))
+				p = (*MallocHeader)(word(p) + mul_word(p.size, sizeof[MallocHeader]()))
 				p.size = nunits
 			}
+			p.magic = 42424
 			freep = prevp
 			// Return pointer to user space (skipping past the MallocHeader)
+			//println("#malloc >>", nbytes, word(p) )
 			return (*byte)(word(p) + sizeof[MallocHeader]())
 		}
 		if word(p) == word(freep) {
@@ -377,13 +382,28 @@ func malloc(nbytes word) *byte {
 func free(ap *byte) {
 	var bp *MallocHeader
 	var p *MallocHeader
+	// println("#free <<", word(ap) )
 
 	if word(ap) == 0 {
 		return
 	}
 
+	// Safety check: Only free pointers that actually reside inside the Heap!
+	// This prevents crashing when Appending to string literals (which live in .data)
+	heap_start := word(&Heap[0])
+	heap_end := heap_start + HEAP_SIZE
+	if word(ap) < heap_start || word(ap) >= heap_end {
+		return
+	}
+
 	// Move pointer backward to find the actual header
 	bp = (*MallocHeader)(word(ap) - sizeof[MallocHeader]())
+
+	if bp.magic != 42424 {
+		return // Not a valid malloc pointer!
+	}
+	// Prevent double free
+	bp.magic = 0
 
 	// Find the right chronological spot in the free list to insert it
 	var done byte = 0
@@ -420,6 +440,7 @@ func free(ap *byte) {
 }
 
 func init() {
+    //println("# HEAP_SIZE =", HEAP_SIZE)
 	malloc_init(&Heap[0], HEAP_SIZE)
 }
 

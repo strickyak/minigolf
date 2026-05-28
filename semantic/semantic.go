@@ -214,7 +214,7 @@ func isFuncType(typ ast.Expression) bool {
 
 func (a *Analyzer) markReachable(qname string) {
 	if !a.reachableFuncs[qname] {
-		fmt.Printf("DEBUG: marking reachable %s\n", qname)
+		//fmt.Printf("DEBUG: marking reachable %s\n", qname)
 		a.reachableFuncs[qname] = true
 		a.queue = append(a.queue, qname)
 	}
@@ -385,7 +385,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			}
 
 			if !a.reachableFuncs[qname] && !strings.HasSuffix(qname, "_destructor") {
-				fmt.Printf("DEBUG: stripping %s\n", qname)
+				//fmt.Printf("DEBUG: stripping %s\n", qname)
 				continue // DEAD CODE ELIMINATED!
 			}
 		}
@@ -406,7 +406,7 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	if s.Receiver != nil {
 		evaluatedType := a.analyzeExpression(s.Receiver.Type)
 		a.currentScope.Define(s.Receiver.Name.Value, evaluatedType)
-		fmt.Printf("DEBUG ANALYZEFUNC: Defined receiver %s as %s (raw: %s)\n", s.Receiver.Name.Value, a.exprToString(evaluatedType), a.exprToString(s.Receiver.Type))
+		//fmt.Printf("DEBUG ANALYZEFUNC: Defined receiver %s as %s (raw: %s)\n", s.Receiver.Name.Value, a.exprToString(evaluatedType), a.exprToString(s.Receiver.Type))
 	}
 
 	for _, p := range s.Parameters {
@@ -600,7 +600,7 @@ func (a *Analyzer) substituteGenericTokens(instName string, argTyps []ast.Expres
 }
 
 func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps []ast.Expression, instantiateToken *token.Token) {
-	fmt.Printf("DEBUG INSTANTIATE ENTER: instName=%s rawGenericName=%s\n", instName, rawGenericName)
+	//fmt.Printf("DEBUG INSTANTIATE ENTER: instName=%s rawGenericName=%s\n", instName, rawGenericName)
 	if _, ok := a.funcMap[instName]; ok {
 		return
 	}
@@ -611,20 +611,20 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 	a.instantiatedArgs[instName] = argTyps
 	tmpl, ok := a.genericTemplates[rawGenericName]
 	if !ok {
-		fmt.Printf("DEBUG INSTANTIATE: Template %s not found in genericTemplates!\n", rawGenericName)
+		//fmt.Printf("DEBUG INSTANTIATE: Template %s not found in genericTemplates!\n", rawGenericName)
 		return
 	}
-	fmt.Printf("DEBUG INSTANTIATE: Found template %s\n", rawGenericName)
+	//fmt.Printf("DEBUG INSTANTIATE: Found template %s\n", rawGenericName)
 
 	subTokens := a.substituteGenericTokens(instName, argTyps, tmpl, instantiateToken)
-	fmt.Printf("DEBUG INSTANTIATE: Tokens for %s:\n", instName)
+	//fmt.Printf("DEBUG INSTANTIATE: Tokens for %s:\n", instName)
 	for i, tok := range subTokens {
 		fmt.Printf("  %d: %s (Type: %v)\n", i, tok.Literal, tok.Type)
 	}
 	p := parser.New(subTokens)
 	stmt := p.ParseStatementForGeneric()
 	if stmt == nil {
-		fmt.Printf("DEBUG INSTANTIATE: ParseStatementForGeneric returned nil for %s\n", instName)
+		//fmt.Printf("DEBUG INSTANTIATE: ParseStatementForGeneric returned nil for %s\n", instName)
 		return
 	}
 
@@ -640,7 +640,7 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 		ts.Name.Value = strings.TrimPrefix(instName, defPkg+".")
 		ts.TypeParameters = nil
 		a.globalScope.Define(instName, ts.BaseType)
-		fmt.Printf("DEBUG INSTANTIATE: Defined TYPE %s as %T in globalScope\n", instName, ts)
+		//fmt.Printf("DEBUG INSTANTIATE: Defined TYPE %s as %T in globalScope\n", instName, ts)
 		a.program.Statements = append(a.program.Statements, &ast.PackageStatement{Name: &ast.Identifier{Value: defPkg}})
 		a.program.Statements = append(a.program.Statements, ts)
 	} else if fs, ok := stmt.(*ast.FuncStatement); ok {
@@ -670,9 +670,9 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 	var typ ast.Expression = UnknownType
 
 	if _, ok := expr.(*ast.PointerType); ok {
-		fmt.Printf("DEBUG ANALYZE_EXPR_ENTER: expr is PointerType, String: %s\n", a.exprToString(expr))
+		//fmt.Printf("DEBUG ANALYZE_EXPR_ENTER: expr is PointerType, String: %s\n", a.exprToString(expr))
 	} else {
-		fmt.Printf("DEBUG ANALYZE_EXPR_ENTER: expr type is %T, String: %s\n", expr, a.exprToString(expr))
+		//fmt.Printf("DEBUG ANALYZE_EXPR_ENTER: expr type is %T, String: %s\n", expr, a.exprToString(expr))
 	}
 
 	switch e := expr.(type) {
@@ -680,7 +680,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 		typ = WordType
 	case *ast.PointerType:
 		eltTyp := a.analyzeExpression(e.Elt)
-		fmt.Printf("DEBUG POINTER: e.Elt=%T eltTyp=%s\n", e.Elt, a.exprToString(eltTyp))
+		//fmt.Printf("DEBUG POINTER: e.Elt=%T eltTyp=%s\n", e.Elt, a.exprToString(eltTyp))
 		typ = &ast.PointerType{Elt: eltTyp}
 	case *ast.StringLiteral:
 		typ = &ast.ArrayType{Elt: ByteType}
@@ -710,7 +710,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 
 			// ir.Builder uses prelude helpers for comparing slices and structs
 			t1Str := a.exprToString(t1)
-			fmt.Printf("DEBUG INFIX: left=%s right=%s op=%s t1Str=%s\n", a.exprToString(e.Left), a.exprToString(e.Right), e.Operator, t1Str)
+			//fmt.Printf("DEBUG INFIX: left=%s right=%s op=%s t1Str=%s\n", a.exprToString(e.Left), a.exprToString(e.Right), e.Operator, t1Str)
 			if t1Str == "slice_byte" || t1Str == "prelude.slice_byte" || t1Str == "string" || t1Str == "prelude.string" {
 				if e.Operator == "==" || e.Operator == "!=" {
 					a.markReachable("prelude.streq")
@@ -871,7 +871,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			// It's a method call or field access!
 			baseTypStr := a.exprToString(leftTyp)
 			baseTypStr = strings.TrimPrefix(baseTypStr, "*")
-			fmt.Printf("DEBUG SELECTOR: baseTypStr=%s e.Right.Value=%s\n", baseTypStr, e.Right.Value)
+			//fmt.Printf("DEBUG SELECTOR: baseTypStr=%s e.Right.Value=%s\n", baseTypStr, e.Right.Value)
 
 			// Check for struct field first!
 			lookupTypStr := baseTypStr
@@ -899,18 +899,18 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 					for _, f := range st.Fields {
 						if f.Name.Value == e.Right.Value {
 							typ = f.Type
-							fmt.Printf("DEBUG STRUCT: Found field %s of type %T (%s)\n", f.Name.Value, typ, a.exprToString(typ))
+							//fmt.Printf("DEBUG STRUCT: Found field %s of type %T (%s)\n", f.Name.Value, typ, a.exprToString(typ))
 							break
 						}
 					}
 					if typ == UnknownType {
-						fmt.Printf("DEBUG STRUCT: Field %s not found in struct!\n", e.Right.Value)
+						//fmt.Printf("DEBUG STRUCT: Field %s not found in struct!\n", e.Right.Value)
 					}
 				} else {
-					fmt.Printf("DEBUG STRUCT: Not a StructType! It is %T\n", structDef.Type)
+					//fmt.Printf("DEBUG STRUCT: Not a StructType! It is %T\n", structDef.Type)
 				}
 			} else {
-				fmt.Printf("DEBUG STRUCT: Could not resolve %s or %s\n", baseTypStr, a.currentPackage+"."+baseTypStr)
+				//fmt.Printf("DEBUG STRUCT: Could not resolve %s or %s\n", baseTypStr, a.currentPackage+"."+baseTypStr)
 			}
 
 			// If not a field, check for method

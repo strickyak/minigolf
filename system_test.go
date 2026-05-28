@@ -113,7 +113,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 
 	default:
 		// Compile generated code with gcc
-		cmd = exec.Command("gcc", "-o", exeFile, midFile)
+        cmd = exec.Command("gcc", "-g", "-o", exeFile, midFile)
 		t.Logf("Running: %v", cmd)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("Failed to compile C code with gcc for backend %s: %v\nOutput: %s", backend, err, out)

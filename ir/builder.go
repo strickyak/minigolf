@@ -67,6 +67,7 @@ type Builder struct {
 	continueStack     []*BasicBlock
 	resolveCallback   func(node ast.Node, defPkg string) ast.Node
 	varInitStatements []*GlobalItem
+	WordSize          int
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -83,7 +84,7 @@ type GenericTemplate struct {
 	Tokens     []token.Token
 }
 
-func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node) *Builder {
+func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node, wordSize int) *Builder {
 	return &Builder{
 		Program:           &Program{TypeDefs: make(map[string]Type)},
 		currentDef:        make(map[*BasicBlock]map[string]Value),
@@ -104,12 +105,14 @@ func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node) *Bu
 		globalItems:       make(map[string]*GlobalItem),
 		worklist:          make([]*GlobalItem, 0),
 		resolveCallback:   resolveCallback,
+		WordSize:          wordSize,
 	}
 }
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
 	if se, ok := expr.(*ast.SelectorExpression); ok {
-		fmt.Printf("DEBUG ASTTOIRTYPE SELECTOR: %#v\n", se)
+        _ = se
+		//fmt.Printf("DEBUG ASTTOIRTYPE SELECTOR: %#v\n", se)
 	}
 	if expr == nil {
 		log.Panicf("TODO: when is expr nil?")
@@ -421,7 +424,7 @@ func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []as
 }
 
 func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token) {
-	fmt.Printf("DEBUG instantiateGenericFunc ENTER: instName=%s genericName=%s argTyps=%v\n", instName, genericName, argTyps)
+	//fmt.Printf("DEBUG instantiateGenericFunc ENTER: instName=%s genericName=%s argTyps=%v\n", instName, genericName, argTyps)
 	newTokens := b.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
 
 	p := parser.New(newTokens)
@@ -512,7 +515,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 		case *ast.TypeStatement:
 			qname := b.currentPackage + "." + s.Name.Value
 			if qname == "main.Command" {
-				fmt.Printf("DEBUG Build TypeStatement main.Command: BaseType is %T\n", s.BaseType)
+				//fmt.Printf("DEBUG Build TypeStatement main.Command: BaseType is %T\n", s.BaseType)
 			}
 			item := &GlobalItem{QName: qname, ASTNode: s}
 			if len(s.TypeParameters) > 0 {
@@ -821,7 +824,7 @@ func (b *Builder) addInstr(instr Instruction, reference any) Instruction {
 
 // Braun et al. SSA Construction Methods
 func (b *Builder) writeVariable(variable string, block *BasicBlock, value Value) {
-	fmt.Printf("DEBUG writeVariable name=%s\n", variable)
+	//fmt.Printf("DEBUG writeVariable name=%s\n", variable)
 	if b.currentDef[block] == nil {
 		b.currentDef[block] = make(map[string]Value)
 	}
@@ -935,7 +938,7 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 }
 
 func (b *Builder) readVariable(name string, block *BasicBlock) Value {
-	fmt.Printf("DEBUG readVariable name=%s\n", name)
+	//fmt.Printf("DEBUG readVariable name=%s\n", name)
 	if defs, ok := b.currentDef[block]; ok {
 		if val, ok := defs[name]; ok {
 			return val
@@ -1049,7 +1052,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 	case *ast.AssignStatement:
 		if len(s.Names) > 1 && len(s.Values) == 1 {
 			tupleVal := b.buildExpr(s.Values[0])
-			fmt.Printf("DEBUG ASSIGN tupleVal type: %#v IsStruct: %v\n", tupleVal.Type(), tupleVal.Type().IsAStruct())
+			//fmt.Printf("DEBUG ASSIGN tupleVal type: %#v IsStruct: %v\n", tupleVal.Type(), tupleVal.Type().IsAStruct())
 			typ := tupleVal.Type()
 			if typ.IsAStruct() {
 				// typStr := string(typ)
@@ -2126,7 +2129,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 			if _, exists := b.funcs[funcName]; !exists {
 				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
-					fmt.Printf("DEBUG buildExpr call method: funcName=%s baseType=%s instInfo.ArgTyps=%v\n", funcName, baseType, instInfo.ArgTyps)
+					//fmt.Printf("DEBUG buildExpr call method: funcName=%s baseType=%s instInfo.ArgTyps=%v\n", funcName, baseType, instInfo.ArgTyps)
 					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
 					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
 						b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
@@ -2448,10 +2451,10 @@ func (b *Builder) getTypeSize(typ Type) int {
 		return 1
 	}
 	if typ.Equals(TypeWord) || typ.Equals(TypeInt) || typ.Equals(TypeUint) {
-		return 2
+		return b.WordSize
 	}
 	if typ.IsAPointer() {
-		return 2
+		return b.WordSize
 	}
 	if typ.IsAnArray() {
 		idx := strings.Index(typ.Name, "]")

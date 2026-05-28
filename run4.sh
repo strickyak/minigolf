@@ -23,6 +23,6 @@ do
 done
 echo ========
 
-echo `md5sum $T.cbe.out` `wc < $T.cbe.out`   >&2
-echo `md5sum $T.x.out`   `wc < $T.x.out`   >&2
-echo `md5sum $T.m.out`   `wc < $T.m.out`   >&2
+echo `grep -v '^#' $T.cbe.out | md5sum `   `wc $T.cbe.out`   >&2
+echo `grep -v '^#' $T.x.out   | md5sum `   `wc $T.x.out`   >&2
+echo `grep -v '^#' $T.m.out   | md5sum `   `wc $T.m.out`   >&2

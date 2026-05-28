@@ -1,0 +1,54 @@
+--- DUMP COMMANDS ---
+0 : +
+1 : -
+2 : *
+3 : /
+4 : %
+5 : ==
+6 : !=
+7 : <
+8 : >
+9 : <=
+10 : >=
+11 : if
+12 : while
+13 : set
+14 : proc
+15 : return
+16 : break
+17 : continue
+18 : error
+---------------------
+1111 0
+DyadicArith: first arg not a number 1
+--- cmds ---
+cmd1 arg1
+ cmd2 {arg2; arg2b}
+ cmd3\ncmd4
+--- words ---
+word1
+word2 with spaces
+word3
+--- hello & VAR ---
+bareVAR
+Hello
+braced $var
+--- if test ---
+if 1==1: Hello 0
+if 1==2: Hello 0
+--- while test ---
+--- set test ---
+set x 1: 1 0
+set x: 1 0
+--- real while test ---
+while result:  0
+final x: 3 0
+--- proc test ---
+max 10 20: 20 0
+--- fib test ---
+fib 4: 5 0
+--- loop control test ---
+loop sum: 18 0
+--- return test ---
+early_ret 3: small 0
+early_ret 10: big 0

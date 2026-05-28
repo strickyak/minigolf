@@ -301,7 +301,7 @@ func main() {
 
 	// Flag -m=ir : emit SSA IR and exit cleanly
 	if *archFlag == "IR" {
-		builder := ir.NewBuilder(resolveCallback)
+		builder := ir.NewBuilder(resolveCallback, 8)
 		irProg := builder.Build(program)
 		irCode := ir.PrintProgram(irProg)
 
@@ -319,7 +319,7 @@ func main() {
 
 	// Flag -m=cbe : Generate C from IR and exit cleanly
 	if *archFlag == "CBE" {
-		builder := ir.NewBuilder(resolveCallback)
+		builder := ir.NewBuilder(resolveCallback, 8)
 		irProg := builder.Build(program)
 
 		backend := cbe.New()
@@ -339,7 +339,7 @@ func main() {
 
 	// Flag -m=x86_64 : Generate X86_64 assembly from IR and exit cleanly
 	if *archFlag == "X86_64" || *archFlag == "X86-64" || *archFlag == "X" {
-		builder := ir.NewBuilder(resolveCallback)
+		builder := ir.NewBuilder(resolveCallback, 8)
 		irProg := builder.Build(program)
 
 		backend := x86_64.New()
@@ -359,7 +359,7 @@ func main() {
 
 	// Flag -m=6809 : Generate M6809 assembly from IR and exit cleanly
 	if *archFlag == "6809" || *archFlag == "M6809" || *archFlag == "M" {
-		builder := ir.NewBuilder(resolveCallback)
+		builder := ir.NewBuilder(resolveCallback, 2)
 		irProg := builder.Build(program)
 
 		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)

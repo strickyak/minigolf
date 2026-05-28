@@ -285,7 +285,7 @@ func (p *Parser) parseTypeStatement() *ast.TypeStatement {
 			}
 		}
 		if !p.expectPeek(token.RBRACKET) {
-			fmt.Printf("DEBUG PARSETYPE: expected ], got %s\n", p.curToken.Literal)
+			//fmt.Printf("DEBUG PARSETYPE: expected ], got %s\n", p.curToken.Literal)
 			return nil
 		}
 
@@ -316,7 +316,7 @@ func (p *Parser) ParseExpressionForGeneric() ast.Expression {
 }
 
 func (p *Parser) ParseStatementForGeneric() ast.Statement {
-	fmt.Printf("DEBUG PARSEGENERIC: curToken.Type=%s curToken.Literal=%s\n", p.curToken.Type, p.curToken.Literal)
+	//fmt.Printf("DEBUG PARSEGENERIC: curToken.Type=%s curToken.Literal=%s\n", p.curToken.Type, p.curToken.Literal)
 	return p.parseTopLevelStatement("")
 }
 
