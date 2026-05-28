@@ -113,7 +113,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 
 	default:
 		// Compile generated code with gcc
-        cmd = exec.Command("gcc", "-g", "-o", exeFile, midFile)
+		cmd = exec.Command("gcc", "-g", "-o", exeFile, midFile)
 		t.Logf("Running: %v", cmd)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("Failed to compile C code with gcc for backend %s: %v\nOutput: %s", backend, err, out)
@@ -186,9 +186,9 @@ func TestSystemAllGolfFiles(t *testing.T) {
 		expectedStr := string(wantBytes)
 
 		for _, backend := range backends {
-            if strings.HasSuffix(file, "_nomoto.golf") && backend == "m6809" {
-                continue
-            }
+			if strings.HasSuffix(file, "_nomoto.golf") && backend == "m6809" {
+				continue
+			}
 			testName := fmt.Sprintf("%s_%s", filepath.Base(file), backend)
 			t.Run(testName, func(t *testing.T) {
 				testBackend(t, backend, file, expectedStr)

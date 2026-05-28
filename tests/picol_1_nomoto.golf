@@ -582,7 +582,7 @@ func SubstitutingSplitIntoWords(s string) (slice[string], Status) {
 
 	//println("#SubstitutingSplitIntoWords ok>>")
 	//for r_i, r_e := range result {
-		////println("#             ", r_i, ">>", strdup(r_e))
+	////println("#             ", r_i, ">>", strdup(r_e))
 	//}
 	return result, OKAY
 }

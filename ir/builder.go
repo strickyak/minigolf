@@ -111,7 +111,7 @@ func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node, wor
 
 func (b *Builder) astToIRType(expr ast.Expression) Type {
 	if se, ok := expr.(*ast.SelectorExpression); ok {
-        _ = se
+		_ = se
 		//fmt.Printf("DEBUG ASTTOIRTYPE SELECTOR: %#v\n", se)
 	}
 	if expr == nil {
