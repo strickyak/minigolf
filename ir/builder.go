@@ -158,13 +158,13 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 
 			if aliasExpr, ok := b.typeAliases[qname]; ok {
 				if strings.HasPrefix(qname, "func_ptr_") {
-					return Type{Expr: aliasExpr, Name: qname}
+					return Type{Expr: aliasExpr, Name: qname, Builder: b}
 				}
 				return b.astToIRType(aliasExpr)
 			}
 
 			if _, ok := b.typeDefsAST[qname]; ok {
-				return Type{Expr: expr, Name: qname}
+				return Type{Expr: expr, Name: qname, Builder: b}
 			}
 			panic("unresolved:" + qname)
 		}
@@ -213,27 +213,27 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 					ArgTyps:        argTyps,
 				}
 			}
-			return Type{Expr: expr, Name: instName}
+			return Type{Expr: expr, Name: instName, Builder: b}
 		}
 		return TypeWord
 	case *ast.ArrayType:
 		// nando-GOOD
 		lenVal := b.EvalConst(e.Length)
-		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, b.astToIRType(e.Elt).Name)}
+		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, b.astToIRType(e.Elt).Name), Builder: b}
 	case *ast.PointerType:
-		return Type{Expr: expr, Name: "*" + b.astToIRType(e.Elt).Name}
+		return Type{Expr: expr, Name: "*" + b.astToIRType(e.Elt).Name, Builder: b}
 	case *ast.StructType:
 		name := "struct{"
 		for _, f := range e.Fields {
 			name += b.astToIRType(f.Type).Name + ";"
 		}
 		name += "}"
-		return Type{Expr: expr, Name: name}
+		return Type{Expr: expr, Name: name, Builder: b}
 
 	case *ast.CompositeLit:
 		return b.astToIRType(e.Type)
 	case *ast.FuncType:
-		return Type{Expr: expr, Name: b.SyntheticFuncName(e)}
+		return Type{Expr: expr, Name: b.SyntheticFuncName(e), Builder: b}
 	}
 	log.Panicf("astToIRType NO CASE: %#v", expr)
 	panic(0)
@@ -284,9 +284,9 @@ func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
 	gStr := b.addStringConstant(typeChar)
 	typeStrAddr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Global: gStr}, expr)
 
-	anyTyp := Type{Name: "prelude.any"}
+	anyTyp := Type{Name: "prelude.any", Builder: b}
 	if _, ok := b.Program.TypeDefs["prelude.any"]; !ok {
-		anyTyp = Type{Name: "any"}
+		anyTyp = Type{Name: "any", Builder: b}
 	}
 
 	structVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: anyTyp}}, expr)
@@ -1713,9 +1713,9 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 	case *ast.StringLiteral:
 		g := b.addStringConstant(e.Value)
 
-		typ := Type{Name: "prelude.slice_byte"}
+		typ := Type{Name: "prelude.slice_byte", Builder: b}
 		if _, ok := b.Program.TypeDefs["prelude.slice_byte"]; !ok {
-			typ = Type{Name: "slice_byte"}
+			typ = Type{Name: "slice_byte", Builder: b}
 		}
 
 		var structVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
@@ -1941,7 +1941,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 		if isSliceSugar {
 			eltTypeName := strings.TrimPrefix(typ.Name, "prelude.slice_")
-			eltTyp := Type{Name: eltTypeName}
+			eltTyp := Type{Name: eltTypeName, Builder: b}
 			eltSize := b.getTypeSize(eltTyp)
 
 			sliceVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
@@ -1961,7 +1961,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: capVal}, e)
 			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
 
-			arrTyp := Type{Name: "[" + strconv.Itoa(len(e.Elements)) + "]" + eltTypeName}
+			arrTyp := Type{Name: "[" + strconv.Itoa(len(e.Elements)) + "]" + eltTypeName, Builder: b}
 			arrPtrTyp := arrTyp.PointerTo()
 			arrPtrVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: arrPtrTyp}, Op: "word_to_ptr", Operand: baseWordVal}, e)
 
@@ -2085,7 +2085,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 						}
 						for i, param := range funcStmt.Parameters {
 							if i < len(args) {
-								extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
+								b.extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
 							}
 						}
 
@@ -2223,13 +2223,13 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				qname := b.currentPackage + "." + ident.Value
 				if _, ok := b.typeDefsAST[qname]; ok {
 					arg := b.buildExpr(e.Arguments[0])
-					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Name: qname}}, Op: "bitcast", Operand: arg}, expr)
-					return ExprResult{IsLValue: false, Value: val, Typ: Type{Name: qname}}
+					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Name: qname, Builder: b}}, Op: "bitcast", Operand: arg}, expr)
+					return ExprResult{IsLValue: false, Value: val, Typ: Type{Name: qname, Builder: b}}
 				}
 				if _, ok := b.typeDefsAST["prelude."+ident.Value]; ok {
 					arg := b.buildExpr(e.Arguments[0])
-					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Name: "prelude." + ident.Value}}, Op: "bitcast", Operand: arg}, expr)
-					return ExprResult{IsLValue: false, Value: val, Typ: Type{Name: "prelude." + ident.Value}}
+					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Name: "prelude." + ident.Value, Builder: b}}, Op: "bitcast", Operand: arg}, expr)
+					return ExprResult{IsLValue: false, Value: val, Typ: Type{Name: "prelude." + ident.Value, Builder: b}}
 				}
 				// It's not a typedef, treat as an indirect call from a variable holding a function!
 				funcVal := b.buildExpr(e.Function)
@@ -2324,13 +2324,13 @@ func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.N
 		panic("Variadic parameter type must be a slice, got: " + varTyp.Name)
 	}
 
-	eltTyp := Type{Name: eltTypName}
+	eltTyp := Type{Name: eltTypName, Builder: b}
 	numVarArgs := len(rawArgs) - varIdx
 	if numVarArgs < 0 {
 		numVarArgs = 0
 	}
 
-	arrTyp := Type{Name: fmt.Sprintf("[%d]%s", numVarArgs, eltTyp.Name)}
+	arrTyp := Type{Name: fmt.Sprintf("[%d]%s", numVarArgs, eltTyp.Name), Builder: b}
 	var arrVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: arrTyp}}, tokenNode)
 
 	for i := 0; i < numVarArgs; i++ {
@@ -2643,7 +2643,7 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 	b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: res.Address, Val: val}, lhs)
 }
 
-func extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[string]Type, typeParams []string) {
+func (b *Builder) extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[string]Type, typeParams []string) {
 	if ident, ok := paramType.(*ast.Identifier); ok {
 		for _, tp := range typeParams {
 			if tp == ident.Value {
@@ -2653,11 +2653,11 @@ func extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[stri
 		}
 	} else if prefix, ok := paramType.(*ast.PrefixExpression); ok && prefix.Operator == "*" {
 		if argTyp.IsAPointer() {
-			extractTypeParamsIR(prefix.Right, argTyp.PointedType(), typeMap, typeParams)
+			b.extractTypeParamsIR(prefix.Right, argTyp.PointedType(), typeMap, typeParams)
 		}
 	} else if ptr, ok := paramType.(*ast.PointerType); ok {
 		if argTyp.IsAPointer() {
-			extractTypeParamsIR(ptr.Elt, argTyp.PointedType(), typeMap, typeParams)
+			b.extractTypeParamsIR(ptr.Elt, argTyp.PointedType(), typeMap, typeParams)
 		}
 	} else if idx, ok := paramType.(*ast.IndexExpression); ok {
 		// nando-BAD.  Spliting on _ cannot work.
@@ -2665,7 +2665,7 @@ func extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[stri
 		numIdx := len(idx.Indices)
 		if len(parts) >= numIdx {
 			for i, innerIdx := range idx.Indices {
-				extractTypeParamsIR(innerIdx, Type{Name: parts[len(parts)-numIdx+i]}, typeMap, typeParams)
+				b.extractTypeParamsIR(innerIdx, Type{Name: parts[len(parts)-numIdx+i], Builder: b}, typeMap, typeParams)
 			}
 		}
 	}
@@ -2751,9 +2751,9 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 				typ = TypeWord
 			} else if _, ok := s.Value.(*ast.StringLiteral); ok {
 				if _, ok := b.Program.TypeDefs["prelude.slice_byte"]; ok {
-					typ = Type{Name: "prelude.slice_byte"}
+					typ = Type{Name: "prelude.slice_byte", Builder: b}
 				} else {
-					typ = Type{Name: "slice_byte"}
+					typ = Type{Name: "slice_byte", Builder: b}
 				}
 			} else {
 				panic("Cannot infer type for global variable: " + item.QName)
@@ -2794,7 +2794,7 @@ func (b *Builder) addStringConstant(val string) *Global {
 	valWithNull := val + "\x00"
 	g := &Global{
 		Name:       name,
-		Typ:        Type{Name: fmt.Sprintf("[%d]byte", len(valWithNull))},
+		Typ:        Type{Name: fmt.Sprintf("[%d]byte", len(valWithNull)), Builder: b},
 		InitString: valWithNull,
 		IsInit:     true,
 	}
@@ -2829,7 +2829,7 @@ func (b *Builder) getFuncReturnType(returnTypes []ast.Expression) Type {
 			name += b.astToIRType(rt).Name + ";"
 		}
 		name += "}"
-		return Type{Expr: structTyp, Name: name}
+		return Type{Expr: structTyp, Name: name, Builder: b}
 	} else {
 		return TypeVoid
 	}

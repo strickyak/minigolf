@@ -10,8 +10,9 @@ import (
 
 // Type represents a primitive or composite type in the IR.
 type Type struct {
-	Expr ast.Expression
-	Name string
+	Expr    ast.Expression
+	Name    string
+	Builder *Builder
 }
 
 func (t Type) TypeName() string {
@@ -79,6 +80,25 @@ func (t Type) IsAStruct() bool {
 		return true
 	}
 	return strings.HasPrefix(t.Name, "struct{") || strings.HasPrefix(t.Name, "tuple_")
+}
+
+type NameAndType struct {
+	Name       string
+	Type       Type
+	FieldIndex int
+}
+
+func (t Type) FieldsOfStruct() (result []NameAndType) {
+	if st, ok := t.Expr.(*ast.StructType); ok {
+		for i, field := range st.Fields {
+			result = append(result, NameAndType{
+				Name:       field.Name.ShortName,
+				Type:       t.Builder.astToIRType(field.Type),
+				FieldIndex: i,
+			})
+		}
+	}
+	return
 }
 
 // Value is an interface for anything that can be an operand.

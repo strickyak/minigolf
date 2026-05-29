@@ -21,7 +21,7 @@ func align(sz int) int {
 	return sz
 }
 
-// func (b *Backend) getTypeSize(typ string, tob *ir.Type) int 
+// func (b *Backend) getTypeSize(typ string, tob *ir.Type) int
 func (b *Backend) getTypeSize(typ string) int {
 	switch typ {
 	case "void":
@@ -33,9 +33,9 @@ func (b *Backend) getTypeSize(typ string) int {
 	case "int":
 		return 2
 	case "uint":
-        panic("uint should have been word")
+		panic("uint should have been word")
 	case "bool":
-        panic("bool should have been byte")
+		panic("bool should have been byte")
 	case "const_integer":
 		return 2
 	default:
