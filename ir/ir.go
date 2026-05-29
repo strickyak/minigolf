@@ -3,8 +3,6 @@ package ir
 import (
 	"bytes"
 	"fmt"
-	"log"
-	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
@@ -81,59 +79,6 @@ func (t Type) IsAStruct() bool {
 		return true
 	}
 	return strings.HasPrefix(t.Name, "struct{") || strings.HasPrefix(t.Name, "tuple_")
-}
-
-func GetTypeSize(typ Type) int {
-	if typ.Name == "byte" {
-		return 1
-	}
-	if typ.Name == "word" || typ.Name == "int" || typ.Name == "uint" || typ.Name == "const_integer" {
-		return 2
-	}
-	if typ.IsAnArray() {
-		str := typ.Name
-		idx := strings.Index(str, "]")
-		if idx != -1 {
-			length, _ := strconv.Atoi(str[1:idx])
-			eltSize := GetTypeSize(typ.ArrayElementType())
-			return length * eltSize
-		}
-	}
-	if typ.IsAStruct() {
-		content := typ.Name[7 : len(typ.Name)-1]
-		size := 0
-		depth := 0
-		start := 0
-		for i := 0; i < len(content); i++ {
-			if content[i] == '{' {
-				depth++
-			} else if content[i] == '}' {
-				depth--
-			} else if content[i] == ';' && depth == 0 {
-				fTyp := content[start:i]
-				size += GetTypeSize(Type{Name: fTyp})
-				start = i + 1
-			}
-		}
-		return size
-	}
-	if typ.IsAPointer() {
-		return 2
-	}
-	// Default to trying as a string if no match
-	if typ.Name == "byte" {
-		return 1
-	}
-	log.Panicf("GetTypeSize: unknown type: %q", typ)
-	panic(0)
-}
-
-func GetEltSize(arrType Type) int {
-	if arrType.IsAnArray() {
-		return GetTypeSize(arrType.ArrayElementType())
-	}
-	log.Panicf("GetEltSize: not an array: %q", arrType)
-	panic(0)
 }
 
 // Value is an interface for anything that can be an operand.
