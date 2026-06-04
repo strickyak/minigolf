@@ -3,8 +3,7 @@ package prelude
 const Source = `
 package prelude
 
-const HEAP_SIZE = 10000 + sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * sizeof[*word]() * 512  // 26K on M6809, 16M on Intel
-
+const HEAP_SIZE = 10000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*512 // 26K on M6809, 16M on Intel
 
 func peek[T any](addr word) T {
 	return *((*T)(addr))
@@ -14,25 +13,36 @@ func poke[T any](addr word, value T) {
 	*((*T)(addr)) = value
 }
 
-func peekb(addr word) byte { return peek[byte](addr) }
-func peekw(addr word) word { return peek[word](addr) }
+func peekb(addr word) byte        { return *((*byte)(addr)) }
+func peekw(addr word) word        { return *((*word)(addr)) }
+func pokeb(addr word, value byte) { *((*byte)(addr)) = value }
+func pokew(addr word, value word) { *((*byte)(word)) = value }
 
-func pokeb(addr word, value byte) { poke[byte](addr, value) }
-func pokew(addr word, value word) { poke[word](addr, value) }
+// golf:volatile
+func vpeekb(addr word) byte { return *((*byte)(addr)) }
+
+// golf:volatile
+func vpeekw(addr word) word { return *((*word)(addr)) }
+
+// golf:volatile
+func vpokeb(addr word, value byte) { *((*byte)(addr)) = value }
+
+// golf:volatile
+func vpokew(addr word, value word) { *((*byte)(word)) = value }
 
 /////////////////////////////////////////////
 
 func clear[T any](p *T) {
-    addr := word(p)
-    for i := range sizeof[T]() {
-        pokeb(addr + i, 0)
-    }
+	addr := word(p)
+	for i := range sizeof[T]() {
+		pokeb(addr+i, 0)
+	}
 }
 func memset(p *byte, x byte, n word) {
-    addr := word(p)
-    for i := range n {
-        pokeb(i + addr, x)
-    }
+	addr := word(p)
+	for i := range n {
+		pokeb(i+addr, x)
+	}
 }
 
 func memcmp(a *byte, b *byte, n word) int {
@@ -116,35 +126,35 @@ type slice[T any] struct {
 }
 
 func (o *slice[T]) Append(x T) {
-    if o.Base == 0 {
-        o.Base = word(zalloc(8 * sizeof[T]()))
-        o.Cap = 8
-        o.Len = 1
-        o.Put(0, x)
-        return
-    }
-    n := o.Len
-    if n+1 < o.Cap {
-        o.Len++
-        o.Put(n, x)
-        return
-    }
+	if o.Base == 0 {
+		o.Base = word(zalloc(8 * sizeof[T]()))
+		o.Cap = 8
+		o.Len = 1
+		o.Put(0, x)
+		return
+	}
+	n := o.Len
+	if n+1 < o.Cap {
+		o.Len++
+		o.Put(n, x)
+		return
+	}
 
-    // Must re-alloc
-    var z slice[T]
-    z.Cap = o.Cap + o.Cap
-    if z.Cap < 8 {
-        z.Cap = 8
-    }
-    z.Base = word(zalloc(z.Cap * sizeof[T]()))
-    z.Len = n+1
+	// Must re-alloc
+	var z slice[T]
+	z.Cap = o.Cap + o.Cap
+	if z.Cap < 8 {
+		z.Cap = 8
+	}
+	z.Base = word(zalloc(z.Cap * sizeof[T]()))
+	z.Len = n + 1
 
-    for i := range n {
-        z.Put(i, o.Get(i))
-    }
-    z.Put(n, x)
-    free((*byte)(o.Base))
-    *o = z
+	for i := range n {
+		z.Put(i, o.Get(i))
+	}
+	z.Put(n, x)
+	free((*byte)(o.Base))
+	*o = z
 }
 
 func (o *slice[T]) Address(i word) word {
@@ -187,18 +197,18 @@ func (o *slice[T]) Chop(start word, limit word) slice[T] {
 
 // makeslice[T](n) is like make([]T, n) in golang.
 func makeslice[T any](n word) slice[T] {
-    var z slice[T]
-    if n == 0 {
-        return z
-    }
-    z.Base := zalloc( n * sizeof[T]() )
-    z.Len = n
-    z.Cap = n
-    return z
+	var z slice[T]
+	if n == 0 {
+		return z
+	}
+	z.Base := zalloc(n * sizeof[T]())
+	z.Len = n
+	z.Cap = n
+	return z
 }
 
 // freeslice frees a malloced slice's contents, if it was made by Appending a zero slice, or by makeslice.
-func freeslice[T](a slice[T]) {
+func freeslice[T any](a slice[T]) {
 	p := (*byte)(a.Base)
 	free(p)
 }
@@ -215,55 +225,55 @@ func panic(w word) {
 func mul_byte(a byte, b byte) word
 
 func mul_word(a word, b word) word {
-    a_H := byte(a >> 8)
-    a_L := byte(a)
-    b_H := byte(b >> 8)
-    b_L := byte(b)
-    
-    cross1 := mul_byte(a_H, b_L)
-    cross2 := mul_byte(a_L, b_H)
-    crossSum := cross1 + cross2
-    crossSumShifted := crossSum << 8
-    
-    low := mul_byte(a_L, b_L)
-    
-    return crossSumShifted + low
+	a_H := byte(a >> 8)
+	a_L := byte(a)
+	b_H := byte(b >> 8)
+	b_L := byte(b)
+
+	cross1 := mul_byte(a_H, b_L)
+	cross2 := mul_byte(a_L, b_H)
+	crossSum := cross1 + cross2
+	crossSumShifted := crossSum << 8
+
+	low := mul_byte(a_L, b_L)
+
+	return crossSumShifted + low
 }
 
 func div_word(a0 word, b word) word {
-    if b == 0 {
-        panic(1002)
-    }
-    var q word
-    var r word
-    for i := range 64 {
-        bit_idx := word(63) - i
-        r = r << 1
-        bit := (a0 >> bit_idx) & 1
-        r = r | bit
-        if r >= b {
-            r = r - b
-            q = q | (1 << bit_idx)
-        }
-    }
-    return q
+	if b == 0 {
+		panic(1002)
+	}
+	var q word
+	var r word
+	for i := range 64 {
+		bit_idx := word(63) - i
+		r = r << 1
+		bit := (a0 >> bit_idx) & 1
+		r = r | bit
+		if r >= b {
+			r = r - b
+			q = q | (1 << bit_idx)
+		}
+	}
+	return q
 }
 
 func mod_word(a0 word, b word) word {
-    if b == 0 {
-        panic(1004)
-    }
-    var r word
-    for i := range 64 {
-        bit_idx := word(63) - i
-        r = r << 1
-        bit := (a0 >> bit_idx) & 1
-        r = r | bit
-        if r >= b {
-            r = r - b
-        }
-    }
-    return r
+	if b == 0 {
+		panic(1004)
+	}
+	var r word
+	for i := range 64 {
+		bit_idx := word(63) - i
+		r = r << 1
+		bit := (a0 >> bit_idx) & 1
+		r = r | bit
+		if r >= b {
+			r = r - b
+		}
+	}
+	return r
 }
 
 /////////////////////////////////////////////
@@ -320,11 +330,11 @@ const TOO_BIG = 4000 // Assume an error, if malloc more than this big.
 
 // zalloc allocates zeroed memory using alloc
 func zalloc(nbytes word) *byte {
-    p := word(malloc(nbytes))
-    for i := range nbytes {
-        pokeb(p+i, 0)
-    }
-    return (*byte)(p)
+	p := word(malloc(nbytes))
+	for i := range nbytes {
+		pokeb(p+i, 0)
+	}
+	return (*byte)(p)
 }
 func malloc(nbytes word) *byte {
 	var p *MallocHeader
@@ -416,7 +426,7 @@ func free(ap *byte) {
 	}
 
 	// Coalesce (merge) with the next block if they are physically adjacent
-	if word(bp)+(bp.size * sizeof[MallocHeader]()) == word(p.next) {
+	if word(bp)+(bp.size*sizeof[MallocHeader]()) == word(p.next) {
 		bp.size = bp.size + p.next.size
 		bp.next = p.next.next
 	} else {
@@ -424,7 +434,7 @@ func free(ap *byte) {
 	}
 
 	// Coalesce (merge) with the previous block if they are physically adjacent
-	if word(p)+(p.size * sizeof[MallocHeader]()) == word(bp) {
+	if word(p)+(p.size*sizeof[MallocHeader]()) == word(bp) {
 		p.size = p.size + bp.size
 		p.next = bp.next
 	} else {
@@ -435,7 +445,7 @@ func free(ap *byte) {
 }
 
 func init() {
-    //println("# HEAP_SIZE =", HEAP_SIZE)
+	//println("# HEAP_SIZE =", HEAP_SIZE)
 	malloc_init(&Heap[0], HEAP_SIZE)
 }
 
