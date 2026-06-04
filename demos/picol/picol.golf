@@ -78,8 +78,8 @@ func atow(s string) (word, Status) {
 		if c >= '0' && c <= '9' {
 			sum = sum*10 + word(c-'0')
 		} else {
-            return 0, ERROR
-        }
+			return 0, ERROR
+		}
 	}
 	return sum, OKAY
 }
@@ -88,11 +88,21 @@ type DyOp = func(word, word) (word, Status)
 
 var DyOps smap.Smap[DyOp]
 
-func Add(a word, b word) (word, Status) { return a+b, OKAY }
-func Sub(a word, b word) (word, Status) { return a-b, OKAY }
-func Mul(a word, b word) (word, Status) { return a*b, OKAY }
-func Div(a word, b word) (word, Status) { if b==0 { return 0, ERROR } ; return a/b, OKAY }
-func Mod(a word, b word) (word, Status) { if b==0 { return 0, ERROR } ; return a%b, OKAY }
+func Add(a word, b word) (word, Status) { return a + b, OKAY }
+func Sub(a word, b word) (word, Status) { return a - b, OKAY }
+func Mul(a word, b word) (word, Status) { return a * b, OKAY }
+func Div(a word, b word) (word, Status) {
+	if b == 0 {
+		return 0, ERROR
+	}
+	return a / b, OKAY
+}
+func Mod(a word, b word) (word, Status) {
+	if b == 0 {
+		return 0, ERROR
+	}
+	return a % b, OKAY
+}
 func EQ(a word, b word) (word, Status) { return a == b, OKAY }
 func NE(a word, b word) (word, Status) { return a != b, OKAY }
 func LT(a word, b word) (word, Status) { return a < b, OKAY }
@@ -101,24 +111,28 @@ func LE(a word, b word) (word, Status) { return a <= b, OKAY }
 func GE(a word, b word) (word, Status) { return a >= b, OKAY }
 
 func DyadicArith(cmd string, args slice[string]) (string, Status) {
-    if args.Len != 2 {
-        return strdup("DyadicArith expected 2 args"), ERROR
-    }
+	if args.Len != 2 {
+		return strdup("DyadicArith expected 2 args"), ERROR
+	}
 	a, a_status := atow(args[0])
-    if a_status != OKAY { return strdup("DyadicArith: first arg not a number"), ERROR }
+	if a_status != OKAY {
+		return strdup("DyadicArith: first arg not a number"), ERROR
+	}
 	b, b_status := atow(args[1])
-    if b_status != OKAY { return strdup("DyadicArith: second arg not a number"), ERROR }
+	if b_status != OKAY {
+		return strdup("DyadicArith: second arg not a number"), ERROR
+	}
 
-    f, ok := DyOps.Lookup(cmd)
-    if !ok {
-        return strdup("DyOp not found"), ERROR
-    }
-	c, status := f(a,b)
-    if status != OKAY {
-        return strdup("arithmetic error"), status
-    }
+	f, ok := DyOps.Lookup(cmd)
+	if !ok {
+		return strdup("DyOp not found"), ERROR
+	}
+	c, status := f(a, b)
+	if status != OKAY {
+		return strdup("arithmetic error"), status
+	}
 
-    var result slice[byte]
+	var result slice[byte]
 	result = wtoa(result, c)
 	return strdup(result), OKAY
 }
@@ -198,7 +212,7 @@ func SetCommand(cmd string, args slice[string]) (string, Status) {
 	} else if args.Len == 2 {
 		varname := args.Get(0)
 		value := args.Get(1)
-		// We use strdup because we want to return a fresh copy, and potentially the variables map takes ownership or shares. 
+		// We use strdup because we want to return a fresh copy, and potentially the variables map takes ownership or shares.
 		Current.Vars.Insert(strdup(varname), strdup(value))
 		return strdup(value), OKAY
 	} else {
@@ -684,7 +698,7 @@ func run2() {
 	set_script1 := "set x 1"
 	set_res1, set_stat1 := EvalCommand(set_script1)
 	println("set x 1:", set_res1, set_stat1)
-	
+
 	set_script2 := "set x"
 	set_res2, set_stat2 := EvalCommand(set_script2)
 	println("set x:", set_res2, set_stat2)

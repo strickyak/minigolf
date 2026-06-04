@@ -1,14 +1,17 @@
 set -ex
 
-case "$1" in 
+P=$1
+shift
+
+case "$P" in 
     *.golf )
-        go run main.go -m M6809 -o _tmp/main.asm  -I golflib  "$1" >&2
+        go run main.go -m M6809 -o _tmp/main.asm  -I golflib "$@" "$P" >&2
         ;;
     *.s | *.asm )
-        cp -fv "$1" _tmp/main.asm >&2
+        cp -fv "$P" _tmp/main.asm >&2
         ;;
     * )
-        echo "BAD EXTENSION: Expected .golf or .s or .asm: '$1'" >&2
+        echo "BAD EXTENSION: Expected .golf or .s or .asm: '$P'" >&2
         exit 13
         ;;
 esac

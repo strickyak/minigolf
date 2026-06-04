@@ -15,6 +15,7 @@ import (
 	"github.com/strickyak/minigolf/ir"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6809"
+	"github.com/strickyak/minigolf/opt"
 	"github.com/strickyak/minigolf/parser"
 	"github.com/strickyak/minigolf/prelude"
 	"github.com/strickyak/minigolf/semantic"
@@ -202,6 +203,11 @@ func main() {
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
 	picFlag := flag.Bool("pic", false, "Generate position-independent code (PIC) using relative branches and localized PCR data segments")
 
+	noConstfold := flag.Bool("no-constfold", false, "Disable Constant Folding optimization")
+	noDbe := flag.Bool("no-dbe", false, "Disable Dead Branch Elimination optimization")
+	noDce := flag.Bool("no-dce", false, "Disable Dead Code Elimination optimization")
+	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
+
 	var importDirPath repeatedFlag
 	flag.Var(&importDirPath, "I", "directory to be searched for imports")
 
@@ -302,6 +308,14 @@ func main() {
 	if *archFlag == "IR" {
 		builder := ir.NewBuilder(resolveCallback, 8)
 		irProg := builder.Build(program)
+
+		optConfig := opt.Config{
+			EnableConstFold: !*noConstfold,
+			EnableDBE:       !*noDbe,
+			EnableDCE:       !*noDce,
+			EnablePhiSimp:   !*noPhisimp,
+		}
+		opt.OptimizeProgram(irProg, optConfig)
 		irCode := ir.PrintProgram(irProg)
 
 		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
@@ -320,6 +334,14 @@ func main() {
 	if *archFlag == "CBE" {
 		builder := ir.NewBuilder(resolveCallback, 8)
 		irProg := builder.Build(program)
+
+		optConfig := opt.Config{
+			EnableConstFold: !*noConstfold,
+			EnableDBE:       !*noDbe,
+			EnableDCE:       !*noDce,
+			EnablePhiSimp:   !*noPhisimp,
+		}
+		opt.OptimizeProgram(irProg, optConfig)
 
 		backend := cbe.New()
 		cCode := backend.Generate(irProg)
@@ -341,6 +363,14 @@ func main() {
 		builder := ir.NewBuilder(resolveCallback, 8)
 		irProg := builder.Build(program)
 
+		optConfig := opt.Config{
+			EnableConstFold: !*noConstfold,
+			EnableDBE:       !*noDbe,
+			EnableDCE:       !*noDce,
+			EnablePhiSimp:   !*noPhisimp,
+		}
+		opt.OptimizeProgram(irProg, optConfig)
+
 		backend := x86_64.New()
 		asmCode := backend.Generate(irProg)
 
@@ -360,6 +390,14 @@ func main() {
 	if *archFlag == "6809" || *archFlag == "M6809" || *archFlag == "M" {
 		builder := ir.NewBuilder(resolveCallback, 2)
 		irProg := builder.Build(program)
+
+		optConfig := opt.Config{
+			EnableConstFold: !*noConstfold,
+			EnableDBE:       !*noDbe,
+			EnableDCE:       !*noDce,
+			EnablePhiSimp:   !*noPhisimp,
+		}
+		opt.OptimizeProgram(irProg, optConfig)
 
 		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)
 		asmCode := backend.Generate(irProg)
