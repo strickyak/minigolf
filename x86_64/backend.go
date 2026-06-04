@@ -21,7 +21,7 @@ func (b *Backend) getTypeAlignment(typ string) int {
 	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" {
 		return 8
 	}
-	if (ir.Type{Name: typ}).IsAnArray() {
+	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
 			return b.getTypeAlignment(typ[idx+1:])
@@ -32,7 +32,7 @@ func (b *Backend) getTypeAlignment(typ string) int {
 			typ = def.Name
 		}
 	}
-	if (ir.Type{Name: typ}).IsAStruct() {
+	if strings.HasPrefix(typ, "struct{") || strings.HasPrefix(typ, "tuple_") {
 		content := typ[7 : len(typ)-1]
 		maxAlign := 1
 		depth := 0
@@ -62,7 +62,7 @@ func (b *Backend) getTypeSize(typ string) int {
 	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" {
 		return 8
 	}
-	if (ir.Type{Name: typ}).IsAnArray() {
+	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx != -1 {
 			length, _ := strconv.Atoi(typ[1:idx])
@@ -75,7 +75,7 @@ func (b *Backend) getTypeSize(typ string) int {
 			typ = def.Name
 		}
 	}
-	if (ir.Type{Name: typ}).IsAStruct() {
+	if strings.HasPrefix(typ, "struct{") || strings.HasPrefix(typ, "tuple_") {
 		content := typ[7 : len(typ)-1]
 		size := 0
 		maxAlign := 1
@@ -121,7 +121,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 	content := ""
 	if def, ok := b.program.TypeDefs[structName]; ok {
 		content = def.Name[7 : len(def.Name)-1]
-	} else if (ir.Type{Name: structName}).IsAStruct() {
+	} else if strings.HasPrefix(structName, "struct{") || strings.HasPrefix(structName, "tuple_") {
 		content = structName[7 : len(structName)-1]
 	} else {
 		return 0, 8
@@ -606,7 +606,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.StorePtr:
 		ptrType := i.Ptr.Type().Name
 		pointeeType := "word"
-		if (ir.Type{Name: ptrType}).IsAPointer() {
+		if strings.HasPrefix(ptrType, "*") {
 			pointeeType = ptrType[1:]
 		}
 		b.loadVal(i.Ptr, "rcx")

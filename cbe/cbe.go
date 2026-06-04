@@ -37,16 +37,16 @@ func (c *CBE) mapType(typ string) string {
 	if typ == "uint" {
 		return "uint16_t"
 	}
-	if (ir.Type{Name: typ}).IsAPointer() {
-		return c.mapType((ir.Type{Name: typ}).PointedType().Name) + "*"
+	if strings.HasPrefix(typ, "*") {
+		return c.mapType(typ[1:]) + "*"
 	}
-	if (ir.Type{Name: typ}).IsAnArray() {
+	if strings.HasPrefix(typ, "[") {
 		idx := strings.Index(typ, "]")
 		if idx == -1 {
 			return "word"
 		}
 		lenStr := typ[1:idx]
-		eltType := (ir.Type{Name: typ}).ArrayElementType().Name
+		eltType := typ[idx+1:]
 
 		eltName := c.mapType(eltType)
 		typeName := fmt.Sprintf("t_arr_%s_%s", lenStr, ir.MangleName(eltType))
@@ -57,7 +57,7 @@ func (c *CBE) mapType(typ string) string {
 		}
 		return "struct " + typeName
 	}
-	if (ir.Type{Name: typ}).IsAStruct() {
+	if strings.HasPrefix(typ, "struct{") || strings.HasPrefix(typ, "tuple_") {
 		content := typ[7 : len(typ)-1]
 		typeName := "t_tuple_" + ir.MangleName(content)
 
@@ -474,7 +474,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			if idx < len(i.Func.Parameters) {
 				expectedTyp := i.Func.Parameters[idx].Typ.Name
 				argTyp := arg.Type().Name
-				if (ir.Type{Name: expectedTyp}).IsAPointer() && !(ir.Type{Name: argTyp}).IsAPointer() {
+				if strings.HasPrefix(expectedTyp, "*") && !strings.HasPrefix(argTyp, "*") {
 					argStr = fmt.Sprintf("(%s)(%s)", c.mapType(expectedTyp), argStr)
 				}
 			}

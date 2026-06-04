@@ -74,7 +74,7 @@ func (t Type) IsAnArray() bool {
 	}
 	z := strings.HasPrefix(t.Name, "[")
 	if z {
-		//log.Panicf("ARRAY? %#v %q", t.Expr, t.Name)
+		log.Panicf("TIZ ARRAY? %#v %q", t.Expr, t.Name)
 	}
 	return z
 }
@@ -100,7 +100,7 @@ func (t Type) IsAStruct() bool {
 	}
 	z := strings.HasPrefix(t.Name, "struct{") || strings.HasPrefix(t.Name, "tuple_")
 	if z {
-		// log.Panicf("STRUCT? %#v %q", t.Expr, t.Name)
+		log.Panicf("TIZ STRUCT? %#v %q", t.Expr, t.Name)
 	}
 	return z
 }
