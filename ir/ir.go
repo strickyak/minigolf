@@ -3,10 +3,13 @@ package ir
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
 )
+
+var _ = log.Panicf
 
 // Type represents a primitive or composite type in the IR.
 type Type struct {
@@ -28,11 +31,11 @@ func (t Type) Equals(other Type) bool {
 }
 
 var (
-	TypeUnknown      = Type{Name: ""}
-	TypeByte         = Type{Name: "byte", Expr: &ast.Identifier{Value: "byte"}}
-	TypeWord         = Type{Name: "word", Expr: &ast.Identifier{Value: "word"}}
-	TypeInt          = Type{Name: "int", Expr: &ast.Identifier{Value: "int"}}
-	TypeUint         = Type{Name: "uint", Expr: &ast.Identifier{Value: "uint"}}
+	TypeUnknown = Type{Name: "", Expr: nil}
+	TypeByte    = Type{Name: "byte", Expr: &ast.Identifier{Value: "byte"}}
+	TypeWord    = Type{Name: "word", Expr: &ast.Identifier{Value: "word"}}
+	TypeInt     = Type{Name: "int", Expr: &ast.Identifier{Value: "int"}}
+	// TypeUint         = Type{Name: "uint", Expr: &ast.Identifier{Value: "uint"}}
 	TypeConstInteger = Type{Name: "const_integer", Expr: &ast.Identifier{Value: "const_integer"}}
 	TypeVoid         = Type{Name: "void", Expr: &ast.Identifier{Value: "void"}}
 )
@@ -48,7 +51,12 @@ func (t Type) PointedType() Type {
 	if !t.IsAPointer() {
 		panic("PointedType called on non-pointer type: " + t.Name)
 	}
-	return Type{Name: t.Name[1:]}
+	var typeExpr ast.Expression
+	switch x := t.Expr.(type) {
+	case *ast.PointerType:
+		typeExpr = x.Elt
+	}
+	return Type{Name: t.Name[1:], Expr: typeExpr, Builder: t.Builder}
 }
 
 func (t Type) PointerTo() Type {
@@ -56,7 +64,7 @@ func (t Type) PointerTo() Type {
 		Expr: &ast.PointerType{
 			Elt: t.Expr,
 		},
-		Name: "*" + t.Name,
+		Name: "*" + t.Name, Builder: t.Builder,
 	}
 }
 
@@ -64,22 +72,37 @@ func (t Type) IsAnArray() bool {
 	if _, ok := t.Expr.(*ast.ArrayType); ok {
 		return true
 	}
-	return strings.HasPrefix(t.Name, "[")
+	z := strings.HasPrefix(t.Name, "[")
+	if z {
+		//log.Panicf("ARRAY? %#v %q", t.Expr, t.Name)
+	}
+	return z
 }
 
 func (t Type) ArrayElementType() Type {
 	if !t.IsAnArray() {
 		panic("ArrayElementType called on non-array type: " + t.Name)
 	}
+
+	var typeExpr ast.Expression
+	switch x := t.Expr.(type) {
+	case *ast.ArrayType:
+		typeExpr = x.Elt
+	}
+
 	idx := strings.Index(t.Name, "]")
-	return Type{Name: t.Name[idx+1:]}
+	return Type{Name: t.Name[idx+1:], Expr: typeExpr, Builder: t.Builder}
 }
 
 func (t Type) IsAStruct() bool {
 	if _, ok := t.Expr.(*ast.StructType); ok {
 		return true
 	}
-	return strings.HasPrefix(t.Name, "struct{") || strings.HasPrefix(t.Name, "tuple_")
+	z := strings.HasPrefix(t.Name, "struct{") || strings.HasPrefix(t.Name, "tuple_")
+	if z {
+		// log.Panicf("STRUCT? %#v %q", t.Expr, t.Name)
+	}
+	return z
 }
 
 type NameAndType struct {

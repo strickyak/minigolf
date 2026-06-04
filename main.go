@@ -230,7 +230,6 @@ func main() {
 	}
 	mainSourceFile := sourceFiles[0]
 
-	var logger *log.Logger
 	if *outFlag != "" {
 		logFilename := *outFlag + ".log"
 		logFile, err := os.Create(logFilename)
@@ -239,19 +238,19 @@ func main() {
 			os.Exit(1)
 		}
 		defer logFile.Close()
-		logger = log.New(logFile, "minigolf: ", log.Lshortfile)
-	} else {
-		logger = log.New(os.Stderr, "minigolf: ", log.Lshortfile)
+		log.SetOutput(logFile)
 	}
+	log.SetFlags(log.Lshortfile)
+	log.SetPrefix("#G ")
 
-	logger.Printf("Starting whole-program compilation")
-	logger.Printf("Target architecture: %s", *archFlag)
-	logger.Printf("FramePointer: %v", *framePointerFlag)
-	logger.Printf("Globals-at-Y: %v", *globalsAtYFlag)
-	logger.Printf("Position-Independent Code: %v", *picFlag)
-	logger.Printf("Output object file: %s", *outFlag)
-	logger.Printf("import path: %v", importDirPath)
-	logger.Printf("Source files: %v", sourceFiles)
+	log.Printf("Starting whole-program compilation")
+	log.Printf("Target architecture: %s", *archFlag)
+	log.Printf("FramePointer: %v", *framePointerFlag)
+	log.Printf("Globals-at-Y: %v", *globalsAtYFlag)
+	log.Printf("Position-Independent Code: %v", *picFlag)
+	log.Printf("Output object file: %s", *outFlag)
+	log.Printf("import path: %v", importDirPath)
+	log.Printf("Source files: %v", sourceFiles)
 
 	// =========================================================================
 	// Compilation Pipeline
@@ -272,7 +271,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error writing AST output: %v\n", err)
 			os.Exit(1)
 		}
-		logger.Printf("Successfully dumped AST to: %s", *outFlag)
+		log.Printf("Successfully dumped AST to: %s", *outFlag)
 		os.Exit(0)
 	}
 
@@ -313,7 +312,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error writing IR output: %v\n", err)
 			os.Exit(1)
 		}
-		logger.Printf("Successfully compiled to IR: %s", *outFlag)
+		log.Printf("Successfully compiled to IR: %s", *outFlag)
 		os.Exit(0)
 	}
 
@@ -333,7 +332,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error writing CBE output: %v\n", err)
 			os.Exit(1)
 		}
-		logger.Printf("Successfully compiled via CBE to: %s", *outFlag)
+		log.Printf("Successfully compiled via CBE to: %s", *outFlag)
 		os.Exit(0)
 	}
 
@@ -353,7 +352,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error writing X86_64 output: %v\n", err)
 			os.Exit(1)
 		}
-		logger.Printf("Successfully compiled via X86_64 to: %s", *outFlag)
+		log.Printf("Successfully compiled via X86_64 to: %s", *outFlag)
 		os.Exit(0)
 	}
 
@@ -373,7 +372,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error writing 6809 output: %v\n", err)
 			os.Exit(1)
 		}
-		logger.Printf("Successfully compiled via 6809 to: %s", *outFlag)
+		log.Printf("Successfully compiled via 6809 to: %s", *outFlag)
 		os.Exit(0)
 	}
 

@@ -124,10 +124,13 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 	case *ast.Identifier:
 		switch e.Value {
 		case "byte", "bool":
+			TypeByte.Builder = b
 			return TypeByte
 		case "word", "uint":
+			TypeWord.Builder = b
 			return TypeWord
 		case "int":
+			TypeInt.Builder = b
 			return TypeInt
 		case "string":
 			return b.astToIRType(&ast.IndexExpression{
@@ -135,6 +138,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 				Indices: []ast.Expression{&ast.Identifier{Value: "byte"}},
 			})
 		case "const_integer":
+			TypeConstInteger.Builder = b
 			return TypeConstInteger
 		default:
 			var qname string
@@ -921,7 +925,7 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 			}
 			return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: val}, val)
 		}
-		if targetType.Equals(TypeWord) || targetType.Equals(TypeInt) || targetType.Equals(TypeUint) {
+		if targetType.Equals(TypeWord) || targetType.Equals(TypeInt) {
 			if cw, ok := val.(*ConstWord); ok {
 				return b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: targetType}, Val: cw.Val}, val)
 			}
@@ -2458,7 +2462,7 @@ func (b *Builder) getTypeSize(typ Type) int {
 	if typ.Equals(TypeVoid) || typ.Equals(TypeByte) {
 		return 1
 	}
-	if typ.Equals(TypeWord) || typ.Equals(TypeInt) || typ.Equals(TypeUint) {
+	if typ.Equals(TypeWord) || typ.Equals(TypeInt) {
 		return b.WordSize
 	}
 	if typ.IsAPointer() {
@@ -2873,7 +2877,7 @@ func (b *Builder) zeroConstant(typ Type) Value {
 	if typ.Equals(TypeByte) {
 		return &ConstByte{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
 	}
-	if typ.Equals(TypeWord) || typ.Equals(TypeInt) || typ.Equals(TypeUint) {
+	if typ.Equals(TypeWord) || typ.Equals(TypeInt) {
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
 	}
 	if typ.IsAStruct() {
