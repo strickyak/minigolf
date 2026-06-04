@@ -28,18 +28,77 @@ func (b *Backend) getTypeSizeUsingIrt(irt *ir.Type) int {
 	return z
 }
 func (b *Backend) getTypeSizeUsingIrt9(irt *ir.Type) int {
-	// Do not use irt.Name, except to recognize primative types.
+	if irt.IsAPointer() {
+		return 2
+	}
+	if irt.IsAnArray() {
+		et := irt.ArrayElementType()
+		length := 0
+		idx := strings.Index(irt.Name, "]")
+		if idx != -1 {
+			length, _ = strconv.Atoi(irt.Name[1:idx])
+		}
+		return length * b.getTypeSizeByType(et)
+	}
+	if irt.IsAStruct() {
+		fields := irt.FieldsOfStruct()
+		if len(fields) > 0 {
+			size := 0
+			for _, f := range fields {
+				size += b.getTypeSizeByType(f.Type)
+			}
+			return size
+		}
 
-	log.Printf("GANDALF TYPE %T\n", irt.Expr)
+		// Fallback for missing fields (should not happen for full types, but maybe for tuple_...)
+		content := irt.Name[7 : len(irt.Name)-1]
+		if strings.HasPrefix(irt.Name, "tuple_") {
+			content = irt.Name[6 : len(irt.Name)-1]
+		}
+		size := 0
+		depth := 0
+		start := 0
+		for i := 0; i < len(content); i++ {
+			if content[i] == '{' {
+				depth++
+			} else if content[i] == '}' {
+				depth--
+			} else if content[i] == ';' && depth == 0 {
+				// This will panic TIZENEGY if TIZENEGY is on!
+				size += b.getTypeSize(content[start:i], nil)
+				start = i + 1
+			}
+		}
+		return size
+	}
 
-	// Fallback to irt.Name
-	return b.getTypeSize(irt.Name, nil)
-
+	switch irt.Name {
+	case "void", "byte":
+		return 1
+	case "word", "int", "const_integer", "uint":
+		return 2
+	}
+	if irt.Name == "bool" {
+		return 2
+	}
+	if strings.HasPrefix(irt.Name, "func") {
+		return 2
+	}
+	if b.program != nil {
+		if def, ok := b.program.TypeDefs[irt.Name]; ok {
+			return b.getTypeSizeByType(def)
+		}
+	}
 	log.Panicf("M6809 getTypeSizeUsingIrt: unknown case: %#v", *irt)
 	panic(0)
 }
 
 // func (b *Backend) getTypeSize(typ string) int //
+
+func (b *Backend) getTypeSizeByType(irt ir.Type) int {
+	return b.getTypeSize(irt.Name, &irt)
+}
+
 func (b *Backend) getTypeSize(typ string, irt *ir.Type) int {
 	z := b.getTypeSize9(typ, irt)
 	log.Printf("NANDO9 getTypeSize %#v %#v -> %#v", typ, irt, z)
@@ -50,68 +109,7 @@ func (b *Backend) getTypeSize9(typ string, irt *ir.Type) int {
 	if irt != nil {
 		return b.getTypeSizeUsingIrt(irt)
 	}
-    // log.Panicf("TIZENEGY getTypeSize9: %q, %#v", typ, irt)
-
-	switch typ {
-	case "void":
-		return 1
-	case "byte":
-		return 1
-	case "word":
-		return 2
-	case "int":
-		return 2
-	case "uint":
-		panic("uint should have been word")
-	case "bool":
-		panic("bool should have been byte")
-	case "const_integer":
-		return 2
-	default:
-		// fallthrough
-	}
-
-	if strings.HasPrefix(typ, "*") {
-		return 2
-	}
-	if strings.HasPrefix(typ, "[") {
-		idx := strings.Index(typ, "]")
-		if idx != -1 {
-			length, _ := strconv.Atoi(typ[1:idx])
-			eltSize := b.getTypeSize(typ[idx+1:], nil)
-			return length * eltSize
-		}
-	}
-	if b.program != nil {
-		if def, ok := b.program.TypeDefs[typ]; ok {
-			typ = def.Name
-		}
-	}
-	if typ == "byte" {
-		return 1
-	}
-	if typ == "word" || typ == "int" || typ == "bool" || strings.HasPrefix(typ, "*") || strings.HasPrefix(typ, "func") {
-		return 2
-	}
-
-	if strings.HasPrefix(typ, "struct{") || strings.HasPrefix(typ, "tuple_") {
-		content := typ[7 : len(typ)-1]
-		size := 0
-		depth := 0
-		start := 0
-		for i := 0; i < len(content); i++ {
-			if content[i] == '{' {
-				depth++
-			} else if content[i] == '}' {
-				depth--
-			} else if content[i] == ';' && depth == 0 {
-				size += b.getTypeSize(content[start:i], nil)
-				start = i + 1
-			}
-		}
-		return size
-	}
-	log.Panicf("getTypeSize: unknown type: %q", typ)
+	log.Panicf("TIZENEGY getTypeSize9: %q, %#v", typ, irt)
 	panic("NOT REACHED")
 }
 
@@ -138,20 +136,24 @@ func (b *Backend) getEltSizeUsingIrt(irt ir.Type) int {
 	panic("NOT REACHED")
 }
 
-/*
-func (b *Backend) getEltSize(arrType string, irt *ir.Type) int {
-	if strings.HasPrefix(arrType, "*") {
-		arrType = arrType[1:]
-	}
-	if strings.HasPrefix(arrType, "[") {
-		idx := strings.Index(arrType, "]")
-		if idx != -1 {
-			return b.getTypeSize(arrType[idx+1:], nil)
+func (b *Backend) getFieldOffsetAndSizeUsingIrt(irt ir.Type, fieldIndex int) (int, int) {
+	if b.program != nil {
+		if def, ok := b.program.TypeDefs[irt.Name]; ok {
+			irt = def
 		}
 	}
-	return b.getTypeSize(arrType, nil)
+	fields := irt.FieldsOfStruct()
+	if len(fields) > 0 {
+		offset := 0
+		for i := 0; i < fieldIndex; i++ {
+			offset += b.getTypeSizeByType(fields[i].Type)
+		}
+		size := b.getTypeSizeByType(fields[fieldIndex].Type)
+		return offset, size
+	}
+	log.Panicf("getFieldOffsetAndSizeUsingIrt: no fields found for %#v", irt)
+	panic(0)
 }
-*/
 
 func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int, int) {
 	content := ""
@@ -391,12 +393,13 @@ func (b *Backend) popBytes(n int) {
 	fmt.Fprintf(&b.buf, "\t\t\t; popBytes: %d -> %d\n", n, b.pushedBytes)
 }
 
-func (b *Backend) getSlot(id int, typ string) int {
+func (b *Backend) getSlot(id int, irt ir.Type) int {
+	typ := irt.Name
 	if offset, ok := b.slots[id]; ok {
 		fmt.Fprintf(&b.buf, "\t\t\t; getSlot(%d, %q): found: offset=%d\n", id, typ, offset)
 		return offset
 	}
-	size := b.getTypeSize(typ, nil)
+	size := b.getTypeSizeByType(irt)
 	aligned := align(size)
 	b.stackSize += aligned
 	offset := -(b.frameOffset + b.stackSize)
@@ -440,7 +443,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 				//no-section// b.dataBuf.WriteString("\n\tsection data\n")
 				//no-section// b.dataBuf.WriteString(fmt.Sprintf("\texport v_%s\n", g.Name))
 
-				size := b.getTypeSize(g.Typ.Name, nil)
+				size := b.getTypeSizeByType(g.Typ)
 				// Use `equ` to avoid producing 0 bytes which do not belong in our ROM image.
 				b.dataBuf.WriteString(fmt.Sprintf("v_%s\tequ\t%d\t; size=%d type=%q [no init]\n\n", g.Name, addr, size, g.Typ.Name))
 				addr += size
@@ -457,12 +460,12 @@ func (b *Backend) Generate(program *ir.Program) string {
 			b.globalOffsets[g.Name] = offset
 			if g.IsInit {
 				if g.InitVal != nil {
-					offset += b.getTypeSize(g.Typ.Name, nil)
+					offset += b.getTypeSizeByType(g.Typ)
 				} else {
 					offset += len(g.InitString)
 				}
 			} else {
-				size := b.getTypeSize(g.Typ.Name, nil)
+				size := b.getTypeSizeByType(g.Typ)
 				offset += size
 			}
 		}
@@ -502,7 +505,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	fmt.Fprintf(&b.buf, "\t\t; =========== EMIT FUNC %q\n", f.Name)
 
 	for _, p := range f.Parameters {
-		sz := b.getTypeSize(p.Typ.Name, nil)
+		sz := b.getTypeSizeByType(p.Typ)
 		if sz == 2 && firstWord == nil {
 			firstWord = p
 			fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
@@ -513,7 +516,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	for _, p := range f.Parameters {
-		size := b.getTypeSize(p.Typ.Name, nil)
+		size := b.getTypeSizeByType(p.Typ)
 		aligned := align(size)
 		b.stackSize += aligned
 		b.paramSlots[p.Name] = -(b.frameOffset + b.stackSize)
@@ -522,7 +525,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
-				b.getSlot(instr.GetID(), instr.Type().Name)
+				b.getSlot(instr.GetID(), instr.Type())
 			}
 		}
 	}
@@ -538,7 +541,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	stackArgOffset := 2
-	retSize := b.getTypeSize(f.ReturnType.Name, nil)
+	retSize := b.getTypeSizeByType(f.ReturnType)
 	b.retSlot = -1
 	b.buf.WriteString("\t; --- Function parameters ---\n")
 	if retSize > 2 {
@@ -558,7 +561,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	for _, p := range f.Parameters {
-		size := b.getTypeSize(p.Typ.Name, nil)
+		size := b.getTypeSizeByType(p.Typ)
 		if p == firstWord || p == firstByte {
 			continue
 		}
@@ -620,7 +623,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 		case *ir.Return:
 			if term.Val != nil {
-				retSize := b.getTypeSize(term.Val.Type().Name, nil)
+				retSize := b.getTypeSizeByType(term.Val.Type())
 				if retSize <= 2 {
 					b.loadVal(term.Val)
 					if retSize == 2 {
@@ -652,7 +655,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 func (b *Backend) loadVal(val ir.Value) {
 	switch v := val.(type) {
 	case *ir.Parameter:
-		if b.getTypeSize(v.Typ.Name, nil) == 1 {
+		if b.getTypeSizeByType(v.Typ) == 1 {
 			b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.paramSlots[v.Name])))
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.paramSlots[v.Name])))
@@ -689,7 +692,7 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 		if phi, ok := instr.(*ir.Phi); ok {
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
-					size := b.getTypeSize(phi.Typ.Name, nil)
+					size := b.getTypeSizeByType(phi.Typ)
 					if size <= 2 {
 						b.loadVal(edge.Value)
 						if phi.Type().Equals(ir.TypeByte) {
@@ -748,12 +751,12 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i)
 		b.storeResult(id)
 	case *ir.Sizeof:
-		size := b.getTypeSize(i.TargetTyp.Name, nil)
+		size := b.getTypeSizeByType(i.TargetTyp)
 		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", size))
 		b.storeResult(id)
 	case *ir.Load:
 		b.flushRegisters()
-		size := b.getTypeSize(i.Global.Typ.Name, nil)
+		size := b.getTypeSizeByType(i.Global.Typ)
 		destStr := b.memAccess(offset)
 		srcStr := ""
 		if b.globalsAtY {
@@ -788,7 +791,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.Store:
 		b.flushRegisters()
-		size := b.getTypeSize(i.Global.Typ.Name, nil)
+		size := b.getTypeSizeByType(i.Global.Typ)
 		destStr := ""
 		if b.globalsAtY {
 			destStr = fmt.Sprintf("%d,y", b.globalOffsets[i.Global.Name])
@@ -838,7 +841,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.ZeroInit:
 		b.flushRegisters()
-		size := b.getTypeSize(i.Typ.Name, nil)
+		size := b.getTypeSizeByType(i.Typ)
 		destStr := b.memAccess(offset)
 		fmt.Fprintf(&b.buf, "\t\t; ZeroInit size=%d dest=%v\n", size, destStr)
 
@@ -924,7 +927,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.InsertElement:
 		b.flushRegisters()
-		arraySize := b.getTypeSize(i.Array.Type().Name, nil)
+		arraySize := b.getTypeSizeByType(i.Array.Type())
 		arrayStr := b.getAddrStr(i.Array)
 		destStr := b.memAccess(offset)
 
@@ -1011,7 +1014,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.ExtractField:
 		b.flushRegisters()
-		byteOffset, fieldSize := b.getFieldOffsetAndSize(i.Struct.Type().Name, i.FieldIndex)
+		byteOffset, fieldSize := b.getFieldOffsetAndSizeUsingIrt(i.Struct.Type(), i.FieldIndex)
 		structStr := b.getAddrStr(i.Struct)
 		destStr := b.memAccess(offset)
 
@@ -1043,7 +1046,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.InsertField:
 		b.flushRegisters()
-		structSize := b.getTypeSize(i.Struct.Type().Name, nil)
+		structSize := b.getTypeSizeByType(i.Struct.Type())
 		structStr := b.getAddrStr(i.Struct)
 		destStr := b.memAccess(offset)
 
@@ -1060,7 +1063,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lbl))
 		b.buf.WriteString("\tpuls u\n")
 
-		byteOffset, fieldSize := b.getFieldOffsetAndSize(i.Struct.Type().Name, i.FieldIndex)
+		byteOffset, fieldSize := b.getFieldOffsetAndSizeUsingIrt(i.Struct.Type(), i.FieldIndex)
 		b.emitLoadAddr("x", destStr)
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
@@ -1128,14 +1131,13 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(%v, locOff=%d ;%v)\n", b.memAccess(offset), localOffset, localInstr.GetID(), localInstr.GetComment()))
 		}
 	case *ir.AddressOfField:
-		structName := i.Ptr.Type().Name
-		structName = strings.TrimPrefix(structName, "*")
-		byteOffset, _ := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		structType := i.Ptr.Type().PointedType()
+		byteOffset, _ := b.getFieldOffsetAndSizeUsingIrt(structType, i.FieldIndex)
 		b.loadVal(i.Ptr)
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\taddd #%d\t; byteOffset\n", byteOffset))
 		}
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfField(%v.%v)\n", b.memAccess(offset), structName, i.FieldIndex))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfField(%v.%v)\n", b.memAccess(offset), structType.Name, i.FieldIndex))
 	case *ir.AddressOfElement:
 		b.flushRegisters()
 		b.loadVal(i.ArrayPtr)
@@ -1159,9 +1161,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
 	case *ir.ExtractFieldPtr:
 		b.flushRegisters()
-		structName := i.Ptr.Type().Name
-		structName = strings.TrimPrefix(structName, "*")
-		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		structType := i.Ptr.Type().PointedType()
+		byteOffset, fieldSize := b.getFieldOffsetAndSizeUsingIrt(structType, i.FieldIndex)
 
 		destStr := b.memAccess(offset)
 		b.loadVal(i.Ptr)
@@ -1193,9 +1194,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.InsertFieldPtr:
 		b.flushRegisters()
-		structName := i.Ptr.Type().Name
-		structName = strings.TrimPrefix(structName, "*")
-		byteOffset, fieldSize := b.getFieldOffsetAndSize(structName, i.FieldIndex)
+		structType := i.Ptr.Type().PointedType()
+		byteOffset, fieldSize := b.getFieldOffsetAndSizeUsingIrt(structType, i.FieldIndex)
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,x\t; starting ir.InsertFieldPtr\n")
 		if byteOffset > 0 {
@@ -1238,7 +1238,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		destStr := b.memAccess(offset)
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,y\t; starting ir.LoadPtr\n")
-		fieldSize := b.getTypeSize(i.Typ.Name, nil)
+		fieldSize := b.getTypeSizeByType(i.Typ)
 		switch fieldSize {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
@@ -1262,12 +1262,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 	case *ir.StorePtr:
 		b.flushRegisters()
-		ptrType := i.Ptr.Type().Name
-		pointeeType := "word"
-		if strings.HasPrefix(ptrType, "*") {
-			pointeeType = ptrType[1:]
-		}
-		fieldSize := b.getTypeSize(pointeeType, nil)
+		fieldSize := b.getTypeSizeByType(i.Ptr.Type().PointedType())
 		b.loadVal(i.Ptr)
 		b.buf.WriteString("\ttfr d,x\t; starting ir.StorePtr\n")
 
@@ -1432,7 +1427,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		var firstByteIdx = -1
 
 		for idx, arg := range i.Args {
-			sz := b.getTypeSize(i.Func.Parameters[idx].Typ.Name, nil)
+			sz := b.getTypeSizeByType(i.Func.Parameters[idx].Typ)
 			_ = sz
 			if sz == 2 && firstWordArg == nil {
 				firstWordArg = arg
@@ -1454,7 +1449,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString(fmt.Sprintf("\t\t; --- first size=1 arg: %q %q\n", i.Args[idx].String(), i.Args[idx].Type()))
 				continue
 			}
-			argSize := b.getTypeSize(i.Args[idx].Type().Name, nil)
+			argSize := b.getTypeSizeByType(i.Args[idx].Type())
 			aligned := align(argSize)
 
 			b.buf.WriteString(fmt.Sprintf("\t\t\t; Push arg %d: size=%d\n", idx, argSize))
@@ -1478,7 +1473,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 		b.buf.WriteString(fmt.Sprintf("\t; --- Pushed args, pushedBytes=%d", pushedBytes))
 
-		retSize := b.getTypeSize(i.Func.ReturnType.Name, nil)
+		retSize := b.getTypeSizeByType(i.Func.ReturnType)
 		if retSize > 2 {
 			aligned := align(retSize)
 			b.buf.WriteString(fmt.Sprintf("\t; Allocate space for return value: size=%d\n", retSize))
@@ -1537,7 +1532,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		var firstByteIdx = -1
 
 		for idx, arg := range i.Args {
-			sz := b.getTypeSize(arg.Type().Name, nil)
+			sz := b.getTypeSizeByType(arg.Type())
 			if sz == 2 && firstWordArg == nil {
 				firstWordArg = arg
 				firstWordIdx = idx
@@ -1553,7 +1548,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if idx == firstWordIdx || idx == firstByteIdx {
 				continue
 			}
-			argSize := b.getTypeSize(i.Args[idx].Type().Name, nil)
+			argSize := b.getTypeSizeByType(i.Args[idx].Type())
 			aligned := align(argSize)
 			if argSize == 1 {
 				b.loadVal(i.Args[idx])
@@ -1576,7 +1571,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 		retSize := 0
 		if !i.Typ.Equals(ir.TypeVoid) {
-			retSize = b.getTypeSize(i.Typ.Name, nil)
+			retSize = b.getTypeSizeByType(i.Typ)
 		}
 		if retSize > 2 {
 			aligned := align(retSize)

@@ -2827,7 +2827,7 @@ func (b *Builder) addStringConstant(val string) *Global {
 	name := fmt.Sprintf("str_const_%d", len(b.Program.Globals))
 	valWithNull := val + "\x00"
 	g := &Global{
-		Name:       name,
+		Name: name,
 		Typ: Type{
 			Expr: &ast.ArrayType{
 				Length: &ast.IntegerLiteral{Value: int64(len(valWithNull))},
