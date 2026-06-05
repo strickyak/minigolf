@@ -211,6 +211,7 @@ func main() {
 	noStrengthRed := flag.Bool("no-strengthred", false, "Disable Strength Reduction optimization")
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
 	noStackAlloc := flag.Bool("no-stackalloc", false, "Disable Stack Slot Allocation (Slot Sharing)")
+	noBranchFold := flag.Bool("no-branchfold", false, "Disable Branch Folding optimization")
 
 	var importDirPath repeatedFlag
 	flag.Var(&importDirPath, "I", "directory to be searched for imports")
@@ -322,6 +323,7 @@ func main() {
 			EnableStrengthRed: !*noStrengthRed,
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
+			EnableBranchFold:  !*noBranchFold,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 		irCode := ir.PrintProgram(irProg)
@@ -352,6 +354,7 @@ func main() {
 			EnableStrengthRed: !*noStrengthRed,
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
+			EnableBranchFold:  !*noBranchFold,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 
@@ -384,6 +387,7 @@ func main() {
 			EnableStrengthRed: !*noStrengthRed,
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
+			EnableBranchFold:  !*noBranchFold,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 
@@ -408,12 +412,13 @@ func main() {
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{
-			EnableConstFold: !*noConstfold,
-			EnableDBE:       !*noDbe,
-			EnableDCE:       !*noDce,
-			EnableCopyProp:  !*noCopyProp,
-			EnablePhiSimp:   !*noPhisimp,
-			EnableStackAlloc:  !*noStackAlloc,
+			EnableConstFold:  !*noConstfold,
+			EnableDBE:        !*noDbe,
+			EnableDCE:        !*noDce,
+			EnableCopyProp:   !*noCopyProp,
+			EnablePhiSimp:    !*noPhisimp,
+			EnableStackAlloc: !*noStackAlloc,
+			EnableBranchFold: !*noBranchFold,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 

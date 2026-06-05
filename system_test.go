@@ -117,6 +117,9 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	if os.Getenv("NO_STACKALLOC") != "" {
 		args = append(args, "-no-stackalloc")
 	}
+	if os.Getenv("NO_BRANCHFOLD") != "" {
+		args = append(args, "-no-branchfold")
+	}
 	args = append(args, sourceFile)
 
 	cmd := exec.Command(compiler, args...)

@@ -13,6 +13,7 @@ type Config struct {
 	EnableStrengthRed bool
 	EnablePhiSimp     bool
 	EnableStackAlloc  bool
+	EnableBranchFold  bool
 }
 
 type Pass interface {
@@ -46,6 +47,9 @@ func OptimizeProgram(p *ir.Program, config Config) {
 	}
 	if config.EnableStackAlloc {
 		passes = append(passes, &StackAllocPass{})
+	}
+	if config.EnableBranchFold {
+		passes = append(passes, &BranchFoldPass{})
 	}
 
 	for _, f := range p.Functions {

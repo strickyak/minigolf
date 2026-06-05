@@ -156,7 +156,101 @@ func peepholeOptimize(asm string) string {
 			finalOut = append(finalOut, line)
 		}
 
-		asm = strings.Join(finalOut, "\n")
+		var finalOut2 []string
+		// Pass 3: Jump Threading (Jump to Jump optimization)
+		labelTargets := make(map[string]string)
+		for i := 0; i < len(finalOut); i++ {
+			trimmed := strings.TrimSpace(finalOut[i])
+			if idx := strings.Index(trimmed, ";"); idx != -1 {
+				trimmed = strings.TrimSpace(trimmed[:idx])
+			}
+			if strings.HasSuffix(trimmed, ":") {
+				label := trimmed[:len(trimmed)-1]
+				for j := i + 1; j < len(finalOut); j++ {
+					nextTrimmed := strings.TrimSpace(finalOut[j])
+					if idx := strings.Index(nextTrimmed, ";"); idx != -1 {
+						nextTrimmed = strings.TrimSpace(nextTrimmed[:idx])
+					}
+					if nextTrimmed == "" {
+						continue
+					}
+					if strings.HasPrefix(nextTrimmed, "lbra ") || strings.HasPrefix(nextTrimmed, "bra ") || strings.HasPrefix(nextTrimmed, "jmp ") {
+						fields := strings.Fields(nextTrimmed)
+						if len(fields) >= 2 {
+							target := fields[1]
+							if target != label {
+								labelTargets[label] = target
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+
+		for i, line := range finalOut {
+			trimmed := strings.TrimSpace(line)
+			if idx := strings.Index(trimmed, ";"); idx != -1 {
+				trimmed = strings.TrimSpace(trimmed[:idx])
+			}
+			fields := strings.Fields(trimmed)
+			if len(fields) >= 2 {
+				op := fields[0]
+				target := fields[1]
+				isBranch := false
+				switch op {
+				case "bra", "lbra", "jmp", "beq", "bne", "blt", "ble", "bgt", "bge", "blo", "bls", "bhi", "bhs", "lbeq", "lbne", "lblt", "lble", "lbgt", "lbge", "lblo", "lbls", "lbhi", "lbhs":
+					isBranch = true
+				}
+				if isBranch {
+					if newTarget, ok := labelTargets[target]; ok {
+						newOp := op
+						if op == "bra" {
+							newOp = "lbra"
+						} else if op == "jmp" {
+							newOp = "jmp"
+						} else if !strings.HasPrefix(op, "lb") && op != "lbra" {
+							newOp = "l" + op
+						}
+
+						newLine := strings.Replace(line, target, newTarget, 1)
+						if newOp != op {
+							newLine = strings.Replace(newLine, op, newOp, 1)
+						}
+						finalOut[i] = newLine
+						changed = true
+					}
+				}
+			}
+		}
+
+		// Pass 4: Unreachable Code Elimination
+		unreachable := false
+		for _, line := range finalOut {
+			trimmed := strings.TrimSpace(line)
+			if idx := strings.Index(trimmed, ";"); idx != -1 {
+				trimmed = strings.TrimSpace(trimmed[:idx])
+			}
+
+			// Labels and data declarations start at column 0 (no indentation)
+			if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+				unreachable = false
+			}
+			if strings.HasSuffix(trimmed, ":") {
+				unreachable = false
+			}
+
+			if unreachable && trimmed != "" {
+				changed = true
+				continue // drop unreachable instruction
+			}
+			if strings.HasPrefix(trimmed, "bra ") || strings.HasPrefix(trimmed, "lbra ") || strings.HasPrefix(trimmed, "jmp ") || trimmed == "rts" || trimmed == "puls u,pc" {
+				unreachable = true
+			}
+			finalOut2 = append(finalOut2, line)
+		}
+
+		asm = strings.Join(finalOut2, "\n")
 		if !changed {
 			return asm
 		}
