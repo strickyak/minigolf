@@ -34,72 +34,142 @@ func PrintProgram(p *Program) string {
 		for _, b := range f.Blocks {
 			buf.WriteString(fmt.Sprintf("b%d:\n", b.ID))
 			for _, instr := range b.Instructions {
-				op := instr.Opcode()
-
-				var args []string
-				switch i := instr.(type) {
-				case *ConstByte:
-					args = append(args, fmt.Sprintf("%d", i.Val))
-				case *ConstWord:
-					args = append(args, fmt.Sprintf("%d", i.Val))
-				case *Load:
-					args = append(args, i.Global.String())
-				case *Store:
-					args = append(args, i.Global.String(), i.Val.String())
-				case *BinaryOp:
-					args = append(args, i.Left.String(), i.Right.String())
-				case *Compare:
-					args = append(args, str(i.Left), str(i.Right))
-				case *UnaryOp:
-					args = append(args, i.Operand.String())
-				case *Phi:
-					for _, edge := range i.Edges {
-						args = append(args, fmt.Sprintf("[b%d: %s]", edge.Block.ID, edge.Value.String()))
-					}
-				case *ExtractElement:
-					args = append(args, i.Array.String(), i.Index.String())
-				case *InsertElement:
-					args = append(args, i.Array.String(), i.Index.String(), i.Val.String())
-				case *ExtractField:
-					args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex))
-				case *InsertField:
-					args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex), i.Val.String())
-				case *ZeroInit:
-					// no args
-				case *Call:
-					args = append(args, "@"+i.Func.Name)
-					for _, a := range i.Args {
-						args = append(args, a.String())
-					}
-				case *BuiltinCall:
-					for _, a := range i.Args {
-						args = append(args, a.String())
-					}
-				case *Cast:
-					args = append(args, i.Operand.String())
-				case *Jump:
-					args = append(args, fmt.Sprintf("b%d", i.Target.ID))
-				case *Branch:
-					args = append(args, i.Condition.String(), fmt.Sprintf("b%d", i.TrueBlock.ID), fmt.Sprintf("b%d", i.FalseBlock.ID))
-				case *Return:
-					if i.Val != nil {
-						args = append(args, i.Val.String())
-					}
-				}
-
-				comment := instr.GetComment()
-				if comment != "" {
-					comment = "\t\t; " + comment
-				}
-				if !instr.Type().Equals(TypeVoid) && !instr.Type().Equals(TypeUnknown) {
-					buf.WriteString(fmt.Sprintf("  %s:%s = %s %s%s\n", instr.String(), instr.Type().Name, op, strings.Join(args, ", "), comment))
+				if true {
+					buf.WriteString(PrintInstruction(instr))
+					buf.WriteByte('\n')
 				} else {
-					buf.WriteString(fmt.Sprintf("  %s %s%s\n", op, strings.Join(args, ", "), comment))
+					op := instr.Opcode()
+
+					var args []string
+					switch i := instr.(type) {
+					case *ConstByte:
+						args = append(args, fmt.Sprintf("%d", i.Val))
+					case *ConstWord:
+						args = append(args, fmt.Sprintf("%d", i.Val))
+					case *Load:
+						args = append(args, i.Global.String())
+					case *Store:
+						args = append(args, i.Global.String(), i.Val.String())
+					case *BinaryOp:
+						args = append(args, i.Left.String(), i.Right.String())
+					case *Compare:
+						args = append(args, str(i.Left), str(i.Right))
+					case *UnaryOp:
+						args = append(args, i.Operand.String())
+					case *Phi:
+						for _, edge := range i.Edges {
+							args = append(args, fmt.Sprintf("[b%d: %s]", edge.Block.ID, edge.Value.String()))
+						}
+					case *ExtractElement:
+						args = append(args, i.Array.String(), i.Index.String())
+					case *InsertElement:
+						args = append(args, i.Array.String(), i.Index.String(), i.Val.String())
+					case *ExtractField:
+						args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex))
+					case *InsertField:
+						args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex), i.Val.String())
+					case *ZeroInit:
+						// no args
+					case *Call:
+						args = append(args, "@"+i.Func.Name)
+						for _, a := range i.Args {
+							args = append(args, a.String())
+						}
+					case *BuiltinCall:
+						for _, a := range i.Args {
+							args = append(args, a.String())
+						}
+					case *Cast:
+						args = append(args, i.Operand.String())
+					case *Jump:
+						args = append(args, fmt.Sprintf("b%d", i.Target.ID))
+					case *Branch:
+						args = append(args, i.Condition.String(), fmt.Sprintf("b%d", i.TrueBlock.ID), fmt.Sprintf("b%d", i.FalseBlock.ID))
+					case *Return:
+						if i.Val != nil {
+							args = append(args, i.Val.String())
+						}
+					}
+
+					comment := instr.GetComment()
+					if comment != "" {
+						comment = "\t\t; " + comment
+					}
+					if !instr.Type().Equals(TypeVoid) && !instr.Type().Equals(TypeUnknown) {
+						buf.WriteString(fmt.Sprintf("  %s:%s = %s %s%s\n", instr.String(), instr.Type().Name, op, strings.Join(args, ", "), comment))
+					} else {
+						buf.WriteString(fmt.Sprintf("  %s %s%s\n", op, strings.Join(args, ", "), comment))
+					}
 				}
-			}
-		}
+			} // next instr
+		} // next block
 		buf.WriteString("}\n\n")
 	}
 
 	return buf.String()
+}
+
+func PrintInstruction(instr Instruction) string {
+	op := instr.Opcode()
+
+	var args []string
+	switch i := instr.(type) {
+	case *ConstByte:
+		args = append(args, fmt.Sprintf("%d", i.Val))
+	case *ConstWord:
+		args = append(args, fmt.Sprintf("%d", i.Val))
+	case *Load:
+		args = append(args, i.Global.String())
+	case *Store:
+		args = append(args, i.Global.String(), i.Val.String())
+	case *BinaryOp:
+		args = append(args, i.Left.String(), i.Right.String())
+	case *Compare:
+		args = append(args, str(i.Left), str(i.Right))
+	case *UnaryOp:
+		args = append(args, i.Operand.String())
+	case *Phi:
+		for _, edge := range i.Edges {
+			args = append(args, fmt.Sprintf("[b%d: %s]", edge.Block.ID, edge.Value.String()))
+		}
+	case *ExtractElement:
+		args = append(args, i.Array.String(), i.Index.String())
+	case *InsertElement:
+		args = append(args, i.Array.String(), i.Index.String(), i.Val.String())
+	case *ExtractField:
+		args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex))
+	case *InsertField:
+		args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex), i.Val.String())
+	case *ZeroInit:
+		// no args
+	case *Call:
+		args = append(args, "@"+i.Func.Name)
+		for _, a := range i.Args {
+			args = append(args, a.String())
+		}
+	case *BuiltinCall:
+		for _, a := range i.Args {
+			args = append(args, a.String())
+		}
+	case *Cast:
+		args = append(args, i.Operand.String())
+	case *Jump:
+		args = append(args, fmt.Sprintf("b%d", i.Target.ID))
+	case *Branch:
+		args = append(args, i.Condition.String(), fmt.Sprintf("b%d", i.TrueBlock.ID), fmt.Sprintf("b%d", i.FalseBlock.ID))
+	case *Return:
+		if i.Val != nil {
+			args = append(args, i.Val.String())
+		}
+	}
+
+	comment := instr.GetComment()
+	if comment != "" {
+		comment = "\t\t; " + comment
+	}
+	if !instr.Type().Equals(TypeVoid) && !instr.Type().Equals(TypeUnknown) {
+		return fmt.Sprintf("  %s:%s = %s %s%s", instr.String(), instr.Type().Name, op, strings.Join(args, ", "), comment)
+	} else {
+		return fmt.Sprintf("  %s %s%s", op, strings.Join(args, ", "), comment)
+	}
 }

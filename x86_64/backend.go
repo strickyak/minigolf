@@ -345,7 +345,12 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if _, isTerm := instr.(ir.Terminator); isTerm {
 				continue
 			}
+			b.buf.WriteString("\t# " + instr.String() + "\n")
 			b.emitInstr(instr)
+		}
+
+		if blk.Terminator != nil {
+			b.buf.WriteString("\t# " + blk.Terminator.String() + "\n")
 		}
 
 		switch term := blk.Terminator.(type) {

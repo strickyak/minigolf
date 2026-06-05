@@ -2,12 +2,21 @@ package m6809
 
 import (
 	"flag"
+	"os"
 	"strings"
 )
 
 var DisableTrivialMath = flag.Bool("disable_trivial_math", false, "disable trivial math and offset elimination peephole optimizations")
+var noPeephole6809 = flag.Bool("no-peephole6809", false, "disable peephole optimizations on M6809")
 
 func peepholeOptimize(asm string) string {
+	if os.Getenv("NO_PEEPHOLE6809") != "" {
+		*noPeephole6809 = true
+	}
+	if *noPeephole6809 {
+		return asm
+	}
+
 	for {
 		lines := strings.Split(asm, "\n")
 		var out []string

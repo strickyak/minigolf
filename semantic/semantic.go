@@ -629,9 +629,9 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 
 	subTokens := a.substituteGenericTokens(instName, argTyps, tmpl, instantiateToken)
 	//fmt.Printf("DEBUG INSTANTIATE: Tokens for %s:\n", instName)
-	for i, tok := range subTokens {
-		fmt.Printf("  %d: %s (Type: %v)\n", i, tok.Literal, tok.Type)
-	}
+	// for i, tok := range subTokens {
+	// fmt.Printf("  %d: %s (Type: %v)\n", i, tok.Literal, tok.Type)
+	// }
 	p := parser.New(subTokens)
 	stmt := p.ParseStatementForGeneric()
 	if stmt == nil {

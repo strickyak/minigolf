@@ -312,6 +312,8 @@ func (c *CBE) emitFunc(f *ir.Function) {
 				continue // Handled below
 			}
 
+			c.buf.WriteString("\t// " + instr.String() + "\n")
+
 			if ins, ok := instr.(*ir.InsertElement); ok {
 				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", c.getSlot(ins.GetID()), c.formatVal(ins.Array)))
 				c.buf.WriteString(fmt.Sprintf("\tv%d.data[%s] = %s;\n", c.getSlot(ins.GetID()), c.formatVal(ins.Index), c.formatVal(ins.Val)))
@@ -344,6 +346,10 @@ func (c *CBE) emitFunc(f *ir.Function) {
 				c.buf.WriteString(fmt.Sprintf("v%d = ", c.getSlot(instr.GetID())))
 			}
 			c.buf.WriteString(c.emitInstrExpr(instr) + ";\n")
+		}
+
+		if b.Terminator != nil {
+			c.buf.WriteString("\t// " + b.Terminator.String() + "\n")
 		}
 
 		// Terminator and Phi edge assignments

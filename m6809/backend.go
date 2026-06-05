@@ -664,6 +664,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if _, isTerm := instr.(ir.Terminator); isTerm {
 				continue
 			}
+			b.buf.WriteString("\t;;; " + ir.PrintInstruction(instr) + "\n")
 			b.emitInstr(instr)
 			if offset, ok := b.getSlotOffset(instr.GetID()); ok {
 				b.slotOwner[offset] = instr.GetID()
@@ -671,6 +672,10 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 
 		b.flushRegisters()
+
+		if blk.Terminator != nil {
+			b.buf.WriteString("\t; " + blk.Terminator.String() + " ;;; Block_Terminator\n")
+		}
 
 		switch term := blk.Terminator.(type) {
 		case *ir.Jump:
