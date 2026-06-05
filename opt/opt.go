@@ -8,6 +8,7 @@ type Config struct {
 	EnableConstFold bool
 	EnableDBE       bool
 	EnableDCE       bool
+	EnableCopyProp  bool
 	EnablePhiSimp   bool
 }
 
@@ -27,6 +28,9 @@ func OptimizeProgram(p *ir.Program, config Config) {
 	}
 	if config.EnableDCE {
 		passes = append(passes, &DCEPass{})
+	}
+	if config.EnableCopyProp {
+		passes = append(passes, &CopyPropPass{})
 	}
 	if config.EnablePhiSimp {
 		passes = append(passes, &PhiSimpPass{})

@@ -206,6 +206,7 @@ func main() {
 	noConstfold := flag.Bool("no-constfold", false, "Disable Constant Folding optimization")
 	noDbe := flag.Bool("no-dbe", false, "Disable Dead Branch Elimination optimization")
 	noDce := flag.Bool("no-dce", false, "Disable Dead Code Elimination optimization")
+	noCopyProp := flag.Bool("no-copyprop", false, "Disable Copy Propagation optimization")
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
 
 	var importDirPath repeatedFlag
@@ -313,6 +314,7 @@ func main() {
 			EnableConstFold: !*noConstfold,
 			EnableDBE:       !*noDbe,
 			EnableDCE:       !*noDce,
+			EnableCopyProp:  !*noCopyProp,
 			EnablePhiSimp:   !*noPhisimp,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
@@ -339,6 +341,7 @@ func main() {
 			EnableConstFold: !*noConstfold,
 			EnableDBE:       !*noDbe,
 			EnableDCE:       !*noDce,
+			EnableCopyProp:  !*noCopyProp,
 			EnablePhiSimp:   !*noPhisimp,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
@@ -367,6 +370,7 @@ func main() {
 			EnableConstFold: !*noConstfold,
 			EnableDBE:       !*noDbe,
 			EnableDCE:       !*noDce,
+			EnableCopyProp:  !*noCopyProp,
 			EnablePhiSimp:   !*noPhisimp,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
@@ -395,6 +399,7 @@ func main() {
 			EnableConstFold: !*noConstfold,
 			EnableDBE:       !*noDbe,
 			EnableDCE:       !*noDce,
+			EnableCopyProp:  !*noCopyProp,
 			EnablePhiSimp:   !*noPhisimp,
 		}
 		opt.OptimizeProgram(irProg, optConfig)

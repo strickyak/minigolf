@@ -102,6 +102,9 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	if os.Getenv("NO_DCE") != "" {
 		args = append(args, "-no-dce")
 	}
+	if os.Getenv("NO_COPYPROP") != "" {
+		args = append(args, "-no-copyprop")
+	}
 	if os.Getenv("NO_PHISIMP") != "" {
 		args = append(args, "-no-phisimp")
 	}
