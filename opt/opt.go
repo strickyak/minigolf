@@ -29,7 +29,7 @@ func OptimizeProgram(p *ir.Program, config Config) {
 		passes = append(passes, &DCEPass{})
 	}
 	if config.EnablePhiSimp {
-		// passes = append(passes, &PhiSimpPass{})
+		passes = append(passes, &PhiSimpPass{})
 	}
 
 	for _, f := range p.Functions {
