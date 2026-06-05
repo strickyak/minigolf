@@ -225,6 +225,35 @@ func main() {
 	// Parse command-line flags
 	flag.Parse()
 
+	// Apply environment variable overrides for optimization flags
+	if os.Getenv("NO_CONSTFOLD") != "" {
+		*noConstfold = true
+	}
+	if os.Getenv("NO_DBE") != "" {
+		*noDbe = true
+	}
+	if os.Getenv("NO_DCE") != "" {
+		*noDce = true
+	}
+	if os.Getenv("NO_COPYPROP") != "" {
+		*noCopyProp = true
+	}
+	if os.Getenv("NO_CSE") != "" {
+		*noCse = true
+	}
+	if os.Getenv("NO_STRENGTHRED") != "" {
+		*noStrengthRed = true
+	}
+	if os.Getenv("NO_PHISIMP") != "" {
+		*noPhisimp = true
+	}
+	if os.Getenv("NO_STACKALLOC") != "" {
+		*noStackAlloc = true
+	}
+	if os.Getenv("NO_BRANCHFOLD") != "" {
+		*noBranchFold = true
+	}
+
 	// Validate required flags
 	if *archFlag == "" {
 		fmt.Fprintln(os.Stderr, "Error: Target architecture flag (-m) is required.")

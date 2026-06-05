@@ -93,33 +93,6 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	}
 
 	args := []string{"-m=" + backend, "-o", midFile, "-I=golflib"}
-	if os.Getenv("NO_CONSTFOLD") != "" {
-		args = append(args, "-no-constfold")
-	}
-	if os.Getenv("NO_DBE") != "" {
-		args = append(args, "-no-dbe")
-	}
-	if os.Getenv("NO_DCE") != "" {
-		args = append(args, "-no-dce")
-	}
-	if os.Getenv("NO_COPYPROP") != "" {
-		args = append(args, "-no-copyprop")
-	}
-	if os.Getenv("NO_CSE") != "" {
-		args = append(args, "-no-cse")
-	}
-	if os.Getenv("NO_STRENGTHRED") != "" {
-		args = append(args, "-no-strengthred")
-	}
-	if os.Getenv("NO_PHISIMP") != "" {
-		args = append(args, "-no-phisimp")
-	}
-	if os.Getenv("NO_STACKALLOC") != "" {
-		args = append(args, "-no-stackalloc")
-	}
-	if os.Getenv("NO_BRANCHFOLD") != "" {
-		args = append(args, "-no-branchfold")
-	}
 	args = append(args, sourceFile)
 
 	cmd := exec.Command(compiler, args...)
