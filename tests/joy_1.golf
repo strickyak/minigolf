@@ -215,6 +215,82 @@ func AllocDef() *Def {
 
 var Definitions slice[word]
 
+func evalAdd(stack *slice[word]) {
+	b := (*Node)(stack.Get(stack.Len - 1))
+	a := (*Node)(stack.Get(stack.Len - 2))
+	stack.Len = stack.Len - 2
+	res := AllocNode()
+	res.Kind = NumberKind
+	res.Number = a.Number + b.Number
+	stack.Append(word(res))
+}
+
+func evalMul(stack *slice[word]) {
+	b := (*Node)(stack.Get(stack.Len - 1))
+	a := (*Node)(stack.Get(stack.Len - 2))
+	stack.Len = stack.Len - 2
+	res := AllocNode()
+	res.Kind = NumberKind
+	res.Number = a.Number * b.Number
+	stack.Append(word(res))
+}
+
+func evalDup(stack *slice[word]) {
+	a := (*Node)(stack.Get(stack.Len - 1))
+	stack.Append(word(a))
+}
+
+func evalConcat(stack *slice[word]) {
+	b := (*Node)(stack.Get(stack.Len - 1))
+	a := (*Node)(stack.Get(stack.Len - 2))
+	stack.Len = stack.Len - 2
+	res := AllocNode()
+	res.Kind = ListKind
+	for j := range a.List.Len {
+		res.List.Append(a.List.Get(j))
+	}
+	for j := range b.List.Len {
+		res.List.Append(b.List.Get(j))
+	}
+	stack.Append(word(res))
+}
+
+func evalMap(stack *slice[word]) {
+	progNode := (*Node)(stack.Get(stack.Len - 1)) // quoted program
+	lstNode := (*Node)(stack.Get(stack.Len - 2))  // list
+	stack.Len = stack.Len - 2
+
+	resList := AllocNode()
+	resList.Kind = ListKind
+
+	for j := range lstNode.List.Len {
+		// map executes the program for each element
+		var mapStack slice[word]
+		mapStack.Append(lstNode.List.Get(j))
+		Eval(progNode.List, &mapStack)
+		// push all results to resList
+		for k := range mapStack.Len {
+			resList.List.Append(mapStack.Get(k))
+		}
+	}
+	stack.Append(word(resList))
+}
+
+func evalDef(i word, prog slice[word], stack *slice[word]) {
+	nameNode := (*Node)(stack.Get(stack.Len - 1))
+	stack.Len = stack.Len - 1
+
+	var body slice[word]
+	for j := i + 1; j < prog.Len; j++ {
+		body.Append(prog.Get(j))
+	}
+
+	def := AllocDef()
+	def.Name = nameNode.Symbol
+	def.Body = body
+	Definitions.Append(word(def))
+}
+
 func Eval(prog slice[word], stack *slice[word]) {
 	for i := word(0); i < prog.Len; i++ {
 		node := (*Node)(prog.Get(i))
@@ -226,76 +302,17 @@ func Eval(prog slice[word], stack *slice[word]) {
 
 			// Check if it's a built-in
 			if sym == "+" {
-				b := (*Node)(stack.Get(stack.Len - 1))
-				a := (*Node)(stack.Get(stack.Len - 2))
-				stack.Len = stack.Len - 2
-				res := AllocNode()
-				res.Kind = NumberKind
-				res.Number = a.Number + b.Number
-				stack.Append(word(res))
+				evalAdd(stack)
 			} else if sym == "*" {
-				b := (*Node)(stack.Get(stack.Len - 1))
-				a := (*Node)(stack.Get(stack.Len - 2))
-				stack.Len = stack.Len - 2
-				res := AllocNode()
-				res.Kind = NumberKind
-				res.Number = a.Number * b.Number
-				stack.Append(word(res))
+				evalMul(stack)
 			} else if sym == "dup" {
-				a := (*Node)(stack.Get(stack.Len - 1))
-				stack.Append(word(a))
+				evalDup(stack)
 			} else if sym == "concat" {
-				b := (*Node)(stack.Get(stack.Len - 1))
-				a := (*Node)(stack.Get(stack.Len - 2))
-				stack.Len = stack.Len - 2
-				res := AllocNode()
-				res.Kind = ListKind
-				for j := range a.List.Len {
-					res.List.Append(a.List.Get(j))
-				}
-				for j := range b.List.Len {
-					res.List.Append(b.List.Get(j))
-				}
-				stack.Append(word(res))
+				evalConcat(stack)
 			} else if sym == "map" {
-				progNode := (*Node)(stack.Get(stack.Len - 1)) // quoted program
-				lstNode := (*Node)(stack.Get(stack.Len - 2))  // list
-				stack.Len = stack.Len - 2
-
-				resList := AllocNode()
-				resList.Kind = ListKind
-
-				for j := range lstNode.List.Len {
-					// map executes the program for each element
-					var mapStack slice[word]
-					mapStack.Append(lstNode.List.Get(j))
-					Eval(progNode.List, &mapStack)
-					// push all results to resList
-					for k := range mapStack.Len {
-						resList.List.Append(mapStack.Get(k))
-					}
-				}
-				stack.Append(word(resList))
+				evalMap(stack)
 			} else if sym == "==" {
-				// "==" in Joy evaluates the RHS and binds it to LHS name
-				// e.g. square == dup *
-				// Here we cheat a bit and intercept the definition.
-				// Actually the parser just parsed 'square' '==' 'dup' '*'.
-				// If it's evaluated, we can define 'square' as the rest of the program!
-
-				nameNode := (*Node)(stack.Get(stack.Len - 1))
-				stack.Len = stack.Len - 1
-
-				var body slice[word]
-				for j := i + 1; j < prog.Len; j++ {
-					body.Append(prog.Get(j))
-				}
-
-				def := AllocDef()
-				def.Name = nameNode.Symbol
-				def.Body = body
-				Definitions.Append(word(def))
-
+				evalDef(i, prog, stack)
 				break // consume the rest of the program
 			} else {
 				// Check if it's a defined function

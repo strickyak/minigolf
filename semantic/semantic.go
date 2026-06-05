@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
@@ -336,7 +337,13 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 	a.markReachable("prelude.init_0")
 
 	// Pre-analyze generic templates to ensure their internal dependencies are discovered
-	for _, fs := range a.funcMap {
+	var sortedFuncs []string
+	for fn := range a.funcMap {
+		sortedFuncs = append(sortedFuncs, fn)
+	}
+	sort.Strings(sortedFuncs)
+	for _, fn := range sortedFuncs {
+		fs := a.funcMap[fn]
 		if len(fs.TypeParameters) > 0 {
 			// Temporarily set currentPackage for the template's analysis
 			oldPkg := a.currentPackage

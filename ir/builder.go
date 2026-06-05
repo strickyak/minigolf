@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sort"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
@@ -1004,7 +1005,13 @@ func (b *Builder) addPhiOperands(variable string, phi *Phi, block *BasicBlock) V
 }
 
 func (b *Builder) sealBlock(block *BasicBlock) {
-	for variable, phi := range b.incompletePhis[block] {
+	var vars []string
+	for variable := range b.incompletePhis[block] {
+		vars = append(vars, variable)
+	}
+	sort.Strings(vars)
+	for _, variable := range vars {
+		phi := b.incompletePhis[block][variable]
 		b.addPhiOperands(variable, phi, block)
 	}
 	b.sealedBlocks[block] = true

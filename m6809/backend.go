@@ -522,6 +522,30 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		b.paramSlots[p.Name] = -(b.frameOffset + b.stackSize)
 		fmt.Fprintf(&b.buf, "\t\t; Note: with param %q, type %q, size %d, b.stackSize becomes %d, slot becomes %v\n", p.Name, p.Type(), aligned, b.stackSize, b.paramSlots[p.Name])
 	}
+	// Pre-scan for all AddressOfLocal targets first.
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			if addrLocal, ok := instr.(*ir.AddressOfLocal); ok {
+				if localInstr, isInstr := addrLocal.Local.(ir.Instruction); isInstr {
+					b.getSlot(localInstr.GetID(), localInstr.Type())
+				}
+			}
+		}
+	}
+	
+	// Pre-scan for all other instructions
+	// Pre-scan for all AddressOfLocal targets first.
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			if addrLocal, ok := instr.(*ir.AddressOfLocal); ok {
+				if localInstr, isInstr := addrLocal.Local.(ir.Instruction); isInstr {
+					b.getSlot(localInstr.GetID(), localInstr.Type())
+				}
+			}
+		}
+	}
+	
+	// Pre-scan for all other instructions
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {

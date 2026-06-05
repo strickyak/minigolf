@@ -22,6 +22,9 @@ func OptimizeProgram(p *ir.Program, config Config) {
 	if config.EnableConstFold {
 		passes = append(passes, &ConstFoldPass{})
 	}
+	if config.EnableDBE {
+		passes = append(passes, &DBEPass{})
+	}
 
 	for _, f := range p.Functions {
 		changed := true
