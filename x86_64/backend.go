@@ -162,6 +162,7 @@ type Backend struct {
 	slots       map[int]int
 	paramSlots  map[string]int
 	fmtCount    int
+	f           *ir.Function
 }
 
 func New() *Backend {
@@ -246,7 +247,20 @@ func (b *Backend) Generate(program *ir.Program) string {
 }
 
 func (b *Backend) getSlot(id int, typ string) int {
+	origId := id
+	if b.f != nil && b.f.SlotAlias != nil {
+		for {
+			if alias, ok := b.f.SlotAlias[id]; ok {
+				id = alias
+			} else {
+				break
+			}
+		}
+	}
 	if offset, ok := b.slots[id]; ok {
+		if origId != id {
+			b.slots[origId] = offset
+		}
 		return offset
 	}
 	size := b.getTypeSize(typ)
@@ -256,10 +270,14 @@ func (b *Backend) getSlot(id int, typ string) int {
 	}
 	b.stackOffset += aligned
 	b.slots[id] = b.stackOffset
+	if origId != id {
+		b.slots[origId] = b.stackOffset
+	}
 	return b.stackOffset
 }
 
 func (b *Backend) emitFunc(f *ir.Function) {
+	b.f = f
 	b.buf.WriteString(fmt.Sprintf("\n\t.globl f_%s\n", f.Name))
 	b.buf.WriteString(fmt.Sprintf("f_%s:\n", f.Name))
 	b.buf.WriteString("\tpush rbp\n")

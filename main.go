@@ -210,6 +210,7 @@ func main() {
 	noCse := flag.Bool("no-cse", false, "Disable Common Subexpression Elimination optimization")
 	noStrengthRed := flag.Bool("no-strengthred", false, "Disable Strength Reduction optimization")
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
+	noStackAlloc := flag.Bool("no-stackalloc", false, "Disable Stack Slot Allocation (Slot Sharing)")
 
 	var importDirPath repeatedFlag
 	flag.Var(&importDirPath, "I", "directory to be searched for imports")
@@ -320,6 +321,7 @@ func main() {
 			EnableCSE:         !*noCse,
 			EnableStrengthRed: !*noStrengthRed,
 			EnablePhiSimp:     !*noPhisimp,
+			EnableStackAlloc:  !*noStackAlloc,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 		irCode := ir.PrintProgram(irProg)
@@ -349,6 +351,7 @@ func main() {
 			EnableCSE:         !*noCse,
 			EnableStrengthRed: !*noStrengthRed,
 			EnablePhiSimp:     !*noPhisimp,
+			EnableStackAlloc:  !*noStackAlloc,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 
@@ -380,6 +383,7 @@ func main() {
 			EnableCSE:         !*noCse,
 			EnableStrengthRed: !*noStrengthRed,
 			EnablePhiSimp:     !*noPhisimp,
+			EnableStackAlloc:  !*noStackAlloc,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 
@@ -409,6 +413,7 @@ func main() {
 			EnableDCE:       !*noDce,
 			EnableCopyProp:  !*noCopyProp,
 			EnablePhiSimp:   !*noPhisimp,
+			EnableStackAlloc:  !*noStackAlloc,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 

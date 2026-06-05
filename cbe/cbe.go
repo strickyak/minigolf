@@ -13,12 +13,26 @@ type CBE struct {
 	buf        bytes.Buffer
 	typedefBuf bytes.Buffer
 	arrayTypes map[string]bool
+	f          *ir.Function
 }
 
 func New() *CBE {
 	return &CBE{
 		arrayTypes: make(map[string]bool),
 	}
+}
+
+func (c *CBE) getSlot(id int) int {
+	if c.f != nil && c.f.SlotAlias != nil {
+		for {
+			if alias, ok := c.f.SlotAlias[id]; ok {
+				id = alias
+			} else {
+				break
+			}
+		}
+	}
+	return id
 }
 
 func (c *CBE) mapType(typ string) string {
@@ -267,13 +281,20 @@ func (c *CBE) emitFuncSignature(f *ir.Function, isForward bool) {
 }
 
 func (c *CBE) emitFunc(f *ir.Function) {
+	c.f = f
 	c.emitFuncSignature(f, false)
 
 	// Declare all local variables (values) at the top of the function
 	for _, b := range f.Blocks {
 		for _, instr := range b.Instructions {
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
-				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", c.mapType(instr.Type().Name), instr.GetID()))
+				id := instr.GetID()
+				if c.f != nil && c.f.SlotAlias != nil {
+					if _, ok := c.f.SlotAlias[id]; ok {
+						continue // Alias, already declared by target
+					}
+				}
+				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", c.mapType(instr.Type().Name), id))
 			}
 		}
 	}
@@ -292,14 +313,14 @@ func (c *CBE) emitFunc(f *ir.Function) {
 			}
 
 			if ins, ok := instr.(*ir.InsertElement); ok {
-				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", ins.GetID(), c.formatVal(ins.Array)))
-				c.buf.WriteString(fmt.Sprintf("\tv%d.data[%s] = %s;\n", ins.GetID(), c.formatVal(ins.Index), c.formatVal(ins.Val)))
+				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", c.getSlot(ins.GetID()), c.formatVal(ins.Array)))
+				c.buf.WriteString(fmt.Sprintf("\tv%d.data[%s] = %s;\n", c.getSlot(ins.GetID()), c.formatVal(ins.Index), c.formatVal(ins.Val)))
 				continue
 			}
 
 			if ins, ok := instr.(*ir.InsertField); ok {
-				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", ins.GetID(), c.formatVal(ins.Struct)))
-				c.buf.WriteString(fmt.Sprintf("\tv%d.f%d = %s;\n", ins.GetID(), ins.FieldIndex, c.formatVal(ins.Val)))
+				c.buf.WriteString(fmt.Sprintf("\tv%d = %s;\n", c.getSlot(ins.GetID()), c.formatVal(ins.Struct)))
+				c.buf.WriteString(fmt.Sprintf("\tv%d.f%d = %s;\n", c.getSlot(ins.GetID()), ins.FieldIndex, c.formatVal(ins.Val)))
 				continue
 			}
 
@@ -320,7 +341,7 @@ func (c *CBE) emitFunc(f *ir.Function) {
 
 			c.buf.WriteString("\t")
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
-				c.buf.WriteString(fmt.Sprintf("v%d = ", instr.GetID()))
+				c.buf.WriteString(fmt.Sprintf("v%d = ", c.getSlot(instr.GetID())))
 			}
 			c.buf.WriteString(c.emitInstrExpr(instr) + ";\n")
 		}
@@ -357,7 +378,7 @@ func (c *CBE) emitPhiAssignments(from, to *ir.BasicBlock, indent string) {
 		if phi, ok := instr.(*ir.Phi); ok {
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
-					c.buf.WriteString(fmt.Sprintf("%sv%d = %s;\n", indent, phi.GetID(), c.formatVal(edge.Value)))
+					c.buf.WriteString(fmt.Sprintf("%sv%d = %s;\n", indent, c.getSlot(phi.GetID()), c.formatVal(edge.Value)))
 				}
 			}
 		}
@@ -394,7 +415,7 @@ func (c *CBE) formatVal(v ir.Value) string {
 		fName := strings.ReplaceAll(val.Func.Name, ".", "_")
 		return fmt.Sprintf("((word)(&f_%s))", fName)
 	case ir.Instruction:
-		return fmt.Sprintf("v%d", val.(interface{ GetID() int }).GetID())
+		return fmt.Sprintf("v%d", c.getSlot(val.(interface{ GetID() int }).GetID()))
 	default:
 		log.Panicf("bad case: %T / %v", val, val)
 	}
@@ -536,7 +557,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		if p, ok := i.Local.(*ir.Parameter); ok {
 			return fmt.Sprintf("(&v_%s)", p.Name)
 		} else if inst, ok := i.Local.(ir.Instruction); ok {
-			return fmt.Sprintf("(&v%d)", inst.GetID())
+			return fmt.Sprintf("(&v%d)", c.getSlot(inst.GetID()))
 		} else {
 			return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
 		}

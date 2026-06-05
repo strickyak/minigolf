@@ -12,6 +12,7 @@ type Config struct {
 	EnableCSE         bool
 	EnableStrengthRed bool
 	EnablePhiSimp     bool
+	EnableStackAlloc  bool
 }
 
 type Pass interface {
@@ -42,6 +43,9 @@ func OptimizeProgram(p *ir.Program, config Config) {
 	}
 	if config.EnablePhiSimp {
 		passes = append(passes, &PhiSimpPass{})
+	}
+	if config.EnableStackAlloc {
+		passes = append(passes, &StackAllocPass{})
 	}
 
 	for _, f := range p.Functions {

@@ -208,10 +208,12 @@ type Backend struct {
 	globalOffsets   map[string]int
 	activeRegs      map[string]int
 	valInReg        map[int]string
+	slotOwner       map[int]int
 	freeRegs        []string
 	fmtCount        int
 	lblCount        int
 	retSlot         int
+	f               *ir.Function
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -228,6 +230,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		slotSizes:       make(map[int]int),
 		paramSlots:      make(map[string]int),
 		globalOffsets:   make(map[string]int),
+		slotOwner:       make(map[int]int),
 	}
 }
 
@@ -264,11 +267,19 @@ func (b *Backend) flushRegisters() {
 		default:
 			panic(reg)
 		}
+		offset, ok := b.getSlotOffset(id)
+		if !ok {
+			continue
+		}
+		if owner, hasOwner := b.slotOwner[offset]; hasOwner && owner != id {
+			b.buf.WriteString(fmt.Sprintf("\t\t\t; skipped flush for id=%v reg=%v because slot is owned by id=%v\n", id, reg, owner))
+			continue
+		}
 		sz := b.slotSizes[id]
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tstb %s\t; reg=%v id=%v\n", b.memAccess(b.slots[id]), reg, id))
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\t; reg=%v id=%v\n", b.memAccess(offset), reg, id))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\t; reg=%v id=%v\n", b.memAccess(b.slots[id]), reg, id))
+			b.buf.WriteString(fmt.Sprintf("\tstd %s\t; reg=%v id=%v\n", b.memAccess(offset), reg, id))
 		}
 	}
 	b.activeRegs = map[string]int{}
@@ -308,10 +319,16 @@ func (b *Backend) allocateReg(id int) string {
 	if regToSpill == "U" {
 		b.buf.WriteString("\ttfr u,d\n")
 	}
-	if b.slotSizes[spilledId] == 1 {
-		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.slots[spilledId])))
+	offset, ok := b.getSlotOffset(spilledId)
+	if !ok {
+		panic("Cannot spill register holding unallocated ID")
+	}
+	if owner, hasOwner := b.slotOwner[offset]; hasOwner && owner != spilledId {
+		b.buf.WriteString(fmt.Sprintf("\t\t\t; skipped spill for id=%v reg=%v because slot is owned by id=%v\n", spilledId, regToSpill, owner))
+	} else if b.slotSizes[spilledId] == 1 {
+		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(offset)))
 	} else {
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.slots[spilledId])))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
 	}
 	b.buf.WriteString("\tpuls d\n")
 	b.popBytes(2)
@@ -391,6 +408,27 @@ func (b *Backend) pushBytes(n int) {
 func (b *Backend) popBytes(n int) {
 	b.pushedBytes -= n
 	fmt.Fprintf(&b.buf, "\t\t\t; popBytes: %d -> %d\n", n, b.pushedBytes)
+}
+
+func (b *Backend) getSlotOffset(id int) (int, bool) {
+	origId := id
+	if b.f != nil && b.f.SlotAlias != nil {
+		for {
+			if alias, ok := b.f.SlotAlias[id]; ok {
+				id = alias
+			} else {
+				break
+			}
+		}
+	}
+	if offset, ok := b.slots[id]; ok {
+		if origId != id {
+			b.slots[origId] = offset
+			b.slotSizes[origId] = b.slotSizes[id]
+		}
+		return offset, true
+	}
+	return 0, false
 }
 
 func (b *Backend) getSlot(id int, irt ir.Type) int {
@@ -613,16 +651,23 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 		b.activeRegs = map[string]int{}
 		b.valInReg = map[int]string{}
+		b.slotOwner = map[int]int{}
 		b.freeRegs = b.availableRegisters()
 
 		for _, instr := range blk.Instructions {
-			if _, isPhi := instr.(*ir.Phi); isPhi {
+			if phi, isPhi := instr.(*ir.Phi); isPhi {
+				if offset, ok := b.getSlotOffset(phi.GetID()); ok {
+					b.slotOwner[offset] = phi.GetID()
+				}
 				continue
 			}
 			if _, isTerm := instr.(ir.Terminator); isTerm {
 				continue
 			}
 			b.emitInstr(instr)
+			if offset, ok := b.getSlotOffset(instr.GetID()); ok {
+				b.slotOwner[offset] = instr.GetID()
+			}
 		}
 
 		b.flushRegisters()

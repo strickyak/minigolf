@@ -145,6 +145,7 @@ type Function struct {
 	ReturnType Type
 	Blocks     []*BasicBlock
 	IsVariadic bool
+	SlotAlias  map[int]int
 }
 
 // Parameter represents a function parameter.

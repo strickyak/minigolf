@@ -114,6 +114,9 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	if os.Getenv("NO_PHISIMP") != "" {
 		args = append(args, "-no-phisimp")
 	}
+	if os.Getenv("NO_STACKALLOC") != "" {
+		args = append(args, "-no-stackalloc")
+	}
 	args = append(args, sourceFile)
 
 	cmd := exec.Command(compiler, args...)
