@@ -3,8 +3,8 @@ package ir
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"

@@ -10,7 +10,9 @@ type DBEPass struct{}
 func (p *DBEPass) Name() string { return "DBE" }
 
 func (p *DBEPass) Run(f *ir.Function) bool {
-	if f.Name != "main.Eval" { return false }
+	if f.Name != "main.Eval" {
+		return false
+	}
 
 	changed := false
 
@@ -22,34 +24,34 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 			if c, isConstB := br.Condition.(*ir.ConstByte); isConstB {
 				if c.Val != 0 {
 					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						takenBlock = br.TrueBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
+					takenBlock = br.TrueBlock
 					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						takenBlock = br.FalseBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
+					takenBlock = br.FalseBlock
 				} else {
 					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						takenBlock = br.FalseBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
+					takenBlock = br.FalseBlock
 					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						takenBlock = br.TrueBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
+					takenBlock = br.TrueBlock
 				}
 			} else if c, isConstW := br.Condition.(*ir.ConstWord); isConstW {
 				if c.Val != 0 {
 					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						takenBlock = br.TrueBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
+					takenBlock = br.TrueBlock
 					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						takenBlock = br.FalseBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
+					takenBlock = br.FalseBlock
 				} else {
 					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-						takenBlock = br.FalseBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
+					takenBlock = br.FalseBlock
 					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-						takenBlock = br.TrueBlock
+					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
+					takenBlock = br.TrueBlock
 				}
 			}
 
@@ -58,10 +60,10 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 				// but wait, if True and False are the SAME block, it's already an unconditional branch conceptually,
 				// though our IR models it as conditional. It's safer to always convert it to a jump.
 				// However, if they are the same block, we only remove it ONCE from successors/predecessors!
-				
+
 				if takenBlock != untakenBlock {
 					fmt.Printf("DBE: taken == untaken in %s ID %d\n", f.Name, b.ID)
-								b.Terminator = &ir.Jump{
+					b.Terminator = &ir.Jump{
 						BaseInstruction: ir.BaseInstruction{ID: br.ID, Typ: ir.TypeVoid, Comment: "DBE Jump"},
 						Target:          takenBlock,
 					}
@@ -84,22 +86,22 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 					}
 					untakenBlock.Predecessors = newPreds
 					fmt.Printf("DBE: Removing untaken block %d from successors of %d in %s\n", untakenBlock.ID, b.ID, f.Name)
-					
+
 					// Remove phi edges in untaken block coming from this block
 					removePhiEdgesFrom(untakenBlock, b)
 					changed = true
 				} else {
 					// Both edges went to the exact same block! Just convert to jump.
 					fmt.Printf("DBE: taken == untaken in %s ID %d\n", f.Name, b.ID)
-								b.Terminator = &ir.Jump{
+					b.Terminator = &ir.Jump{
 						BaseInstruction: ir.BaseInstruction{ID: br.ID, Typ: ir.TypeVoid, Comment: "DBE Jump Same"},
 						Target:          takenBlock,
 					}
-					// Successors/Predecessors probably list it twice, so deduplicate if necessary, 
+					// Successors/Predecessors probably list it twice, so deduplicate if necessary,
 					// or we just leave it alone since CFG doesn't break if an edge is merged.
 					// Let's just fix successors/predecessors manually to be 1 count.
 					b.Successors = []*ir.BasicBlock{takenBlock}
-					
+
 					newPreds := make([]*ir.BasicBlock, 0, len(takenBlock.Predecessors))
 					found := false
 					for _, p := range takenBlock.Predecessors {
@@ -113,8 +115,8 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 						}
 					}
 					takenBlock.Predecessors = newPreds
-					
-					// We must also remove one of the duplicate Phi edges in takenBlock, 
+
+					// We must also remove one of the duplicate Phi edges in takenBlock,
 					// but it's simpler to just let PhiSimp handle it, or remove duplicates here.
 					removeDuplicatePhiEdgesFrom(takenBlock, b)
 					changed = true

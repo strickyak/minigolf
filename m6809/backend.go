@@ -532,7 +532,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			}
 		}
 	}
-	
+
 	// Pre-scan for all other instructions
 	// Pre-scan for all AddressOfLocal targets first.
 	for _, blk := range f.Blocks {
@@ -544,7 +544,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			}
 		}
 	}
-	
+
 	// Pre-scan for all other instructions
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
