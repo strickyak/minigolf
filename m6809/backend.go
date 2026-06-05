@@ -1479,7 +1479,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\t\t\t; Push arg %d: size=%d\n", idx, argSize))
 			if argSize == 1 {
 				b.loadVal(i.Args[idx])
-				b.buf.WriteString("\tstb ,-s\n")
+				b.buf.WriteString("\tpshs b\n")
 				b.pushBytes(aligned)
 			} else if argSize == 2 {
 				b.loadVal(i.Args[idx])
@@ -1576,7 +1576,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			aligned := align(argSize)
 			if argSize == 1 {
 				b.loadVal(i.Args[idx])
-				b.buf.WriteString("\tstb ,--s\n")
+				b.buf.WriteString("\tpshs b\n")
 				b.pushBytes(aligned)
 			} else if argSize == 2 {
 				b.loadVal(i.Args[idx])
