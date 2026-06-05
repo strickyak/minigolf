@@ -25,6 +25,12 @@ func OptimizeProgram(p *ir.Program, config Config) {
 	if config.EnableDBE {
 		passes = append(passes, &DBEPass{})
 	}
+	if config.EnableDCE {
+		passes = append(passes, &DCEPass{})
+	}
+	if config.EnablePhiSimp {
+		// passes = append(passes, &PhiSimpPass{})
+	}
 
 	for _, f := range p.Functions {
 		changed := true

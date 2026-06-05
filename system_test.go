@@ -92,7 +92,22 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 		exec.Command("go", "build", "-o", compiler, "main.go").Run()
 	}
 
-	cmd := exec.Command(compiler, "-m="+backend, "-o", midFile, "-I=golflib", sourceFile)
+	args := []string{"-m=" + backend, "-o", midFile, "-I=golflib"}
+	if os.Getenv("NO_CONSTFOLD") != "" {
+		args = append(args, "-no-constfold")
+	}
+	if os.Getenv("NO_DBE") != "" {
+		args = append(args, "-no-dbe")
+	}
+	if os.Getenv("NO_DCE") != "" {
+		args = append(args, "-no-dce")
+	}
+	if os.Getenv("NO_PHISIMP") != "" {
+		args = append(args, "-no-phisimp")
+	}
+	args = append(args, sourceFile)
+
+	cmd := exec.Command(compiler, args...)
 	t.Logf("Running: %v", cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to compile with %q -m=%s: %v\nOutput: %s", compiler, backend, err, out)
