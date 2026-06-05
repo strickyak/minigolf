@@ -108,6 +108,9 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	if os.Getenv("NO_CSE") != "" {
 		args = append(args, "-no-cse")
 	}
+	if os.Getenv("NO_STRENGTHRED") != "" {
+		args = append(args, "-no-strengthred")
+	}
 	if os.Getenv("NO_PHISIMP") != "" {
 		args = append(args, "-no-phisimp")
 	}

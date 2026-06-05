@@ -208,6 +208,7 @@ func main() {
 	noDce := flag.Bool("no-dce", false, "Disable Dead Code Elimination optimization")
 	noCopyProp := flag.Bool("no-copyprop", false, "Disable Copy Propagation optimization")
 	noCse := flag.Bool("no-cse", false, "Disable Common Subexpression Elimination optimization")
+	noStrengthRed := flag.Bool("no-strengthred", false, "Disable Strength Reduction optimization")
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
 
 	var importDirPath repeatedFlag
@@ -312,12 +313,13 @@ func main() {
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{
-			EnableConstFold: !*noConstfold,
-			EnableDBE:       !*noDbe,
-			EnableDCE:       !*noDce,
-			EnableCopyProp:  !*noCopyProp,
-			EnableCSE:       !*noCse,
-			EnablePhiSimp:   !*noPhisimp,
+			EnableConstFold:   !*noConstfold,
+			EnableDBE:         !*noDbe,
+			EnableDCE:         !*noDce,
+			EnableCopyProp:    !*noCopyProp,
+			EnableCSE:         !*noCse,
+			EnableStrengthRed: !*noStrengthRed,
+			EnablePhiSimp:     !*noPhisimp,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 		irCode := ir.PrintProgram(irProg)
@@ -340,12 +342,13 @@ func main() {
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{
-			EnableConstFold: !*noConstfold,
-			EnableDBE:       !*noDbe,
-			EnableDCE:       !*noDce,
-			EnableCopyProp:  !*noCopyProp,
-			EnableCSE:       !*noCse,
-			EnablePhiSimp:   !*noPhisimp,
+			EnableConstFold:   !*noConstfold,
+			EnableDBE:         !*noDbe,
+			EnableDCE:         !*noDce,
+			EnableCopyProp:    !*noCopyProp,
+			EnableCSE:         !*noCse,
+			EnableStrengthRed: !*noStrengthRed,
+			EnablePhiSimp:     !*noPhisimp,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 
@@ -370,12 +373,13 @@ func main() {
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{
-			EnableConstFold: !*noConstfold,
-			EnableDBE:       !*noDbe,
-			EnableDCE:       !*noDce,
-			EnableCopyProp:  !*noCopyProp,
-			EnableCSE:       !*noCse,
-			EnablePhiSimp:   !*noPhisimp,
+			EnableConstFold:   !*noConstfold,
+			EnableDBE:         !*noDbe,
+			EnableDCE:         !*noDce,
+			EnableCopyProp:    !*noCopyProp,
+			EnableCSE:         !*noCse,
+			EnableStrengthRed: !*noStrengthRed,
+			EnablePhiSimp:     !*noPhisimp,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 

@@ -5,12 +5,13 @@ import (
 )
 
 type Config struct {
-	EnableConstFold bool
-	EnableDBE       bool
-	EnableDCE       bool
-	EnableCopyProp  bool
-	EnableCSE       bool
-	EnablePhiSimp   bool
+	EnableConstFold   bool
+	EnableDBE         bool
+	EnableDCE         bool
+	EnableCopyProp    bool
+	EnableCSE         bool
+	EnableStrengthRed bool
+	EnablePhiSimp     bool
 }
 
 type Pass interface {
@@ -35,6 +36,9 @@ func OptimizeProgram(p *ir.Program, config Config) {
 	}
 	if config.EnableCSE {
 		passes = append(passes, &CSEPass{})
+	}
+	if config.EnableStrengthRed {
+		passes = append(passes, &StrengthReductionPass{})
 	}
 	if config.EnablePhiSimp {
 		passes = append(passes, &PhiSimpPass{})
