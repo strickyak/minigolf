@@ -108,11 +108,11 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 	case *ast.ImportStatement:
 		return s
 	case *ast.ConstStatement:
-        // TODO: I think we have lost the ability to set string constants.
-        // This is because we are not smart enough to realize that
-        // this is an integer:
-        // const HEAP_SIZE = 10000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*512
-        // TODO: A ConstExprEval() that can tell us the type and value of constant expressions like that.
+		// TODO: I think we have lost the ability to set string constants.
+		// This is because we are not smart enough to realize that
+		// this is an integer:
+		// const HEAP_SIZE = 10000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*512
+		// TODO: A ConstExprEval() that can tell us the type and value of constant expressions like that.
 		qname := r.currentPkg + "." + s.Name.Value
 		if override, ok := r.defines[qname]; ok {
 			val, err := strconv.ParseInt(override, 10, 64)
