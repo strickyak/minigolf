@@ -75,10 +75,45 @@ func PrintInstruction(instr Instruction) string {
 		args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex))
 	case *InsertField:
 		args = append(args, i.Struct.String(), fmt.Sprintf("%d", i.FieldIndex), i.Val.String())
+	case *AddressOfGlobal:
+		args = append(args, i.Global.String())
+	case *AddressOfLocal:
+		args = append(args, i.Local.String())
+	case *AddressOfFunc:
+		args = append(args, "@"+i.Func.Name)
+	case *AddressOfField:
+		args = append(args, i.Ptr.String(), fmt.Sprintf("%d", i.FieldIndex))
+	case *AddressOfElement:
+		args = append(args, i.ArrayPtr.String(), i.Index.String())
+	case *ExtractFieldPtr:
+		args = append(args, i.Ptr.String(), fmt.Sprintf("%d", i.FieldIndex))
+	case *InsertFieldPtr:
+		args = append(args, i.Ptr.String(), fmt.Sprintf("%d", i.FieldIndex), i.Val.String())
+	case *LoadPtr:
+		args = append(args, i.Ptr.String())
+	case *StorePtr:
+		args = append(args, i.Ptr.String(), i.Val.String())
 	case *ZeroInit:
 		// no args
+	case *Sizeof:
+		args = append(args, i.TargetTyp.String())
+	case *ConstStruct:
+		for _, f := range i.Fields {
+			args = append(args, f.String())
+		}
+	case *ConstArray:
+		for _, e := range i.Elements {
+			args = append(args, e.String())
+		}
+	case *SourceMarker:
+		args = append(args, fmt.Sprintf("%q", i.Comment))
 	case *Call:
 		args = append(args, "@"+i.Func.Name)
+		for _, a := range i.Args {
+			args = append(args, a.String())
+		}
+	case *IndirectCall:
+		args = append(args, i.FuncPtr.String())
 		for _, a := range i.Args {
 			args = append(args, a.String())
 		}
