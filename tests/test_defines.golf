@@ -1,0 +1,18 @@
+package main
+
+const testInt = 10
+const testStr = "hello"
+
+func main() {
+	if testInt == 100 {
+		println("INT IS 100")
+	} else {
+		println("INT IS NOT 100")
+	}
+
+	if testStr == "world" {
+		println("STR IS world")
+	} else {
+		println("STR IS NOT world")
+	}
+}

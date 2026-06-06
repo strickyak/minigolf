@@ -216,6 +216,9 @@ func main() {
 	var importDirPath repeatedFlag
 	flag.Var(&importDirPath, "I", "directory to be searched for imports")
 
+	var defineFlags repeatedFlag
+	flag.Var(&defineFlags, "D", "Override constant value: -Dmodule.const=value")
+
 	// Custom usage message
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s -m <architecture> -o <output_file> <source_files...>\n", os.Args[0])
@@ -259,6 +262,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: Target architecture flag (-m) is required.")
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	// Parse -D overrides
+	defines := make(map[string]string)
+	for _, d := range defineFlags {
+		parts := strings.SplitN(d, "=", 2)
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: Invalid syntax for -D flag '%s'. Expected format: -Dmodule.const=value\n", d)
+			os.Exit(1)
+		}
+		defines[parts[0]] = parts[1]
 	}
 
 	// Remaining arguments are source files
@@ -315,7 +329,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	resolver := semantic.NewResolver()
+	resolver := semantic.NewResolver(defines)
 	resolver.Resolve(program)
 	resolveCallback := func(node ast.Node, defPkg string) ast.Node {
 		if stmt, ok := node.(ast.Statement); ok {

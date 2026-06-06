@@ -1597,6 +1597,12 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
 			}
 		}
+		if cexpr, ok := b.constExprs[fullName]; ok {
+			if _, isStr := cexpr.(*ast.StringLiteral); isStr {
+				v := b.buildExpr(cexpr)
+				return ExprResult{IsLValue: false, Value: v, Typ: v.Type()}
+			}
+		}
 		if typ, ok := b.varTypes[e.Value]; ok {
 			val := b.readVariable(e.Value, b.currentBlock)
 			addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: val}, e)
@@ -2772,8 +2778,10 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 	case ItemConst:
 		s := item.ASTNode.(*ast.ConstStatement)
 		b.constExprs[item.QName] = s.Value
-		val := b.EvalConst(&ast.Identifier{Value: item.QName})
-		b.consts[item.QName] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
+		if _, isStr := s.Value.(*ast.StringLiteral); !isStr {
+			val := b.EvalConst(&ast.Identifier{Value: item.QName})
+			b.consts[item.QName] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
+		}
 	case ItemVar:
 		s := item.ASTNode.(*ast.VarStatement)
 		var typ Type

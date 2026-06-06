@@ -1,0 +1,41 @@
+// Hint:
+//
+//	sh run9.sh demos/sayc.golf -D=main.Size=99 -D=main.Color=green
+//
+// or
+//
+//	go run main.go -m M6809 -o _tmp/main.asm -I golflib -D=main.Size=99 -D=main.Color=green demos/sayc.golf
+package main
+
+const Size = 100
+
+const Color = "red"
+
+func small() {
+	println("small apple")
+}
+
+func large() {
+	println("large apple")
+}
+
+func main() {
+	sz := Size
+	clr := Color
+	printany(sz)
+	printany(clr)
+
+	if sz < 100 {
+		small()
+	} else {
+		large()
+	}
+
+	x := 0
+	if sz < 222 {
+		x = 555
+	} else {
+		x = 888
+	}
+	println(x)
+}

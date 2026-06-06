@@ -106,7 +106,7 @@ func printany(x any) {
 	if ch == 'b' {
 		// byte
 		println("b=", peek[byte](x.BaseAddr))
-	} else if ch == 'w' {
+	} else if ch == 'w' || ch == 'c' {
 		// word
 		println("w=", peek[word](x.BaseAddr))
 	} else if ch == 's' {
@@ -114,6 +114,12 @@ func printany(x any) {
 		println("s=", peek[string](x.BaseAddr))
 	} else {
 		println("?", ch, "?")
+        i := 0
+        for peekb(x.TypeStr + i) > 0 {
+            print("...", peekb(x.TypeStr + i))
+            i++
+        }
+        println("")
 	}
 }
 

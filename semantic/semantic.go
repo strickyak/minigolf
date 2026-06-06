@@ -313,7 +313,11 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			// Actually VarStatement has no initializers in ast.go right now. Wait, let's look at AST later.
 
 		case *ast.ConstStatement:
-			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, WordType)
+			if _, isStr := s.Value.(*ast.StringLiteral); isStr {
+				a.globalScope.Define(a.currentPackage+"."+s.Name.Value, &ast.ArrayType{Elt: ByteType})
+			} else {
+				a.globalScope.Define(a.currentPackage+"."+s.Name.Value, WordType)
+			}
 		case *ast.TypeStatement:
 			qname := a.currentPackage + "." + s.Name.Value
 			if len(s.TypeParameters) > 0 {

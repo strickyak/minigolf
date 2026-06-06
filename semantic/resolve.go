@@ -1,6 +1,10 @@
 package semantic
 
 import (
+	"fmt"
+	"os"
+	"strconv"
+
 	"github.com/strickyak/minigolf/ast"
 )
 
@@ -10,13 +14,18 @@ type Resolver struct {
 	currentPkg  string
 	localScopes []map[string]bool
 	errors      []string
+	defines     map[string]string
 }
 
-func NewResolver() *Resolver {
+func NewResolver(defines map[string]string) *Resolver {
+	if defines == nil {
+		defines = make(map[string]string)
+	}
 	return &Resolver{
 		packages:    make(map[string]bool),
 		globals:     make(map[string]bool),
 		localScopes: make([]map[string]bool, 0),
+		defines:     defines,
 	}
 }
 
@@ -99,6 +108,24 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 	case *ast.ImportStatement:
 		return s
 	case *ast.ConstStatement:
+		qname := r.currentPkg + "." + s.Name.Value
+		if override, ok := r.defines[qname]; ok {
+			if _, isInt := s.Value.(*ast.IntegerLiteral); isInt {
+				val, err := strconv.ParseInt(override, 10, 64)
+				if err != nil {
+					// fatal error
+					fmt.Fprintf(os.Stderr, "Error: Invalid override value for %s. Expected integer, got '%s'.\n", qname, override)
+					os.Exit(1)
+				}
+				tok := *s.Value.GetToken()
+				tok.Literal = override
+				s.Value = &ast.IntegerLiteral{Value: val, Token: tok}
+			} else if _, isStr := s.Value.(*ast.StringLiteral); isStr {
+				tok := *s.Value.GetToken()
+				tok.Literal = override
+				s.Value = &ast.StringLiteral{Value: override, Token: tok}
+			}
+		}
 		s.Value = r.resolveExpression(s.Value)
 		return s
 	case *ast.TypeStatement:
