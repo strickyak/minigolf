@@ -34,8 +34,8 @@ func PrintProgram(p *Program) string {
 		for _, b := range f.Blocks {
 			buf.WriteString(fmt.Sprintf("b%d:\n", b.ID))
 			for _, instr := range b.Instructions {
-					buf.WriteString(PrintInstruction(instr))
-					buf.WriteByte('\n')
+				buf.WriteString(PrintInstruction(instr))
+				buf.WriteByte('\n')
 			} // next instr
 		} // next block
 		buf.WriteString("}\n\n")

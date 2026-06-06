@@ -155,8 +155,13 @@ type Parameter struct {
 	Typ  Type
 }
 
-func (p *Parameter) Type() Type     { return p.Typ }
-func (p *Parameter) String() string { return fmt.Sprintf("p%d", p.ID) }
+func (p *Parameter) Type() Type { return p.Typ }
+func (p *Parameter) String() string {
+	if p.Name != "" {
+		return fmt.Sprintf("p%d_%s", p.ID, p.Name)
+	}
+	return fmt.Sprintf("p%d", p.ID)
+}
 
 // BasicBlock is a sequence of non-branching instructions ending in a terminator.
 type BasicBlock struct {
@@ -195,6 +200,8 @@ type Instruction interface {
 	GetID() int
 	GetComment() string
 	SetComment(c string)
+	GetName() string
+	SetName(string)
 }
 
 // Terminator represents an instruction that safely ends a BasicBlock.
@@ -208,14 +215,22 @@ type BaseInstruction struct {
 	ID      int
 	Typ     Type
 	Comment string
+	Name    string
 }
 
-func (b *BaseInstruction) Type() Type          { return b.Typ }
-func (b *BaseInstruction) String() string      { return fmt.Sprintf("v%d", b.ID) }
+func (b *BaseInstruction) Type() Type { return b.Typ }
+func (b *BaseInstruction) String() string {
+	if b.Name != "" {
+		return fmt.Sprintf("v%d_%s", b.ID, b.Name)
+	}
+	return fmt.Sprintf("v%d", b.ID)
+}
 func (b *BaseInstruction) SetID(id int)        { b.ID = id }
 func (b *BaseInstruction) GetID() int          { return b.ID }
 func (b *BaseInstruction) GetComment() string  { return b.Comment }
 func (b *BaseInstruction) SetComment(c string) { b.Comment = c }
+func (b *BaseInstruction) GetName() string     { return b.Name }
+func (b *BaseInstruction) SetName(name string) { b.Name = name }
 
 // --- Constant Instructions ---
 

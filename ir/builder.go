@@ -843,7 +843,11 @@ func (b *Builder) addInstr(instr Instruction, reference any) Instruction {
 
 // Braun et al. SSA Construction Methods
 func (b *Builder) writeVariable(variable string, block *BasicBlock, value Value) {
-	//fmt.Printf("DEBUG writeVariable name=%s\n", variable)
+	if instr, ok := value.(Instruction); ok {
+		if instr.GetName() == "" {
+			instr.SetName(variable)
+		}
+	}
 	if b.currentDef[block] == nil {
 		b.currentDef[block] = make(map[string]Value)
 	}
