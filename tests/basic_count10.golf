@@ -27,21 +27,6 @@ type Line struct {
 var Lines [100]Line
 var NumLines word
 
-/*
-func NewProgram() {
-    for i := word(0); i < NumLines; i++ {
-        line := Lines[i]
-        if line.Cmd == 'R' {
-            strfree(line.Remark)
-        }
-    }
-    NumLines = 0
-    for i := word(0); i < 26; i++ {
-        IntVars[i] = 0
-    }
-}
-*/
-
 func isSpace(c byte) byte {
 	if c == ' ' {
 		return 1
@@ -67,6 +52,16 @@ func isAlpha(c byte) byte {
 		}
 	}
 	return 0
+}
+
+func chr(i word) string {
+	var z string
+	z.Append(i)
+	return z
+}
+
+func getVarName(i word) string {
+	return chr(i + 'A')
 }
 
 func getVarIndex(tok string) word {
@@ -231,26 +226,64 @@ func compileLine(lineStr string) {
 	NumLines++
 }
 
-/*
 func ListProgram() {
-    for i := word(0); i < NumLines; i++ {
-        line := Lines[i]
-        if line.Cmd == 'R' {
-            println(line.Num, "REM", line.Remark)
-        } else if line.Cmd == 'L' {
-            println(line.Num, "LET")
-        } else if line.Cmd == 'P' {
-            println(line.Num, "PRINT")
-        } else if line.Cmd == 'I' {
-            println(line.Num, "IF")
-        } else if line.Cmd == 'G' {
-            println(line.Num, "GOTO", line.Topic)
-        } else if line.Cmd == 'E' {
-            println(line.Num, "END")
-        }
-    }
+	for i := word(0); i < NumLines; i++ {
+		line := Lines[i]
+		if line.Cmd == 'R' {
+			println(line.Remark)
+		} else if line.Cmd == 'L' {
+			print(line.Num, "LET ")
+			print(getVarName(line.Topic))
+			print(" = ")
+			printExpr(line.Expr)
+			println()
+		} else if line.Cmd == 'P' {
+			print(line.Num, "PRINT ")
+			printExpr(line.Expr)
+			println()
+		} else if line.Cmd == 'I' {
+			print(line.Num, "IF ")
+			printExpr(line.Expr)
+			println(" ...THEN", line.Topic)
+		} else if line.Cmd == 'G' {
+			println(line.Num, "GOTO", line.Topic)
+		} else if line.Cmd == 'E' {
+			println(line.Num, "END")
+		}
+	}
 }
-*/
+
+func printSubExpr(x word, isVar bool) {
+	if isVar {
+		print(getVarName(x))
+	} else {
+		print(x)
+	}
+}
+func printExpr(e Expression) {
+	if e.Op == 'I' {
+		print(e.LVal)
+		return
+	}
+	if e.Op == 'V' {
+		print(getVarName(e.LVal))
+		return
+	}
+	if e.Op == '+' {
+		printSubExpr(e.LVal, e.LIsVar)
+		print(" + ")
+		printSubExpr(e.RVal, e.RIsVar)
+		return
+	}
+	if e.Op == '!' {
+		printSubExpr(e.LVal, e.LIsVar)
+		print(" <> ")
+		printSubExpr(e.RVal, e.RIsVar)
+		return
+	}
+	print("?expression?")
+
+}
 
 func evalExpr(e Expression) word {
 	if e.Op == 'I' {
@@ -339,9 +372,10 @@ func main() {
 60 GOTO 70
 70 END
 `
-	// NewProgram()
 	CompileProgram(BasicSource)
-	// println("Compiled lines:", NumLines)
-	// ListProgram()
+	println("> LIST")
+	ListProgram()
+	println("> RUN")
 	RunProgram()
+	println("> BYE")
 }

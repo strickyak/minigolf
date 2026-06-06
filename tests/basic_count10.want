@@ -1,3 +1,12 @@
+> LIST
+10 REM count to 10
+20 LET I = 1
+30 PRINT I
+40 LET I = I + 1
+50 IF I <> 11 ...THEN 30
+60 GOTO 70
+70 END
+> RUN
 1
 2
 3
@@ -8,3 +17,4 @@
 8
 9
 10
+> BYE
