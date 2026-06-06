@@ -495,6 +495,15 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		}
 		return fmt.Sprintf("(-%s)", c.formatVal(i.Operand))
 	case *ir.Call:
+		if i.Func.Name == "prelude.mul_word" {
+			return fmt.Sprintf("(%s * %s)", c.formatVal(i.Args[0]), c.formatVal(i.Args[1]))
+		}
+		if i.Func.Name == "prelude.div_word" {
+			return fmt.Sprintf("(%s / %s)", c.formatVal(i.Args[0]), c.formatVal(i.Args[1]))
+		}
+		if i.Func.Name == "prelude.mod_word" {
+			return fmt.Sprintf("(%s %% %s)", c.formatVal(i.Args[0]), c.formatVal(i.Args[1]))
+		}
 		var args []string
 		for idx, arg := range i.Args {
 			argStr := c.formatVal(arg)

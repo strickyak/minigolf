@@ -1,7 +1,6 @@
 package opt
 
 import (
-	"fmt"
 	"github.com/strickyak/minigolf/ir"
 )
 
@@ -10,10 +9,6 @@ type DBEPass struct{}
 func (p *DBEPass) Name() string { return "DBE" }
 
 func (p *DBEPass) Run(f *ir.Function) bool {
-	if f.Name != "main.Eval" {
-		return false
-	}
-
 	changed := false
 
 	// 1. Fold branches with constant conditions
@@ -23,35 +18,19 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 
 			if c, isConstB := br.Condition.(*ir.ConstByte); isConstB {
 				if c.Val != 0 {
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
 					takenBlock = br.TrueBlock
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-					takenBlock = br.FalseBlock
+					untakenBlock = br.FalseBlock
 				} else {
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
 					takenBlock = br.FalseBlock
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-					takenBlock = br.TrueBlock
+					untakenBlock = br.TrueBlock
 				}
 			} else if c, isConstW := br.Condition.(*ir.ConstWord); isConstW {
 				if c.Val != 0 {
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
 					takenBlock = br.TrueBlock
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-					takenBlock = br.FalseBlock
+					untakenBlock = br.FalseBlock
 				} else {
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to FalseBlock\n", f.Name, b.ID)
 					takenBlock = br.FalseBlock
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-					fmt.Printf("DBE: Folding branch in %s ID %d to TrueBlock\n", f.Name, b.ID)
-					takenBlock = br.TrueBlock
+					untakenBlock = br.TrueBlock
 				}
 			}
 
@@ -62,7 +41,6 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 				// However, if they are the same block, we only remove it ONCE from successors/predecessors!
 
 				if takenBlock != untakenBlock {
-					fmt.Printf("DBE: taken == untaken in %s ID %d\n", f.Name, b.ID)
 					b.Terminator = &ir.Jump{
 						BaseInstruction: ir.BaseInstruction{ID: br.ID, Typ: ir.TypeVoid, Comment: "DBE Jump"},
 						Target:          takenBlock,
@@ -85,14 +63,12 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 						}
 					}
 					untakenBlock.Predecessors = newPreds
-					fmt.Printf("DBE: Removing untaken block %d from successors of %d in %s\n", untakenBlock.ID, b.ID, f.Name)
 
 					// Remove phi edges in untaken block coming from this block
 					removePhiEdgesFrom(untakenBlock, b)
 					changed = true
 				} else {
 					// Both edges went to the exact same block! Just convert to jump.
-					fmt.Printf("DBE: taken == untaken in %s ID %d\n", f.Name, b.ID)
 					b.Terminator = &ir.Jump{
 						BaseInstruction: ir.BaseInstruction{ID: br.ID, Typ: ir.TypeVoid, Comment: "DBE Jump Same"},
 						Target:          takenBlock,
@@ -155,7 +131,6 @@ func (p *DBEPass) Run(f *ir.Function) bool {
 						}
 					}
 					s.Predecessors = newPreds
-					fmt.Printf("DBE: Removing unreachable block %d from successors of %d in %s\n", b.ID, s.ID, f.Name)
 					removePhiEdgesFrom(s, b)
 				}
 				changed = true

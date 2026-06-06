@@ -4,15 +4,22 @@ import (
 	"github.com/strickyak/minigolf/ast"
 )
 
-func foldExpression(expr ast.Expression) ast.Expression {
+func (a *Analyzer) foldExpression(expr ast.Expression) ast.Expression {
 	if expr == nil {
 		return nil
 	}
 
 	switch e := expr.(type) {
+	case *ast.Identifier:
+		if e.IsResolved {
+			qname := e.Package + "." + e.ShortName
+			if cExpr, ok := a.constExprs[qname]; ok {
+				return a.foldExpression(cExpr)
+			}
+		}
 	case *ast.InfixExpression:
-		e.Left = foldExpression(e.Left)
-		e.Right = foldExpression(e.Right)
+		e.Left = a.foldExpression(e.Left)
+		e.Right = a.foldExpression(e.Right)
 
 		leftInt, leftOk := e.Left.(*ast.IntegerLiteral)
 		rightInt, rightOk := e.Right.(*ast.IntegerLiteral)
@@ -91,7 +98,7 @@ func foldExpression(expr ast.Expression) ast.Expression {
 		}
 
 	case *ast.PrefixExpression:
-		e.Right = foldExpression(e.Right)
+		e.Right = a.foldExpression(e.Right)
 
 		if rightInt, ok := e.Right.(*ast.IntegerLiteral); ok {
 			switch e.Operator {
@@ -111,19 +118,19 @@ func foldExpression(expr ast.Expression) ast.Expression {
 		}
 
 	case *ast.CallExpression:
-		e.Function = foldExpression(e.Function)
+		e.Function = a.foldExpression(e.Function)
 		for i, arg := range e.Arguments {
-			e.Arguments[i] = foldExpression(arg)
+			e.Arguments[i] = a.foldExpression(arg)
 		}
 
 	case *ast.IndexExpression:
-		e.Left = foldExpression(e.Left)
+		e.Left = a.foldExpression(e.Left)
 		for i, idx := range e.Indices {
-			e.Indices[i] = foldExpression(idx)
+			e.Indices[i] = a.foldExpression(idx)
 		}
 
 	case *ast.SelectorExpression:
-		e.Left = foldExpression(e.Left)
+		e.Left = a.foldExpression(e.Left)
 	}
 
 	return expr

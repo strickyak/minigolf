@@ -1196,7 +1196,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			op = "andnot"
 		}
 
-		if typ.Name == "word" && (op == "mul" || op == "div" || op == "mod") {
+		if b.WordSize == 2 && typ.Name == "word" && (op == "mul" || op == "div" || op == "mod") {
 			var funcName string
 			if op == "mul" {
 				funcName = "prelude.mul_word"
@@ -1849,7 +1849,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		case "-":
 			val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "sub", Left: left, Right: right}, expr)
 		case "*":
-			if typ.Name == "word" && b.funcs["prelude.mul_word"] != nil {
+			if b.WordSize == 2 && typ.Name == "word" && b.funcs["prelude.mul_word"] != nil {
 				f := b.funcs["prelude.mul_word"]
 				args := []Value{left, right}
 				b.coerceCallArgs(f, args, expr)
@@ -1858,7 +1858,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "mul", Left: left, Right: right}, expr)
 			}
 		case "/":
-			if typ.Name == "word" && b.funcs["prelude.div_word"] != nil {
+			if b.WordSize == 2 && typ.Name == "word" && b.funcs["prelude.div_word"] != nil {
 				f := b.funcs["prelude.div_word"]
 				args := []Value{left, right}
 				b.coerceCallArgs(f, args, expr)
@@ -1867,7 +1867,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				val = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "div", Left: left, Right: right}, expr)
 			}
 		case "%":
-			if typ.Name == "word" && b.funcs["prelude.mod_word"] != nil {
+			if b.WordSize == 2 && typ.Name == "word" && b.funcs["prelude.mod_word"] != nil {
 				f := b.funcs["prelude.mod_word"]
 				args := []Value{left, right}
 				b.coerceCallArgs(f, args, expr)

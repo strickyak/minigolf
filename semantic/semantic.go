@@ -56,6 +56,7 @@ type Analyzer struct {
 	program          *ast.Program
 	genericTemplates map[string]*GenericTemplate
 	funcMap          map[string]*ast.FuncStatement
+	constExprs       map[string]ast.Expression
 	reachableFuncs   map[string]bool
 	queue            []string
 	resolver         *Resolver
@@ -100,6 +101,7 @@ func New(resolver *Resolver) *Analyzer {
 		currentScope:     global,
 		genericTemplates: make(map[string]*GenericTemplate),
 		funcMap:          make(map[string]*ast.FuncStatement),
+		constExprs:       make(map[string]ast.Expression),
 		reachableFuncs:   make(map[string]bool),
 		queue:            make([]string, 0),
 		resolver:         resolver,
@@ -313,6 +315,8 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			// Actually VarStatement has no initializers in ast.go right now. Wait, let's look at AST later.
 
 		case *ast.ConstStatement:
+			qname := a.currentPackage + "." + s.Name.Value
+			a.constExprs[qname] = s.Value
 			if _, isStr := s.Value.(*ast.StringLiteral); isStr {
 				a.globalScope.Define(a.currentPackage+"."+s.Name.Value, &ast.ArrayType{Elt: ByteType})
 			} else {
@@ -438,7 +442,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 		switch s := stmt.(type) {
 		case *ast.VarStatement:
 			if s.Value != nil {
-				s.Value = foldExpression(s.Value)
+				s.Value = a.foldExpression(s.Value)
 			}
 			typ := UnknownType
 			if s.ValueType != nil {
@@ -453,7 +457,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				for i, nameExpr := range s.Names {
 					typ := UnknownType
 					if i < len(s.Values) {
-						s.Values[i] = foldExpression(s.Values[i])
+						s.Values[i] = a.foldExpression(s.Values[i])
 						typ = a.analyzeExpression(s.Values[i])
 					}
 					if name, ok := nameExpr.(*ast.Identifier); ok {
@@ -464,18 +468,18 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				}
 			} else {
 				for i, nameExpr := range s.Names {
-					s.Names[i] = foldExpression(nameExpr)
+					s.Names[i] = a.foldExpression(nameExpr)
 					a.analyzeExpression(s.Names[i])
 				}
 				for i, expr := range s.Values {
-					s.Values[i] = foldExpression(expr)
+					s.Values[i] = a.foldExpression(expr)
 					a.analyzeExpression(s.Values[i])
 				}
 			}
 		case *ast.OpAssignStatement:
-			s.Name = foldExpression(s.Name)
+			s.Name = a.foldExpression(s.Name)
 			a.analyzeExpression(s.Name)
-			s.Value = foldExpression(s.Value)
+			s.Value = a.foldExpression(s.Value)
 			a.analyzeExpression(s.Value)
 
 			op := s.Operator
@@ -488,7 +492,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				a.markReachable("prelude.mod_word")
 			}
 		case *ast.IfStatement:
-			s.Condition = foldExpression(s.Condition)
+			s.Condition = a.foldExpression(s.Condition)
 			a.analyzeExpression(s.Condition)
 
 			if intLit, ok := s.Condition.(*ast.IntegerLiteral); ok {
@@ -508,7 +512,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			}
 		case *ast.ForStatement:
 			if s.Condition != nil {
-				s.Condition = foldExpression(s.Condition)
+				s.Condition = a.foldExpression(s.Condition)
 				a.analyzeExpression(s.Condition)
 			}
 			a.analyzeBlock(s.Body)
@@ -517,7 +521,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Init}})
 			}
 			if s.Condition != nil {
-				s.Condition = foldExpression(s.Condition)
+				s.Condition = a.foldExpression(s.Condition)
 				a.analyzeExpression(s.Condition)
 			}
 			if s.Increment != nil {
@@ -525,7 +529,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			}
 			a.analyzeBlock(s.Body)
 		case *ast.ForRangeStatement:
-			s.RangeValue = foldExpression(s.RangeValue)
+			s.RangeValue = a.foldExpression(s.RangeValue)
 			rangeTyp := a.analyzeExpression(s.RangeValue)
 			if s.IsDecl {
 				if ident, ok := s.Key.(*ast.Identifier); ok {
@@ -579,14 +583,14 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			a.analyzeBlock(s.Body)
 		case *ast.ReturnStatement:
 			for i, rv := range s.ReturnValues {
-				s.ReturnValues[i] = foldExpression(rv)
+				s.ReturnValues[i] = a.foldExpression(rv)
 				a.analyzeExpression(s.ReturnValues[i])
 			}
 		case *ast.ExpressionStatement:
-			s.Expression = foldExpression(s.Expression)
+			s.Expression = a.foldExpression(s.Expression)
 			a.analyzeExpression(s.Expression)
 		case *ast.IncDecStatement:
-			s.Name = foldExpression(s.Name)
+			s.Name = a.foldExpression(s.Name)
 			a.analyzeExpression(s.Name)
 		}
 		newStatements = append(newStatements, stmt)
