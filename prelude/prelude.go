@@ -313,12 +313,15 @@ type MallocHeader struct {
 	magic word
 }
 
-var Heap [HEAP_SIZE]byte
+var Heap [HEAP_SIZE+1]byte
 
 var base MallocHeader
 var freep *MallocHeader
 
 func malloc_init(heap_start *byte, heap_size word) {
+    if HEAP_SIZE < 1 {
+        panic(4043)
+    }
 	var p *MallocHeader = (*MallocHeader)(word(heap_start))
 
 	// Calculate how many MallocHeader-sized units fit in the heap
@@ -343,6 +346,11 @@ func zalloc(nbytes word) *byte {
 	return (*byte)(p)
 }
 func malloc(nbytes word) *byte {
+    if HEAP_SIZE < 1 {
+        panic(4041)
+        var null *byte
+        return null
+    }
 	var p *MallocHeader
 	var prevp *MallocHeader
 	var nunits word
@@ -391,6 +399,10 @@ func malloc(nbytes word) *byte {
 }
 
 func free(ap *byte) {
+    if HEAP_SIZE < 1 {
+        panic(4042)
+        return
+    }
 	var bp *MallocHeader
 	var p *MallocHeader
 	// println("#free <<", word(ap) )
@@ -451,8 +463,9 @@ func free(ap *byte) {
 }
 
 func init() {
-	//println("# HEAP_SIZE =", HEAP_SIZE)
-	malloc_init(&Heap[0], HEAP_SIZE)
+	if HEAP_SIZE > 0 {
+	    malloc_init(&Heap[0], HEAP_SIZE)
+    }
 }
 
 /////////////////////////////////////////////
