@@ -206,6 +206,7 @@ func main() {
 	noConstfold := flag.Bool("no-constfold", false, "Disable Constant Folding optimization")
 	noDbe := flag.Bool("no-dbe", false, "Disable Dead Branch Elimination optimization")
 	noDce := flag.Bool("no-dce", false, "Disable Dead Code Elimination optimization")
+	noDfe := flag.Bool("no-dfe", false, "Disable Dead Function Elimination optimization")
 	noCopyProp := flag.Bool("no-copyprop", false, "Disable Copy Propagation optimization")
 	noCse := flag.Bool("no-cse", false, "Disable Common Subexpression Elimination optimization")
 	noStrengthRed := flag.Bool("no-strengthred", false, "Disable Strength Reduction optimization")
@@ -237,6 +238,9 @@ func main() {
 	}
 	if os.Getenv("NO_DCE") != "" {
 		*noDce = true
+	}
+	if os.Getenv("NO_DFE") != "" {
+		*noDfe = true
 	}
 	if os.Getenv("NO_COPYPROP") != "" {
 		*noCopyProp = true
@@ -367,6 +371,7 @@ func main() {
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
+			EnableDFE:         !*noDfe,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 		irCode := ir.PrintProgram(irProg)
@@ -398,6 +403,7 @@ func main() {
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
+			EnableDFE:         !*noDfe,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 
@@ -431,6 +437,7 @@ func main() {
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
+			EnableDFE:         !*noDfe,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 
@@ -462,6 +469,7 @@ func main() {
 			EnablePhiSimp:    !*noPhisimp,
 			EnableStackAlloc: !*noStackAlloc,
 			EnableBranchFold: !*noBranchFold,
+			EnableDFE:        !*noDfe,
 		}
 		opt.OptimizeProgram(irProg, optConfig)
 

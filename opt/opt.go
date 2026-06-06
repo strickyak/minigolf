@@ -14,6 +14,7 @@ type Config struct {
 	EnablePhiSimp     bool
 	EnableStackAlloc  bool
 	EnableBranchFold  bool
+	EnableDFE         bool
 }
 
 type Pass interface {
@@ -62,6 +63,10 @@ func OptimizeProgram(p *ir.Program, config Config) {
 				}
 			}
 		}
+	}
+
+	if config.EnableDFE {
+		EliminateDeadFunctions(p)
 	}
 }
 
