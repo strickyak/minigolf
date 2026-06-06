@@ -108,23 +108,20 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 	case *ast.ImportStatement:
 		return s
 	case *ast.ConstStatement:
+        // TODO: I think we have lost the ability to set string constants.
+        // This is because we are not smart enough to realize that
+        // this is an integer:
+        // const HEAP_SIZE = 10000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*512
+        // TODO: A ConstExprEval() that can tell us the type and value of constant expressions like that.
 		qname := r.currentPkg + "." + s.Name.Value
 		if override, ok := r.defines[qname]; ok {
-			if _, isInt := s.Value.(*ast.IntegerLiteral); isInt {
-				val, err := strconv.ParseInt(override, 10, 64)
-				if err != nil {
-					// fatal error
-					fmt.Fprintf(os.Stderr, "Error: Invalid override value for %s. Expected integer, got '%s'.\n", qname, override)
-					os.Exit(1)
-				}
-				tok := *s.Value.GetToken()
-				tok.Literal = override
-				s.Value = &ast.IntegerLiteral{Value: val, Token: tok}
-			} else if _, isStr := s.Value.(*ast.StringLiteral); isStr {
-				tok := *s.Value.GetToken()
-				tok.Literal = override
-				s.Value = &ast.StringLiteral{Value: override, Token: tok}
+			val, err := strconv.ParseInt(override, 10, 64)
+			if err != nil {
+				// fatal error
+				fmt.Fprintf(os.Stderr, "Error: Invalid override value for %s. Expected integer, got '%s'.\n", qname, override)
+				os.Exit(1)
 			}
+			s.Value = &ast.IntegerLiteral{Value: val, Token: s.Token}
 		}
 		s.Value = r.resolveExpression(s.Value)
 		return s
