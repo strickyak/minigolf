@@ -1,0 +1,35 @@
+// Hint:
+//
+//	sh run9.sh demos/trim.golf -D=main.Size=999
+//
+// or
+//
+//	go run main.go -m M6809 -o _tmp/main.asm -I golflib -D=main.Size=999 demos/trim.golf
+package main
+
+const Size = 33
+
+func small() {
+	println("small apple")
+}
+
+func large() {
+	println("large apple")
+}
+
+var x word
+
+func main() {
+	if Size < 100 {
+		small()
+	} else {
+		large()
+	}
+
+	if Size < 222 {
+		x = 777
+	} else {
+		x = 888
+	}
+	println(x)
+}
