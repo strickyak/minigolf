@@ -203,6 +203,51 @@ func (a *Analyzer) exprToString(expr ast.Expression) string {
 	return expr.TokenLiteral()
 }
 
+func (a *Analyzer) isDestructible(typ ast.Expression) bool {
+	if typ == nil || typ == UnknownType {
+		return false
+	}
+	// Pointers are never destructible by value
+	if _, ok := typ.(*ast.PointerType); ok {
+		return false
+	}
+
+	qname := a.exprToString(typ)
+
+	// Explicit destructor exists?
+	if _, ok := a.funcMap[qname+"_destructor"]; ok {
+		return true
+	}
+
+	// Recursive field/element checks
+	if arr, ok := typ.(*ast.ArrayType); ok {
+		return a.isDestructible(arr.Elt)
+	}
+
+	// Structural fields check
+	var ts *ast.TypeStatement
+	for _, stmt := range a.program.Statements {
+		if s, ok := stmt.(*ast.TypeStatement); ok {
+			stmtQname := a.currentPackage + "." + s.Name.Value
+			if stmtQname == qname || s.Name.Value == qname {
+				ts = s
+				break
+			}
+		}
+	}
+	if ts != nil {
+		if st, ok := ts.BaseType.(*ast.StructType); ok {
+			for _, field := range st.Fields {
+				if a.isDestructible(field.Type) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 func (a *Analyzer) typesEqual(t1, t2 ast.Expression) bool {
 	if t1 == UnknownType || t2 == UnknownType {
 		return true // Prevent cascade errors
@@ -428,7 +473,16 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 
 	for _, p := range s.Parameters {
 		a.analyzeExpression(p.Type)
+		if a.isDestructible(p.Type) {
+			a.reportError(s, "Cannot pass destructible type %s by value in function parameter", a.exprToString(p.Type))
+		}
 		a.currentScope.Define(p.Name.Value, p.Type)
+	}
+
+	for _, retTyp := range s.ReturnTypes {
+		if a.isDestructible(retTyp) {
+			a.reportError(s, "Cannot return destructible type %s by value from function", a.exprToString(retTyp))
+		}
 	}
 
 	if s.Body != nil {
@@ -451,6 +505,9 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			} else if s.Value != nil {
 				typ = a.analyzeExpression(s.Value)
 			}
+			if s.Value != nil && a.isDestructible(typ) {
+				a.reportError(s, "Cannot initialize destructible type %s to a nonzero value", a.exprToString(typ))
+			}
 			a.currentScope.Define(s.Name.Value, typ)
 		case *ast.AssignStatement:
 			if s.Token.Literal == ":=" {
@@ -459,6 +516,9 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 					if i < len(s.Values) {
 						s.Values[i] = a.foldExpression(s.Values[i])
 						typ = a.analyzeExpression(s.Values[i])
+						if a.isDestructible(typ) {
+							a.reportError(s, "Cannot copy destructible type %s", a.exprToString(typ))
+						}
 					}
 					if name, ok := nameExpr.(*ast.Identifier); ok {
 						a.currentScope.Define(name.Value, typ)
@@ -473,7 +533,10 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				}
 				for i, expr := range s.Values {
 					s.Values[i] = a.foldExpression(expr)
-					a.analyzeExpression(s.Values[i])
+					typ := a.analyzeExpression(s.Values[i])
+					if a.isDestructible(typ) {
+						a.reportError(s, "Cannot copy destructible type %s", a.exprToString(typ))
+					}
 				}
 			}
 		case *ast.OpAssignStatement:
@@ -584,7 +647,10 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 		case *ast.ReturnStatement:
 			for i, rv := range s.ReturnValues {
 				s.ReturnValues[i] = a.foldExpression(rv)
-				a.analyzeExpression(s.ReturnValues[i])
+				typ := a.analyzeExpression(s.ReturnValues[i])
+				if a.isDestructible(typ) {
+					a.reportError(s, "Cannot return destructible type %s by value", a.exprToString(typ))
+				}
 			}
 		case *ast.ExpressionStatement:
 			s.Expression = a.foldExpression(s.Expression)
