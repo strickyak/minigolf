@@ -630,7 +630,12 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 
 				if eltTyp != nil {
 					baseTypStr := a.exprToString(rangeTyp)
-					methodsToInstantiate := []string{"Address", "Put", "Get", "Chop"}
+					var methodsToInstantiate []string
+					if a.isDestructible(eltTyp) {
+						methodsToInstantiate = []string{"Address", "Chop"}
+					} else {
+						methodsToInstantiate = []string{"Address", "Put", "Get", "Chop"}
+					}
 					for _, m := range methodsToInstantiate {
 						instName := baseTypStr + "_" + m
 						if !strings.HasPrefix(instName, "prelude.") {
@@ -907,7 +912,12 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			typ = builtinType(instName)
 		} else {
 			if arrTyp, ok := leftTyp.(*ast.ArrayType); ok {
-				typ = arrTyp.Elt
+				if e.IsSlice {
+					// Slice of an array/slice results in a slice
+					typ = &ast.ArrayType{Elt: arrTyp.Elt}
+				} else {
+					typ = arrTyp.Elt
+				}
 			}
 
 			// ir.Builder will compile index expressions to a call to Address (or Put, Get, Chop).
@@ -926,7 +936,12 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 					typ = builtinType(eltTypeStr)
 				}
 
-				methodsToInstantiate := []string{"Address", "Put", "Get", "Chop"}
+				var methodsToInstantiate []string
+				if a.isDestructible(typ) {
+					methodsToInstantiate = []string{"Address", "Chop"}
+				} else {
+					methodsToInstantiate = []string{"Address", "Put", "Get", "Chop"}
+				}
 				for _, m := range methodsToInstantiate {
 					instName := baseTypStr + "_" + m
 					if !strings.HasPrefix(instName, "prelude.") {
@@ -991,8 +1006,12 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 							break
 						}
 					}
-					if typ == UnknownType {
-						//fmt.Printf("DEBUG STRUCT: Field %s not found in struct!\n", e.Right.Value)
+				} else if arr, ok := structDef.Type.(*ast.ArrayType); ok {
+					// Slices implicitly have Base, Cap, Len fields in Minigolf
+					if e.Right.Value == "Len" || e.Right.Value == "Cap" {
+						typ = WordType
+					} else if e.Right.Value == "Base" {
+						typ = &ast.PointerType{Elt: arr.Elt}
 					}
 				} else {
 					//fmt.Printf("DEBUG STRUCT: Not a StructType! It is %T\n", structDef.Type)
@@ -1037,15 +1056,19 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 
 					// Fallback for prelude slices which are built-in generics without explicit struct templates
 					if typ == UnknownType {
-						if strings.HasPrefix(baseTypStr, "prelude.slice_") || strings.HasPrefix(baseTypStr, "slice_") {
+						lookupTypStr := baseTypStr
+						if lookupTypStr == "string" {
+							lookupTypStr = "slice_byte"
+						}
+						if strings.HasPrefix(lookupTypStr, "prelude.slice_") || strings.HasPrefix(lookupTypStr, "slice_") {
 							var eltTypeStr string
-							if strings.HasPrefix(baseTypStr, "prelude.slice_") {
-								eltTypeStr = strings.TrimPrefix(baseTypStr, "prelude.slice_")
+							if strings.HasPrefix(lookupTypStr, "prelude.slice_") {
+								eltTypeStr = strings.TrimPrefix(lookupTypStr, "prelude.slice_")
 							} else {
-								eltTypeStr = strings.TrimPrefix(baseTypStr, "slice_")
+								eltTypeStr = strings.TrimPrefix(lookupTypStr, "slice_")
 							}
 							qname := "prelude.slice_" + e.Right.Value
-							instName := baseTypStr + "_" + e.Right.Value
+							instName := lookupTypStr + "_" + e.Right.Value
 							if !strings.HasPrefix(instName, "prelude.") {
 								instName = "prelude." + instName
 							}

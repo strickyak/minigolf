@@ -86,11 +86,15 @@ type TypeStatement struct {
 	Tokens         []token.Token
 	BaseType       Expression
 	IsAlias        bool
+	resolvedType   Expression
 }
 
-func (s *TypeStatement) statementNode()         {}
-func (s *TypeStatement) TokenLiteral() string   { return s.Token.Literal }
-func (s *TypeStatement) GetToken() *token.Token { return &s.Token }
+func (s *TypeStatement) statementNode()               {}
+func (s *TypeStatement) expressionNode()              {}
+func (s *TypeStatement) TokenLiteral() string         { return s.Token.Literal }
+func (s *TypeStatement) GetToken() *token.Token       { return &s.Token }
+func (s *TypeStatement) GetResolvedType() Expression  { return s.resolvedType }
+func (s *TypeStatement) SetResolvedType(e Expression) { s.resolvedType = e }
 
 type VarStatement struct {
 	Token     token.Token // The 'var' token
