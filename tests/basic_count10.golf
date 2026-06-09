@@ -244,7 +244,7 @@ func ListProgram() {
 		} else if line.Cmd == 'I' {
 			print(line.Num, "IF ")
 			printExpr(line.Expr)
-			println(" ...THEN", line.Topic)
+			println(" THEN", line.Topic)
 		} else if line.Cmd == 'G' {
 			println(line.Num, "GOTO", line.Topic)
 		} else if line.Cmd == 'E' {
