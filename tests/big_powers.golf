@@ -1,0 +1,29 @@
+package main
+
+import "big"
+import "bogus"
+
+const LIMIT = 10
+
+var x big.Dec
+
+const LEVEL = bogus.GooseLevel + LIMIT
+
+var extraApple bogus.Apple
+
+func main() {
+	x.SetSmall(1)
+
+	for i := range LIMIT {
+		x.Add(&x, &x)
+		print("two to the ", i+1, " is ")
+		x.Print()
+	}
+
+	println(bogus.GooseLevel)
+	println(bogus.JellyName[0])
+	println(bogus.PBName)
+
+	var apple = bogus.Apple{6, 7}
+	bogus.ApplePrint(apple)
+}
