@@ -1585,182 +1585,11 @@ func (b *Builder) buildDefer(s *ast.DeferStatement) {
 	if !ok {
 		panic("Defer statement without CallExpression")
 	}
-
-	action := DeferredAction{IsDestructible: false, Token: s}
-
 	if _, ok := callExpr.Function.(*ast.PointerType); ok {
 		panic("Defer on pointer type cast not supported")
 	}
 
-	var isGenericFunc bool
-	var funcName string
-	var rawFuncName string
-	var args []Value
-
-	if idxExpr, ok := callExpr.Function.(*ast.IndexExpression); ok {
-		if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
-			rawFuncName = ident.FullName()
-		}
-		if rawFuncName != "" {
-			var instTypStr string
-			var argTyps []Type
-			for _, idx := range idxExpr.Indices {
-				argTyp := b.astToIRType(idx)
-				argTyps = append(argTyps, argTyp)
-				instTypStr += "_" + argTyp.Name
-			}
-			funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
-			if _, ok := b.funcs[funcName]; !ok {
-				if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
-					b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, s.GetToken())
-				}
-			}
-			isGenericFunc = true
-		}
-	} else if ident, ok := callExpr.Function.(*ast.Identifier); ok {
-		rawFuncName = ident.FullName()
-		if _, ok := b.funcs[rawFuncName]; !ok {
-			if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
-				p := parser.New(tmpl.Tokens)
-				stmt := p.ParseStatementForGeneric()
-				if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
-					typeMap := make(map[string]Type)
-					for _, arg := range callExpr.Arguments {
-						args = append(args, b.buildExpr(arg))
-					}
-					for i, param := range funcStmt.Parameters {
-						if i < len(args) {
-							b.extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
-						}
-					}
-
-					var argTyps []Type
-					var instTypStr string
-					for _, tp := range tmpl.TypeParams {
-						argTyp := typeMap[tp]
-						if argTyp.Name == "" {
-							argTyp = TypeWord
-						}
-						argTyps = append(argTyps, argTyp)
-						instTypStr += "_" + argTyp.Name
-					}
-					funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
-					if _, ok := b.funcs[funcName]; !ok {
-						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, s.GetToken())
-					}
-					isGenericFunc = true
-				}
-			}
-		}
-	}
-
-	if isGenericFunc {
-		if len(args) == 0 && len(callExpr.Arguments) > 0 {
-			for _, arg := range callExpr.Arguments {
-				args = append(args, b.buildExpr(arg))
-			}
-		}
-		f, ok := b.funcs[funcName]
-		if !ok {
-			panic(fmt.Sprintf("MISSING GENERIC FUNC: %s", funcName))
-		}
-		action.Func = f
-		action.Args = args
-		b.deferredActions = append(b.deferredActions, action)
-		return
-	}
-
-	if sel, ok := callExpr.Function.(*ast.SelectorExpression); ok {
-		base := b.eval(sel.Left)
-		isPtr := base.Typ.IsAPointer()
-		var baseType string
-		if isPtr {
-			baseType = base.Typ.PointedType().Name
-		} else {
-			baseType = base.Typ.Name
-		}
-		funcName := MangleName(baseType) + "_" + sel.Right.Value
-
-		if _, exists := b.funcs[funcName]; !exists {
-			if instInfo, ok := b.instantiatedTypes[baseType]; ok {
-				rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
-				if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
-					b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, s.GetToken())
-				}
-			}
-		}
-
-		if f, exists := b.funcs[funcName]; exists {
-			var receiverVal Value
-			if isPtr {
-				if base.IsLValue {
-					receiverVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, s)
-				} else {
-					receiverVal = base.Value
-				}
-			} else {
-				if base.IsLValue {
-					receiverVal = base.Address
-				} else {
-					panic(fmt.Sprintf("Cannot call pointer method on unaddressable value: %T", sel.Left))
-				}
-			}
-			args := []Value{receiverVal}
-			for _, arg := range callExpr.Arguments {
-				args = append(args, b.buildExpr(arg))
-			}
-			if f.IsVariadic {
-				args = b.packVariadicArgs(f, args, s)
-			}
-			b.coerceCallArgs(f, args, s)
-			action.Func = f
-			action.Args = args
-			b.deferredActions = append(b.deferredActions, action)
-			return
-		}
-	}
-
-	if ident, ok := callExpr.Function.(*ast.Identifier); ok {
-		if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" {
-			args := []Value{}
-			for _, arg := range callExpr.Arguments {
-				if strLit, ok := arg.(*ast.StringLiteral); ok {
-					args = append(args, &StringLiteral{Value: strLit.Value})
-				} else {
-					args = append(args, b.buildExpr(arg))
-				}
-			}
-			action.BuiltinName = ident.Value
-			action.Args = args
-			b.deferredActions = append(b.deferredActions, action)
-			return
-		}
-
-		fullName := ident.FullName()
-		if f, ok := b.funcs[fullName]; ok {
-			args := []Value{}
-			for _, arg := range callExpr.Arguments {
-				args = append(args, b.buildExpr(arg))
-			}
-			if f.IsVariadic {
-				args = b.packVariadicArgs(f, args, s)
-			}
-			b.coerceCallArgs(f, args, s)
-			action.Func = f
-			action.Args = args
-			b.deferredActions = append(b.deferredActions, action)
-			return
-		}
-	}
-
-	funcVal := b.buildExpr(callExpr.Function)
-	args = []Value{}
-	for _, arg := range callExpr.Arguments {
-		args = append(args, b.buildExpr(arg))
-	}
-	action.FuncPtr = funcVal
-	action.Args = args
-	b.deferredActions = append(b.deferredActions, action)
+	b.buildCall(callExpr, true)
 }
 
 func (b *Builder) buildExpr(expr ast.Expression) Value {
@@ -1791,6 +1620,265 @@ func (b *Builder) buildAddress(expr ast.Expression) Value {
 		panic(fmt.Sprintf("Cannot take the address of expression: %T", expr))
 	}
 	return res.Address
+}
+
+func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
+		if ptrType, ok := e.Function.(*ast.PointerType); ok {
+			targetTyp := b.astToIRType(ptrType)
+			val := b.buildExpr(e.Arguments[0])
+			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, e)
+			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
+		}
+
+		var isGenericFunc bool
+		var funcName string
+		var rawFuncName string
+		var args []Value
+
+		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
+			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+				if ident.Value == "sizeof" {
+					targetTyp := b.astToIRType(idxExpr.Indices[0])
+					val := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, e)
+					return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+				}
+				rawFuncName = ident.FullName()
+			}
+			if rawFuncName != "" {
+				var instTypStr string
+				var argTyps []Type
+				for _, idx := range idxExpr.Indices {
+					argTyp := b.astToIRType(idx)
+					argTyps = append(argTyps, argTyp)
+					instTypStr += "_" + argTyp.Name
+				}
+				funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+				if _, ok := b.funcs[funcName]; !ok {
+					if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, e.GetToken())
+					}
+				}
+				isGenericFunc = true
+			}
+		} else if ident, ok := e.Function.(*ast.Identifier); ok {
+			rawFuncName = ident.FullName()
+			if _, ok := b.funcs[rawFuncName]; !ok {
+				if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+					p := parser.New(tmpl.Tokens)
+					stmt := p.ParseStatementForGeneric()
+					if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
+						typeMap := make(map[string]Type)
+						for _, arg := range e.Arguments {
+							args = append(args, b.buildExpr(arg))
+						}
+						for i, param := range funcStmt.Parameters {
+							if i < len(args) {
+								b.extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
+							}
+						}
+
+						var argTyps []Type
+						var instTypStr string
+						for _, tp := range tmpl.TypeParams {
+							argTyp := typeMap[tp]
+							if argTyp.Name == "" {
+								argTyp = TypeWord
+							}
+							argTyps = append(argTyps, argTyp)
+							instTypStr += "_" + argTyp.Name
+						}
+						funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+						if _, ok := b.funcs[funcName]; !ok {
+							b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, e.GetToken())
+						}
+						isGenericFunc = true
+					}
+				}
+			}
+		}
+
+		if isGenericFunc {
+			if len(args) == 0 && len(e.Arguments) > 0 {
+				for _, arg := range e.Arguments {
+					args = append(args, b.buildExpr(arg))
+				}
+			}
+			f, ok := b.funcs[funcName]
+			if !ok {
+				panic(fmt.Sprintf("MISSING GENERIC FUNC: %s", funcName))
+			}
+			if isDefer {
+				b.deferredActions = append(b.deferredActions, DeferredAction{Func: f, Args: args, Token: e})
+				return ExprResult{}
+			}
+			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
+		}
+
+		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+
+			base := b.eval(sel.Left)
+			isPtr := base.Typ.IsAPointer()
+			var baseType string
+			if isPtr {
+				baseType = base.Typ.PointedType().Name
+			} else {
+				baseType = base.Typ.Name
+			}
+			funcName := MangleName(baseType) + "_" + sel.Right.Value
+
+			if _, exists := b.funcs[funcName]; !exists {
+				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+					//fmt.Printf("DEBUG buildExpr call method: funcName=%s baseType=%s instInfo.ArgTyps=%v\n", funcName, baseType, instInfo.ArgTyps)
+					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
+					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+						b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
+					}
+				}
+			}
+
+			if f, exists := b.funcs[funcName]; exists {
+				var receiverVal Value
+				if isPtr {
+					if base.IsLValue {
+						receiverVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, e)
+					} else {
+						receiverVal = base.Value
+					}
+				} else {
+					if base.IsLValue {
+						receiverVal = base.Address
+					} else {
+						panic(fmt.Sprintf("Cannot call pointer method on unaddressable value: %T", sel.Left))
+					}
+				}
+				args := []Value{receiverVal}
+				for _, arg := range e.Arguments {
+					args = append(args, b.buildExpr(arg))
+				}
+				if f.IsVariadic {
+					args = b.packVariadicArgs(f, args, e)
+				}
+				b.coerceCallArgs(f, args, e)
+				if isDefer {
+					b.deferredActions = append(b.deferredActions, DeferredAction{Func: f, Args: args, Token: e})
+					return ExprResult{}
+				}
+				val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
+			}
+		}
+
+		if ident, ok := e.Function.(*ast.Identifier); ok {
+			if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" {
+				args := []Value{}
+				for _, arg := range e.Arguments {
+					if strLit, ok := arg.(*ast.StringLiteral); ok {
+						args = append(args, &StringLiteral{Value: strLit.Value})
+					} else {
+						args = append(args, b.buildExpr(arg))
+					}
+				}
+				if isDefer {
+					b.deferredActions = append(b.deferredActions, DeferredAction{BuiltinName: ident.Value, Args: args, Token: e})
+					return ExprResult{}
+				}
+				val := b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: ident.Value, Args: args}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeVoid}
+			}
+			if ident.Value == "byte" {
+				arg := b.buildExpr(e.Arguments[0])
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: arg}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
+			}
+			if ident.Value == "len" || ident.Value == "cap" {
+				arg := b.buildExpr(e.Arguments[0])
+				fieldIdx := 2 // Len
+				if ident.Value == "cap" {
+					fieldIdx = 1 // Cap
+				}
+				val := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: arg, FieldIndex: fieldIdx}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+			}
+			if ident.Value == "word" {
+				arg := b.buildExpr(e.Arguments[0])
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: arg}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
+			}
+
+			args := []Value{}
+			for _, arg := range e.Arguments {
+				args = append(args, b.buildExpr(arg))
+			}
+			funcName := ident.FullName()
+			if _, ok := b.funcs[funcName]; ok {
+				// Found by exact full name
+			} else if _, ok := b.funcs[b.currentPackage+"."+funcName]; ok {
+				funcName = b.currentPackage + "." + funcName
+			} else if _, ok := b.funcs["prelude."+funcName]; ok {
+				funcName = "prelude." + funcName
+			}
+			f := b.funcs[funcName]
+			if f == nil {
+				qname := b.currentPackage + "." + ident.Value
+				if _, ok := b.typeDefsAST[qname]; ok {
+					arg := b.buildExpr(e.Arguments[0])
+					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}, Op: "bitcast", Operand: arg}, e)
+					return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}
+				}
+				if _, ok := b.typeDefsAST["prelude."+ident.Value]; ok {
+					arg := b.buildExpr(e.Arguments[0])
+					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}, Op: "bitcast", Operand: arg}, e)
+					return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}
+				}
+				// It's not a typedef, treat as an indirect call from a variable holding a function!
+				funcVal := b.buildExpr(e.Function)
+				var args []Value
+				for _, arg := range e.Arguments {
+					args = append(args, b.buildExpr(arg))
+				}
+				retTyp := TypeWord
+				if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
+					retTyp = b.getFuncReturnType(ft.ReturnTypes)
+				}
+
+				if isDefer {
+					b.deferredActions = append(b.deferredActions, DeferredAction{FuncPtr: funcVal, Args: args, Token: e})
+					return ExprResult{}
+				}
+				val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: funcVal, Args: args}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: retTyp}
+			}
+			if f.IsVariadic {
+				args = b.packVariadicArgs(f, args, e)
+			}
+			b.coerceCallArgs(f, args, e)
+			if isDefer {
+				b.deferredActions = append(b.deferredActions, DeferredAction{Func: f, Args: args, Token: e})
+				return ExprResult{}
+			}
+			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
+		} else {
+			// Treat as an indirect call!
+			funcVal := b.buildExpr(e.Function)
+			var args []Value
+			for _, arg := range e.Arguments {
+				args = append(args, b.buildExpr(arg))
+			}
+
+			retTyp := TypeWord
+			if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
+				retTyp = b.getFuncReturnType(ft.ReturnTypes)
+			}
+			if isDefer {
+				b.deferredActions = append(b.deferredActions, DeferredAction{FuncPtr: funcVal, Args: args, Token: e})
+				return ExprResult{}
+			}
+			val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: funcVal, Args: args}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: retTyp}
+		}
+
 }
 
 func (b *Builder) eval(expr ast.Expression) ExprResult {
@@ -2292,237 +2380,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		return ExprResult{IsLValue: false, Value: val, Typ: typ}
 
 	case *ast.CallExpression:
-		if ptrType, ok := e.Function.(*ast.PointerType); ok {
-			targetTyp := b.astToIRType(ptrType)
-			val := b.buildExpr(e.Arguments[0])
-			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, expr)
-			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
-		}
-
-		var isGenericFunc bool
-		var funcName string
-		var rawFuncName string
-		var args []Value
-
-		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
-			if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
-				if ident.Value == "sizeof" {
-					targetTyp := b.astToIRType(idxExpr.Indices[0])
-					val := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, expr)
-					return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
-				}
-				rawFuncName = ident.FullName()
-			}
-			if rawFuncName != "" {
-				var instTypStr string
-				var argTyps []Type
-				for _, idx := range idxExpr.Indices {
-					argTyp := b.astToIRType(idx)
-					argTyps = append(argTyps, argTyp)
-					instTypStr += "_" + argTyp.Name
-				}
-				funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
-				if _, ok := b.funcs[funcName]; !ok {
-					if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
-						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, e.GetToken())
-					}
-				}
-				isGenericFunc = true
-			}
-		} else if ident, ok := e.Function.(*ast.Identifier); ok {
-			rawFuncName = ident.FullName()
-			if _, ok := b.funcs[rawFuncName]; !ok {
-				if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
-					p := parser.New(tmpl.Tokens)
-					stmt := p.ParseStatementForGeneric()
-					if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
-						typeMap := make(map[string]Type)
-						for _, arg := range e.Arguments {
-							args = append(args, b.buildExpr(arg))
-						}
-						for i, param := range funcStmt.Parameters {
-							if i < len(args) {
-								b.extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
-							}
-						}
-
-						var argTyps []Type
-						var instTypStr string
-						for _, tp := range tmpl.TypeParams {
-							argTyp := typeMap[tp]
-							if argTyp.Name == "" {
-								argTyp = TypeWord
-							}
-							argTyps = append(argTyps, argTyp)
-							instTypStr += "_" + argTyp.Name
-						}
-						funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
-						if _, ok := b.funcs[funcName]; !ok {
-							b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, e.GetToken())
-						}
-						isGenericFunc = true
-					}
-				}
-			}
-		}
-
-		if isGenericFunc {
-			if len(args) == 0 && len(e.Arguments) > 0 {
-				for _, arg := range e.Arguments {
-					args = append(args, b.buildExpr(arg))
-				}
-			}
-			f, ok := b.funcs[funcName]
-			if !ok {
-				panic(fmt.Sprintf("MISSING GENERIC FUNC: %s", funcName))
-			}
-			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
-			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
-		}
-
-		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
-
-			base := b.eval(sel.Left)
-			isPtr := base.Typ.IsAPointer()
-			var baseType string
-			if isPtr {
-				baseType = base.Typ.PointedType().Name
-			} else {
-				baseType = base.Typ.Name
-			}
-			funcName := MangleName(baseType) + "_" + sel.Right.Value
-
-			if _, exists := b.funcs[funcName]; !exists {
-				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
-					//fmt.Printf("DEBUG buildExpr call method: funcName=%s baseType=%s instInfo.ArgTyps=%v\n", funcName, baseType, instInfo.ArgTyps)
-					rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
-					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
-						b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
-					}
-				}
-			}
-
-			if f, exists := b.funcs[funcName]; exists {
-				var receiverVal Value
-				if isPtr {
-					if base.IsLValue {
-						receiverVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, expr)
-					} else {
-						receiverVal = base.Value
-					}
-				} else {
-					if base.IsLValue {
-						receiverVal = base.Address
-					} else {
-						panic(fmt.Sprintf("Cannot call pointer method on unaddressable value: %T", sel.Left))
-					}
-				}
-				args := []Value{receiverVal}
-				for _, arg := range e.Arguments {
-					args = append(args, b.buildExpr(arg))
-				}
-				if f.IsVariadic {
-					args = b.packVariadicArgs(f, args, expr)
-				}
-				b.coerceCallArgs(f, args, expr)
-				val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
-				return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
-			}
-		}
-
-		if ident, ok := e.Function.(*ast.Identifier); ok {
-			if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" {
-				args := []Value{}
-				for _, arg := range e.Arguments {
-					if strLit, ok := arg.(*ast.StringLiteral); ok {
-						args = append(args, &StringLiteral{Value: strLit.Value})
-					} else {
-						args = append(args, b.buildExpr(arg))
-					}
-				}
-				val := b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: ident.Value, Args: args}, expr)
-				return ExprResult{IsLValue: false, Value: val, Typ: TypeVoid}
-			}
-			if ident.Value == "byte" {
-				arg := b.buildExpr(e.Arguments[0])
-				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "trunc", Operand: arg}, expr)
-				return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
-			}
-			if ident.Value == "len" || ident.Value == "cap" {
-				arg := b.buildExpr(e.Arguments[0])
-				fieldIdx := 2 // Len
-				if ident.Value == "cap" {
-					fieldIdx = 1 // Cap
-				}
-				val := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: arg, FieldIndex: fieldIdx}, expr)
-				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
-			}
-			if ident.Value == "word" {
-				arg := b.buildExpr(e.Arguments[0])
-				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: arg}, expr)
-				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
-			}
-
-			args := []Value{}
-			for _, arg := range e.Arguments {
-				args = append(args, b.buildExpr(arg))
-			}
-			funcName := ident.FullName()
-			if _, ok := b.funcs[funcName]; ok {
-				// Found by exact full name
-			} else if _, ok := b.funcs[b.currentPackage+"."+funcName]; ok {
-				funcName = b.currentPackage + "." + funcName
-			} else if _, ok := b.funcs["prelude."+funcName]; ok {
-				funcName = "prelude." + funcName
-			}
-			f := b.funcs[funcName]
-			if f == nil {
-				qname := b.currentPackage + "." + ident.Value
-				if _, ok := b.typeDefsAST[qname]; ok {
-					arg := b.buildExpr(e.Arguments[0])
-					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}, Op: "bitcast", Operand: arg}, expr)
-					return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}
-				}
-				if _, ok := b.typeDefsAST["prelude."+ident.Value]; ok {
-					arg := b.buildExpr(e.Arguments[0])
-					val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}, Op: "bitcast", Operand: arg}, expr)
-					return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}
-				}
-				// It's not a typedef, treat as an indirect call from a variable holding a function!
-				funcVal := b.buildExpr(e.Function)
-				var args []Value
-				for _, arg := range e.Arguments {
-					args = append(args, b.buildExpr(arg))
-				}
-				retTyp := TypeWord
-				if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
-					retTyp = b.getFuncReturnType(ft.ReturnTypes)
-				}
-
-				val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: funcVal, Args: args}, expr)
-				return ExprResult{IsLValue: false, Value: val, Typ: retTyp}
-			}
-			if f.IsVariadic {
-				args = b.packVariadicArgs(f, args, expr)
-			}
-			b.coerceCallArgs(f, args, expr)
-			val := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, expr)
-			return ExprResult{IsLValue: false, Value: val, Typ: f.ReturnType}
-		} else {
-			// Treat as an indirect call!
-			funcVal := b.buildExpr(e.Function)
-			var args []Value
-			for _, arg := range e.Arguments {
-				args = append(args, b.buildExpr(arg))
-			}
-
-			retTyp := TypeWord
-			if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
-				retTyp = b.getFuncReturnType(ft.ReturnTypes)
-			}
-			val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: funcVal, Args: args}, expr)
-			return ExprResult{IsLValue: false, Value: val, Typ: retTyp}
-		}
+		return b.buildCall(e, false)
 
 	case *ast.PrefixExpression:
 		if e.Operator == "!" {
