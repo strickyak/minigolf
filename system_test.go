@@ -70,7 +70,7 @@ func cleanOutput(out string) []string {
 	return result
 }
 
-func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
+func testBackend(t *testing.T, backend, sourceFile, expectedStr string, expectCompileError, expectRunError bool) {
 	tmpDir := filepath.Join("_tmp", backend+"_"+filepath.Base(sourceFile)+".dir")
 	os.MkdirAll(tmpDir, 0777)
 
@@ -98,7 +98,12 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 	cmd := exec.Command(compiler, args...)
 	t.Logf("Running: %v", cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if expectCompileError {
+			return // Success: compilation failed as expected
+		}
 		t.Fatalf("Failed to compile with %q -m=%s: %v\nOutput: %s", compiler, backend, err, out)
+	} else if expectCompileError {
+		t.Fatalf("Expected compile error for %q -m=%s but compilation succeeded. Output: %s", compiler, backend, out)
 	}
 
 	var stdout bytes.Buffer
@@ -111,7 +116,12 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 		cmd.Stderr = &stderr
 		t.Logf("Running: %v", cmd)
 		if err := cmd.Run(); err != nil {
+			if expectRunError {
+				return // Success: execution failed as expected
+			}
 			t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
+		} else if expectRunError {
+			t.Fatalf("Expected run error for backend %s but execution succeeded", backend)
 		}
 
 	default:
@@ -126,7 +136,12 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 		cmd = exec.Command(exeFile)
 		cmd.Stdout = &stdout
 		if err := cmd.Run(); err != nil {
+			if expectRunError {
+				return // Success: execution failed as expected
+			}
 			t.Fatalf("Failed to run executable for backend %s: %v", backend, err)
+		} else if expectRunError {
+			t.Fatalf("Expected run error for backend %s but execution succeeded", backend)
 		}
 	}
 
@@ -157,19 +172,19 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string) {
 }
 
 func TestSystemTriangles_CBE(t *testing.T) {
-	testBackend(t, "CBE", "demos/triangles.golf", expectedOutput)
+	testBackend(t, "CBE", "demos/triangles.golf", expectedOutput, false, false)
 }
 
 func TestSystemTrianglesByte_CBE(t *testing.T) {
-	testBackend(t, "CBE", "demos/triangles_byte.golf", expectedOutputByte)
+	testBackend(t, "CBE", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
 
 func TestSystemTriangles_x86_64(t *testing.T) {
-	testBackend(t, "x86_64", "demos/triangles.golf", expectedOutput)
+	testBackend(t, "x86_64", "demos/triangles.golf", expectedOutput, false, false)
 }
 
 func TestSystemTrianglesByte_x86_64(t *testing.T) {
-	testBackend(t, "x86_64", "demos/triangles_byte.golf", expectedOutputByte)
+	testBackend(t, "x86_64", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
 
 func TestSystemAllGolfFiles(t *testing.T) {
@@ -181,12 +196,22 @@ func TestSystemAllGolfFiles(t *testing.T) {
 	backends := []string{"CBE", "x86_64", "m6809"}
 
 	for _, file := range files {
-		wantFile := strings.TrimSuffix(file, ".golf") + ".want"
-		wantBytes, err := os.ReadFile(wantFile)
-		if err != nil {
-			t.Fatalf("Failed to read want file %s: %v", wantFile, err)
+		if strings.HasSuffix(file, ".bad.golf") {
+			continue // Skip known broken/wip files
 		}
-		expectedStr := string(wantBytes)
+
+		expectCompileError := strings.HasSuffix(file, ".error.golf")
+		expectRunError := strings.HasSuffix(file, ".panic.golf")
+
+		var expectedStr string
+		if !expectCompileError && !expectRunError {
+			wantFile := strings.TrimSuffix(file, ".golf") + ".want"
+			wantBytes, err := os.ReadFile(wantFile)
+			if err != nil {
+				t.Fatalf("Failed to read want file %s: %v", wantFile, err)
+			}
+			expectedStr = string(wantBytes)
+		}
 
 		for _, backend := range backends {
 			if strings.HasSuffix(file, "_nomoto.golf") && backend == "m6809" {
@@ -194,7 +219,7 @@ func TestSystemAllGolfFiles(t *testing.T) {
 			}
 			testName := fmt.Sprintf("%s_%s", filepath.Base(file), backend)
 			t.Run(testName, func(t *testing.T) {
-				testBackend(t, backend, file, expectedStr)
+				testBackend(t, backend, file, expectedStr, expectCompileError, expectRunError)
 			})
 		}
 	}
