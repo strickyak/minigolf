@@ -18,7 +18,7 @@ func (b *Backend) getTypeAlignment(typ string) int {
 	if typ == "byte" {
 		return 1
 	}
-	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" {
+	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "panicked" {
 		return 8
 	}
 	if strings.HasPrefix(typ, "[") {
@@ -59,7 +59,7 @@ func (b *Backend) getTypeSize(typ string) int {
 	if typ == "byte" {
 		return 1
 	}
-	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" {
+	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "panicked" {
 		return 8
 	}
 	if strings.HasPrefix(typ, "[") {
@@ -161,6 +161,7 @@ type Backend struct {
 	retPtrSlot  int
 	slots       map[int]int
 	paramSlots  map[string]int
+	jmpSlots    map[int]int
 	fmtCount    int
 	f           *ir.Function
 }
@@ -169,6 +170,7 @@ func New() *Backend {
 	return &Backend{
 		slots:      make(map[int]int),
 		paramSlots: make(map[string]int),
+		jmpSlots:   make(map[int]int),
 	}
 }
 
@@ -229,6 +231,42 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString("\tpush rbp\n")
 	b.buf.WriteString("\tmov rbp, rsp\n")
 	b.buf.WriteString("\tand rsp, -16\n")
+	b.buf.WriteString("\tsub rsp, 208\n") // Allocate 208 bytes for jumper_main
+
+	// jumper_main.prev = NULL; v_prelude._jmp_chain_ = &jumper_main;
+	b.buf.WriteString("\tmov qword ptr [rbp - 208], 0\n")
+	b.buf.WriteString("\tlea rax, [rbp - 208]\n")
+	b.buf.WriteString("\tmov qword ptr [rip + v_prelude._jmp_chain_], rax\n")
+
+	// setjmp(jumper_main.jmpbuf)
+	b.buf.WriteString("\tlea rdi, [rbp - 200]\n")
+	b.buf.WriteString("\tcall setjmp@PLT\n")
+	b.buf.WriteString("\ttest eax, eax\n")
+	b.buf.WriteString("\tjz .L_main_call_f_main\n")
+
+	// if (val != 0) { ... abort() }
+	b.fmtCount++
+	lblUncaught := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"\\n*** UNCAUGHT_PANIC\\n\"\n", lblUncaught))
+	b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblUncaught))
+	b.buf.WriteString("\txor eax, eax\n")
+	b.buf.WriteString("\tcall printf@PLT\n")
+
+	b.buf.WriteString("\tmov rax, qword ptr [rip + v_prelude._panic_]\n")
+	b.buf.WriteString("\ttest rax, rax\n")
+	b.buf.WriteString("\tjz .L_main_abort\n")
+	b.fmtCount++
+	lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"*** %%s\\n\"\n", lblPanicMsg))
+	b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblPanicMsg))
+	b.buf.WriteString("\tmov rsi, qword ptr [rip + v_prelude._panic_]\n")
+	b.buf.WriteString("\txor eax, eax\n")
+	b.buf.WriteString("\tcall printf@PLT\n")
+
+	b.buf.WriteString(".L_main_abort:\n")
+	b.buf.WriteString("\tcall abort@PLT\n")
+
+	b.buf.WriteString(".L_main_call_f_main:\n")
 	b.buf.WriteString("\tcall f_main\n")
 
 	// TODO -- fix this, to call fflush(stdout), where stdout is `extern FILE* stdout;`
@@ -324,6 +362,10 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
+			if _, ok := instr.(*ir.SetJmp); ok {
+				b.stackOffset += 208
+				b.jmpSlots[instr.GetID()] = b.stackOffset
+			}
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				b.getSlot(instr.GetID(), instr.Type().Name)
 			}
@@ -877,9 +919,92 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.BuiltinCall:
 		if i.Name == "print" || i.Name == "println" {
 			b.emitPrint(i.Name == "println", i.Args)
+		} else if i.Name == "panic" {
+			if len(i.Args) > 0 {
+				if strLit, ok := i.Args[0].(*ir.StringLiteral); ok {
+					b.fmtCount++
+					lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+					b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string %q\n", lbl, strLit.Value))
+					b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + %s]\n", lbl))
+					b.buf.WriteString("\tmov qword ptr [rip + v_prelude._panic_], rax\n")
+				} else {
+					b.loadVal(i.Args[0], "rax")
+					b.buf.WriteString("\tmov qword ptr [rip + v_prelude._panic_], rax\n")
+				}
+			} else {
+				b.buf.WriteString("\tmov qword ptr [rip + v_prelude._panic_], 0\n")
+			}
+
+			b.fmtCount++
+			lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"\\n*PANIC* %%s\\n\"\n", lblPanicMsg))
+			b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblPanicMsg))
+			b.buf.WriteString("\tmov rsi, qword ptr [rip + v_prelude._panic_]\n")
+			b.buf.WriteString("\txor eax, eax\n")
+			b.buf.WriteString("\tcall printf@PLT\n")
+
+			b.buf.WriteString("\tmov rcx, qword ptr [rip + v_prelude._jmp_chain_]\n")
+			b.buf.WriteString("\ttest rcx, rcx\n")
+			b.buf.WriteString("\tjz 1f\n")
+			b.buf.WriteString("\tlea rdi, [rcx + 8]\n") // jmpbuf is at offset 8
+			b.buf.WriteString("\tmov rsi, 1\n")
+			b.buf.WriteString("\tcall longjmp@PLT\n")
+			b.buf.WriteString("1:\n")
+			b.fmtCount++
+			lblAbortMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n", lblAbortMsg))
+			b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblAbortMsg))
+			b.buf.WriteString("\txor eax, eax\n")
+			b.buf.WriteString("\tcall printf@PLT\n")
+			b.buf.WriteString("\tcall abort@PLT\n")
+
+		} else if i.Name == "_unlink_jmp_" {
+			b.buf.WriteString("\tmov rcx, qword ptr [rip + v_prelude._jmp_chain_]\n")
+			b.buf.WriteString("\ttest rcx, rcx\n")
+			b.buf.WriteString("\tjz 1f\n")
+			b.buf.WriteString("\tmov rax, qword ptr [rcx]\n") // prev is at offset 0
+			b.buf.WriteString("\tmov qword ptr [rip + v_prelude._jmp_chain_], rax\n")
+			b.buf.WriteString("1:\n")
+		} else if i.Name == "_propagate_panic_" {
+			b.buf.WriteString("\tmov rax, qword ptr [rip + v_prelude._panic_]\n")
+			b.buf.WriteString("\ttest rax, rax\n")
+			b.buf.WriteString("\tjz 2f\n")
+			b.buf.WriteString("\tmov rcx, qword ptr [rip + v_prelude._jmp_chain_]\n")
+			b.buf.WriteString("\ttest rcx, rcx\n")
+			b.buf.WriteString("\tjz 1f\n")
+			b.buf.WriteString("\tlea rdi, [rcx + 8]\n") // jmpbuf is at offset 8
+			b.buf.WriteString("\tmov rsi, 1\n")
+			b.buf.WriteString("\tcall longjmp@PLT\n")
+			b.buf.WriteString("1:\n")
+			b.fmtCount++
+			lblAbortMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n", lblAbortMsg))
+			b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblAbortMsg))
+			b.buf.WriteString("\txor eax, eax\n")
+			b.buf.WriteString("\tcall printf@PLT\n")
+			b.buf.WriteString("\tcall abort@PLT\n")
+			b.buf.WriteString("2:\n")
 		} else if i.Name == "exit" {
-			b.buf.WriteString("\tud2\n")
+			b.loadVal(i.Args[0], "rdi")
+			b.buf.WriteString("\tcall exit@PLT\n")
 		}
+	case *ir.SetJmp:
+		jmpSlot := b.jmpSlots[id]
+		// jumper.prev = _jmp_chain_
+		b.buf.WriteString("\tmov rax, qword ptr [rip + v_prelude._jmp_chain_]\n")
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", jmpSlot))
+		// _jmp_chain_ = &jumper
+		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rbp - %d]\n", jmpSlot))
+		b.buf.WriteString("\tmov qword ptr [rip + v_prelude._jmp_chain_], rax\n")
+		// setjmp(&jumper.jmpbuf)
+		b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rbp - %d]\n", jmpSlot-8))
+		b.buf.WriteString("\tcall setjmp@PLT\n")
+		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
+	case *ir.LongJmp:
+		b.loadVal(i.JmpBuf, "rax")
+		b.buf.WriteString("\tlea rdi, [rax + 8]\n") // jmpbuf is at offset 8
+		b.buf.WriteString("\tmov rsi, 1\n")
+		b.buf.WriteString("\tcall longjmp@PLT\n")
 	case *ir.Cast:
 		b.loadVal(i.Operand, "rax")
 		if i.Op == "trunc" {

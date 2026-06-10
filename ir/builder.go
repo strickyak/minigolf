@@ -1619,11 +1619,11 @@ func (b *Builder) buildDefer(s *ast.DeferStatement) {
 
 		// -- Panic Block --
 		b.currentBlock = panicBlk
-		
+
 		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, s)
 		b.buildBlock(s.Block)
 		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_propagate_panic_"}, s)
-		
+
 		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, s)
 		b.addEdge(b.currentBlock, b.currentDestructBlock)
 

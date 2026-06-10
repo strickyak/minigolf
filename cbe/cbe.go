@@ -679,4 +679,3 @@ func (c *CBE) emitPanic(i *ir.BuiltinCall) string {
 	}
 	return fmt.Sprintf("(printf(\"\\n*PANIC* %%s\\n\", (char*)(%s)), v_prelude__panic_ = (byte*)(%s), (v_prelude__jmp_chain_ ? (longjmp(((struct jmp_struct*)v_prelude__jmp_chain_)->jmpbuf, 1), 0) : (printf(\"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"), abort(), 0)))", msg, msg)
 }
-
