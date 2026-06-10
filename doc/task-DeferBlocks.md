@@ -1,0 +1,14 @@
+- `[x]` AST Updates: Update `DeferStatement` to include `Block *BlockStatement` field.
+- `[x]` Parser Updates: Update `parseDeferStatement()` to detect and parse `defer func() { ... }()`.
+- `[x]` Semantic Analyzer Updates:
+  - `[x]` Add `inDeferBlock` tracking to `Analyzer`.
+  - `[x]` Analyze deferred blocks in `analyzeStatement()`.
+  - `[x]` Reject `return`, `break`, and `continue` inside deferred blocks.
+  - `[x]` Reject creating destructibles inside deferred blocks via `defineLocalSymbol()`.
+- `[x]` IR Builder Updates:
+  - `[x]` Add `Block *ast.BlockStatement` to `DeferredAction`.
+  - `[x]` Process `DeferStatement.Block` into `deferredActions`.
+  - `[x]` Execute deferred block inside `buildReturn()` by calling `b.buildBlock()`.
+- `[x]` Verification:
+  - `[x]` Create system test `test_defer_block.golf`.
+  - `[x]` Run `go test ./...` and ensure functionality works correctly.
