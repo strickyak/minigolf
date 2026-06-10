@@ -2624,6 +2624,9 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 		return e.Value
 	case *ast.Identifier:
 		qname := b.currentPackage + "." + e.Value
+		if e.Package != "" {
+			qname = e.Package + "." + e.Value
+		}
 		var target ast.Expression
 		targetName := qname
 		if cExpr, ok := b.constExprs[qname]; ok {
@@ -2632,6 +2635,9 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 			target = cExpr
 			targetName = e.Value
 		} else {
+			if e.Package != "" {
+				panic("unresolved:" + qname)
+			}
 			panic("unresolved:" + e.Value)
 		}
 
@@ -2639,8 +2645,8 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 			panic("unresolved:" + targetName)
 		}
 		b.evaluatingConst[targetName] = true
+		defer func() { b.evaluatingConst[targetName] = false }()
 		val := b.EvalConst(target)
-		b.evaluatingConst[targetName] = false
 
 		b.consts[targetName] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(val)}
 		b.constExprs[targetName] = &ast.IntegerLiteral{Value: val}

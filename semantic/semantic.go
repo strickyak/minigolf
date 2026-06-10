@@ -277,48 +277,7 @@ func (a *Analyzer) markReachable(qname string) {
 func (a *Analyzer) Analyze(program *ast.Program) {
 	a.program = program
 
-	// Pass 1a: Collect generic templates
-	a.currentPackage = ""
-	for _, stmt := range program.Statements {
-		switch s := stmt.(type) {
-		case *ast.PackageStatement:
-			a.currentPackage = s.Name.Value
-		case *ast.TypeStatement:
-			qname := a.currentPackage + "." + s.Name.Value
-			if len(s.TypeParameters) > 0 {
-				var tparams []string
-				for _, tp := range s.TypeParameters {
-					tparams = append(tparams, tp.Value)
-				}
-				a.genericTemplates[qname] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
-				// Don't analyze base type for generic templates until instantiated
-				a.globalScope.Define(qname, s.BaseType)
-			} else {
-				a.globalScope.Define(qname, builtinType(qname))
-			}
-		case *ast.FuncStatement:
-			if len(s.TypeParameters) > 0 {
-				qname := a.currentPackage + "." + s.Name.Value
-				if s.Receiver != nil {
-					// Simplified for pass 1a
-					if pt, ok := s.Receiver.Type.(*ast.PointerType); ok {
-						if idx, ok := pt.Elt.(*ast.IndexExpression); ok {
-							if id, ok := idx.Left.(*ast.Identifier); ok {
-								qname = a.currentPackage + "." + id.Value + "_" + s.Name.Value
-							}
-						}
-					}
-				}
-				var tparams []string
-				for _, tp := range s.TypeParameters {
-					tparams = append(tparams, tp.Value)
-				}
-				a.genericTemplates[qname] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
-			}
-		}
-	}
-
-	// Pass 1: define global symbols, map functions, and scan global vars
+	// Pass 1: Name Registration
 	a.currentPackage = ""
 	for _, stmt := range program.Statements {
 		switch s := stmt.(type) {
@@ -327,11 +286,63 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			if s.Name.Value == "main" {
 				a.hasMainPackage = true
 			}
+		case *ast.TypeStatement:
+			qname := a.currentPackage + "." + s.Name.Value
+			if len(s.TypeParameters) > 0 {
+				var tparams []string
+				for _, tp := range s.TypeParameters {
+					tparams = append(tparams, tp.Value)
+				}
+				a.genericTemplates[qname] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
+				a.globalScope.Define(qname, s.BaseType)
+			} else {
+				a.globalScope.Define(qname, builtinType(qname))
+			}
 		case *ast.FuncStatement:
 			if a.currentPackage == "main" && s.Name.Value == "main" && s.Receiver == nil {
 				a.hasMainFunc = true
 			}
 
+			qname := a.currentPackage + "." + s.Name.Value
+			if s.Receiver != nil {
+				qname = a.exprToString(s.Receiver.Type)
+				qname = strings.TrimPrefix(qname, "*")
+				if !strings.Contains(qname, ".") {
+					if _, ok := a.globalScope.Resolve("prelude." + qname); ok {
+						qname = "prelude." + qname
+					} else {
+						qname = a.currentPackage + "." + qname
+					}
+				}
+				qname = qname + "_" + s.Name.Value
+			}
+
+			if len(s.TypeParameters) > 0 {
+				var tparams []string
+				for _, tp := range s.TypeParameters {
+					tparams = append(tparams, tp.Value)
+				}
+				a.genericTemplates[qname] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
+			}
+
+			a.funcMap[qname] = s
+			a.globalScope.Define(qname, UnknownType)
+		case *ast.VarStatement:
+			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, UnknownType)
+		case *ast.ConstStatement:
+			qname := a.currentPackage + "." + s.Name.Value
+			a.constExprs[qname] = s.Value
+			a.globalScope.Define(qname, UnknownType)
+		}
+	}
+
+	// Pass 2: Type/Value Resolution
+	a.currentPackage = ""
+	for _, stmt := range program.Statements {
+		switch s := stmt.(type) {
+		case *ast.PackageStatement:
+			a.currentPackage = s.Name.Value
+		case *ast.FuncStatement:
 			qname := a.currentPackage + "." + s.Name.Value
 			if s.Receiver != nil {
 				qname = a.exprToString(s.Receiver.Type)
@@ -354,25 +365,18 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				ft := &ast.FuncType{Parameters: s.Parameters, ReturnTypes: retTypes, IsVariadic: s.IsVariadic}
 				a.globalScope.Define(qname, ft)
 			}
-			a.funcMap[qname] = s
-
 		case *ast.VarStatement:
 			typ := UnknownType
 			if s.ValueType != nil {
 				typ = a.analyzeExpression(s.ValueType)
 			}
 			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, typ)
-			// Any global var assignments? If there's an initializer, it might call functions!
-			// In minigolf, ast.VarStatement does not have Values. Wait, yes it does?
-			// Actually VarStatement has no initializers in ast.go right now. Wait, let's look at AST later.
-
 		case *ast.ConstStatement:
 			qname := a.currentPackage + "." + s.Name.Value
-			a.constExprs[qname] = s.Value
 			if _, isStr := s.Value.(*ast.StringLiteral); isStr {
-				a.globalScope.Define(a.currentPackage+"."+s.Name.Value, &ast.ArrayType{Elt: ByteType})
+				a.globalScope.Define(qname, &ast.ArrayType{Elt: ByteType})
 			} else {
-				a.globalScope.Define(a.currentPackage+"."+s.Name.Value, WordType)
+				a.globalScope.Define(qname, WordType)
 			}
 		}
 	}
