@@ -35,22 +35,18 @@ func (o *Buffer) Format(format string, args ...any) {
 				ptr := args[k].BaseAddr
 				o.guts = FormatDecimalUnsigned(o.guts, peek[uint](ptr))
 				k++
-				/*
-				   } else if c2 == 'x' {
-				       ptr := args[k].BaseAddr
-				       o.guts = FormatHex(o.guts, peek[uint](ptr))
-				       k++
-				*/
+			} else if false && c2 == 'x' {
+				//ptr := args[k].BaseAddr
+				//o.guts = FormatHex(o.guts, peek[uint](ptr))
+				//k++
 			} else if c2 == 's' {
 				ptr := args[k].BaseAddr
 				o.guts = FormatString(o.guts, peek[string](ptr))
 				k++
-				/*
-				   } else if c2 == 'q' {
-				       ptr := args[k].BaseAddr
-				       o.guts = FormatStringQuoted(o.guts, peek[string](ptr))
-				       k++
-				*/
+			} else if false && c2 == 'q' {
+				// ptr := args[k].BaseAddr
+				// o.guts = FormatStringQuoted(o.guts, peek[string](ptr))
+				// k++
 			} else {
 				o.guts.Append(c2)
 			}

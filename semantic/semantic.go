@@ -284,13 +284,17 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 		case *ast.PackageStatement:
 			a.currentPackage = s.Name.Value
 		case *ast.TypeStatement:
+			qname := a.currentPackage + "." + s.Name.Value
 			if len(s.TypeParameters) > 0 {
-				qname := a.currentPackage + "." + s.Name.Value
 				var tparams []string
 				for _, tp := range s.TypeParameters {
 					tparams = append(tparams, tp.Value)
 				}
 				a.genericTemplates[qname] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
+				// Don't analyze base type for generic templates until instantiated
+				a.globalScope.Define(qname, s.BaseType)
+			} else {
+				a.globalScope.Define(qname, builtinType(qname))
 			}
 		case *ast.FuncStatement:
 			if len(s.TypeParameters) > 0 {
@@ -369,14 +373,6 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				a.globalScope.Define(a.currentPackage+"."+s.Name.Value, &ast.ArrayType{Elt: ByteType})
 			} else {
 				a.globalScope.Define(a.currentPackage+"."+s.Name.Value, WordType)
-			}
-		case *ast.TypeStatement:
-			qname := a.currentPackage + "." + s.Name.Value
-			if len(s.TypeParameters) > 0 {
-				// Don't analyze base type for generic templates until instantiated
-				a.globalScope.Define(qname, s.BaseType)
-			} else {
-				a.globalScope.Define(qname, builtinType(qname))
 			}
 		}
 	}
