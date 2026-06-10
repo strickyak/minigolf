@@ -1,0 +1,16 @@
+package main
+
+func doPanic() {
+    println("about to panic")
+    panic("HELLO PANIC")
+    println("should not print this")
+}
+
+func main() {
+    println("start")
+    defer func() {
+        println("defer block executed")
+    }()
+    doPanic()
+    println("should not print this either")
+}

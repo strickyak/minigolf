@@ -48,6 +48,12 @@ func (c *CBE) mapType(typ string) string {
 	if typ == "int" {
 		return "int16_t"
 	}
+	if typ == "any" {
+		return "struct any_struct"
+	}
+	if typ == "panicked" {
+		return "int"
+	}
 	if typ == "uint" {
 		return "uint16_t"
 	}
@@ -244,8 +250,7 @@ func (c *CBE) Generate(program *ir.Program) string {
 	c.buf.WriteString("}\n")
 
 	var finalBuf bytes.Buffer
-	finalBuf.WriteString("#include <stdio.h>\n")
-	finalBuf.WriteString("#include <stdint.h>\n\n")
+	finalBuf.WriteString("#include <stdio.h>\n#include <stdint.h>\n#include <stdlib.h>\n#include <string.h>\n#include <setjmp.h>\n\nstruct jmp_struct {\n\tjmp_buf jmpbuf;\n\tstruct jmp_struct *prev;\n};\n\n// Types\n\n")
 	finalBuf.WriteString("typedef uint8_t byte;\n")
 	finalBuf.WriteString("typedef uintptr_t word;\n\n")
 
@@ -293,6 +298,9 @@ func (c *CBE) emitFunc(f *ir.Function) {
 					if _, ok := c.f.SlotAlias[id]; ok {
 						continue // Alias, already declared by target
 					}
+				}
+				if _, ok := instr.(*ir.SetJmp); ok {
+					c.buf.WriteString(fmt.Sprintf("\tstruct jmp_struct jumper_%d;\n", instr.GetID()))
 				}
 				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", c.mapType(instr.Type().Name), id))
 			}
@@ -489,6 +497,17 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		}
 		// Cast to byte to ensure strictly byte-level boolean properties
 		return fmt.Sprintf("(byte)(%s %s %s)", c.formatVal(i.Left), opStr, c.formatVal(i.Right))
+	case *ir.Return:
+		if i.Val != nil {
+			valStr := c.formatVal(i.Val)
+			return fmt.Sprintf("v%d = %s", i.GetID(), valStr)
+		}
+		return ""
+	case *ir.SetJmp:
+		id := i.GetID()
+		return fmt.Sprintf("(jumper_%d.prev = (struct jmp_struct*)v_prelude__jmp_chain_, v_prelude__jmp_chain_ = (byte*)(&jumper_%d), setjmp(jumper_%d.jmpbuf))", id, id, id)
+	case *ir.LongJmp:
+		return fmt.Sprintf("longjmp(((struct jmp_struct*)%s)->jmpbuf, 1)", c.formatVal(i.JmpBuf))
 	case *ir.UnaryOp:
 		if i.Op == "not" {
 			return fmt.Sprintf("(~%s)", c.formatVal(i.Operand))
@@ -531,7 +550,16 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 	case *ir.BuiltinCall:
 		if i.Name == "print" || i.Name == "println" {
 			return c.emitPrint(i.Name == "println", i.Args)
+		} else if i.Name == "panic" {
+			return c.emitPanic(i)
+		} else if i.Name == "_unlink_jmp_" {
+			return "(v_prelude__jmp_chain_ ? (v_prelude__jmp_chain_ = (byte*)(((struct jmp_struct*)v_prelude__jmp_chain_)->prev), 0) : 0)"
+		} else if i.Name == "_propagate_panic_" {
+			return "(v_prelude__panic_ ? (v_prelude__jmp_chain_ ? (longjmp(((struct jmp_struct*)v_prelude__jmp_chain_)->jmpbuf, 1), 0) : (printf(\"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"), abort(), 0)) : 0)"
+		} else if i.Name == "exit" {
+			return fmt.Sprintf("exit((int)%s)", c.formatVal(i.Args[0]))
 		}
+		return fmt.Sprintf("/* builtin %s */", i.Name)
 	case *ir.Cast:
 		switch i.Op {
 		case "trunc":
@@ -626,3 +654,18 @@ func (c *CBE) emitPrint(newline bool, args []ir.Value) string {
 	}
 	return fmt.Sprintf("printf(%q)", format)
 }
+
+func (c *CBE) emitPanic(i *ir.BuiltinCall) string {
+	msg := ""
+	if len(i.Args) > 0 {
+		if strLit, ok := i.Args[0].(*ir.StringLiteral); ok {
+			msg = fmt.Sprintf("%q", strLit.Value)
+		} else {
+			msg = c.formatVal(i.Args[0])
+		}
+	} else {
+		msg = "\"<nil>\""
+	}
+	return fmt.Sprintf("(printf(\"\\n*PANIC* %%s\\n\", (char*)(%s)), v_prelude__panic_ = (byte*)(%s), (v_prelude__jmp_chain_ ? (longjmp(((struct jmp_struct*)v_prelude__jmp_chain_)->jmpbuf, 1), 0) : (printf(\"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"), abort(), 0)))", msg, msg)
+}
+

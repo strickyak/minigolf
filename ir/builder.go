@@ -777,6 +777,9 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 				ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: val}, s)
 				b.emitDestruction(val.Type(), ptr, s)
 			} else if action.Block != nil {
+				if action.IsPanicDefer {
+					b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, nil)
+				}
 				b.buildBlock(action.Block)
 			} else {
 				// Defer Call
@@ -1536,6 +1539,13 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 				val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: structTyp}, Struct: val, FieldIndex: i, Val: fieldVal}, s)
 			}
 		}
+		// Unlink active panic defers!
+		for i := len(b.deferredActions) - 1; i >= 0; i-- {
+			if b.deferredActions[i].IsPanicDefer {
+				b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, s)
+			}
+		}
+
 		if b.currentDestructBlock != nil {
 			if val != nil {
 				b.writeVariable("__retval", b.currentBlock, val)
@@ -1588,11 +1598,38 @@ type DeferredAction struct {
 	Args           []Value
 	Token          ast.Node
 	Block          *ast.BlockStatement
+	IsPanicDefer   bool
 }
 
 func (b *Builder) buildDefer(s *ast.DeferStatement) {
 	if s.Block != nil {
-		b.deferredActions = append(b.deferredActions, DeferredAction{Block: s.Block, Token: s})
+		setjmpVal := b.addInstr(&SetJmp{BaseInstruction: BaseInstruction{Typ: TypeWord}}, s)
+		zero := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, s)
+		cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: setjmpVal, Right: zero}, s)
+
+		panicBlk := b.newBlock()
+		normalBlk := b.newBlock()
+
+		b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: panicBlk, FalseBlock: normalBlk}, s)
+		b.addEdge(b.currentBlock, panicBlk)
+		b.addEdge(b.currentBlock, normalBlk)
+
+		b.sealBlock(panicBlk)
+		b.sealBlock(normalBlk)
+
+		// -- Panic Block --
+		b.currentBlock = panicBlk
+		
+		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, s)
+		b.buildBlock(s.Block)
+		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_propagate_panic_"}, s)
+		
+		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, s)
+		b.addEdge(b.currentBlock, b.currentDestructBlock)
+
+		// -- Normal Block --
+		b.currentBlock = normalBlk
+		b.deferredActions = append(b.deferredActions, DeferredAction{Block: s.Block, Token: s, IsPanicDefer: true})
 		return
 	}
 
@@ -1785,7 +1822,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	}
 
 	if ident, ok := e.Function.(*ast.Identifier); ok {
-		if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" {
+		if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" || ident.Value == "panic" {
 			args := []Value{}
 			for _, arg := range e.Arguments {
 				if strLit, ok := arg.(*ast.StringLiteral); ok {
@@ -1798,8 +1835,20 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 				b.deferredActions = append(b.deferredActions, DeferredAction{BuiltinName: ident.Value, Args: args, Token: e})
 				return ExprResult{}
 			}
-			val := b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: ident.Value, Args: args}, e)
-			return ExprResult{IsLValue: false, Value: val, Typ: TypeVoid}
+			var builtinTyp Type = TypeVoid
+			if ident.Value == "panic" {
+				builtinTyp = TypePanicked
+			}
+			val := b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: builtinTyp}, Name: ident.Value, Args: args}, e)
+			if ident.Value == "panic" {
+				// panic acts as a terminator
+				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, e)
+				if b.currentDestructBlock != nil {
+					b.addEdge(b.currentBlock, b.currentDestructBlock)
+				}
+				b.currentBlock = b.newBlock() // Unreachable block
+			}
+			return ExprResult{IsLValue: false, Value: val, Typ: builtinTyp}
 		}
 		if ident.Value == "byte" {
 			arg := b.buildExpr(e.Arguments[0])

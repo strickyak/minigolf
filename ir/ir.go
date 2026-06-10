@@ -38,6 +38,7 @@ var (
 	// TypeUint         = Type{Name: "uint", Expr: &ast.Identifier{Value: "uint"}}
 	TypeConstInteger = Type{Name: "const_integer", Expr: &ast.Identifier{Value: "const_integer"}}
 	TypeVoid         = Type{Name: "void", Expr: &ast.Identifier{Value: "void"}}
+	TypePanicked     = Type{Name: "panicked", Expr: &ast.Identifier{Value: "panicked"}}
 )
 
 func (t Type) IsAPointer() bool {
@@ -504,6 +505,21 @@ type Return struct {
 
 func (i *Return) Opcode() string { return "ret" }
 func (i *Return) IsTerminator()  {}
+
+type SetJmp struct {
+	BaseInstruction
+	JmpBuf Value
+}
+
+func (i *SetJmp) Opcode() string { return "setjmp" }
+
+type LongJmp struct {
+	BaseInstruction
+	JmpBuf Value
+}
+
+func (i *LongJmp) Opcode() string { return "longjmp" }
+func (i *LongJmp) IsTerminator()  {}
 
 func MangleName(s string) string {
 	var bbuf bytes.Buffer

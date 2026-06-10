@@ -165,7 +165,7 @@ func (o *slice[T]) Append(x T) {
 
 func (o *slice[T]) Address(i word) word {
 	if i >= o.Len {
-		panic(2001)
+		panic("2001")
 	}
 	p := (i * sizeof[T]())
 	return o.Base + p
@@ -174,7 +174,7 @@ func (o *slice[T]) Address(i word) word {
 func (o *slice[T]) Get(i word) T {
 	p := (i * sizeof[T]())
 	if i >= o.Len {
-		panic(2002)
+		panic("2002")
 	}
 	return peek[T](o.Base + p)
 }
@@ -182,17 +182,17 @@ func (o *slice[T]) Get(i word) T {
 func (o *slice[T]) Put(i word, x T) {
 	p := (i * sizeof[T]())
 	if i >= o.Len {
-		panic(2003)
+		panic("2003")
 	}
 	poke[T](o.Base+p, x)
 }
 
 func (o *slice[T]) Chop(start word, limit word) slice[T] {
 	if start > limit {
-		panic(2004)
+		panic("2004")
 	}
 	if limit > o.Cap {
-		panic(2005)
+		panic("2005")
 	}
 	var z slice[T]
 	z.Base = o.Base + start*sizeof[T]()
@@ -221,10 +221,8 @@ func freeslice[T any](a slice[T]) {
 
 /////////////////////////////////////////////
 
-func panic(w word) {
-	println("\n*PANIC* why=", w)
-	exit(13)
-}
+var _panic_ *byte
+var _jmp_chain_ *byte
 
 /////////////////////////////////////////////
 
@@ -248,7 +246,7 @@ func mul_word(a word, b word) word {
 
 func div_word(a0 word, b word) word {
 	if b == 0 {
-		panic(1002)
+		panic("1002")
 	}
 	var q word
 	var r word
@@ -267,7 +265,7 @@ func div_word(a0 word, b word) word {
 
 func mod_word(a0 word, b word) word {
 	if b == 0 {
-		panic(1004)
+		panic("1004")
 	}
 	var r word
 	for i := range 64 {
@@ -320,7 +318,7 @@ var freep *MallocHeader
 
 func malloc_init(heap_start *byte, heap_size word) {
     if HEAP_SIZE < 1 {
-        panic(4043)
+        panic("4043")
     }
 	var p *MallocHeader = (*MallocHeader)(word(heap_start))
 
@@ -347,7 +345,7 @@ func zalloc(nbytes word) *byte {
 }
 func malloc(nbytes word) *byte {
     if HEAP_SIZE < 1 {
-        panic(4041)
+        panic("4041")
         var null *byte
         return null
     }
@@ -356,7 +354,7 @@ func malloc(nbytes word) *byte {
 	var nunits word
 
 	if nbytes > TOO_BIG {
-		panic(nbytes)
+		panic("4044")
 	}
 
 	// Calculate how many MallocHeader units we need (including the 1 unit for metadata)
@@ -364,7 +362,7 @@ func malloc(nbytes word) *byte {
 
 	prevp = freep
 	if word(prevp) == 0 {
-		panic(4001)
+		panic("4001")
 		return (*byte)(0) // Heap wasn't initialized!
 	}
 
@@ -388,19 +386,19 @@ func malloc(nbytes word) *byte {
 			return (*byte)(word(p) + sizeof[MallocHeader]())
 		}
 		if word(p) == word(freep) {
-			panic(4002)
+			panic("4002")
 			return (*byte)(0) // Wrapped around the list: Out of Memory!
 		}
 		prevp = p
 		p = p.next
 	}
-	panic(4003)
+	panic("4003")
 	return (*byte)(0)
 }
 
 func free(ap *byte) {
     if HEAP_SIZE < 1 {
-        panic(4042)
+        panic("4042")
         return
     }
 	var bp *MallocHeader
