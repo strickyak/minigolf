@@ -11,8 +11,9 @@ import (
 )
 
 type Symbol struct {
-	Name string
-	Type ast.Expression
+	Name       string
+	UniqueName string
+	Type       ast.Expression
 }
 
 type Scope struct {
@@ -28,7 +29,7 @@ func NewScope(parent *Scope) *Scope {
 }
 
 func (s *Scope) Define(name string, typ ast.Expression) {
-	s.symbols[name] = Symbol{Name: name, Type: typ}
+	s.symbols[name] = Symbol{Name: name, UniqueName: name, Type: typ}
 }
 
 func (s *Scope) Resolve(name string) (Symbol, bool) {
@@ -63,6 +64,7 @@ type Analyzer struct {
 	suppressErrors   bool
 	instantiatedArgs map[string][]ast.Expression
 	typeAliases      map[string]ast.Expression
+	localIdCounter   int
 }
 
 func builtinType(name string) ast.Expression {
@@ -486,11 +488,23 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 	}
 
 	if s.Body != nil {
-		a.analyzeBlock(s.Body)
+		a.analyzeBlock(s.Body, false)
 	}
 }
 
-func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
+func (a *Analyzer) pushScope() {
+	a.currentScope = NewScope(a.currentScope)
+}
+
+func (a *Analyzer) popScope() {
+	a.currentScope = a.currentScope.parent
+}
+
+func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
+	if createsScope {
+		a.pushScope()
+		defer a.popScope()
+	}
 	var newStatements []ast.Statement
 	for _, stmt := range b.Statements {
 		switch s := stmt.(type) {
@@ -502,15 +516,30 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 			if s.ValueType != nil {
 				a.analyzeExpression(s.ValueType)
 				typ = s.ValueType
+				if s.Value != nil {
+					a.analyzeExpression(s.Value)
+				}
 			} else if s.Value != nil {
 				typ = a.analyzeExpression(s.Value)
 			}
 			if s.Value != nil && a.isDestructible(typ) {
 				a.reportError(s, "Cannot initialize destructible type %s to a nonzero value", a.exprToString(typ))
 			}
-			a.currentScope.Define(s.Name.Value, typ)
+			a.defineLocalSymbol(s.Name, typ, s)
 		case *ast.AssignStatement:
 			if s.Token.Literal == ":=" {
+				hasNewVar := false
+				for _, nameExpr := range s.Names {
+					if name, ok := nameExpr.(*ast.Identifier); ok {
+						if _, exists := a.currentScope.symbols[name.Value]; !exists {
+							hasNewVar = true
+						}
+					}
+				}
+				if !hasNewVar && !a.suppressErrors {
+					a.reportError(s, "no new variables on left side of :=")
+				}
+
 				for i, nameExpr := range s.Names {
 					typ := UnknownType
 					if i < len(s.Values) {
@@ -521,7 +550,11 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 						}
 					}
 					if name, ok := nameExpr.(*ast.Identifier); ok {
-						a.currentScope.Define(name.Value, typ)
+						if _, exists := a.currentScope.symbols[name.Value]; !exists {
+							a.defineLocalSymbol(name, typ, s)
+						} else {
+							a.analyzeExpression(nameExpr)
+						}
 					} else {
 						a.analyzeExpression(nameExpr)
 					}
@@ -560,43 +593,48 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 
 			if intLit, ok := s.Condition.(*ast.IntegerLiteral); ok {
 				if intLit.Value != 0 {
-					a.analyzeBlock(s.Consequence)
+					a.analyzeBlock(s.Consequence, true)
 					newStatements = append(newStatements, s.Consequence)
 				} else if s.Alternative != nil {
-					a.analyzeBlock(s.Alternative)
+					a.analyzeBlock(s.Alternative, true)
 					newStatements = append(newStatements, s.Alternative)
 				}
 				continue // DEAD BRANCH ELIMINATED
 			}
 
-			a.analyzeBlock(s.Consequence)
+			a.analyzeBlock(s.Consequence, true)
 			if s.Alternative != nil {
-				a.analyzeBlock(s.Alternative)
+				a.analyzeBlock(s.Alternative, true)
 			}
 		case *ast.ForStatement:
+			a.pushScope()
 			if s.Condition != nil {
 				s.Condition = a.foldExpression(s.Condition)
 				a.analyzeExpression(s.Condition)
 			}
-			a.analyzeBlock(s.Body)
+			a.analyzeBlock(s.Body, true)
+			a.popScope()
 		case *ast.For3Statement:
+			a.pushScope()
 			if s.Init != nil {
-				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Init}})
+				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Init}}, false)
 			}
 			if s.Condition != nil {
 				s.Condition = a.foldExpression(s.Condition)
 				a.analyzeExpression(s.Condition)
 			}
 			if s.Increment != nil {
-				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Increment}})
+				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Increment}}, false)
 			}
-			a.analyzeBlock(s.Body)
+			a.analyzeBlock(s.Body, true)
+			a.popScope()
 		case *ast.ForRangeStatement:
+			a.pushScope()
 			s.RangeValue = a.foldExpression(s.RangeValue)
 			rangeTyp := a.analyzeExpression(s.RangeValue)
 			if s.IsDecl {
 				if ident, ok := s.Key.(*ast.Identifier); ok {
-					a.currentScope.Define(ident.Value, WordType)
+					a.defineLocalSymbol(ident, WordType, s)
 				}
 				if s.Value != nil {
 					if ident, ok := s.Value.(*ast.Identifier); ok {
@@ -608,7 +646,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 								valTyp = idxExpr.Indices[0]
 							}
 						}
-						a.currentScope.Define(ident.Value, valTyp)
+						a.defineLocalSymbol(ident, valTyp, s)
 					}
 				}
 			} else {
@@ -648,7 +686,8 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement) {
 				}
 			}
 
-			a.analyzeBlock(s.Body)
+			a.analyzeBlock(s.Body, true)
+			a.popScope()
 		case *ast.ReturnStatement:
 			for i, rv := range s.ReturnValues {
 				s.ReturnValues[i] = a.foldExpression(rv)
@@ -752,6 +791,21 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 	}
 }
 
+func (a *Analyzer) defineLocalSymbol(nameExpr *ast.Identifier, typ ast.Expression, stmt ast.Node) {
+	if _, exists := a.currentScope.symbols[nameExpr.Value]; exists {
+		a.reportError(stmt, "Variable %q already declared in this scope", nameExpr.Value)
+	}
+	
+	uniqueName := nameExpr.Value
+	if a.currentScope.parent != nil {
+		a.localIdCounter++
+		uniqueName = fmt.Sprintf("%s$%d", nameExpr.Value, a.localIdCounter)
+	}
+
+	a.currentScope.symbols[nameExpr.Value] = Symbol{Name: nameExpr.Value, UniqueName: uniqueName, Type: typ}
+	nameExpr.Value = uniqueName
+}
+
 func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 	if expr == nil {
 		return UnknownType
@@ -779,6 +833,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 
 		if sym, ok := a.currentScope.Resolve(e.Value); ok {
 			typ = sym.Type
+			e.Value = sym.UniqueName // Rewrite the AST so the builder sees the unique mangled name
 			if isFuncType(typ) {
 				a.markReachable(sym.Name)
 			}

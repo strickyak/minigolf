@@ -267,7 +267,7 @@ func run1() {
 	println(result, status)
 
 	args = slice[string]{"101foo", "1010"}
-	result, status := f("+", args)
+	result, status = f("+", args)
 	println(result, status)
 }
 
