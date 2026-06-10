@@ -977,6 +977,13 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 		}
 		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: val}, val)
 	}
+
+	// nando: Coerce string literal (slice_byte) to *byte for C interop
+	if (val.Type().Name == "slice_byte" || val.Type().Name == "prelude.slice_byte") && targetType.Name == "*byte" {
+		ptrWord := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: val, FieldIndex: 0}, nil)
+		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetType}, Op: "word_to_ptr", Operand: ptrWord}, nil)
+	}
+
 	return val
 }
 

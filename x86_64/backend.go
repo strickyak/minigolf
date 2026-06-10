@@ -906,6 +906,9 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
 			formatStrs = append(formatStrs, "%s")
 			dataArgs = append(dataArgs, arg)
+		} else if arg.Type().Name == "*byte" {
+			formatStrs = append(formatStrs, "%s")
+			dataArgs = append(dataArgs, arg)
 		} else {
 			formatStrs = append(formatStrs, "%llu")
 			dataArgs = append(dataArgs, arg)

@@ -607,6 +607,9 @@ func (c *CBE) emitPrint(newline bool, args []ir.Value) string {
 		} else if arg.Type().Name == "prelude.slice_byte" || arg.Type().Name == "slice_byte" {
 			formatStrs = append(formatStrs, "%s")
 			argStrs = append(argStrs, fmt.Sprintf("(char*)(%s.f0)", c.formatVal(arg)))
+		} else if arg.Type().Name == "*byte" {
+			formatStrs = append(formatStrs, "%s")
+			argStrs = append(argStrs, fmt.Sprintf("(char*)(%s)", c.formatVal(arg)))
 		} else {
 			formatStrs = append(formatStrs, "%llu")
 			argStrs = append(argStrs, fmt.Sprintf("(unsigned long long)%s", c.formatVal(arg)))

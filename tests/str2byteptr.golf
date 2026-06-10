@@ -1,0 +1,23 @@
+package main
+
+func say2(a *byte, b *byte) {
+	print(a, ", ")
+	println(b)
+}
+
+func dupstar(s string) *byte {
+	return s
+}
+
+func main() {
+	say2("Hello", dupstar("World"))
+
+	var okay = [3]byte{'o', 'k', 0}
+	say2(strdup("TwoFifty"), &okay[0])
+
+	var p1 *byte
+	var p2 *byte
+	p1 = "Bye"
+	p2 = strdup("Szia")
+	say2(p1, p2)
+}

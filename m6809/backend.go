@@ -1723,6 +1723,9 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		} else if strings.HasSuffix(arg.Type().Name, "slice_byte") {
 			formatStrs = append(formatStrs, "%s")
 			dataArgs = append(dataArgs, arg)
+		} else if arg.Type().Name == "*byte" {
+			formatStrs = append(formatStrs, "%s")
+			dataArgs = append(dataArgs, arg)
 		} else {
 			formatStrs = append(formatStrs, "%u")
 			dataArgs = append(dataArgs, arg)
