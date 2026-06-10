@@ -235,6 +235,9 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 	case *ast.ExpressionStatement:
 		s.Expression = r.resolveExpression(s.Expression)
 		return s
+	case *ast.DeferStatement:
+		s.Call = r.resolveExpression(s.Call)
+		return s
 	}
 	return stmt
 }

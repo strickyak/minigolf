@@ -1,0 +1,25 @@
+package main
+
+var bb = [3]byte{10, 20, 30}
+var ww = [3]word{111, 222, 333}
+var ii = [3]int{-1000, -800, -600}
+var ss [3]string
+
+func main() {
+	for k, v := range bb {
+		println(k, v)
+	}
+	println(k, v)
+	for k, v := range ww {
+		println(k, v)
+	}
+	println(k, v)
+	for k, v := range ii {
+		println(k, v)
+	}
+	println(k, v)
+	for k, v := range ss {
+		println(k, v)
+	}
+	println(k, v)
+}

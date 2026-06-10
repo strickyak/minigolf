@@ -113,6 +113,9 @@ func Print(node any) string {
 		return fmt.Sprintf("ForRangeStatement{Key: %s, IsDecl: %v, RangeValue: %s, Body: %s}",
 			Print(n.Key), n.IsDecl, Print(n.RangeValue), Print(n.Body))
 
+	case *DeferStatement:
+		return fmt.Sprintf("DeferStatement{Call: %s}", Print(n.Call))
+
 	case *ReturnStatement:
 		var retVals []string
 		for _, r := range n.ReturnValues {

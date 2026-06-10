@@ -65,6 +65,7 @@ type Analyzer struct {
 	instantiatedArgs map[string][]ast.Expression
 	typeAliases      map[string]ast.Expression
 	localIdCounter   int
+	blockDepth       int
 }
 
 func builtinType(name string) ast.Expression {
@@ -467,6 +468,7 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 
 	a.currentScope = NewScope(a.currentScope)
 	defer func() { a.currentScope = a.currentScope.parent }()
+	a.blockDepth = 0
 
 	if s.Receiver != nil {
 		a.analyzeExpression(s.Receiver.Type)
@@ -503,7 +505,11 @@ func (a *Analyzer) popScope() {
 func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 	if createsScope {
 		a.pushScope()
-		defer a.popScope()
+		a.blockDepth++
+		defer func() {
+			a.popScope()
+			a.blockDepth--
+		}()
 	}
 	var newStatements []ast.Statement
 	for _, stmt := range b.Statements {
@@ -526,6 +532,15 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 				a.reportError(s, "Cannot initialize destructible type %s to a nonzero value", a.exprToString(typ))
 			}
 			a.defineLocalSymbol(s.Name, typ, s)
+		case *ast.DeferStatement:
+			if a.blockDepth > 0 {
+				a.reportError(s, "defer statements are only allowed in the top-level block of a function")
+			}
+			if _, ok := s.Call.(*ast.CallExpression); !ok {
+				a.reportError(s, "defer requires a function or method call")
+			}
+			s.Call = a.foldExpression(s.Call)
+			a.analyzeExpression(s.Call)
 		case *ast.AssignStatement:
 			if s.Token.Literal == ":=" {
 				hasNewVar := false
@@ -616,6 +631,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 			a.popScope()
 		case *ast.For3Statement:
 			a.pushScope()
+			a.blockDepth++
 			if s.Init != nil {
 				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Init}}, false)
 			}
@@ -627,6 +643,7 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 				a.analyzeBlock(&ast.BlockStatement{Statements: []ast.Statement{s.Increment}}, false)
 			}
 			a.analyzeBlock(s.Body, true)
+			a.blockDepth--
 			a.popScope()
 		case *ast.ForRangeStatement:
 			a.pushScope()
@@ -795,7 +812,7 @@ func (a *Analyzer) defineLocalSymbol(nameExpr *ast.Identifier, typ ast.Expressio
 	if _, exists := a.currentScope.symbols[nameExpr.Value]; exists {
 		a.reportError(stmt, "Variable %q already declared in this scope", nameExpr.Value)
 	}
-	
+
 	uniqueName := nameExpr.Value
 	if a.currentScope.parent != nil {
 		a.localIdCounter++
@@ -845,7 +862,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 		} else if _, ok := a.genericTemplates[fullName]; ok {
 			typ = builtinType("func") // It's a generic template func or type
 		} else {
-			a.reportError(e, "undefined identifier: %s (resolved as %s)", e.Value, fullName)
+			a.reportError(e, "undefined identifier: %s (resolved as %s) pkg=%s", e.Value, fullName, a.currentPackage)
 		}
 	case *ast.InfixExpression:
 		t1 := a.analyzeExpression(e.Left)

@@ -522,6 +522,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseVarStatement()
 	case token.RETURN:
 		return p.parseReturnStatement()
+	case token.DEFER:
+		return p.parseDeferStatement()
 	case token.IF:
 		return p.parseIfStatement()
 	case token.FOR:
@@ -647,6 +649,19 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 		p.nextToken() // go to next expression
 		stmt.ReturnValues = append(stmt.ReturnValues, p.parseExpression(LOWEST))
 	}
+
+	if p.peekTokenIs(token.SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseDeferStatement() *ast.DeferStatement {
+	stmt := &ast.DeferStatement{Token: p.curToken}
+
+	p.nextToken()
+	stmt.Call = p.parseExpression(LOWEST)
 
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()

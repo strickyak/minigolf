@@ -40,7 +40,7 @@ type Builder struct {
 	currentFunc          *Function
 	currentBlock         *BasicBlock
 	currentDestructBlock *BasicBlock
-	destructables        []string
+	deferredActions      []DeferredAction
 	nextValueID          int
 	nextBlockID          int
 
@@ -478,7 +478,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			oldVarTypes := b.varTypes
 			oldCurBlk := b.currentBlock
 			oldCurDestructBlk := b.currentDestructBlock
-			oldDestructables := b.destructables
+			oldDestructables := b.deferredActions
 
 			b.buildFunc(funcStmt)
 
@@ -491,7 +491,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			b.varTypes = oldVarTypes
 			b.currentBlock = oldCurBlk
 			b.currentDestructBlock = oldCurDestructBlk
-			b.destructables = oldDestructables
+			b.deferredActions = oldDestructables
 		}
 		b.currentPackage = oldPkg
 	} else {
@@ -743,7 +743,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.currentBlock = entry
 
 	b.currentDestructBlock = b.newBlock()
-	b.destructables = nil
+	b.deferredActions = nil
 	if !b.currentFunc.ReturnType.Equals(TypeUnknown) && !b.currentFunc.ReturnType.Equals(TypeVoid) {
 		b.varTypes["__retval"] = b.currentFunc.ReturnType
 	}
@@ -753,7 +753,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 
 		b.writeVariable(p.Name, b.currentBlock, p)
 		if b.isDestructable(p.Typ) {
-			b.destructables = append(b.destructables, p.Name)
+			b.deferredActions = append(b.deferredActions, DeferredAction{IsDestructible: true, VarName: p.Name})
 		}
 	}
 
@@ -767,13 +767,31 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	}
 
 	b.currentBlock = b.currentDestructBlock
-	if len(b.destructables) > 0 {
+	if len(b.deferredActions) > 0 {
 		// Destruct in reverse order of declaration
-		for i := len(b.destructables) - 1; i >= 0; i-- {
-			vname := b.destructables[i]
-			val := b.readVariable(vname, b.currentBlock)
-			ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: val}, s)
-			b.emitDestruction(val.Type(), ptr, s)
+		for i := len(b.deferredActions) - 1; i >= 0; i-- {
+			action := b.deferredActions[i]
+			if action.IsDestructible {
+				vname := action.VarName
+				val := b.readVariable(vname, b.currentBlock)
+				ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: val}, s)
+				b.emitDestruction(val.Type(), ptr, s)
+			} else {
+				// Defer Call
+				if action.BuiltinName != "" {
+					b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: action.BuiltinName, Args: action.Args}, action.Token)
+				} else if action.Func != nil {
+					b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: action.Func.ReturnType}, Func: action.Func, Args: action.Args}, action.Token)
+				} else if action.FuncPtr != nil {
+					retTyp := TypeWord
+					if ptrType, ok := action.FuncPtr.Type().PointedType().Expr.(*ast.FuncType); ok {
+						retTyp = b.getFuncReturnType(ptrType.ReturnTypes)
+					} else if ft, ok := action.FuncPtr.Type().Expr.(*ast.FuncType); ok {
+						retTyp = b.getFuncReturnType(ft.ReturnTypes)
+					}
+					b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: action.FuncPtr, Args: action.Args}, action.Token)
+				}
+			}
 		}
 	}
 
@@ -786,7 +804,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.sealBlock(b.currentDestructBlock)
 
 	b.currentDestructBlock = nil
-	b.destructables = nil
+	b.deferredActions = nil
 }
 
 func (b *Builder) newBlock() *BasicBlock {
@@ -1076,7 +1094,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		}
 		b.writeVariable(s.Name.Value, b.currentBlock, val)
 		if b.isDestructable(typ) {
-			b.destructables = append(b.destructables, s.Name.Value)
+			b.deferredActions = append(b.deferredActions, DeferredAction{IsDestructible: true, VarName: s.Name.Value})
 		}
 	case *ast.AssignStatement:
 		if len(s.Names) > 1 && len(s.Values) == 1 {
@@ -1231,6 +1249,12 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		} else {
 			b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: ptr, Val: newVal}, s)
 		}
+	case *ast.DeferStatement:
+		b.addInstr(&SourceMarker{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Comment:         fmt.Sprintf("Line %d: Defer: %s", s.Token.Line, s.Token.Literal),
+		}, s)
+		b.buildDefer(s)
 	case *ast.ExpressionStatement:
 		b.addInstr(&SourceMarker{
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
@@ -1544,6 +1568,199 @@ type ExprResult struct {
 	Address  Value
 	Value    Value
 	Typ      Type
+}
+
+type DeferredAction struct {
+	IsDestructible bool
+	VarName        string
+	Func           *Function
+	BuiltinName    string
+	FuncPtr        Value
+	Args           []Value
+	Token          ast.Node
+}
+
+func (b *Builder) buildDefer(s *ast.DeferStatement) {
+	callExpr, ok := s.Call.(*ast.CallExpression)
+	if !ok {
+		panic("Defer statement without CallExpression")
+	}
+
+	action := DeferredAction{IsDestructible: false, Token: s}
+
+	if _, ok := callExpr.Function.(*ast.PointerType); ok {
+		panic("Defer on pointer type cast not supported")
+	}
+
+	var isGenericFunc bool
+	var funcName string
+	var rawFuncName string
+	var args []Value
+
+	if idxExpr, ok := callExpr.Function.(*ast.IndexExpression); ok {
+		if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
+			rawFuncName = ident.FullName()
+		}
+		if rawFuncName != "" {
+			var instTypStr string
+			var argTyps []Type
+			for _, idx := range idxExpr.Indices {
+				argTyp := b.astToIRType(idx)
+				argTyps = append(argTyps, argTyp)
+				instTypStr += "_" + argTyp.Name
+			}
+			funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+			if _, ok := b.funcs[funcName]; !ok {
+				if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+					b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, s.GetToken())
+				}
+			}
+			isGenericFunc = true
+		}
+	} else if ident, ok := callExpr.Function.(*ast.Identifier); ok {
+		rawFuncName = ident.FullName()
+		if _, ok := b.funcs[rawFuncName]; !ok {
+			if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+				p := parser.New(tmpl.Tokens)
+				stmt := p.ParseStatementForGeneric()
+				if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
+					typeMap := make(map[string]Type)
+					for _, arg := range callExpr.Arguments {
+						args = append(args, b.buildExpr(arg))
+					}
+					for i, param := range funcStmt.Parameters {
+						if i < len(args) {
+							b.extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
+						}
+					}
+
+					var argTyps []Type
+					var instTypStr string
+					for _, tp := range tmpl.TypeParams {
+						argTyp := typeMap[tp]
+						if argTyp.Name == "" {
+							argTyp = TypeWord
+						}
+						argTyps = append(argTyps, argTyp)
+						instTypStr += "_" + argTyp.Name
+					}
+					funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
+					if _, ok := b.funcs[funcName]; !ok {
+						b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, s.GetToken())
+					}
+					isGenericFunc = true
+				}
+			}
+		}
+	}
+
+	if isGenericFunc {
+		if len(args) == 0 && len(callExpr.Arguments) > 0 {
+			for _, arg := range callExpr.Arguments {
+				args = append(args, b.buildExpr(arg))
+			}
+		}
+		f, ok := b.funcs[funcName]
+		if !ok {
+			panic(fmt.Sprintf("MISSING GENERIC FUNC: %s", funcName))
+		}
+		action.Func = f
+		action.Args = args
+		b.deferredActions = append(b.deferredActions, action)
+		return
+	}
+
+	if sel, ok := callExpr.Function.(*ast.SelectorExpression); ok {
+		base := b.eval(sel.Left)
+		isPtr := base.Typ.IsAPointer()
+		var baseType string
+		if isPtr {
+			baseType = base.Typ.PointedType().Name
+		} else {
+			baseType = base.Typ.Name
+		}
+		funcName := MangleName(baseType) + "_" + sel.Right.Value
+
+		if _, exists := b.funcs[funcName]; !exists {
+			if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+				rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
+				if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+					b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, s.GetToken())
+				}
+			}
+		}
+
+		if f, exists := b.funcs[funcName]; exists {
+			var receiverVal Value
+			if isPtr {
+				if base.IsLValue {
+					receiverVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, s)
+				} else {
+					receiverVal = base.Value
+				}
+			} else {
+				if base.IsLValue {
+					receiverVal = base.Address
+				} else {
+					panic(fmt.Sprintf("Cannot call pointer method on unaddressable value: %T", sel.Left))
+				}
+			}
+			args := []Value{receiverVal}
+			for _, arg := range callExpr.Arguments {
+				args = append(args, b.buildExpr(arg))
+			}
+			if f.IsVariadic {
+				args = b.packVariadicArgs(f, args, s)
+			}
+			b.coerceCallArgs(f, args, s)
+			action.Func = f
+			action.Args = args
+			b.deferredActions = append(b.deferredActions, action)
+			return
+		}
+	}
+
+	if ident, ok := callExpr.Function.(*ast.Identifier); ok {
+		if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" {
+			args := []Value{}
+			for _, arg := range callExpr.Arguments {
+				if strLit, ok := arg.(*ast.StringLiteral); ok {
+					args = append(args, &StringLiteral{Value: strLit.Value})
+				} else {
+					args = append(args, b.buildExpr(arg))
+				}
+			}
+			action.BuiltinName = ident.Value
+			action.Args = args
+			b.deferredActions = append(b.deferredActions, action)
+			return
+		}
+
+		fullName := ident.FullName()
+		if f, ok := b.funcs[fullName]; ok {
+			args := []Value{}
+			for _, arg := range callExpr.Arguments {
+				args = append(args, b.buildExpr(arg))
+			}
+			if f.IsVariadic {
+				args = b.packVariadicArgs(f, args, s)
+			}
+			b.coerceCallArgs(f, args, s)
+			action.Func = f
+			action.Args = args
+			b.deferredActions = append(b.deferredActions, action)
+			return
+		}
+	}
+
+	funcVal := b.buildExpr(callExpr.Function)
+	args = []Value{}
+	for _, arg := range callExpr.Arguments {
+		args = append(args, b.buildExpr(arg))
+	}
+	action.FuncPtr = funcVal
+	action.Args = args
+	b.deferredActions = append(b.deferredActions, action)
 }
 
 func (b *Builder) buildExpr(expr ast.Expression) Value {
@@ -2625,7 +2842,7 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 				targetType = val.Type()
 				b.varTypes[ident.Value] = targetType
 				if b.isDestructable(targetType) {
-					b.destructables = append(b.destructables, ident.Value)
+					b.deferredActions = append(b.deferredActions, DeferredAction{IsDestructible: true, VarName: ident.Value})
 				}
 			}
 			val = b.coerceType(val, targetType)

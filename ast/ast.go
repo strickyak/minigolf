@@ -220,6 +220,15 @@ func (s *ForRangeStatement) statementNode()         {}
 func (s *ForRangeStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ForRangeStatement) GetToken() *token.Token { return &s.Token }
 
+type DeferStatement struct {
+	Token token.Token // The 'defer' token
+	Call  Expression
+}
+
+func (s *DeferStatement) statementNode()         {}
+func (s *DeferStatement) TokenLiteral() string   { return s.Token.Literal }
+func (s *DeferStatement) GetToken() *token.Token { return &s.Token }
+
 type ReturnStatement struct {
 	Token        token.Token  // The 'return' token
 	ReturnValues []Expression // Optional

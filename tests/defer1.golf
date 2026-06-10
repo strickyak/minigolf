@@ -1,0 +1,31 @@
+package main
+
+func Increment(p *word) {
+	*p++
+}
+
+func Decrement(p *word) {
+	*p--
+}
+
+var a [10]word
+
+func Run() {
+	i := 1
+	Increment(&a[i])
+	defer Decrement(&a[i])
+
+	i = 2
+	Increment(&a[i])
+	defer Decrement(&a[i])
+
+	i = 3
+	Increment(&a[i])
+	defer Decrement(&a[i])
+}
+
+func main() {
+	println(a[1], a[2], a[3])
+	Run()
+	println(a[1], a[2], a[3])
+}

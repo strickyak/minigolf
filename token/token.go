@@ -89,6 +89,7 @@ const (
 	RETURN   = "RETURN"
 	BREAK    = "BREAK"
 	CONTINUE = "CONTINUE"
+	DEFER    = "DEFER"
 )
 
 var keywords = map[string]TokenType{
@@ -106,6 +107,7 @@ var keywords = map[string]TokenType{
 	"return":   RETURN,
 	"break":    BREAK,
 	"continue": CONTINUE,
+	"defer":    DEFER,
 }
 
 func LookupIdent(ident string) TokenType {

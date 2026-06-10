@@ -1,0 +1,36 @@
+package main
+
+var bb = [3]byte{10, 20, 30}
+var ww = [3]word{111, 222, 333}
+var ii = [3]int{-1000, -800, -600}
+var ss [3]string
+
+func main() {
+	for k, v := range bb {
+		println(k, v)
+	}
+	println(k, v)
+	for k, v := range ww {
+		println(k, v)
+	}
+	println(k, v)
+	for k, v := range ii {
+		println(k, v)
+	}
+	println(k, v)
+	for k, v := range ss {
+		println(k, v)
+	}
+	println(k, v)
+	if true {
+		var x byte = byte(-100)
+		println("alpha", x)
+	}
+	println("zeta", x)
+	if true {
+		var x word = word(-100)
+		println("beta", x)
+	}
+	println("gamma", x)
+	println(k, v)
+}

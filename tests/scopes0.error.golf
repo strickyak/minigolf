@@ -1,0 +1,13 @@
+package main
+
+var bb = [3]byte{10, 20, 30}
+var ww = [3]word{111, 222, 333}
+var ii = [3]int{-1000, -800, -600}
+var ss [3]string
+
+func main() {
+	var x word = 4
+	println(x)
+	var x byte = 44
+	println(x)
+}
