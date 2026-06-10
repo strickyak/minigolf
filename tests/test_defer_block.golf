@@ -1,0 +1,19 @@
+package main
+
+func do_defer() word {
+	var a word = 10
+	var b word = 20
+	defer func() {
+		a = a + 5
+		b = b + 10
+		println(a)
+		println(b)
+	}()
+	a = a + 2
+	b = b + 3
+	return a + b
+}
+
+func main() {
+	do_defer()
+}

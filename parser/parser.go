@@ -661,6 +661,34 @@ func (p *Parser) parseDeferStatement() *ast.DeferStatement {
 	stmt := &ast.DeferStatement{Token: p.curToken}
 
 	p.nextToken()
+
+	// Special case: defer func() { ... }()
+	if p.curTokenIs(token.FUNC) && p.peekTokenIs(token.LPAREN) &&
+		p.pos < len(p.tokens) && p.tokens[p.pos].Type == token.RPAREN &&
+		p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Type == token.LBRACE {
+
+		p.nextToken() // move to LPAREN
+		p.nextToken() // move to RPAREN
+		p.nextToken() // move to LBRACE
+
+		stmt.Block = p.parseBlockStatement()
+
+		if p.curTokenIs(token.RBRACE) {
+			p.nextToken() // move past RBRACE
+		}
+
+		// parse optional () at the end
+		if p.curTokenIs(token.LPAREN) {
+			p.nextToken() // move to RPAREN
+			// we leave curToken on RPAREN, because the outer parser loop calls p.nextToken()
+		}
+
+		if p.peekTokenIs(token.SEMICOLON) {
+			p.nextToken()
+		}
+		return stmt
+	}
+
 	stmt.Call = p.parseExpression(LOWEST)
 
 	if p.peekTokenIs(token.SEMICOLON) {

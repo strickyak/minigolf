@@ -66,6 +66,7 @@ type Analyzer struct {
 	typeAliases      map[string]ast.Expression
 	localIdCounter   int
 	blockDepth       int
+	inDeferBlock     int
 }
 
 func builtinType(name string) ast.Expression {
@@ -536,11 +537,17 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 			if a.blockDepth > 0 {
 				a.reportError(s, "defer statements are only allowed in the top-level block of a function")
 			}
-			if _, ok := s.Call.(*ast.CallExpression); !ok {
-				a.reportError(s, "defer requires a function or method call")
+			if s.Block != nil {
+				a.inDeferBlock++
+				a.analyzeBlock(s.Block, true)
+				a.inDeferBlock--
+			} else {
+				if _, ok := s.Call.(*ast.CallExpression); !ok {
+					a.reportError(s, "defer requires a function or method call")
+				}
+				s.Call = a.foldExpression(s.Call)
+				a.analyzeExpression(s.Call)
 			}
-			s.Call = a.foldExpression(s.Call)
-			a.analyzeExpression(s.Call)
 		case *ast.AssignStatement:
 			if s.Token.Literal == ":=" {
 				hasNewVar := false
@@ -706,12 +713,23 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 			a.analyzeBlock(s.Body, true)
 			a.popScope()
 		case *ast.ReturnStatement:
+			if a.inDeferBlock > 0 {
+				a.reportError(s, "return is not allowed inside a defer block")
+			}
 			for i, rv := range s.ReturnValues {
 				s.ReturnValues[i] = a.foldExpression(rv)
 				typ := a.analyzeExpression(s.ReturnValues[i])
 				if a.isDestructible(typ) {
 					a.reportError(s, "Cannot return destructible type %s by value", a.exprToString(typ))
 				}
+			}
+		case *ast.BreakStatement:
+			if a.inDeferBlock > 0 {
+				a.reportError(s, "break is not allowed inside a defer block")
+			}
+		case *ast.ContinueStatement:
+			if a.inDeferBlock > 0 {
+				a.reportError(s, "continue is not allowed inside a defer block")
 			}
 		case *ast.ExpressionStatement:
 			s.Expression = a.foldExpression(s.Expression)
@@ -809,6 +827,10 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 }
 
 func (a *Analyzer) defineLocalSymbol(nameExpr *ast.Identifier, typ ast.Expression, stmt ast.Node) {
+	if a.inDeferBlock > 0 && a.isDestructible(typ) {
+		a.reportError(stmt, "Cannot create destructible type %s inside a defer block", a.exprToString(typ))
+	}
+
 	if _, exists := a.currentScope.symbols[nameExpr.Value]; exists {
 		a.reportError(stmt, "Variable %q already declared in this scope", nameExpr.Value)
 	}

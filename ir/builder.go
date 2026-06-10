@@ -776,6 +776,8 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 				val := b.readVariable(vname, b.currentBlock)
 				ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: val}, s)
 				b.emitDestruction(val.Type(), ptr, s)
+			} else if action.Block != nil {
+				b.buildBlock(action.Block)
 			} else {
 				// Defer Call
 				if action.BuiltinName != "" {
@@ -1578,9 +1580,15 @@ type DeferredAction struct {
 	FuncPtr        Value
 	Args           []Value
 	Token          ast.Node
+	Block          *ast.BlockStatement
 }
 
 func (b *Builder) buildDefer(s *ast.DeferStatement) {
+	if s.Block != nil {
+		b.deferredActions = append(b.deferredActions, DeferredAction{Block: s.Block, Token: s})
+		return
+	}
+
 	callExpr, ok := s.Call.(*ast.CallExpression)
 	if !ok {
 		panic("Defer statement without CallExpression")

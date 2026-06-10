@@ -223,6 +223,7 @@ func (s *ForRangeStatement) GetToken() *token.Token { return &s.Token }
 type DeferStatement struct {
 	Token token.Token // The 'defer' token
 	Call  Expression
+	Block *BlockStatement // Used for `defer func() { ... }()`
 }
 
 func (s *DeferStatement) statementNode()         {}
