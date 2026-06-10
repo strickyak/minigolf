@@ -21,6 +21,8 @@ func main() {
 	}
 
 	println(bogus.GooseLevel)
+	println(LIMIT)
+	println(LEVEL)
 	println(bogus.JellyName[0])
 	println(bogus.PBName)
 
