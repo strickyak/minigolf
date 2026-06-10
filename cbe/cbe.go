@@ -243,19 +243,38 @@ func (c *CBE) Generate(program *ir.Program) string {
 		}
 	}
 
+	// Check if panic is used
+	usesPanic := false
+	for _, f := range program.Functions {
+		for _, b := range f.Blocks {
+			for _, i := range b.Instructions {
+				switch instr := i.(type) {
+				case *ir.SetJmp, *ir.LongJmp:
+					usesPanic = true
+				case *ir.BuiltinCall:
+					if instr.Name == "panic" || instr.Name == "_propagate_panic_" || instr.Name == "_unlink_jmp_" {
+						usesPanic = true
+					}
+				}
+			}
+		}
+	}
+
 	// C main
 	c.buf.WriteString("int main() {\n")
-	c.buf.WriteString("\tstruct jmp_struct jumper_main;\n")
-	c.buf.WriteString("\tjumper_main.prev = NULL;\n")
-	c.buf.WriteString("\tv_prelude__jmp_chain_ = (byte*)(&jumper_main);\n")
-	c.buf.WriteString("\tint val = setjmp(jumper_main.jmpbuf);\n")
-	c.buf.WriteString("\tif (val != 0) {\n")
-	c.buf.WriteString("\t\tprintf(\"\\n*** UNCAUGHT_PANIC\\n\");\n")
-	c.buf.WriteString("\t\tif (v_prelude__panic_) {\n")
-	c.buf.WriteString("\t\t\tprintf(\"*** %s\\n\", (char*)v_prelude__panic_);\n")
-	c.buf.WriteString("\t\t}\n")
-	c.buf.WriteString("\t\tabort();\n")
-	c.buf.WriteString("\t}\n")
+	if usesPanic {
+		c.buf.WriteString("\tstruct jmp_struct jumper_main;\n")
+		c.buf.WriteString("\tjumper_main.prev = NULL;\n")
+		c.buf.WriteString("\tv_prelude__jmp_chain_ = (byte*)(&jumper_main);\n")
+		c.buf.WriteString("\tint val = setjmp(jumper_main.jmpbuf);\n")
+		c.buf.WriteString("\tif (val != 0) {\n")
+		c.buf.WriteString("\t\tprintf(\"\\n*** UNCAUGHT_PANIC\\n\");\n")
+		c.buf.WriteString("\t\tif (v_prelude__panic_) {\n")
+		c.buf.WriteString("\t\t\tprintf(\"*** %s\\n\", (char*)v_prelude__panic_);\n")
+		c.buf.WriteString("\t\t}\n")
+		c.buf.WriteString("\t\tabort();\n")
+		c.buf.WriteString("\t}\n")
+	}
 	c.buf.WriteString("\tf_main();\n")
 	c.buf.WriteString("\treturn 0;\n")
 	c.buf.WriteString("}\n")

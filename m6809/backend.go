@@ -75,7 +75,7 @@ func (b *Backend) getTypeSizeUsingIrt9(irt *ir.Type) int {
 	switch irt.Name {
 	case "void", "byte":
 		return 1
-	case "word", "int", "const_integer", "uint":
+	case "word", "int", "const_integer", "uint", "panicked":
 		return 2
 	}
 	if irt.Name == "bool" {
@@ -205,6 +205,7 @@ type Backend struct {
 	slots           map[int]int
 	slotSizes       map[int]int
 	paramSlots      map[string]int
+	jmpSlots        map[int]int
 	globalOffsets   map[string]int
 	activeRegs      map[string]int
 	valInReg        map[int]string
@@ -229,6 +230,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		slots:           make(map[int]int),
 		slotSizes:       make(map[int]int),
 		paramSlots:      make(map[string]int),
+		jmpSlots:        make(map[int]int),
 		globalOffsets:   make(map[string]int),
 		slotOwner:       make(map[int]int),
 	}
@@ -516,13 +518,120 @@ func (b *Backend) Generate(program *ir.Program) string {
 		}
 	}
 
+	// Check if panic is used
+	usesPanic := false
+	for _, f := range program.Functions {
+		for _, b := range f.Blocks {
+			for _, i := range b.Instructions {
+				switch instr := i.(type) {
+				case *ir.SetJmp, *ir.LongJmp:
+					usesPanic = true
+				case *ir.BuiltinCall:
+					if instr.Name == "panic" || instr.Name == "_propagate_panic_" || instr.Name == "_unlink_jmp_" {
+						usesPanic = true
+					}
+				}
+			}
+		}
+	}
+
 	//no-section// b.buf.WriteString("\n\texport _main\n")
 	b.buf.WriteString("_main:\n")
+
+	if usesPanic {
+		b.buf.WriteString("\tleas -10,s\t; Allocate 10 bytes for jumper_main\n")
+		b.buf.WriteString("\tldd #0\n")
+		b.buf.WriteString("\tstd 0,s\t; jumper_main.prev = NULL\n")
+
+		b.buf.WriteString("\tleax ,s\n")
+		if b.picMode {
+			b.buf.WriteString("\tstx v_prelude._jmp_chain_,pcr\n")
+		} else {
+			b.buf.WriteString("\tstx v_prelude._jmp_chain_\n")
+		}
+
+		lblNext := b.nextLabel()
+		if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tleay %s,pcr\n", lblNext))
+			b.buf.WriteString("\tsty 2,x\n")
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", lblNext))
+			b.buf.WriteString("\tstd 2,x\n")
+		}
+
+		b.buf.WriteString("\ttfr s,d\n")
+		b.buf.WriteString("\tstd 4,x\n")
+		b.buf.WriteString("\ttfr u,d\n")
+		b.buf.WriteString("\tstd 6,x\n")
+		b.buf.WriteString("\ttfr y,d\n")
+		b.buf.WriteString("\tstd 8,x\n")
+		b.buf.WriteString("\tclra\n")
+		b.buf.WriteString("\tclrb\n")
+		b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext))
+		b.buf.WriteString("\tcmpd #0\n")
+		lblCallMain := b.nextLabel()
+		b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblCallMain))
+
+		// Uncaught Panic
+		b.fmtCount++
+		lblUncaught := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*** UNCAUGHT_PANIC\\n\"\n", lblUncaught))
+		if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblUncaught))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lblUncaught))
+		}
+		b.buf.WriteString("\tstx ,--s\n")
+		if b.picMode {
+			b.buf.WriteString("\tlbsr _printf\n")
+		} else {
+			b.buf.WriteString("\tjsr _printf\n")
+		}
+		b.buf.WriteString("\tleas 2,s\n")
+
+		if b.picMode {
+			b.buf.WriteString("\tldd v_prelude._panic_,pcr\n")
+		} else {
+			b.buf.WriteString("\tldd v_prelude._panic_\n")
+		}
+		b.buf.WriteString("\tcmpd #0\n")
+		lblAbort := b.nextLabel()
+		b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblAbort))
+
+		b.fmtCount++
+		lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"*** %%s\\n\"\n", lblPanicMsg))
+
+		b.buf.WriteString("\tstd ,--s\n")
+		if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblPanicMsg))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lblPanicMsg))
+		}
+		b.buf.WriteString("\tstx ,--s\n")
+		if b.picMode {
+			b.buf.WriteString("\tlbsr _printf\n")
+		} else {
+			b.buf.WriteString("\tjsr _printf\n")
+		}
+		b.buf.WriteString("\tleas 4,s\n")
+
+		b.buf.WriteString(fmt.Sprintf("%s:\n", lblAbort))
+		b.buf.WriteString("\tfcb 1\n")
+
+		b.buf.WriteString(fmt.Sprintf("%s:\n", lblCallMain))
+	}
+
 	if b.picMode {
 		b.buf.WriteString("\tlbsr f_main\n")
 	} else {
 		b.buf.WriteString("\tjsr f_main\n")
 	}
+
+	if usesPanic {
+		b.buf.WriteString("\tleas 10,s\n")
+	}
+	b.buf.WriteString("\tldd #0\n")
 	b.buf.WriteString("\tldx #0\n")
 	b.buf.WriteString("\trts\n")
 
@@ -571,14 +680,12 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 	}
 
-	// Pre-scan for all other instructions
-	// Pre-scan for all AddressOfLocal targets first.
+	b.jmpSlots = make(map[int]int)
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
-			if addrLocal, ok := instr.(*ir.AddressOfLocal); ok {
-				if localInstr, isInstr := addrLocal.Local.(ir.Instruction); isInstr {
-					b.getSlot(localInstr.GetID(), localInstr.Type())
-				}
+			if setJmp, ok := instr.(*ir.SetJmp); ok {
+				b.stackSize += 10
+				b.jmpSlots[setJmp.GetID()] = -(b.frameOffset + b.stackSize)
 			}
 		}
 	}
@@ -1689,11 +1796,218 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.storeResult(id)
 		}
 
+	case *ir.SetJmp:
+		b.flushRegisters()
+		jmpSlot := b.jmpSlots[id]
+		// jumper.prev = _jmp_chain_
+		b.emitLoadAddr("x", b.memAccess(jmpSlot))
+		if b.picMode {
+			b.buf.WriteString("\tldd v_prelude._jmp_chain_,pcr\n")
+		} else {
+			b.buf.WriteString("\tldd v_prelude._jmp_chain_\n")
+		}
+		b.buf.WriteString("\tstd 0,x\n")
+
+		// _jmp_chain_ = &jumper
+		if b.picMode {
+			b.buf.WriteString("\tstx v_prelude._jmp_chain_,pcr\n")
+		} else {
+			b.buf.WriteString("\tstx v_prelude._jmp_chain_\n")
+		}
+
+		// save S, U, Y, PC
+		lblNext := b.nextLabel()
+		if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tleay %s,pcr\n", lblNext))
+			b.buf.WriteString("\tsty 2,x\n") // PC
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", lblNext))
+			b.buf.WriteString("\tstd 2,x\n") // PC
+		}
+
+		b.buf.WriteString("\ttfr s,d\n")
+		b.buf.WriteString("\tstd 4,x\n") // S
+
+		b.buf.WriteString("\ttfr u,d\n")
+		b.buf.WriteString("\tstd 6,x\n") // U
+
+		b.buf.WriteString("\ttfr y,d\n")
+		b.buf.WriteString("\tstd 8,x\n") // Y
+
+		b.buf.WriteString("\tclra\n")
+		b.buf.WriteString("\tclrb\n")
+
+		b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext))
+		b.storeResult(id)
+
+	case *ir.LongJmp:
+		b.flushRegisters()
+		b.loadVal(i.JmpBuf)
+		b.buf.WriteString("\ttfr d,x\n") // X = jumper
+
+		// Return 1
+		b.buf.WriteString("\tclra\n")
+		b.buf.WriteString("\tldb #1\n")
+
+		b.buf.WriteString("\tldy 8,x\n")
+		b.buf.WriteString("\tldu 6,x\n")
+		b.buf.WriteString("\tlds 4,x\n")
+		b.buf.WriteString("\tjmp [2,x]\n")
+
 	case *ir.BuiltinCall:
 		b.flushRegisters()
 		if i.Name == "print" || i.Name == "println" {
 			b.emitPrint(i.Name == "println", i.Args)
+		} else if i.Name == "panic" {
+			if len(i.Args) > 0 {
+				if strLit, ok := i.Args[0].(*ir.StringLiteral); ok {
+					b.fmtCount++
+					lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+					b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
+					if b.picMode {
+						b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lbl))
+						b.buf.WriteString("\tstx v_prelude._panic_,pcr\n")
+					} else {
+						b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lbl))
+						b.buf.WriteString("\tstx v_prelude._panic_\n")
+					}
+				} else {
+					b.loadVal(i.Args[0])
+					if b.picMode {
+						b.buf.WriteString("\tstd v_prelude._panic_,pcr\n")
+					} else {
+						b.buf.WriteString("\tstd v_prelude._panic_\n")
+					}
+				}
+			} else {
+				b.buf.WriteString("\tldd #0\n")
+				if b.picMode {
+					b.buf.WriteString("\tstd v_prelude._panic_,pcr\n")
+				} else {
+					b.buf.WriteString("\tstd v_prelude._panic_\n")
+				}
+			}
+
+			b.fmtCount++
+			lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*PANIC* %%s\\n\"\n", lblPanicMsg))
+
+			if b.picMode {
+				b.buf.WriteString("\tldd v_prelude._panic_,pcr\n")
+			} else {
+				b.buf.WriteString("\tldd v_prelude._panic_\n")
+			}
+			b.buf.WriteString("\tstd ,--s\n")
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblPanicMsg))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lblPanicMsg))
+			}
+			b.buf.WriteString("\tstx ,--s\n")
+			if b.picMode {
+				b.buf.WriteString("\tlbsr _printf\n")
+			} else {
+				b.buf.WriteString("\tjsr _printf\n")
+			}
+			b.buf.WriteString("\tleas 4,s\n")
+
+			if b.picMode {
+				b.buf.WriteString("\tldx v_prelude._jmp_chain_,pcr\n")
+			} else {
+				b.buf.WriteString("\tldx v_prelude._jmp_chain_\n")
+			}
+			b.buf.WriteString("\tcmpx #0\n")
+			lblNext2 := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblNext2))
+			b.buf.WriteString("\tclra\n")
+			b.buf.WriteString("\tldb #1\n")
+			b.buf.WriteString("\tldy 8,x\n")
+			b.buf.WriteString("\tldu 6,x\n")
+			b.buf.WriteString("\tlds 4,x\n")
+			b.buf.WriteString("\tjmp [2,x]\n")
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext2))
+
+			b.fmtCount++
+			lblAbortMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n", lblAbortMsg))
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblAbortMsg))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lblAbortMsg))
+			}
+			b.buf.WriteString("\tstx ,--s\n")
+			if b.picMode {
+				b.buf.WriteString("\tlbsr _printf\n")
+			} else {
+				b.buf.WriteString("\tjsr _printf\n")
+			}
+			b.buf.WriteString("\tleas 2,s\n")
+			b.buf.WriteString("\tfcb 1\n")
+
+		} else if i.Name == "_unlink_jmp_" {
+			if b.picMode {
+				b.buf.WriteString("\tldx v_prelude._jmp_chain_,pcr\n")
+			} else {
+				b.buf.WriteString("\tldx v_prelude._jmp_chain_\n")
+			}
+			b.buf.WriteString("\tcmpx #0\n")
+			lblNext2 := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblNext2))
+			b.buf.WriteString("\tldd 0,x\n") // prev
+			if b.picMode {
+				b.buf.WriteString("\tstd v_prelude._jmp_chain_,pcr\n")
+			} else {
+				b.buf.WriteString("\tstd v_prelude._jmp_chain_\n")
+			}
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext2))
+
+		} else if i.Name == "_propagate_panic_" {
+			if b.picMode {
+				b.buf.WriteString("\tldd v_prelude._panic_,pcr\n")
+			} else {
+				b.buf.WriteString("\tldd v_prelude._panic_\n")
+			}
+			b.buf.WriteString("\tcmpd #0\n")
+			lblNext3 := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblNext3))
+
+			if b.picMode {
+				b.buf.WriteString("\tldx v_prelude._jmp_chain_,pcr\n")
+			} else {
+				b.buf.WriteString("\tldx v_prelude._jmp_chain_\n")
+			}
+			b.buf.WriteString("\tcmpx #0\n")
+			lblNext2 := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblNext2))
+
+			b.buf.WriteString("\tclra\n")
+			b.buf.WriteString("\tldb #1\n")
+			b.buf.WriteString("\tldy 8,x\n")
+			b.buf.WriteString("\tldu 6,x\n")
+			b.buf.WriteString("\tlds 4,x\n")
+			b.buf.WriteString("\tjmp [2,x]\n")
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext2))
+
+			b.fmtCount++
+			lblAbortMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n", lblAbortMsg))
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblAbortMsg))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lblAbortMsg))
+			}
+			b.buf.WriteString("\tstx ,--s\n")
+			if b.picMode {
+				b.buf.WriteString("\tlbsr _printf\n")
+			} else {
+				b.buf.WriteString("\tjsr _printf\n")
+			}
+			b.buf.WriteString("\tleas 2,s\n")
+			b.buf.WriteString("\tfcb 1\n")
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext3))
+
 		} else if i.Name == "exit" {
+			b.loadVal(i.Args[0])
 			b.buf.WriteString("\tfcb 1\n")
 		}
 

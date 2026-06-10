@@ -224,6 +224,23 @@ func (b *Backend) Generate(program *ir.Program) string {
 		}
 	}
 
+	// Check if panic is used
+	usesPanic := false
+	for _, f := range program.Functions {
+		for _, b := range f.Blocks {
+			for _, i := range b.Instructions {
+				switch instr := i.(type) {
+				case *ir.SetJmp, *ir.LongJmp:
+					usesPanic = true
+				case *ir.BuiltinCall:
+					if instr.Name == "panic" || instr.Name == "_propagate_panic_" || instr.Name == "_unlink_jmp_" {
+						usesPanic = true
+					}
+				}
+			}
+		}
+	}
+
 	b.buf.WriteString("\n\t.globl main\n")
 	b.buf.WriteString("\t.globl _main\n")
 	b.buf.WriteString("main:\n")
@@ -231,42 +248,45 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString("\tpush rbp\n")
 	b.buf.WriteString("\tmov rbp, rsp\n")
 	b.buf.WriteString("\tand rsp, -16\n")
-	b.buf.WriteString("\tsub rsp, 208\n") // Allocate 208 bytes for jumper_main
 
-	// jumper_main.prev = NULL; v_prelude._jmp_chain_ = &jumper_main;
-	b.buf.WriteString("\tmov qword ptr [rbp - 208], 0\n")
-	b.buf.WriteString("\tlea rax, [rbp - 208]\n")
-	b.buf.WriteString("\tmov qword ptr [rip + v_prelude._jmp_chain_], rax\n")
+	if usesPanic {
+		b.buf.WriteString("\tsub rsp, 208\n") // Allocate 208 bytes for jumper_main
 
-	// setjmp(jumper_main.jmpbuf)
-	b.buf.WriteString("\tlea rdi, [rbp - 200]\n")
-	b.buf.WriteString("\tcall setjmp@PLT\n")
-	b.buf.WriteString("\ttest eax, eax\n")
-	b.buf.WriteString("\tjz .L_main_call_f_main\n")
+		// jumper_main.prev = NULL; v_prelude._jmp_chain_ = &jumper_main;
+		b.buf.WriteString("\tmov qword ptr [rbp - 208], 0\n")
+		b.buf.WriteString("\tlea rax, [rbp - 208]\n")
+		b.buf.WriteString("\tmov qword ptr [rip + v_prelude._jmp_chain_], rax\n")
 
-	// if (val != 0) { ... abort() }
-	b.fmtCount++
-	lblUncaught := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"\\n*** UNCAUGHT_PANIC\\n\"\n", lblUncaught))
-	b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblUncaught))
-	b.buf.WriteString("\txor eax, eax\n")
-	b.buf.WriteString("\tcall printf@PLT\n")
+		// setjmp(jumper_main.jmpbuf)
+		b.buf.WriteString("\tlea rdi, [rbp - 200]\n")
+		b.buf.WriteString("\tcall setjmp@PLT\n")
+		b.buf.WriteString("\ttest eax, eax\n")
+		b.buf.WriteString("\tjz .L_main_call_f_main\n")
 
-	b.buf.WriteString("\tmov rax, qword ptr [rip + v_prelude._panic_]\n")
-	b.buf.WriteString("\ttest rax, rax\n")
-	b.buf.WriteString("\tjz .L_main_abort\n")
-	b.fmtCount++
-	lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-	b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"*** %%s\\n\"\n", lblPanicMsg))
-	b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblPanicMsg))
-	b.buf.WriteString("\tmov rsi, qword ptr [rip + v_prelude._panic_]\n")
-	b.buf.WriteString("\txor eax, eax\n")
-	b.buf.WriteString("\tcall printf@PLT\n")
+		// if (val != 0) { ... abort() }
+		b.fmtCount++
+		lblUncaught := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"\\n*** UNCAUGHT_PANIC\\n\"\n", lblUncaught))
+		b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblUncaught))
+		b.buf.WriteString("\txor eax, eax\n")
+		b.buf.WriteString("\tcall printf@PLT\n")
 
-	b.buf.WriteString(".L_main_abort:\n")
-	b.buf.WriteString("\tcall abort@PLT\n")
+		b.buf.WriteString("\tmov rax, qword ptr [rip + v_prelude._panic_]\n")
+		b.buf.WriteString("\ttest rax, rax\n")
+		b.buf.WriteString("\tjz .L_main_abort\n")
+		b.fmtCount++
+		lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.string \"*** %%s\\n\"\n", lblPanicMsg))
+		b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rip + %s]\n", lblPanicMsg))
+		b.buf.WriteString("\tmov rsi, qword ptr [rip + v_prelude._panic_]\n")
+		b.buf.WriteString("\txor eax, eax\n")
+		b.buf.WriteString("\tcall printf@PLT\n")
 
-	b.buf.WriteString(".L_main_call_f_main:\n")
+		b.buf.WriteString(".L_main_abort:\n")
+		b.buf.WriteString("\tcall abort@PLT\n")
+
+		b.buf.WriteString(".L_main_call_f_main:\n")
+	}
 	b.buf.WriteString("\tcall f_main\n")
 
 	// TODO -- fix this, to call fflush(stdout), where stdout is `extern FILE* stdout;`
