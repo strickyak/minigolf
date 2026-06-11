@@ -108,15 +108,16 @@ func (s *VarStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *VarStatement) GetToken() *token.Token { return &s.Token }
 
 type FuncStatement struct {
-	Token          token.Token // The 'func' token
-	Name           *Identifier
-	TypeParameters []*Identifier
-	Tokens         []token.Token
-	Receiver       *Parameter // Optional
-	Parameters     []*Parameter
-	ReturnTypes    []Expression // Optional
-	Body           *BlockStatement
-	IsVariadic     bool
+	Token            token.Token // The 'func' token
+	Name             *Identifier
+	TypeParameters   []*Identifier
+	Tokens           []token.Token
+	Receiver         *Parameter // Optional
+	Parameters       []*Parameter
+	ReturnParameters []*Parameter // Optional
+
+	Body       *BlockStatement
+	IsVariadic bool
 }
 
 func (s *FuncStatement) statementNode()         {}
@@ -349,10 +350,11 @@ func (e *CallExpression) GetToken() *token.Token { return &e.Token }
 
 type FuncType struct {
 	BaseExpression
-	Token       token.Token // The 'func' token
-	Parameters  []*Parameter
-	ReturnTypes []Expression
-	IsVariadic  bool
+	Token            token.Token // The 'func' token
+	Parameters       []*Parameter
+	ReturnParameters []*Parameter
+
+	IsVariadic bool
 }
 
 func (e *FuncType) expressionNode()        {}

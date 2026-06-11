@@ -38,6 +38,7 @@ type Builder struct {
 	Program *Program
 
 	currentFunc          *Function
+	currentASTFunc       *ast.FuncStatement
 	currentBlock         *BasicBlock
 	currentDestructBlock *BasicBlock
 	deferredActions      []DeferredAction
@@ -256,11 +257,11 @@ func (b *Builder) SyntheticFuncName(e *ast.FuncType) string {
 		name += b.astToIRType(param.Type).Name
 	}
 	name += "__"
-	for i, rt := range e.ReturnTypes {
+	for i, rt := range e.ReturnParameters {
 		if i > 0 {
 			name += "_"
 		}
-		name += b.astToIRType(rt).Name
+		name += b.astToIRType(rt.Type).Name
 	}
 	// Sanitize by replacing any non-alphanumeric with underscores just in case
 	name = strings.ReplaceAll(name, ".", "_")
@@ -482,10 +483,12 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			oldCurBlk := b.currentBlock
 			oldCurDestructBlk := b.currentDestructBlock
 			oldDestructables := b.deferredActions
+			oldASTFunc := b.currentASTFunc
 
 			b.buildFunc(funcStmt)
 
 			b.currentFunc = oldFunc
+			b.currentASTFunc = oldASTFunc
 			b.nextValueID = oldNextValID
 			b.nextBlockID = oldNextBlkID
 			b.currentDef = oldCurDef
@@ -688,7 +691,7 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		}
 	}
 	f := &Function{Name: funcName}
-	f.ReturnType = b.getFuncReturnType(s.ReturnTypes)
+	f.ReturnType = b.getFuncReturnType(s.ReturnParameters)
 	paramIdx := 0
 	if s.Receiver != nil {
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: s.Receiver.Name.Value, Typ: receiverTyp})
@@ -736,6 +739,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 		}
 	}
 	b.currentFunc = b.funcs[funcName]
+	b.currentASTFunc = s
 	b.nextValueID = 1
 	b.nextBlockID = 1
 	b.currentDef = make(map[*BasicBlock]map[string]Value)
@@ -750,6 +754,15 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.deferredActions = nil
 	if !b.currentFunc.ReturnType.Equals(TypeUnknown) && !b.currentFunc.ReturnType.Equals(TypeVoid) {
 		b.varTypes["__retval"] = b.currentFunc.ReturnType
+	}
+
+	// Map named return variables
+	for _, rp := range s.ReturnParameters {
+		if rp.Name != nil {
+			typ := b.astToIRType(rp.Type)
+			b.varTypes[rp.Name.Value] = typ
+			b.writeVariable(rp.Name.Value, b.currentBlock, b.zeroConstant(typ))
+		}
 	}
 
 	// Map parameters
@@ -794,9 +807,9 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 				} else if action.FuncPtr != nil {
 					retTyp := TypeWord
 					if ptrType, ok := action.FuncPtr.Type().PointedType().Expr.(*ast.FuncType); ok {
-						retTyp = b.getFuncReturnType(ptrType.ReturnTypes)
+						retTyp = b.getFuncReturnType(ptrType.ReturnParameters)
 					} else if ft, ok := action.FuncPtr.Type().Expr.(*ast.FuncType); ok {
-						retTyp = b.getFuncReturnType(ft.ReturnTypes)
+						retTyp = b.getFuncReturnType(ft.ReturnParameters)
 					}
 					b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: action.FuncPtr, Args: action.Args}, action.Token)
 				}
@@ -1530,16 +1543,44 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			Comment:         fmt.Sprintf("Line %d: Return statement", s.Token.Line),
 		}, s)
 		var val Value
-		if len(s.ReturnValues) == 1 {
+		if len(s.ReturnValues) == 0 {
+			if len(b.currentASTFunc.ReturnParameters) == 1 {
+				rp := b.currentASTFunc.ReturnParameters[0]
+				if rp.Name != nil {
+					val = b.readVariable(rp.Name.Value, b.currentBlock)
+				} else {
+					val = b.zeroConstant(b.currentFunc.ReturnType)
+				}
+			} else if len(b.currentASTFunc.ReturnParameters) > 1 {
+				structTyp := b.currentFunc.ReturnType
+				val = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: structTyp}}, s)
+				for i, rp := range b.currentASTFunc.ReturnParameters {
+					var fieldVal Value
+					if rp.Name != nil {
+						fieldVal = b.readVariable(rp.Name.Value, b.currentBlock)
+					} else {
+						fieldVal = b.zeroConstant(b.astToIRType(rp.Type))
+					}
+					val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: structTyp}, Struct: val, FieldIndex: i, Val: fieldVal}, s)
+				}
+			}
+		} else if len(s.ReturnValues) == 1 {
 			val = b.buildExpr(s.ReturnValues[0])
 			if f := b.currentFunc; f != nil && !f.ReturnType.Equals(TypeUnknown) {
 				val = b.coerceType(val, f.ReturnType)
+			}
+			if len(b.currentASTFunc.ReturnParameters) == 1 && b.currentASTFunc.ReturnParameters[0].Name != nil {
+				b.writeVariable(b.currentASTFunc.ReturnParameters[0].Name.Value, b.currentBlock, val)
 			}
 		} else if len(s.ReturnValues) > 1 {
 			structTyp := b.currentFunc.ReturnType
 			val = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: structTyp}}, s)
 			for i, rv := range s.ReturnValues {
 				fieldVal := b.buildExpr(rv)
+				rp := b.currentASTFunc.ReturnParameters[i]
+				if rp.Name != nil {
+					b.writeVariable(rp.Name.Value, b.currentBlock, fieldVal)
+				}
 				val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: structTyp}, Struct: val, FieldIndex: i, Val: fieldVal}, s)
 			}
 		}
@@ -1976,7 +2017,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			}
 			retTyp := TypeWord
 			if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
-				retTyp = b.getFuncReturnType(ft.ReturnTypes)
+				retTyp = b.getFuncReturnType(ft.ReturnParameters)
 			}
 
 			if isDefer {
@@ -2009,7 +2050,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 
 		retTyp := TypeWord
 		if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
-			retTyp = b.getFuncReturnType(ft.ReturnTypes)
+			retTyp = b.getFuncReturnType(ft.ReturnParameters)
 		}
 		if isDefer {
 			b.deferredActions = append(b.deferredActions, DeferredAction{FuncPtr: funcVal, Args: args, Token: e})
@@ -3145,21 +3186,21 @@ func (t Type) ArrayLength() int {
 	return 0
 }
 
-func (b *Builder) getFuncReturnType(returnTypes []ast.Expression) Type {
-	if len(returnTypes) == 1 {
-		return b.astToIRType(returnTypes[0])
-	} else if len(returnTypes) > 1 {
+func (b *Builder) getFuncReturnType(returnParams []*ast.Parameter) Type {
+	if len(returnParams) == 1 {
+		return b.astToIRType(returnParams[0].Type)
+	} else if len(returnParams) > 1 {
 		var fields []*ast.Field
-		for i, rt := range returnTypes {
+		for i, rt := range returnParams {
 			fields = append(fields, &ast.Field{
 				Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-				Type: rt,
+				Type: rt.Type,
 			})
 		}
 		structTyp := &ast.StructType{Fields: fields}
 		name := "struct{"
-		for _, rt := range returnTypes {
-			name += b.astToIRType(rt).Name + ";"
+		for _, rt := range returnParams {
+			name += b.astToIRType(rt.Type).Name + ";"
 		}
 		name += "}"
 		return Type{Expr: structTyp, Name: name, Builder: b}

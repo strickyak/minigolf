@@ -63,7 +63,7 @@ func Print(node any) string {
 			params = append(params, Print(p))
 		}
 		var retTypes []string
-		for _, r := range n.ReturnTypes {
+		for _, r := range n.ReturnParameters {
 			retTypes = append(retTypes, Print(r))
 		}
 		return fmt.Sprintf("FuncStatement{Name: %s, TypeParameters: [%s], Receiver: %s, Parameters: [%s], ReturnTypes: [%s], Body: %s}\n",

@@ -378,11 +378,11 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 			}
 
 			if len(s.TypeParameters) == 0 {
-				var retTypes []ast.Expression
-				for _, r := range s.ReturnTypes {
-					retTypes = append(retTypes, r)
+				var retParams []*ast.Parameter
+				for _, r := range s.ReturnParameters {
+					retParams = append(retParams, r)
 				}
-				ft := &ast.FuncType{Parameters: s.Parameters, ReturnTypes: retTypes, IsVariadic: s.IsVariadic}
+				ft := &ast.FuncType{Parameters: s.Parameters, ReturnParameters: retParams, IsVariadic: s.IsVariadic}
 				a.globalScope.Define(qname, ft)
 			}
 		case *ast.VarStatement:
@@ -503,9 +503,14 @@ func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
 		a.currentScope.Define(p.Name.Value, p.Type)
 	}
 
-	for _, retTyp := range s.ReturnTypes {
-		if a.isDestructible(retTyp) {
-			a.reportError(s, "Cannot return destructible type %s by value from function", a.exprToString(retTyp))
+	for _, retParam := range s.ReturnParameters {
+		if retParam.Type != nil {
+			if a.isDestructible(retParam.Type) {
+				a.reportError(s, "Cannot return destructible type %s by value from function", a.exprToString(retParam.Type))
+			}
+		}
+		if retParam.Name != nil {
+			a.currentScope.Define(retParam.Name.Value, retParam.Type)
 		}
 	}
 
@@ -833,11 +838,11 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 		a.program.Statements = append(a.program.Statements, fs)
 		a.funcMap[instName] = fs
 
-		var retTypes []ast.Expression
-		for _, r := range fs.ReturnTypes {
-			retTypes = append(retTypes, r)
+		var retParams []*ast.Parameter
+		for _, r := range fs.ReturnParameters {
+			retParams = append(retParams, r)
 		}
-		ft := &ast.FuncType{Parameters: fs.Parameters, ReturnTypes: retTypes, IsVariadic: fs.IsVariadic}
+		ft := &ast.FuncType{Parameters: fs.Parameters, ReturnParameters: retParams, IsVariadic: fs.IsVariadic}
 		a.globalScope.Define(instName, ft)
 
 		// Queue the instantiated function for reachability analysis!
@@ -981,8 +986,8 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			} else if len(argTyps) != len(ft.Parameters) && a.exprToString(funcTyp) != "func" {
 				a.reportError(e, "argument count mismatch: expected %d, got %d", len(ft.Parameters), len(argTyps))
 			}
-			if len(ft.ReturnTypes) > 0 {
-				typ = ft.ReturnTypes[0]
+			if len(ft.ReturnParameters) > 0 {
+				typ = ft.ReturnParameters[0].Type
 			} else {
 				typ = WordType // void essentially
 			}

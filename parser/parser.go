@@ -425,22 +425,15 @@ func (p *Parser) parseFuncStatement() *ast.FuncStatement {
 	// Optional return type
 	if p.peekTokenIs(token.LPAREN) {
 		p.nextToken() // '('
-		for !p.peekTokenIs(token.RPAREN) {
-			p.nextToken()
-			p.allowCompositeLit = false
-			stmt.ReturnTypes = append(stmt.ReturnTypes, p.parseExpression(LOWEST))
-			p.allowCompositeLit = true
-			if p.peekTokenIs(token.COMMA) {
-				p.nextToken()
-			}
-		}
+		stmt.ReturnParameters = p.parseReturnParameters()
 		if !p.expectPeek(token.RPAREN) {
 			return nil
 		}
-	} else if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) {
+	} else if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) || p.peekTokenIs(token.FUNC) {
 		p.nextToken()
 		p.allowCompositeLit = false
-		stmt.ReturnTypes = []ast.Expression{p.parseExpression(LOWEST)}
+		typ := p.parseExpression(LOWEST)
+		stmt.ReturnParameters = []*ast.Parameter{{Type: typ}}
 		p.allowCompositeLit = true
 	}
 
@@ -517,6 +510,51 @@ func (p *Parser) parseFunctionParameters() []*ast.Parameter {
 
 	if !p.expectPeek(token.RPAREN) {
 		return nil
+	}
+
+	return parameters
+}
+
+func (p *Parser) parseReturnParameters() []*ast.Parameter {
+	var parameters []*ast.Parameter
+
+	if p.peekTokenIs(token.RPAREN) {
+		return parameters
+	}
+
+	p.nextToken()
+
+	for {
+		param := &ast.Parameter{}
+
+		// Parse the first expression
+		p.allowCompositeLit = false
+		expr := p.parseExpression(LOWEST)
+		p.allowCompositeLit = true
+
+		if ident, ok := expr.(*ast.Identifier); ok && !p.peekTokenIs(token.COMMA) && !p.peekTokenIs(token.RPAREN) {
+			// It was a name, now parse the type
+			param.Name = ident
+			p.nextToken()
+			p.allowCompositeLit = false
+			param.Type = p.parseExpression(LOWEST)
+			p.allowCompositeLit = true
+		} else {
+			// It was an anonymous type
+			param.Type = expr
+		}
+
+		parameters = append(parameters, param)
+
+		if p.peekTokenIs(token.COMMA) {
+			p.nextToken() // Skip comma
+			if p.peekTokenIs(token.RPAREN) {
+				break
+			}
+			p.nextToken()
+		} else {
+			break
+		}
 	}
 
 	return parameters
@@ -1027,19 +1065,13 @@ func (p *Parser) parseFuncType() ast.Expression {
 
 	if p.peekTokenIs(token.LPAREN) {
 		p.nextToken() // '('
-		for !p.peekTokenIs(token.RPAREN) {
-			p.nextToken()
-			node.ReturnTypes = append(node.ReturnTypes, p.parseExpression(LOWEST))
-			if p.peekTokenIs(token.COMMA) {
-				p.nextToken()
-			}
-		}
+		node.ReturnParameters = p.parseReturnParameters()
 		if !p.expectPeek(token.RPAREN) {
 			return nil
 		}
 	} else if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) || p.peekTokenIs(token.FUNC) {
 		p.nextToken()
-		node.ReturnTypes = []ast.Expression{p.parseExpression(LOWEST)}
+		node.ReturnParameters = []*ast.Parameter{{Type: p.parseExpression(LOWEST)}}
 	}
 
 	return node

@@ -1,0 +1,34 @@
+package main
+
+func getValues() (a int, b int) {
+	a = 10
+	b = 20
+	return
+}
+
+func overrideValues() (a int, b int) {
+	a = 10
+	b = 20
+	return 30, 40
+}
+
+func main() {
+	var x int
+	var y int
+	x, y = getValues()
+	if x != 10 {
+		panic("getValues x failed")
+	}
+	if y != 20 {
+		panic("getValues y failed")
+	}
+
+	x, y = overrideValues()
+	if x != 30 {
+		panic("overrideValues x failed")
+	}
+	if y != 40 {
+		panic("overrideValues y failed")
+	}
+	println("OK")
+}

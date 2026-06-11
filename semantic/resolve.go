@@ -143,8 +143,8 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 			r.defineLocal(s.Receiver.Name.Value)
 			s.Receiver.Type = r.resolveExpression(s.Receiver.Type)
 		}
-		for i, rt := range s.ReturnTypes {
-			s.ReturnTypes[i] = r.resolveExpression(rt)
+		for _, rp := range s.ReturnParameters {
+			rp.Type = r.resolveExpression(rp.Type)
 		}
 		if s.Body != nil {
 			s.Body = r.resolveStatement(s.Body).(*ast.BlockStatement)
@@ -302,8 +302,8 @@ func (r *Resolver) resolveExpression(expr ast.Expression) ast.Expression {
 		for _, param := range e.Parameters {
 			param.Type = r.resolveExpression(param.Type)
 		}
-		for i, rt := range e.ReturnTypes {
-			e.ReturnTypes[i] = r.resolveExpression(rt)
+		for _, rp := range e.ReturnParameters {
+			rp.Type = r.resolveExpression(rp.Type)
 		}
 		return e
 	case *ast.ArrayType:
