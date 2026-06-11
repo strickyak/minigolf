@@ -91,7 +91,7 @@ const (
 	CONTINUE = "CONTINUE"
 	DEFER    = "DEFER"
 
-	PRAGMA   = "PRAGMA"
+	PRAGMA = "PRAGMA"
 )
 
 var keywords = map[string]TokenType{

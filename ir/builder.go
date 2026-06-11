@@ -1659,7 +1659,7 @@ func (b *Builder) emitBoundsCheck(idx Value, limit Value, isChop bool, token ast
 	cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: op, Left: idx, Right: limit}, token)
 	panicBlk := b.newBlock()
 	continueBlk := b.newBlock()
-	
+
 	b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: panicBlk, FalseBlock: continueBlk}, token)
 	b.addEdge(b.currentBlock, panicBlk)
 	b.addEdge(b.currentBlock, continueBlk)
@@ -1691,10 +1691,10 @@ func (b *Builder) emitNilCheck(ptr Value, token ast.Node) {
 	}
 	zero = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, token)
 	cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: ptr, Right: zero}, token)
-	
+
 	panicBlk := b.newBlock()
 	continueBlk := b.newBlock()
-	
+
 	b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: panicBlk, FalseBlock: continueBlk}, token)
 	b.addEdge(b.currentBlock, panicBlk)
 	b.addEdge(b.currentBlock, continueBlk)
@@ -2103,7 +2103,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					}
 				}
 				args := []Value{receiverVal, idx}
-				
+
 				if b.CheckBounds {
 					var lenVal Value
 					if isPtr {
@@ -2121,7 +2121,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					}
 					b.emitBoundsCheck(idx, lenVal, e.IsSlice, e)
 				}
-				
+
 				if e.IsSlice && len(e.Indices) == 2 {
 					idx2 := b.buildExpr(e.Indices[1])
 					if b.CheckBounds {

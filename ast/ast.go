@@ -454,7 +454,7 @@ type PragmaStatement struct {
 	Value string
 }
 
-func (ps *PragmaStatement) statementNode()       {}
-func (ps *PragmaStatement) TokenLiteral() string { return ps.Token.Literal }
+func (ps *PragmaStatement) statementNode()         {}
+func (ps *PragmaStatement) TokenLiteral() string   { return ps.Token.Literal }
 func (ps *PragmaStatement) GetToken() *token.Token { return &ps.Token }
-func (ps *PragmaStatement) String() string       { return "// minigolf: " + ps.Value }
+func (ps *PragmaStatement) String() string         { return "// minigolf: " + ps.Value }
