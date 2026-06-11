@@ -448,3 +448,13 @@ type CompositeLit struct {
 func (e *CompositeLit) expressionNode()        {}
 func (e *CompositeLit) TokenLiteral() string   { return e.Token.Literal }
 func (e *CompositeLit) GetToken() *token.Token { return &e.Token }
+
+type PragmaStatement struct {
+	Token token.Token // The PRAGMA token
+	Value string
+}
+
+func (ps *PragmaStatement) statementNode()       {}
+func (ps *PragmaStatement) TokenLiteral() string { return ps.Token.Literal }
+func (ps *PragmaStatement) GetToken() *token.Token { return &ps.Token }
+func (ps *PragmaStatement) String() string       { return "// minigolf: " + ps.Value }

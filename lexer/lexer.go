@@ -95,7 +95,19 @@ func (l *Lexer) nextToken() token.Token {
 		}
 	case '/':
 		if l.peekChar() == '/' {
+			pos := l.position
 			l.skipSingleLineComment()
+			comment := l.input[pos:l.position]
+			if len(comment) > 12 && comment[:12] == "// minigolf:" {
+				val := ""
+				for i := 12; i < len(comment); i++ {
+					if comment[i] != ' ' && comment[i] != '\t' {
+						val = comment[i:]
+						break
+					}
+				}
+				return token.Token{Type: token.PRAGMA, Literal: val, Line: startLine, Column: startCol, Filename: l.filename}
+			}
 			return l.nextToken()
 		} else if l.peekChar() == '*' {
 			l.skipMultiLineComment()

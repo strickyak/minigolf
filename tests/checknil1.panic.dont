@@ -1,0 +1,8 @@
+// minigolf: CHECK_BOUNDS=1 CHECK_NIL=1
+
+package main
+
+func main() {
+	var p *word
+	println(*p) // Panic!
+}

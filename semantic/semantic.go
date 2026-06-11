@@ -58,6 +58,9 @@ type Analyzer struct {
 	genericTemplates map[string]*GenericTemplate
 	funcMap          map[string]*ast.FuncStatement
 	constExprs       map[string]ast.Expression
+	Constants        map[string]*ast.ConstStatement
+	GlobalVars       map[string]ast.Expression
+	Pragmas          map[string]string
 	reachableFuncs   map[string]bool
 	queue            []string
 	resolver         *Resolver
@@ -109,6 +112,9 @@ func New(resolver *Resolver) *Analyzer {
 		genericTemplates: make(map[string]*GenericTemplate),
 		funcMap:          make(map[string]*ast.FuncStatement),
 		constExprs:       make(map[string]ast.Expression),
+		Constants:        make(map[string]*ast.ConstStatement),
+		GlobalVars:       make(map[string]ast.Expression),
+		Pragmas:          make(map[string]string),
 		reachableFuncs:   make(map[string]bool),
 		queue:            make([]string, 0),
 		resolver:         resolver,
@@ -346,6 +352,16 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 		switch s := stmt.(type) {
 		case *ast.PackageStatement:
 			a.currentPackage = s.Name.Value
+		case *ast.PragmaStatement:
+			fields := strings.Fields(s.Value)
+			for _, f := range fields {
+				parts := strings.SplitN(f, "=", 2)
+				if len(parts) == 2 {
+					a.Pragmas[parts[0]] = parts[1]
+				} else {
+					a.Pragmas[parts[0]] = "1"
+				}
+			}
 		case *ast.FuncStatement:
 			qname := a.currentPackage + "." + s.Name.Value
 			if s.Receiver != nil {

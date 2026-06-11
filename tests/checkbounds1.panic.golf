@@ -1,0 +1,11 @@
+// minigolf: CHECK_BOUNDS=1
+
+package main
+
+func main() {
+	var a [3]word
+	a[0] = 10
+	a[1] = 20
+	a[2] = 30
+	a[3] = 40 // Panic!
+}

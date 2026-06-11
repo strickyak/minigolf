@@ -1,0 +1,17 @@
+// minigolf: CHECK_BOUNDS=1
+
+package main
+
+var buf [100]word
+
+func main() {
+	var s slice[word]
+	s.Base = word(&buf)
+	s.Cap = 4
+	s.Len = 4
+
+	println(s[0])
+	s2 := s[0:4] // OK
+	println(s2.Len)
+	s3 := s[0:5] // Panic
+}

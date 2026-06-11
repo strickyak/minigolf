@@ -1,0 +1,15 @@
+package bogus
+
+const GooseLevel = 1234
+
+type Apple struct {
+	seeds word
+	worms byte
+}
+
+var JellyName = [1]string{"Smuckers"}
+var PBName = "JIF"
+
+func ApplePrint(an Apple) {
+	println(an.seeds, an.worms)
+}

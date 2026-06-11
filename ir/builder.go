@@ -69,6 +69,8 @@ type Builder struct {
 	resolveCallback   func(node ast.Node, defPkg string) ast.Node
 	varInitStatements []*GlobalItem
 	WordSize          int
+	CheckBounds       bool
+	CheckNil          bool
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -226,6 +228,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		lenVal := b.EvalConst(e.Length)
 		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, b.astToIRType(e.Elt).Name), Builder: b}
 	case *ast.PointerType:
+		//zach//fmt.Printf("EVALUATING POINTER_TYPE, CheckNil=%v\n", b.CheckNil)
 		return Type{Expr: expr, Name: "*" + b.astToIRType(e.Elt).Name, Builder: b}
 	case *ast.StructType:
 		name := "struct{"
@@ -564,6 +567,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 				findRawBase = func(expr ast.Expression) {
 					switch e := expr.(type) {
 					case *ast.PointerType:
+						//zach//fmt.Printf("EVALUATING POINTER_TYPE, CheckNil=%v\n", b.CheckNil)
 						findRawBase(e.Elt)
 					case *ast.IndexExpression:
 						if ident, ok := e.Left.(*ast.Identifier); ok {
@@ -1644,6 +1648,69 @@ func (b *Builder) buildDefer(s *ast.DeferStatement) {
 	b.buildCall(callExpr, true)
 }
 
+func (b *Builder) emitBoundsCheck(idx Value, limit Value, isChop bool, token ast.Node) {
+	if !b.CheckBounds {
+		return
+	}
+	op := "gte"
+	if isChop {
+		op = "gt"
+	}
+	cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: op, Left: idx, Right: limit}, token)
+	panicBlk := b.newBlock()
+	continueBlk := b.newBlock()
+	
+	b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: panicBlk, FalseBlock: continueBlk}, token)
+	b.addEdge(b.currentBlock, panicBlk)
+	b.addEdge(b.currentBlock, continueBlk)
+	b.sealBlock(continueBlk)
+
+	b.currentBlock = panicBlk
+	b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypePanicked}, Name: "panic", Args: []Value{&StringLiteral{Value: "INDEX OUT OF BOUNDS"}}}, token)
+	b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, token)
+	if b.currentDestructBlock != nil {
+		b.addEdge(b.currentBlock, b.currentDestructBlock)
+	}
+	b.sealBlock(panicBlk)
+
+	b.currentBlock = continueBlk
+}
+
+func (b *Builder) emitNilCheck(ptr Value, token ast.Node) {
+	if !b.CheckNil {
+		return
+	}
+	var zero Value
+	if ptr.Type().Equals(TypeByte.PointerTo()) {
+		ptr = b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: ptr}, token)
+	}
+	if b.WordSize == 2 {
+		ptr = b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: ptr}, token)
+	} else if ptr.Type().IsAPointer() {
+		ptr = b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: ptr}, token)
+	}
+	zero = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, token)
+	cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: ptr, Right: zero}, token)
+	
+	panicBlk := b.newBlock()
+	continueBlk := b.newBlock()
+	
+	b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: panicBlk, FalseBlock: continueBlk}, token)
+	b.addEdge(b.currentBlock, panicBlk)
+	b.addEdge(b.currentBlock, continueBlk)
+	b.sealBlock(continueBlk)
+
+	b.currentBlock = panicBlk
+	b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypePanicked}, Name: "panic", Args: []Value{&StringLiteral{Value: "NIL POINTER DEREFERENCE"}}}, token)
+	b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, token)
+	if b.currentDestructBlock != nil {
+		b.addEdge(b.currentBlock, b.currentDestructBlock)
+	}
+	b.sealBlock(panicBlk)
+
+	b.currentBlock = continueBlk
+}
+
 func (b *Builder) buildExpr(expr ast.Expression) Value {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1797,6 +1864,9 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 				} else {
 					receiverVal = base.Value
 				}
+				if b.CheckNil {
+					b.emitNilCheck(receiverVal, e)
+				}
 			} else {
 				if base.IsLValue {
 					receiverVal = base.Address
@@ -1897,6 +1967,9 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			}
 			// It's not a typedef, treat as an indirect call from a variable holding a function!
 			funcVal := b.buildExpr(e.Function)
+			if b.CheckNil {
+				b.emitNilCheck(funcVal, e)
+			}
 			var args []Value
 			for _, arg := range e.Arguments {
 				args = append(args, b.buildExpr(arg))
@@ -1926,6 +1999,9 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	} else {
 		// Treat as an indirect call!
 		funcVal := b.buildExpr(e.Function)
+		if b.CheckNil {
+			b.emitNilCheck(funcVal, e)
+		}
 		var args []Value
 		for _, arg := range e.Arguments {
 			args = append(args, b.buildExpr(arg))
@@ -2027,8 +2103,44 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 					}
 				}
 				args := []Value{receiverVal, idx}
+				
+				if b.CheckBounds {
+					var lenVal Value
+					if isPtr {
+						lenAddr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: TypeWord.PointerTo()}, Ptr: receiverVal, FieldIndex: 2}, e)
+						lenVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: TypeWord}, Ptr: lenAddr}, e)
+					} else {
+						var structVal Value
+						if base.IsLValue {
+							addr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: TypeWord.PointerTo()}, Ptr: base.Address, FieldIndex: 2}, e)
+							lenVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: TypeWord}, Ptr: addr}, e)
+						} else {
+							structVal = base.Value
+							lenVal = b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: structVal, FieldIndex: 2}, e)
+						}
+					}
+					b.emitBoundsCheck(idx, lenVal, e.IsSlice, e)
+				}
+				
 				if e.IsSlice && len(e.Indices) == 2 {
 					idx2 := b.buildExpr(e.Indices[1])
+					if b.CheckBounds {
+						var lenVal Value
+						if isPtr {
+							lenAddr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: TypeWord.PointerTo()}, Ptr: receiverVal, FieldIndex: 2}, e)
+							lenVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: TypeWord}, Ptr: lenAddr}, e)
+						} else {
+							var structVal Value
+							if base.IsLValue {
+								addr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: TypeWord.PointerTo()}, Ptr: base.Address, FieldIndex: 2}, e)
+								lenVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: TypeWord}, Ptr: addr}, e)
+							} else {
+								structVal = base.Value
+								lenVal = b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: structVal, FieldIndex: 2}, e)
+							}
+						}
+						b.emitBoundsCheck(idx2, lenVal, e.IsSlice, e)
+					}
 					args = append(args, idx2)
 				}
 				b.coerceCallArgs(f, args, e)
@@ -2041,6 +2153,14 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		var eltTyp Type
 		if base.Typ.IsAnArray() {
 			eltTyp = base.Typ.ArrayElementType()
+			if b.CheckBounds {
+				if arrTyp, ok := base.Typ.Expr.(*ast.ArrayType); ok {
+					if intLit, ok := arrTyp.Length.(*ast.IntegerLiteral); ok {
+						lenVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(intLit.Value)}, e)
+						b.emitBoundsCheck(idx, lenVal, false, e)
+					}
+				}
+			}
 		} else if base.Typ.IsAPointer() {
 			panic("Pointer indexing not supported yet")
 		} else {
@@ -2093,6 +2213,9 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				ptrVal = b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, e)
 			} else {
 				ptrVal = base.Value
+			}
+			if b.CheckNil {
+				b.emitNilCheck(ptrVal, e)
 			}
 			addr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: fieldType.PointerTo()}, Ptr: ptrVal, FieldIndex: fieldIdx}, e)
 			return ExprResult{IsLValue: true, Address: addr, Typ: fieldType}
@@ -2470,11 +2593,16 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			return ExprResult{IsLValue: false, Value: ptr, Typ: typ.PointerTo()}
 		}
 		if e.Operator == "*" {
+			//zach//fmt.Printf("EVALUATING * OPERATOR, CheckNil=%v\n", b.CheckNil)
 			ptrVal := b.buildExpr(e.Right)
+			if b.CheckNil {
+				b.emitNilCheck(ptrVal, e)
+			}
 			return ExprResult{IsLValue: true, Address: ptrVal, Typ: ptrVal.Type().PointedType()}
 		}
 
 	case *ast.PointerType:
+		//zach//fmt.Printf("EVALUATING POINTER_TYPE, CheckNil=%v\n", b.CheckNil)
 		ptrVal := b.buildExpr(e.Elt)
 		return ExprResult{IsLValue: true, Address: ptrVal, Typ: ptrVal.Type().PointedType()}
 

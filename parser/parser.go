@@ -193,6 +193,8 @@ func (p *Parser) parseTopLevelStatement(overridePackage string) ast.Statement {
 		return p.parseImportStatement()
 	case token.CONST:
 		return p.parseConstStatement()
+	case token.PRAGMA:
+		return p.parsePragmaStatement()
 	case token.TYPE:
 		return p.parseTypeStatement()
 	case token.VAR:
@@ -206,6 +208,14 @@ func (p *Parser) parseTopLevelStatement(overridePackage string) ast.Statement {
 		p.addError(p.curToken, msg)
 		return nil
 	}
+}
+
+func (p *Parser) parsePragmaStatement() *ast.PragmaStatement {
+	stmt := &ast.PragmaStatement{Token: p.curToken, Value: p.curToken.Literal}
+	if p.peekTokenIs(token.SEMICOLON) {
+		p.nextToken()
+	}
+	return stmt
 }
 
 func (p *Parser) parsePackageStatement(overridePackage string) *ast.PackageStatement {

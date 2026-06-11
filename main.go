@@ -213,6 +213,8 @@ func main() {
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
 	noStackAlloc := flag.Bool("no-stackalloc", false, "Disable Stack Slot Allocation (Slot Sharing)")
 	noBranchFold := flag.Bool("no-branchfold", false, "Disable Branch Folding optimization")
+	checkBoundsFlag := flag.Bool("check-bounds", false, "Enable bounds checking for slices and arrays")
+	checkNilFlag := flag.Bool("check-nil", false, "Enable nil pointer checks for pointers, method receivers, and function references")
 
 	var importDirPath repeatedFlag
 	flag.Var(&importDirPath, "I", "directory to be searched for imports")
@@ -356,9 +358,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	if val, ok := analyzer.Pragmas["CHECK_BOUNDS"]; ok {
+		*checkBoundsFlag = (val == "1" || val == "true")
+	}
+	if val, ok := analyzer.Pragmas["CHECK_NIL"]; ok {
+		*checkNilFlag = (val == "1" || val == "true")
+	}
+
 	// Flag -m=ir : emit SSA IR and exit cleanly
 	if *archFlag == "IR" {
 		builder := ir.NewBuilder(resolveCallback, 8)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{
@@ -391,6 +402,8 @@ func main() {
 	// Flag -m=cbe : Generate C from IR and exit cleanly
 	if *archFlag == "CBE" {
 		builder := ir.NewBuilder(resolveCallback, 8)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{
@@ -425,6 +438,8 @@ func main() {
 	// Flag -m=x86_64 : Generate X86_64 assembly from IR and exit cleanly
 	if *archFlag == "X86_64" || *archFlag == "X86-64" || *archFlag == "X" {
 		builder := ir.NewBuilder(resolveCallback, 8)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{
@@ -459,6 +474,8 @@ func main() {
 	// Flag -m=6809 : Generate M6809 assembly from IR and exit cleanly
 	if *archFlag == "6809" || *archFlag == "M6809" || *archFlag == "M" {
 		builder := ir.NewBuilder(resolveCallback, 2)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
 
 		optConfig := opt.Config{

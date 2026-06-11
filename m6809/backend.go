@@ -617,7 +617,8 @@ func (b *Backend) Generate(program *ir.Program) string {
 		b.buf.WriteString("\tleas 4,s\n")
 
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblAbort))
-		b.buf.WriteString("\tfcb 1\n")
+		b.buf.WriteString("\tldx #1\n")
+		b.buf.WriteString("\tjmp __exit\n")
 
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblCallMain))
 	}
@@ -1942,7 +1943,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString("\tjsr _printf\n")
 			}
 			b.buf.WriteString("\tleas 2,s\n")
-			b.buf.WriteString("\tfcb 1\n")
+			b.buf.WriteString("\tldx #1\n")
+			b.buf.WriteString("\tjmp __exit\n")
 
 		} else if i.Name == "_unlink_jmp_" {
 			if b.picMode {
@@ -2003,12 +2005,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString("\tjsr _printf\n")
 			}
 			b.buf.WriteString("\tleas 2,s\n")
-			b.buf.WriteString("\tfcb 1\n")
+			b.buf.WriteString("\tldx #1\n")
+			b.buf.WriteString("\tjmp __exit\n")
 			b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext3))
 
 		} else if i.Name == "exit" {
 			b.loadVal(i.Args[0])
-			b.buf.WriteString("\tfcb 1\n")
+			b.buf.WriteString("\tldx #1\n")
+			b.buf.WriteString("\tjmp __exit\n")
 		}
 
 	case *ir.Cast:
