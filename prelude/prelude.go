@@ -224,6 +224,12 @@ func freeslice[T any](a slice[T]) {
 var _panic_ *byte
 var _jmp_chain_ *byte
 
+func recover() *byte {
+    z := _panic_
+    _panic_ = (*byte)(0)
+    return z
+}
+
 /////////////////////////////////////////////
 
 func mul_byte(a byte, b byte) word
