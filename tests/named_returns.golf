@@ -15,7 +15,9 @@ func overrideValues() (a int, b int) {
 func main() {
 	var x int
 	var y int
+	println(x, y)
 	x, y = getValues()
+	println(x, y)
 	if x != 10 {
 		panic("getValues x failed")
 	}
@@ -24,6 +26,7 @@ func main() {
 	}
 
 	x, y = overrideValues()
+	println(x, y)
 	if x != 30 {
 		panic("overrideValues x failed")
 	}
