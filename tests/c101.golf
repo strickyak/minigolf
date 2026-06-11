@@ -1,7 +1,7 @@
 package c101
 
 const SZ = 20
-const NUM = 500
+const NUM = 10
 
 type Chunk struct {
 	Next *Chunk
