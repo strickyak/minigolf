@@ -101,5 +101,5 @@ test -s /home/strick/modoc/coco-shelf/gomar/gomar0n || \
 /home/strick/modoc/coco-shelf/gomar/gomar0n  \
         -ttl=60s \
         -write_rom_fail=1 -t=1 --entry=0x8000 -n=1 -raw_hyper_print=1   \
-         -big_rom  /home/strick/antig/_tmp/moto.rom \
-         -external_rom_listing   /home/strick/antig/_tmp/moto.rom.list
+         -big_rom  moto.rom \
+         -external_rom_listing   moto.rom.list
