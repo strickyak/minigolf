@@ -16,7 +16,7 @@ func poke[T any](addr word, value T) {
 func peekb(addr word) byte        { return *((*byte)(addr)) }
 func peekw(addr word) word        { return *((*word)(addr)) }
 func pokeb(addr word, value byte) { *((*byte)(addr)) = value }
-func pokew(addr word, value word) { *((*byte)(word)) = value }
+func pokew(addr word, value word) { *((*word)(addr)) = value }
 
 // golf:volatile
 func vpeekb(addr word) byte { return *((*byte)(addr)) }

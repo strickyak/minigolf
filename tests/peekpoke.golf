@@ -1,0 +1,14 @@
+package main
+
+var b [10]byte
+var w [10]word
+
+func main() {
+	b[3] = 33
+	pokeb(&b[8], peekb(&b[3]))
+	println(peekb(&b[8]))
+
+	w[4] = 3333
+	pokew(&w[9], peekw(&w[4]))
+	println(peekw(&w[9]))
+}
