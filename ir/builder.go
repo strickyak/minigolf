@@ -130,7 +130,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		case "byte", "bool":
 			TypeByte.Builder = b
 			return TypeByte
-		case "word", "uint":
+		case "word", "uint", "panicked":
 			TypeWord.Builder = b
 			return TypeWord
 		case "int":

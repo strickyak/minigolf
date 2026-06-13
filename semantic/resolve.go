@@ -81,7 +81,7 @@ func (r *Resolver) Resolve(program *ast.Program) {
 	}
 
 	// Implicit builtins
-	for _, b := range []string{"word", "byte", "int", "uint", "string", "any", "bool"} {
+	for _, b := range []string{"word", "byte", "int", "uint", "string", "any", "bool", "panicked"} {
 		r.globals["builtin."+b] = true
 	}
 	r.globals["builtin.true"] = true
@@ -236,7 +236,11 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 		s.Expression = r.resolveExpression(s.Expression)
 		return s
 	case *ast.DeferStatement:
-		s.Call = r.resolveExpression(s.Call)
+		if s.Block != nil {
+			s.Block = r.resolveStatement(s.Block).(*ast.BlockStatement)
+		} else {
+			s.Call = r.resolveExpression(s.Call)
+		}
 		return s
 	}
 	return stmt
