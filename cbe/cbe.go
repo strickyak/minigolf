@@ -51,7 +51,7 @@ func (c *CBE) mapType(typ string) string {
 	if typ == "any" {
 		return "struct any_struct"
 	}
-	if typ == "panicked" {
+	if typ == "noreturn" {
 		return "int"
 	}
 	if typ == "uint" {

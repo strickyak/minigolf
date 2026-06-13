@@ -130,7 +130,7 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 		case "byte", "bool":
 			TypeByte.Builder = b
 			return TypeByte
-		case "word", "uint", "panicked":
+		case "word", "uint", "noreturn":
 			TypeWord.Builder = b
 			return TypeWord
 		case "int":
@@ -1707,7 +1707,7 @@ func (b *Builder) emitBoundsCheck(idx Value, limit Value, isChop bool, token ast
 	b.sealBlock(continueBlk)
 
 	b.currentBlock = panicBlk
-	b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypePanicked}, Name: "panic", Args: []Value{&StringLiteral{Value: "INDEX OUT OF BOUNDS"}}}, token)
+	b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeNoReturn}, Name: "panic", Args: []Value{&StringLiteral{Value: "INDEX OUT OF BOUNDS"}}}, token)
 	b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, token)
 	if b.currentDestructBlock != nil {
 		b.addEdge(b.currentBlock, b.currentDestructBlock)
@@ -1742,7 +1742,7 @@ func (b *Builder) emitNilCheck(ptr Value, token ast.Node) {
 	b.sealBlock(continueBlk)
 
 	b.currentBlock = panicBlk
-	b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypePanicked}, Name: "panic", Args: []Value{&StringLiteral{Value: "NIL POINTER DEREFERENCE"}}}, token)
+	b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeNoReturn}, Name: "panic", Args: []Value{&StringLiteral{Value: "NIL POINTER DEREFERENCE"}}}, token)
 	b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, token)
 	if b.currentDestructBlock != nil {
 		b.addEdge(b.currentBlock, b.currentDestructBlock)
@@ -1948,7 +1948,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			}
 			var builtinTyp Type = TypeVoid
 			if ident.Value == "panic" {
-				builtinTyp = TypePanicked
+				builtinTyp = TypeNoReturn
 			}
 			val := b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: builtinTyp}, Name: ident.Value, Args: args}, e)
 			if ident.Value == "panic" {

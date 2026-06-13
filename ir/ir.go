@@ -38,7 +38,7 @@ var (
 	// TypeUint         = Type{Name: "uint", Expr: &ast.Identifier{Value: "uint"}}
 	TypeConstInteger = Type{Name: "const_integer", Expr: &ast.Identifier{Value: "const_integer"}}
 	TypeVoid         = Type{Name: "void", Expr: &ast.Identifier{Value: "void"}}
-	TypePanicked     = Type{Name: "panicked", Expr: &ast.Identifier{Value: "panicked"}}
+	TypeNoReturn     = Type{Name: "noreturn", Expr: &ast.Identifier{Value: "noreturn"}}
 )
 
 func (t Type) IsAPointer() bool {

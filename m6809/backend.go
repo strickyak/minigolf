@@ -75,7 +75,7 @@ func (b *Backend) getTypeSizeUsingIrt9(irt *ir.Type) int {
 	switch irt.Name {
 	case "void", "byte":
 		return 1
-	case "word", "int", "const_integer", "uint", "panicked":
+	case "word", "int", "const_integer", "uint", "noreturn":
 		return 2
 	}
 	if irt.Name == "bool" {

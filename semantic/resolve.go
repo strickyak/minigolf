@@ -81,7 +81,7 @@ func (r *Resolver) Resolve(program *ast.Program) {
 	}
 
 	// Implicit builtins
-	for _, b := range []string{"word", "byte", "int", "uint", "string", "any", "bool", "panicked"} {
+	for _, b := range []string{"word", "byte", "int", "uint", "string", "any", "bool", "noreturn"} {
 		r.globals["builtin."+b] = true
 	}
 	r.globals["builtin.true"] = true

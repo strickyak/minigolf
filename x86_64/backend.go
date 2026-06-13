@@ -18,7 +18,7 @@ func (b *Backend) getTypeAlignment(typ string) int {
 	if typ == "byte" {
 		return 1
 	}
-	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "panicked" {
+	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "noreturn" {
 		return 8
 	}
 	if strings.HasPrefix(typ, "[") {
@@ -59,7 +59,7 @@ func (b *Backend) getTypeSize(typ string) int {
 	if typ == "byte" {
 		return 1
 	}
-	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "panicked" {
+	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "noreturn" {
 		return 8
 	}
 	if strings.HasPrefix(typ, "[") {

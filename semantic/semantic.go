@@ -79,7 +79,7 @@ func builtinType(name string) ast.Expression {
 var UnknownType = builtinType("UnknownType")
 var WordType = builtinType("word")
 var ByteType = builtinType("byte")
-var PanickedType = builtinType("panicked")
+var NoReturnType = builtinType("noreturn")
 var AnyType = builtinType("any")
 var FuncTypeBuiltin = builtinType("func")
 
@@ -100,7 +100,7 @@ func New(resolver *Resolver) *Analyzer {
 	global.Define("uint", builtinType("type"))
 	global.Define("any", builtinType("type"))
 	global.Define("bool", builtinType("type"))
-	global.Define("panicked", builtinType("type"))
+	global.Define("noreturn", builtinType("type"))
 	global.Define("string", &ast.ArrayType{Elt: ByteType}) // string is alias for slice[byte]
 	global.Define("true", WordType)
 	global.Define("false", WordType)
