@@ -213,6 +213,7 @@ func main() {
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
 	noStackAlloc := flag.Bool("no-stackalloc", false, "Disable Stack Slot Allocation (Slot Sharing)")
 	noBranchFold := flag.Bool("no-branchfold", false, "Disable Branch Folding optimization")
+	debugOpt := flag.Bool("debug_opt", false, "Enable debug output for optimizations like leaf level")
 	checkBoundsFlag := flag.Bool("check-bounds", false, "Enable bounds checking for slices and arrays")
 	checkNilFlag := flag.Bool("check-nil", false, "Enable nil pointer checks for pointers, method receivers, and function references")
 
@@ -384,7 +385,9 @@ func main() {
 			EnableBranchFold:  !*noBranchFold,
 			EnableDFE:         !*noDfe,
 		}
+		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
 		irCode := ir.PrintProgram(irProg)
 
 		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
@@ -418,7 +421,9 @@ func main() {
 			EnableBranchFold:  !*noBranchFold,
 			EnableDFE:         !*noDfe,
 		}
+		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
 
 		backend := cbe.New()
 		cCode := backend.Generate(irProg)
@@ -454,7 +459,9 @@ func main() {
 			EnableBranchFold:  !*noBranchFold,
 			EnableDFE:         !*noDfe,
 		}
+		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
 
 		backend := x86_64.New()
 		asmCode := backend.Generate(irProg)
@@ -488,7 +495,9 @@ func main() {
 			EnableBranchFold: !*noBranchFold,
 			EnableDFE:        !*noDfe,
 		}
+		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
 
 		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)
 		asmCode := backend.Generate(irProg)

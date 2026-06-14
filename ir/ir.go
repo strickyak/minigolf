@@ -148,6 +148,7 @@ type Function struct {
 	IsVariadic               bool
 	SlotAlias                map[int]int
 	FunctionReferenceWasMade bool
+	LeafLevel                int
 }
 
 // Parameter represents a function parameter.

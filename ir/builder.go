@@ -3544,3 +3544,61 @@ func (b *Builder) checkFunctionReferenceInValue(v Value) {
 		}
 	}
 }
+
+func (b *Builder) AnnotateLeafLevels(debug bool) {
+	for _, f := range b.Program.Functions {
+		f.LeafLevel = 0
+	}
+
+	makesIndirectCall := make(map[*Function]bool)
+	calledFuncs := make(map[*Function]map[*Function]bool)
+
+	for _, f := range b.Program.Functions {
+		calledFuncs[f] = make(map[*Function]bool)
+		for _, blk := range f.Blocks {
+			for _, instr := range blk.Instructions {
+				if _, ok := instr.(*IndirectCall); ok {
+					makesIndirectCall[f] = true
+				} else if call, ok := instr.(*Call); ok {
+					calledFuncs[f][call.Func] = true
+				}
+			}
+		}
+	}
+
+	for level := 1; level <= 5; level++ {
+		madeProgress := false
+		for _, f := range b.Program.Functions {
+			if f.LeafLevel != 0 {
+				continue
+			}
+			if makesIndirectCall[f] {
+				continue
+			}
+
+			allResolved := true
+			maxLevel := 0
+
+			for called := range calledFuncs[f] {
+				if called.LeafLevel == 0 {
+					allResolved = false
+					break
+				}
+				if called.LeafLevel > maxLevel {
+					maxLevel = called.LeafLevel
+				}
+			}
+
+			if allResolved && maxLevel == level-1 {
+				f.LeafLevel = level
+				madeProgress = true
+				if debug {
+					log.Printf("LeafLevel: %s is level %d", f.Name, level)
+				}
+			}
+		}
+		if !madeProgress {
+			break
+		}
+	}
+}
