@@ -141,12 +141,13 @@ type Program struct {
 
 // Function represents a single function in SSA form.
 type Function struct {
-	Name       string
-	Parameters []*Parameter
-	ReturnType Type
-	Blocks     []*BasicBlock
-	IsVariadic bool
-	SlotAlias  map[int]int
+	Name                     string
+	Parameters               []*Parameter
+	ReturnType               Type
+	Blocks                   []*BasicBlock
+	IsVariadic               bool
+	SlotAlias                map[int]int
+	FunctionReferenceWasMade bool
 }
 
 // Parameter represents a function parameter.

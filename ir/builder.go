@@ -506,6 +506,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 }
 
 func (b *Builder) Build(astProg *ast.Program) *Program {
+	b.AnnotateFunctionReferences()
 	// Pass 0: register struct types
 	// nando-PROBLEM.  This pass 0, 0.5, 1, 2 might work for the current
 	// tests but is is not correct.  It registers const and struct types
@@ -672,6 +673,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 		}
 	}
 
+	b.AnnotateFunctionReferences()
 	return b.Program
 }
 
@@ -3503,6 +3505,42 @@ func (b *Builder) emitDestruction(typ Type, ptrVal Value, tokenNode ast.Node) {
 					b.emitDestruction(elemTyp, elemPtr, tokenNode)
 				}
 			}
+		}
+	}
+}
+
+func (b *Builder) AnnotateFunctionReferences() {
+	for _, f := range b.Program.Functions {
+		f.FunctionReferenceWasMade = false
+	}
+
+	for _, g := range b.Program.Globals {
+		b.checkFunctionReferenceInValue(g.InitVal)
+	}
+
+	for _, f := range b.Program.Functions {
+		for _, blk := range f.Blocks {
+			for _, instr := range blk.Instructions {
+				b.checkFunctionReferenceInValue(instr)
+			}
+		}
+	}
+}
+
+func (b *Builder) checkFunctionReferenceInValue(v Value) {
+	if v == nil {
+		return
+	}
+	switch val := v.(type) {
+	case *AddressOfFunc:
+		val.Func.FunctionReferenceWasMade = true
+	case *ConstStruct:
+		for _, field := range val.Fields {
+			b.checkFunctionReferenceInValue(field)
+		}
+	case *ConstArray:
+		for _, elem := range val.Elements {
+			b.checkFunctionReferenceInValue(elem)
 		}
 	}
 }
