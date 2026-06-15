@@ -1,0 +1,15 @@
+package main
+
+func main() {
+	var a int = 10
+	var b int = 20
+	var c int
+
+	if a > 5 {
+		c = a + b
+	} else {
+		c = b - a
+	}
+
+	println(c)
+}

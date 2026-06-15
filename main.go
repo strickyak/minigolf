@@ -384,6 +384,7 @@ func main() {
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
 			EnableDFE:         !*noDfe,
+			EnableDebugOpt:    *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -420,6 +421,7 @@ func main() {
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
 			EnableDFE:         !*noDfe,
+			EnableDebugOpt:    *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -458,6 +460,7 @@ func main() {
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
 			EnableDFE:         !*noDfe,
+			EnableDebugOpt:    *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -494,6 +497,7 @@ func main() {
 			EnableStackAlloc: !*noStackAlloc,
 			EnableBranchFold: !*noBranchFold,
 			EnableDFE:        !*noDfe,
+			EnableDebugOpt:   *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)

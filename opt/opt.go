@@ -1,6 +1,8 @@
 package opt
 
 import (
+	"log"
+
 	"github.com/strickyak/minigolf/ir"
 )
 
@@ -15,6 +17,7 @@ type Config struct {
 	EnableStackAlloc  bool
 	EnableBranchFold  bool
 	EnableDFE         bool
+	EnableDebugOpt    bool
 }
 
 type Pass interface {
@@ -67,6 +70,13 @@ func OptimizeProgram(p *ir.Program, config Config) {
 
 	if config.EnableDFE {
 		EliminateDeadFunctions(p)
+	}
+
+	if config.EnableDebugOpt {
+		for _, f := range p.Functions {
+			ig := ComputeInterferenceGraph(f)
+			log.Printf("Interference Graph for %s:\n%s", f.Name, ig.Format())
+		}
 	}
 }
 
@@ -223,4 +233,150 @@ func replaceInInstruction(instr ir.Instruction, oldVal ir.Value, newVal ir.Value
 			}
 		}
 	}
+}
+
+// OperandsOf returns all the values that are used as operands by the given instruction.
+func OperandsOf(instr ir.Instruction) []ir.Value {
+	var ops []ir.Value
+	switch i := instr.(type) {
+	case *ir.Store:
+		if i.Val != nil {
+			ops = append(ops, i.Val)
+		}
+	case *ir.BinaryOp:
+		if i.Left != nil {
+			ops = append(ops, i.Left)
+		}
+		if i.Right != nil {
+			ops = append(ops, i.Right)
+		}
+	case *ir.Compare:
+		if i.Left != nil {
+			ops = append(ops, i.Left)
+		}
+		if i.Right != nil {
+			ops = append(ops, i.Right)
+		}
+	case *ir.UnaryOp:
+		if i.Operand != nil {
+			ops = append(ops, i.Operand)
+		}
+	case *ir.ExtractElement:
+		if i.Array != nil {
+			ops = append(ops, i.Array)
+		}
+		if i.Index != nil {
+			ops = append(ops, i.Index)
+		}
+	case *ir.InsertElement:
+		if i.Array != nil {
+			ops = append(ops, i.Array)
+		}
+		if i.Index != nil {
+			ops = append(ops, i.Index)
+		}
+		if i.Val != nil {
+			ops = append(ops, i.Val)
+		}
+	case *ir.ExtractField:
+		if i.Struct != nil {
+			ops = append(ops, i.Struct)
+		}
+	case *ir.InsertField:
+		if i.Struct != nil {
+			ops = append(ops, i.Struct)
+		}
+		if i.Val != nil {
+			ops = append(ops, i.Val)
+		}
+	case *ir.AddressOfLocal:
+		if i.Local != nil {
+			ops = append(ops, i.Local)
+		}
+	case *ir.AddressOfField:
+		if i.Ptr != nil {
+			ops = append(ops, i.Ptr)
+		}
+	case *ir.AddressOfElement:
+		if i.ArrayPtr != nil {
+			ops = append(ops, i.ArrayPtr)
+		}
+		if i.Index != nil {
+			ops = append(ops, i.Index)
+		}
+	case *ir.ExtractFieldPtr:
+		if i.Ptr != nil {
+			ops = append(ops, i.Ptr)
+		}
+	case *ir.InsertFieldPtr:
+		if i.Ptr != nil {
+			ops = append(ops, i.Ptr)
+		}
+		if i.Val != nil {
+			ops = append(ops, i.Val)
+		}
+	case *ir.LoadPtr:
+		if i.Ptr != nil {
+			ops = append(ops, i.Ptr)
+		}
+	case *ir.StorePtr:
+		if i.Ptr != nil {
+			ops = append(ops, i.Ptr)
+		}
+		if i.Val != nil {
+			ops = append(ops, i.Val)
+		}
+	case *ir.Phi:
+		for _, e := range i.Edges {
+			if e.Value != nil {
+				ops = append(ops, e.Value)
+			}
+		}
+	case *ir.Call:
+		for _, a := range i.Args {
+			if a != nil {
+				ops = append(ops, a)
+			}
+		}
+	case *ir.IndirectCall:
+		if i.FuncPtr != nil {
+			ops = append(ops, i.FuncPtr)
+		}
+		for _, a := range i.Args {
+			if a != nil {
+				ops = append(ops, a)
+			}
+		}
+	case *ir.BuiltinCall:
+		for _, a := range i.Args {
+			if a != nil {
+				ops = append(ops, a)
+			}
+		}
+	case *ir.Cast:
+		if i.Operand != nil {
+			ops = append(ops, i.Operand)
+		}
+	case *ir.Branch:
+		if i.Condition != nil {
+			ops = append(ops, i.Condition)
+		}
+	case *ir.Return:
+		if i.Val != nil {
+			ops = append(ops, i.Val)
+		}
+	case *ir.ConstArray:
+		for _, e := range i.Elements {
+			if e != nil {
+				ops = append(ops, e)
+			}
+		}
+	case *ir.ConstStruct:
+		for _, f := range i.Fields {
+			if f != nil {
+				ops = append(ops, f)
+			}
+		}
+	}
+	return ops
 }
