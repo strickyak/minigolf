@@ -359,6 +359,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	analyzer.TrimDeadFunctions(program)
+	program.MarkTrunkFunctions(analyzer.ResolveFunc)
+
+	if *debugOpt {
+		for _, stmt := range program.Statements {
+			if fs, ok := stmt.(*ast.FuncStatement); ok {
+				log.Printf("TrunkLevel: %s is level %d", fs.Name.Value, fs.TrunkLevel)
+			}
+		}
+	}
+
 	if val, ok := analyzer.Pragmas["CHECK_BOUNDS"]; ok {
 		*checkBoundsFlag = (val == "1" || val == "true")
 	}

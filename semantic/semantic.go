@@ -443,6 +443,9 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 		}
 	}
 
+}
+
+func (a *Analyzer) TrimDeadFunctions(program *ast.Program) {
 	// Pass 3: Filter AST
 	var reachableStatements []ast.Statement
 	a.currentPackage = ""
@@ -478,6 +481,69 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 		reachableStatements = append(reachableStatements, stmt)
 	}
 	program.Statements = reachableStatements
+}
+
+func (a *Analyzer) ResolveFunc(expr ast.Expression) *ast.FuncStatement {
+	qname := ""
+	if id, ok := expr.(*ast.Identifier); ok {
+		qname = id.FullName()
+		if _, ok := a.genericTemplates[qname]; ok {
+			// keep qname
+		} else if _, ok := a.genericTemplates[a.currentPackage+"."+qname]; ok {
+			qname = a.currentPackage + "." + qname
+		} else if _, ok := a.genericTemplates["prelude."+qname]; ok {
+			qname = "prelude." + qname
+		}
+	} else if sel, ok := expr.(*ast.SelectorExpression); ok {
+		recvType := sel.Left.GetResolvedType()
+		if recvType != nil && recvType != UnknownType {
+			recvTypeStr := a.exprToString(recvType)
+			recvTypeStr = strings.TrimPrefix(recvTypeStr, "*")
+			if !strings.Contains(recvTypeStr, ".") {
+				if _, ok := a.globalScope.Resolve("prelude." + recvTypeStr); ok {
+					recvTypeStr = "prelude." + recvTypeStr
+				} else {
+					recvTypeStr = a.currentPackage + "." + recvTypeStr
+				}
+			}
+			qname = recvTypeStr + "_" + sel.Right.Value
+		} else {
+			// Package selector?
+			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+				qname = pkgIdent.Value + "." + sel.Right.Value
+			}
+		}
+	} else if idx, ok := expr.(*ast.IndexExpression); ok {
+		// generic instantiation
+		if id, ok := idx.Left.(*ast.Identifier); ok {
+			baseName := id.FullName()
+			if _, ok := a.genericTemplates[baseName]; ok {
+				qname = baseName
+			} else if _, ok := a.genericTemplates[a.currentPackage+"."+baseName]; ok {
+				qname = a.currentPackage + "." + baseName
+			} else if _, ok := a.genericTemplates["prelude."+baseName]; ok {
+				qname = "prelude." + baseName
+			}
+		} else if sel, ok := idx.Left.(*ast.SelectorExpression); ok {
+			if pkgIdent, ok := sel.Left.(*ast.Identifier); ok {
+				qname = pkgIdent.Value + "." + sel.Right.Value
+			}
+		}
+		if qname != "" {
+			instName := qname
+			for _, indexExpr := range idx.Indices {
+				instName += "_" + a.exprToString(indexExpr)
+			}
+			qname = instName
+		}
+	}
+
+	if qname != "" {
+		if fs, ok := a.funcMap[qname]; ok {
+			return fs
+		}
+	}
+	return nil
 }
 
 func (a *Analyzer) analyzeFunc(s *ast.FuncStatement) {
