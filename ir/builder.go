@@ -912,6 +912,16 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 	ltype := left.Type()
 	rtype := right.Type()
 
+	if ltype.Equals(TypeNil) && rtype.Equals(TypeNil) {
+		return TypeWord
+	}
+	if ltype.Equals(TypeNil) {
+		return rtype
+	}
+	if rtype.Equals(TypeNil) {
+		return ltype
+	}
+
 	switch op {
 	case "shl":
 		return ltype
@@ -969,6 +979,13 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 func (b *Builder) coerceType(val Value, targetType Type) Value {
 	if val.Type().Equals(targetType) || val.Type().Equals(TypeUnknown) {
 		return val
+	}
+
+	if val.Type().Equals(TypeNil) {
+		if targetType.IsAPointer() || targetType.Name == "func" || strings.HasPrefix(targetType.Name, "func_ptr_") || targetType.Name == "word" || targetType.Name == "any" || strings.HasPrefix(targetType.Name, "prelude.slice_") || strings.HasPrefix(targetType.Name, "slice_") {
+			return b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: targetType}}, val)
+		}
+		log.Panicf("cannot use nil as type %s", targetType.Name)
 	}
 
 	if val.Type().Equals(TypeConstInteger) {
@@ -2069,10 +2086,9 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 	case *ast.IntegerLiteral:
 		val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: uint64(e.Value)}, e)
 		return ExprResult{IsLValue: false, Value: val, Typ: TypeConstInteger}
+	case *ast.NilLiteral:
+		return ExprResult{IsLValue: false, Value: &ZeroInit{BaseInstruction: BaseInstruction{Typ: TypeNil}}, Typ: TypeNil}
 	case *ast.Identifier:
-		if e.Value == "nil" {
-			return ExprResult{IsLValue: false, Value: &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, Typ: TypeWord}
-		}
 
 		fullName := e.FullName()
 		if f, ok := b.funcs[fullName]; ok {
@@ -2368,6 +2384,9 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		left := b.buildExpr(e.Left)
 		right := b.buildExpr(e.Right)
 		typ := b.commonTypeOfValues(expr, left, e.Operator, right)
+
+		left = b.coerceType(left, typ)
+		right = b.coerceType(right, typ)
 
 		var val Value
 		switch e.Operator {

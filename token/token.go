@@ -92,6 +92,7 @@ const (
 	DEFER    = "DEFER"
 
 	PRAGMA = "PRAGMA"
+	NIL    = "NIL"
 )
 
 var keywords = map[string]TokenType{
@@ -110,6 +111,7 @@ var keywords = map[string]TokenType{
 	"break":    BREAK,
 	"continue": CONTINUE,
 	"defer":    DEFER,
+	"nil":      NIL,
 }
 
 func LookupIdent(ident string) TokenType {

@@ -34,6 +34,7 @@ var (
 	TypeUnknown = Type{Name: "", Expr: nil}
 	TypeByte    = Type{Name: "byte", Expr: &ast.Identifier{Value: "byte"}}
 	TypeWord    = Type{Name: "word", Expr: &ast.Identifier{Value: "word"}}
+	TypeNil     = Type{Name: "nil", Expr: &ast.Identifier{Value: "nil"}}
 	TypeInt     = Type{Name: "int", Expr: &ast.Identifier{Value: "int"}}
 	// TypeUint         = Type{Name: "uint", Expr: &ast.Identifier{Value: "uint"}}
 	TypeConstInteger = Type{Name: "const_integer", Expr: &ast.Identifier{Value: "const_integer"}}

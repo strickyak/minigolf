@@ -1,0 +1,24 @@
+package main
+
+func foo(x *word) {
+	if x == nil {
+		println("x is nil")
+	} else {
+		println("x is not nil")
+	}
+}
+
+func main() {
+	var p *word = nil
+	foo(p)
+
+	var s slice[byte] = nil
+	if s == nil {
+		println("s is nil")
+	}
+
+	var f func() = nil
+	if f == nil {
+		println("f is nil")
+	}
+}

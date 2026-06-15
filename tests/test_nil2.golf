@@ -1,0 +1,33 @@
+package main
+
+func returnNilPtr() *word {
+	return nil
+}
+
+func returnNilSlice() slice[byte] {
+	return nil
+}
+
+func returnNilFunc() func() {
+	return nil
+}
+
+func takeNil(p *word, s slice[byte], f func()) {
+	if p == nil {
+		println("p nil")
+	}
+	if s == nil {
+		println("s nil")
+	}
+	if f == nil {
+		println("f nil")
+	}
+}
+
+func main() {
+	var p *word = returnNilPtr()
+	var s slice[byte] = returnNilSlice()
+	var f func() = returnNilFunc()
+	takeNil(p, s, f)
+	takeNil(nil, nil, nil)
+}

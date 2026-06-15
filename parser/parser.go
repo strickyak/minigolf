@@ -87,6 +87,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerPrefix(token.LBRACKET, p.parseArrayType)
 	p.registerPrefix(token.STRUCT, p.parseStructType)
 	p.registerPrefix(token.FUNC, p.parseFuncType)
+	p.registerPrefix(token.NIL, p.parseNil)
 	p.registerPrefix(token.RANGE, p.parseRangeExpression)
 
 	p.infixParseFns = make(map[token.TokenType]infixParseFn)
@@ -338,7 +339,7 @@ func (p *Parser) parseVarStatement() *ast.VarStatement {
 	}
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
-	if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) {
+	if p.peekTokenIs(token.IDENT) || p.peekTokenIs(token.LBRACKET) || p.peekTokenIs(token.ASTERISK) || p.peekTokenIs(token.FUNC) {
 		p.nextToken()
 		p.allowCompositeLit = false
 		stmt.ValueType = p.parseExpression(LOWEST)
@@ -959,6 +960,10 @@ func (p *Parser) parseRangeExpression() ast.Expression {
 
 func (p *Parser) parseIdentifier() ast.Expression {
 	return &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+func (p *Parser) parseNil() ast.Expression {
+	return &ast.NilLiteral{Token: p.curToken}
 }
 
 func (p *Parser) parseIntegerLiteral() ast.Expression {

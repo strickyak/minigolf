@@ -300,8 +300,20 @@ type IntegerLiteral struct {
 }
 
 func (e *IntegerLiteral) expressionNode()        {}
-func (e *IntegerLiteral) TokenLiteral() string   { return e.Token.Literal }
+func (il *IntegerLiteral) TokenLiteral() string  { return il.Token.Literal }
+func (il *IntegerLiteral) String() string        { return il.Token.Literal }
 func (e *IntegerLiteral) GetToken() *token.Token { return &e.Token }
+
+// NilLiteral represents a nil keyword
+type NilLiteral struct {
+	BaseExpression
+	Token token.Token // the 'nil' token
+}
+
+func (nl *NilLiteral) expressionNode()        {}
+func (nl *NilLiteral) GetToken() *token.Token { return &nl.Token }
+func (nl *NilLiteral) TokenLiteral() string   { return nl.Token.Literal }
+func (nl *NilLiteral) String() string         { return "nil" }
 
 type StringLiteral struct {
 	BaseExpression

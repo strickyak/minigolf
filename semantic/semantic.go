@@ -883,6 +883,8 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 	}
 
 	switch e := expr.(type) {
+	case *ast.NilLiteral:
+		typ = UnknownType
 	case *ast.IntegerLiteral:
 		typ = WordType
 	case *ast.PointerType:
