@@ -365,7 +365,7 @@ func main() {
 	if *debugOpt {
 		for _, stmt := range program.Statements {
 			if fs, ok := stmt.(*ast.FuncStatement); ok {
-				log.Printf("TrunkLevel: %s is level %d", fs.Name.Value, fs.TrunkLevel)
+				log.Printf("TrunkLevel: %s is level %d, Popularity: %d", fs.Name.Value, fs.TrunkLevel, fs.Popularity)
 			}
 		}
 	}

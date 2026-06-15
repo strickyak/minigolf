@@ -20,6 +20,7 @@ func (p *Program) MarkTrunkFunctions(resolver func(Expression) *FuncStatement) {
 	for _, stmt := range p.Statements {
 		if fs, ok := stmt.(*FuncStatement); ok {
 			infoMap[fs] = &trunkInfo{funcStmt: fs}
+			fs.Popularity = 0
 		}
 	}
 
@@ -47,6 +48,7 @@ func (p *Program) MarkTrunkFunctions(resolver func(Expression) *FuncStatement) {
 
 	if mainFunc != nil {
 		mainFunc.TrunkLevel = 1
+		mainFunc.Popularity = 1
 	}
 
 	// Propagate trunk levels
@@ -114,6 +116,9 @@ func walkTrunk(node Node, currentFunc *FuncStatement, loopDepth int, inCallFunc 
 					info.loopCall = true
 				}
 				info.callsites = append(info.callsites, currentFunc)
+				if target.Name.Value != "main" {
+					target.Popularity += (1 << (2 * loopDepth))
+				}
 			}
 		}
 		// Walk the function expression in case it's a dynamic call returning a function, etc.

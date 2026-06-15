@@ -119,6 +119,7 @@ type FuncStatement struct {
 	Body       *BlockStatement
 	IsVariadic bool
 	TrunkLevel int
+	Popularity int
 }
 
 func (s *FuncStatement) statementNode()         {}
