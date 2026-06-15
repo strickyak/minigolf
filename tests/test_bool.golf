@@ -1,0 +1,33 @@
+package main
+
+func main() {
+	var a word = 256
+	if a {
+		println("a is true")
+	} else {
+		println("a is false")
+	}
+
+	var b bool = a
+	if b {
+		println("b is true")
+	} else {
+		println("b is false")
+	}
+
+	var z word = 0
+	if z {
+		println("z is true")
+	} else {
+		println("z is false")
+	}
+
+	var ptr *byte = nil
+	if ptr {
+		println("ptr is true")
+	} else {
+		println("ptr is false")
+	}
+
+	println("done")
+}

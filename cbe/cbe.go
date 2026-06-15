@@ -36,7 +36,10 @@ func (c *CBE) getSlot(id int) int {
 }
 
 func (c *CBE) mapType(typ string) string {
-	if typ == "byte" || typ == "word" || typ == "void" || typ == "unknown" {
+	if typ == "byte" || typ == "word" || typ == "void" || typ == "unknown" || typ == "bool" {
+		if typ == "bool" {
+			return "byte"
+		}
 		return typ
 	}
 	if strings.HasPrefix(typ, "func_ptr_") || typ == "func" {

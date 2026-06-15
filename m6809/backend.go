@@ -73,12 +73,9 @@ func (b *Backend) getTypeSizeUsingIrt9(irt *ir.Type) int {
 	}
 
 	switch irt.Name {
-	case "void", "byte":
+	case "void", "byte", "bool":
 		return 1
 	case "word", "int", "const_integer", "uint", "noreturn":
-		return 2
-	}
-	if irt.Name == "bool" {
 		return 2
 	}
 	if strings.HasPrefix(irt.Name, "func") {
@@ -877,7 +874,7 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 					size := b.getTypeSizeByType(phi.Typ)
 					if size <= 2 {
 						b.loadVal(edge.Value)
-						if phi.Type().Equals(ir.TypeByte) {
+						if size == 1 {
 							b.buf.WriteString("\tclra\n")
 							b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.slots[phi.GetID()])))
 						} else {
@@ -1508,7 +1505,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tbeq shl_done_%d\n", id))
 			b.buf.WriteString(fmt.Sprintf("shl_loop_%d:\n", id))
 			b.buf.WriteString("\taslb\n")
-			if !i.Typ.Equals(ir.TypeByte) {
+			if b.getTypeSizeByType(i.Typ) != 1 {
 				b.buf.WriteString("\trola\n")
 			}
 			b.buf.WriteString("\tdec 1,s\n")
@@ -1520,7 +1517,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\ttst 1,s\t; test shift amount\n"))
 			b.buf.WriteString(fmt.Sprintf("\tbeq shr_done_%d\n", id))
 			b.buf.WriteString(fmt.Sprintf("shr_loop_%d:\n", id))
-			if !i.Typ.Equals(ir.TypeByte) {
+			if b.getTypeSizeByType(i.Typ) != 1 {
 				b.buf.WriteString("\tlsra\n")
 				b.buf.WriteString("\trorb\n")
 			} else {
@@ -1546,7 +1543,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		default:
 			log.Panicf("Unknown BinaryOp in M6809: %q", i.Op)
 		}
-		if i.Typ.Equals(ir.TypeByte) {
+		if b.getTypeSizeByType(i.Typ) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
 		b.storeResult(id)

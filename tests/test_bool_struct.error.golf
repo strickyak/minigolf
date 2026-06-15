@@ -1,0 +1,12 @@
+package main
+
+type MyStruct struct {
+	a word
+}
+
+func main() {
+	var s MyStruct
+	if s {
+		println("true")
+	}
+}

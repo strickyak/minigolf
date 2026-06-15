@@ -127,7 +127,10 @@ func (b *Builder) astToIRType(expr ast.Expression) Type {
 	switch e := expr.(type) {
 	case *ast.Identifier:
 		switch e.Value {
-		case "byte", "bool":
+		case "bool":
+			TypeBool.Builder = b
+			return TypeBool
+		case "byte":
 			TypeByte.Builder = b
 			return TypeByte
 		case "word", "uint", "noreturn":
@@ -981,6 +984,36 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 		return val
 	}
 
+	if targetType.Equals(TypeBool) {
+		if val.Type().Equals(TypeConstInteger) {
+			if cw, ok := val.(*ConstWord); ok {
+				var bval uint8 = 1
+				if cw.Val == 0 {
+					bval = 0
+				}
+				return b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeBool}, Val: bval}, val)
+			}
+		}
+		isStruct := val.Type().IsAStruct() || val.Type().IsAnArray() || strings.HasPrefix(val.Type().Name, "prelude.slice_") || strings.HasPrefix(val.Type().Name, "slice_")
+		if !isStruct {
+			if _, ok := b.typeDefsAST[val.Type().Name]; ok {
+				isStruct = true
+			}
+		}
+		if isStruct {
+			log.Panicf("cannot use struct or slice in a boolean context")
+		}
+		zero := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: val.Type()}}, val)
+		return b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeBool}, Op: "neq", Left: val, Right: zero}, val)
+	}
+
+	if val.Type().Equals(TypeBool) && targetType.Equals(TypeByte) {
+		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "bitcast", Operand: val}, val)
+	}
+	if val.Type().Equals(TypeBool) && targetType.Equals(TypeWord) {
+		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: val}, val)
+	}
+
 	if val.Type().Equals(TypeNil) {
 		if targetType.IsAPointer() || targetType.Name == "func" || strings.HasPrefix(targetType.Name, "func_ptr_") || targetType.Name == "word" || targetType.Name == "any" || strings.HasPrefix(targetType.Name, "prelude.slice_") || strings.HasPrefix(targetType.Name, "slice_") {
 			return b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: targetType}}, val)
@@ -1314,7 +1347,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
 			Comment:         fmt.Sprintf("Line %d: If statement", s.Token.Line),
 		}, s)
-		cond := b.buildExpr(s.Condition)
+		cond := b.coerceType(b.buildExpr(s.Condition), TypeBool)
 		trueBlk := b.newBlock()
 		endBlk := b.newBlock()
 
@@ -1365,7 +1398,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 
 		b.currentBlock = headerBlk
 		if s.Condition != nil {
-			cond := b.buildExpr(s.Condition)
+			cond := b.coerceType(b.buildExpr(s.Condition), TypeBool)
 			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk}, s)
 			b.addEdge(headerBlk, bodyBlk)
 			b.addEdge(headerBlk, endBlk)
@@ -2319,66 +2352,79 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 	case *ast.InfixExpression:
 		if e.Operator == "&&" {
-			left := b.buildExpr(e.Left)
-			leftBlock := b.currentBlock
-			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, nil)
-			rightBlock := b.newBlock()
-			endBlock := b.newBlock()
+			val := b.coerceType(b.buildExpr(e.Left), TypeBool)
+			falseBlk := b.newBlock()
+			trueBlk := b.newBlock()
+			endBlk := b.newBlock()
 
-			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: left, TrueBlock: rightBlock, FalseBlock: endBlock}, expr)
-			b.addEdge(b.currentBlock, rightBlock)
-			b.addEdge(b.currentBlock, endBlock)
-			b.sealBlock(rightBlock)
+			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: val, TrueBlock: trueBlk, FalseBlock: falseBlk}, e)
+			b.addEdge(b.currentBlock, trueBlk)
+			b.addEdge(b.currentBlock, falseBlk)
+			b.sealBlock(trueBlk)
+			b.sealBlock(falseBlk)
 
-			b.currentBlock = rightBlock
-			right := b.buildExpr(e.Right)
-			rightEndBlock := b.currentBlock
+			b.currentBlock = trueBlk
+			rval := b.coerceType(b.buildExpr(e.Right), TypeBool)
+			trueEndBlk := b.currentBlock
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, e)
+			b.addEdge(b.currentBlock, endBlk)
 
-			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlock}, expr)
-			b.addEdge(b.currentBlock, endBlock)
-			b.sealBlock(endBlock)
+			b.currentBlock = falseBlk
+			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeBool}, Val: 0}, nil)
+			falseEndBlk := b.currentBlock
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, e)
+			b.addEdge(b.currentBlock, endBlk)
+			b.sealBlock(endBlk)
 
-			b.currentBlock = endBlock
-			phi := &Phi{
-				BaseInstruction: BaseInstruction{Typ: TypeByte},
+			b.currentBlock = endBlk
+
+			val = b.addInstr(&Phi{
+				BaseInstruction: BaseInstruction{Typ: TypeBool},
 				Edges: []PhiEdge{
-					{Block: leftBlock, Value: falseVal},
-					{Block: rightEndBlock, Value: right},
+					{Block: trueEndBlk, Value: rval},
+					{Block: falseEndBlk, Value: falseVal},
 				},
-			}
-			val := b.addInstr(phi, expr)
-			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
+			}, e)
+
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeBool}
 		}
+
 		if e.Operator == "||" {
-			left := b.buildExpr(e.Left)
-			leftBlock := b.currentBlock
-			trueVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, nil)
-			rightBlock := b.newBlock()
-			endBlock := b.newBlock()
+			val := b.coerceType(b.buildExpr(e.Left), TypeBool)
+			falseBlk := b.newBlock()
+			trueBlk := b.newBlock()
+			endBlk := b.newBlock()
 
-			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: left, TrueBlock: endBlock, FalseBlock: rightBlock}, expr)
-			b.addEdge(b.currentBlock, endBlock)
-			b.addEdge(b.currentBlock, rightBlock)
-			b.sealBlock(rightBlock)
+			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: val, TrueBlock: trueBlk, FalseBlock: falseBlk}, e)
+			b.addEdge(b.currentBlock, trueBlk)
+			b.addEdge(b.currentBlock, falseBlk)
+			b.sealBlock(trueBlk)
+			b.sealBlock(falseBlk)
 
-			b.currentBlock = rightBlock
-			right := b.buildExpr(e.Right)
-			rightEndBlock := b.currentBlock
+			b.currentBlock = trueBlk
+			trueVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeBool}, Val: 1}, nil)
+			trueEndBlk := b.currentBlock
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, e)
+			b.addEdge(b.currentBlock, endBlk)
 
-			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlock}, expr)
-			b.addEdge(b.currentBlock, endBlock)
-			b.sealBlock(endBlock)
+			b.currentBlock = falseBlk
+			rval := b.coerceType(b.buildExpr(e.Right), TypeBool)
+			falseEndBlk := b.currentBlock
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, e)
+			b.addEdge(b.currentBlock, endBlk)
+			b.sealBlock(endBlk)
 
-			b.currentBlock = endBlock
-			phi := &Phi{
-				BaseInstruction: BaseInstruction{Typ: TypeByte},
+			b.currentBlock = endBlk
+
+			val = b.addInstr(&Phi{
+				BaseInstruction: BaseInstruction{Typ: TypeBool},
 				Edges: []PhiEdge{
-					{Block: leftBlock, Value: trueVal},
-					{Block: rightEndBlock, Value: right},
+					{Block: trueEndBlk, Value: trueVal},
+					{Block: falseEndBlk, Value: rval},
 				},
-			}
-			val := b.addInstr(phi, expr)
-			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
+			}, e)
+
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeBool}
 		}
 
 		left := b.buildExpr(e.Left)
@@ -2633,10 +2679,10 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 	case *ast.PrefixExpression:
 		if e.Operator == "!" {
-			right := b.buildExpr(e.Right)
-			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, nil)
-			val := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: right, Right: falseVal}, expr)
-			return ExprResult{IsLValue: false, Value: val, Typ: TypeByte}
+			right := b.coerceType(b.buildExpr(e.Right), TypeBool)
+			falseVal := b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeBool}, Val: 0}, nil)
+			val := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeBool}, Op: "eq", Left: right, Right: falseVal}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeBool}
 		}
 		if e.Operator == "-" {
 			right := b.buildExpr(e.Right)
@@ -2831,7 +2877,7 @@ func (b *Builder) getTypeString(qname string) Type {
 
 func (b *Builder) getTypeSize(typ Type) int {
 	// NANDO-recent.
-	if typ.Equals(TypeVoid) || typ.Equals(TypeByte) {
+	if typ.Equals(TypeVoid) || typ.Equals(TypeByte) || typ.Equals(TypeBool) {
 		return 1
 	}
 	if typ.Equals(TypeWord) || typ.Equals(TypeInt) {

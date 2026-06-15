@@ -15,7 +15,7 @@ func alignVal(val, align int) int {
 }
 
 func (b *Backend) getTypeAlignment(typ string) int {
-	if typ == "byte" {
+	if typ == "byte" || typ == "bool" {
 		return 1
 	}
 	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "noreturn" {
@@ -56,7 +56,7 @@ func (b *Backend) getTypeAlignment(typ string) int {
 }
 
 func (b *Backend) getTypeSize(typ string) int {
-	if typ == "byte" {
+	if typ == "byte" || typ == "bool" {
 		return 1
 	}
 	if typ == "word" || typ == "int" || typ == "uint" || typ == "const_integer" || typ == "noreturn" {
@@ -561,15 +561,22 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.Load:
 		size := b.getTypeSize(i.Global.Typ.Name)
+		if size < 8 {
+			b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], 0\n", offset))
+		}
 		b.emitMemCopy(fmt.Sprintf("rbp - %d", offset), fmt.Sprintf("rip + v_%s", i.Global.Name), size)
 	case *ir.Store:
 		size := b.getTypeSize(i.Global.Typ.Name)
 		b.storeToAddr(fmt.Sprintf("rip + v_%s", i.Global.Name), i.Val, size)
 	case *ir.ZeroInit:
 		size := b.getTypeSize(i.Typ.Name)
+		aligned := (size + 7) &^ 7
+		if aligned < 8 {
+			aligned = 8
+		}
 		b.buf.WriteString(fmt.Sprintf("\tlea rdi, [rbp - %d]\n", offset))
 		b.buf.WriteString("\txor al, al\n")
-		b.buf.WriteString(fmt.Sprintf("\tmov rcx, %d\n", size))
+		b.buf.WriteString(fmt.Sprintf("\tmov rcx, %d\n", aligned))
 		b.buf.WriteString("\trep stosb\n")
 	case *ir.ExtractElement:
 		eltSize := b.getTypeSize(i.Typ.Name)

@@ -33,6 +33,7 @@ func (t Type) Equals(other Type) bool {
 var (
 	TypeUnknown = Type{Name: "", Expr: nil}
 	TypeByte    = Type{Name: "byte", Expr: &ast.Identifier{Value: "byte"}}
+	TypeBool    = Type{Name: "bool", Expr: &ast.Identifier{Value: "bool"}}
 	TypeWord    = Type{Name: "word", Expr: &ast.Identifier{Value: "word"}}
 	TypeNil     = Type{Name: "nil", Expr: &ast.Identifier{Value: "nil"}}
 	TypeInt     = Type{Name: "int", Expr: &ast.Identifier{Value: "int"}}
