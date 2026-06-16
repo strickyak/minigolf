@@ -714,6 +714,8 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		paramIdx++
 	}
 	f.IsVariadic = s.IsVariadic
+	f.Popularity = s.Popularity
+	f.TrunkLevel = s.TrunkLevel
 	b.funcs[f.Name] = f
 	b.Program.Functions = append(b.Program.Functions, f)
 }

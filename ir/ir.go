@@ -151,6 +151,8 @@ type Function struct {
 	SlotAlias                map[int]int
 	FunctionReferenceWasMade bool
 	LeafLevel                int
+	TrunkLevel               int
+	Popularity               int
 }
 
 // Parameter represents a function parameter.
