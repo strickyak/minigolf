@@ -2,11 +2,21 @@ package ast
 
 import "reflect"
 
+type callSite struct {
+	caller    *FuncStatement
+	loopDepth int
+}
+
 type trunkInfo struct {
 	funcStmt  *FuncStatement
-	callsites []*FuncStatement
+	callSites []callSite
 	loopCall  bool
 	dynamic   bool
+}
+
+type popularityEdge struct {
+	callee *FuncStatement
+	weight int
 }
 
 // MarkTrunkFunctions analyzes the call graph to determine the TrunkLevel of each function.
@@ -39,7 +49,6 @@ func (p *Program) MarkTrunkFunctions(resolver func(Expression) *FuncStatement) {
 		}
 		if fs, ok := stmt.(*FuncStatement); ok {
 			// We identify main by its name.
-			// Wait, we need to be sure it's the main.main, but if package is main and func is main.
 			if fs.Name.Value == "main" {
 				mainFunc = fs
 			}
@@ -56,10 +65,10 @@ func (p *Program) MarkTrunkFunctions(resolver func(Expression) *FuncStatement) {
 	for changed {
 		changed = false
 		for _, info := range infoMap {
-			if info.dynamic || info.loopCall || len(info.callsites) != 1 {
+			if info.dynamic || info.loopCall || len(info.callSites) != 1 {
 				continue
 			}
-			caller := info.callsites[0]
+			caller := info.callSites[0].caller
 			if caller.TrunkLevel > 0 {
 				newLevel := caller.TrunkLevel + 1
 				if info.funcStmt.TrunkLevel == 0 || info.funcStmt.TrunkLevel > newLevel {
@@ -67,6 +76,60 @@ func (p *Program) MarkTrunkFunctions(resolver func(Expression) *FuncStatement) {
 					changed = true
 				}
 			}
+		}
+	}
+
+	// Build outgoing call graph for Popularity propagation
+	outgoing := make(map[*FuncStatement][]popularityEdge)
+	for callee, info := range infoMap {
+		for _, cs := range info.callSites {
+			outgoing[cs.caller] = append(outgoing[cs.caller], popularityEdge{
+				callee: callee,
+				weight: 1 << (2 * cs.loopDepth),
+			})
+		}
+	}
+
+	// Topological sort of the reachable functions to propagate Popularity
+	var topoOrder []*FuncStatement
+	visited := make(map[*FuncStatement]bool)
+	active := make(map[*FuncStatement]bool)
+	isBackEdge := make(map[*FuncStatement]map[*FuncStatement]bool)
+
+	var dfs func(fs *FuncStatement)
+	dfs = func(fs *FuncStatement) {
+		visited[fs] = true
+		active[fs] = true
+
+		for _, edge := range outgoing[fs] {
+			if active[edge.callee] {
+				if isBackEdge[fs] == nil {
+					isBackEdge[fs] = make(map[*FuncStatement]bool)
+				}
+				isBackEdge[fs][edge.callee] = true
+				continue
+			}
+			if !visited[edge.callee] {
+				dfs(edge.callee)
+			}
+		}
+
+		active[fs] = false
+		topoOrder = append(topoOrder, fs)
+	}
+
+	if mainFunc != nil {
+		dfs(mainFunc)
+	}
+
+	// Propagate popularity in topological order (reverse post-order)
+	for i := len(topoOrder) - 1; i >= 0; i-- {
+		caller := topoOrder[i]
+		for _, edge := range outgoing[caller] {
+			if isBackEdge[caller] != nil && isBackEdge[caller][edge.callee] {
+				continue
+			}
+			edge.callee.Popularity += caller.Popularity * edge.weight
 		}
 	}
 }
@@ -115,10 +178,10 @@ func walkTrunk(node Node, currentFunc *FuncStatement, loopDepth int, inCallFunc 
 				if loopDepth > 0 {
 					info.loopCall = true
 				}
-				info.callsites = append(info.callsites, currentFunc)
-				if target.Name.Value != "main" {
-					target.Popularity += (1 << (2 * loopDepth))
-				}
+				info.callSites = append(info.callSites, callSite{
+					caller:    currentFunc,
+					loopDepth: loopDepth,
+				})
 			}
 		}
 		// Walk the function expression in case it's a dynamic call returning a function, etc.

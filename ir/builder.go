@@ -72,6 +72,7 @@ type Builder struct {
 	WordSize          int
 	CheckBounds       bool
 	CheckNil          bool
+	addressTakenVars  map[string]bool
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -487,6 +488,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			oldCurDestructBlk := b.currentDestructBlock
 			oldDestructables := b.deferredActions
 			oldASTFunc := b.currentASTFunc
+			oldAddressTaken := b.addressTakenVars
 
 			b.buildFunc(funcStmt)
 
@@ -501,6 +503,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			b.currentBlock = oldCurBlk
 			b.currentDestructBlock = oldCurDestructBlk
 			b.deferredActions = oldDestructables
+			b.addressTakenVars = oldAddressTaken
 		}
 		b.currentPackage = oldPkg
 	} else {
@@ -751,6 +754,8 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.sealedBlocks = make(map[*BasicBlock]bool)
 	b.incompletePhis = make(map[*BasicBlock]map[string]*Phi)
 	b.varTypes = make(map[string]Type)
+	b.addressTakenVars = make(map[string]bool)
+	b.findEscapingVars(s.Body)
 
 	entry := b.newBlock()
 	b.currentBlock = entry
@@ -2146,8 +2151,11 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 		if typ, ok := b.varTypes[e.Value]; ok {
 			val := b.readVariable(e.Value, b.currentBlock)
-			addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: val}, e)
-			return ExprResult{IsLValue: true, Address: addr, Typ: typ}
+			if b.addressTakenVars[e.Value] {
+				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: val}, e)
+				return ExprResult{IsLValue: true, Address: addr, Typ: typ}
+			}
+			return ExprResult{IsLValue: false, Value: val, Typ: typ}
 		}
 		panic(fmt.Sprintf("Identifier not found: %s (fullName=%s, currentPackage=%s)", e.Value, fullName, b.currentPackage))
 	case *ast.IndexExpression:
@@ -3666,4 +3674,155 @@ func (b *Builder) AnnotateLeafLevels(debug bool) {
 			break
 		}
 	}
+}
+
+func (b *Builder) findEscapingVars(node ast.Node) {
+	if isNil(node) {
+		return
+	}
+	switch n := node.(type) {
+	case *ast.BlockStatement:
+		for _, s := range n.Statements {
+			b.findEscapingVars(s)
+		}
+	case *ast.AssignStatement:
+		for _, expr := range n.Names {
+			b.findEscapingVars(expr)
+		}
+		for _, expr := range n.Values {
+			b.findEscapingVars(expr)
+		}
+	case *ast.OpAssignStatement:
+		b.findEscapingVars(n.Name)
+		b.findEscapingVars(n.Value)
+	case *ast.IfStatement:
+		b.findEscapingVars(n.Condition)
+		b.findEscapingVars(n.Consequence)
+		b.findEscapingVars(n.Alternative)
+	case *ast.ForStatement:
+		b.findEscapingVars(n.Condition)
+		b.findEscapingVars(n.Body)
+	case *ast.For3Statement:
+		b.findEscapingVars(n.Init)
+		b.findEscapingVars(n.Condition)
+		b.findEscapingVars(n.Increment)
+		b.findEscapingVars(n.Body)
+	case *ast.ForRangeStatement:
+		b.findEscapingVars(n.Key)
+		b.findEscapingVars(n.Value)
+		b.findEscapingVars(n.RangeValue)
+		b.findEscapingVars(n.Body)
+	case *ast.IncDecStatement:
+		b.findEscapingVars(n.Name)
+	case *ast.DeferStatement:
+		b.findEscapingVars(n.Call)
+		b.findEscapingVars(n.Block)
+	case *ast.ReturnStatement:
+		for _, expr := range n.ReturnValues {
+			b.findEscapingVars(expr)
+		}
+	case *ast.ExpressionStatement:
+		b.findEscapingVars(n.Expression)
+	case *ast.VarStatement:
+		b.findEscapingVars(n.Value)
+
+	// Expressions
+	case *ast.PrefixExpression:
+		if n.Operator == "&" {
+			if ident := findBaseIdent(n.Right); ident != nil {
+				b.addressTakenVars[ident.Value] = true
+			}
+		}
+		b.findEscapingVars(n.Right)
+	case *ast.InfixExpression:
+		b.findEscapingVars(n.Left)
+		b.findEscapingVars(n.Right)
+	case *ast.CallExpression:
+		b.findEscapingVars(n.Function)
+		for _, arg := range n.Arguments {
+			b.findEscapingVars(arg)
+		}
+	case *ast.SelectorExpression:
+		if ident := findBaseIdent(n.Left); ident != nil {
+			b.addressTakenVars[ident.Value] = true
+		}
+		b.findEscapingVars(n.Left)
+	case *ast.IndexExpression:
+		if ident := findBaseIdent(n.Left); ident != nil {
+			b.addressTakenVars[ident.Value] = true
+		}
+		b.findEscapingVars(n.Left)
+		for _, idx := range n.Indices {
+			b.findEscapingVars(idx)
+		}
+	case *ast.CompositeLit:
+		for _, elt := range n.Elements {
+			b.findEscapingVars(elt)
+		}
+	case *ast.KeyValueExpr:
+		b.findEscapingVars(n.Key)
+		b.findEscapingVars(n.Value)
+	}
+}
+
+func findBaseIdent(expr ast.Expression) *ast.Identifier {
+	if isNil(expr) {
+		return nil
+	}
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return e
+	case *ast.IndexExpression:
+		return findBaseIdent(e.Left)
+	case *ast.SelectorExpression:
+		return findBaseIdent(e.Left)
+	}
+	return nil
+}
+
+func isNil(node ast.Node) bool {
+	if node == nil {
+		return true
+	}
+	switch n := node.(type) {
+	case *ast.BlockStatement:
+		return n == nil
+	case *ast.AssignStatement:
+		return n == nil
+	case *ast.OpAssignStatement:
+		return n == nil
+	case *ast.IfStatement:
+		return n == nil
+	case *ast.ForStatement:
+		return n == nil
+	case *ast.For3Statement:
+		return n == nil
+	case *ast.ForRangeStatement:
+		return n == nil
+	case *ast.DeferStatement:
+		return n == nil
+	case *ast.ReturnStatement:
+		return n == nil
+	case *ast.ExpressionStatement:
+		return n == nil
+	case *ast.VarStatement:
+		return n == nil
+	case *ast.PrefixExpression:
+		return n == nil
+	case *ast.InfixExpression:
+		return n == nil
+	case *ast.CallExpression:
+		return n == nil
+	case *ast.SelectorExpression:
+		return n == nil
+	case *ast.IndexExpression:
+		return n == nil
+	case *ast.CompositeLit:
+		return n == nil
+	case *ast.KeyValueExpr:
+		return n == nil
+	case *ast.Identifier:
+		return n == nil
+	}
+	return false
 }
