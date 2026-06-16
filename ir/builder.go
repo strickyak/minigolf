@@ -73,6 +73,7 @@ type Builder struct {
 	CheckBounds       bool
 	CheckNil          bool
 	addressTakenVars  map[string]bool
+	variableInitVal   map[string]Value
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -489,6 +490,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			oldDestructables := b.deferredActions
 			oldASTFunc := b.currentASTFunc
 			oldAddressTaken := b.addressTakenVars
+			oldVariableInitVal := b.variableInitVal
 
 			b.buildFunc(funcStmt)
 
@@ -504,6 +506,7 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			b.currentDestructBlock = oldCurDestructBlk
 			b.deferredActions = oldDestructables
 			b.addressTakenVars = oldAddressTaken
+			b.variableInitVal = oldVariableInitVal
 		}
 		b.currentPackage = oldPkg
 	} else {
@@ -755,6 +758,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.incompletePhis = make(map[*BasicBlock]map[string]*Phi)
 	b.varTypes = make(map[string]Type)
 	b.addressTakenVars = make(map[string]bool)
+	b.variableInitVal = make(map[string]Value)
 	b.findEscapingVars(s.Body)
 
 	entry := b.newBlock()
@@ -801,7 +805,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 			if action.IsDestructible {
 				vname := action.VarName
 				val := b.readVariable(vname, b.currentBlock)
-				ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: val}, s)
+				ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: b.variableInitVal[vname]}, s)
 				b.emitDestruction(val.Type(), ptr, s)
 			} else if action.Block != nil {
 				if action.IsPanicDefer {
@@ -906,6 +910,12 @@ func (b *Builder) writeVariable(variable string, block *BasicBlock, value Value)
 		if _, exists := b.varTypes[variable]; !exists {
 			b.varTypes[variable] = value.Type()
 		}
+	}
+	if b.variableInitVal == nil {
+		b.variableInitVal = make(map[string]Value)
+	}
+	if _, exists := b.variableInitVal[variable]; !exists {
+		b.variableInitVal[variable] = value
 	}
 }
 
@@ -2152,7 +2162,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		if typ, ok := b.varTypes[e.Value]; ok {
 			val := b.readVariable(e.Value, b.currentBlock)
 			if b.addressTakenVars[e.Value] {
-				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: val}, e)
+				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: b.variableInitVal[e.Value]}, e)
 				return ExprResult{IsLValue: true, Address: addr, Typ: typ}
 			}
 			return ExprResult{IsLValue: false, Value: val, Typ: typ}
@@ -3019,6 +3029,10 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 			}
 			val = b.coerceType(val, targetType)
 			b.writeVariable(ident.Value, b.currentBlock, val)
+			if b.addressTakenVars[ident.Value] {
+				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: targetType.PointerTo()}, Local: b.variableInitVal[ident.Value]}, lhs)
+				b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: addr, Val: val}, lhs)
+			}
 			return
 		}
 	}

@@ -380,7 +380,19 @@ func (b *Backend) emitLoadAddr(reg string, addrStr string) {
 	}
 }
 
+func (b *Backend) resolveVal(val ir.Value) ir.Value {
+	for {
+		if cast, ok := val.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
+			val = cast.Operand
+		} else {
+			break
+		}
+	}
+	return val
+}
+
 func (b *Backend) getAddrStr(val ir.Value) string {
+	val = b.resolveVal(val)
 	switch v := val.(type) {
 	case *ir.Parameter:
 		return b.memAccess(b.paramSlots[v.Name])
@@ -691,6 +703,9 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	// Pre-scan for all other instructions
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
+			if cast, ok := instr.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
+				continue
+			}
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				b.getSlot(instr.GetID(), instr.Type())
 			}
@@ -832,6 +847,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 }
 
 func (b *Backend) loadVal(val ir.Value) {
+	val = b.resolveVal(val)
 	switch v := val.(type) {
 	case *ir.Parameter:
 		if b.getTypeSizeByType(v.Typ) == 1 {
@@ -920,6 +936,9 @@ func (b *Backend) emitCopyYX(size int) {
 }
 
 func (b *Backend) emitInstr(instr ir.Instruction) {
+	if cast, ok := instr.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
+		return
+	}
 	id := instr.GetID()
 	offset := b.slots[id]
 
