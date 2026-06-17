@@ -212,6 +212,9 @@ type Backend struct {
 	lblCount        int
 	retSlot         int
 	f               *ir.Function
+	levelBases      map[int]string
+	levelYOffsets   map[int]int
+	paramPseudoIDs  map[string]int
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -230,6 +233,9 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		jmpSlots:        make(map[int]int),
 		globalOffsets:   make(map[string]int),
 		slotOwner:       make(map[int]int),
+		levelBases:      make(map[int]string),
+		levelYOffsets:   make(map[int]int),
+		paramPseudoIDs:  make(map[string]int),
 	}
 }
 
@@ -263,6 +269,10 @@ func (b *Backend) flushRegisters() {
 			b.buf.WriteString("\ttfr y,d\n")
 		case "U":
 			b.buf.WriteString("\ttfr u,d\n")
+		case "B":
+			// already in B
+		case "D":
+			// already in D
 		default:
 			panic(reg)
 		}
@@ -672,11 +682,16 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 	}
 
-	for _, p := range f.Parameters {
+	b.paramPseudoIDs = make(map[string]int)
+	for i, p := range f.Parameters {
 		size := b.getTypeSizeByType(p.Typ)
 		aligned := align(size)
 		b.stackSize += aligned
 		b.paramSlots[p.Name] = -(b.frameOffset + b.stackSize)
+		pseudoID := -(i + 1)
+		b.paramPseudoIDs[p.Name] = pseudoID
+		b.slots[pseudoID] = b.paramSlots[p.Name]
+		b.slotSizes[pseudoID] = size
 		fmt.Fprintf(&b.buf, "\t\t; Note: with param %q, type %q, size %d, b.stackSize becomes %d, slot becomes %v\n", p.Name, p.Type(), aligned, b.stackSize, b.paramSlots[p.Name])
 	}
 	// Pre-scan for all AddressOfLocal targets first.
@@ -733,15 +748,19 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		stackArgOffset += aligned
 	}
 
-	if firstWord != nil {
-		b.buf.WriteString(fmt.Sprintf("\t; Param %s passed in X\n", firstWord.Name))
-		b.buf.WriteString(fmt.Sprintf("\tstx %s\n", b.memAccess(b.paramSlots[firstWord.Name])))
-	}
-	if firstByte != nil {
-		b.buf.WriteString(fmt.Sprintf("\t; Param %s passed in B\n", firstByte.Name))
-		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.paramSlots[firstByte.Name])))
+	for _, p := range f.Parameters {
+		if p == firstWord {
+			b.buf.WriteString(fmt.Sprintf("\t; Param %s passed in X (tracked in register)\n", firstWord.Name))
+			b.buf.WriteString(fmt.Sprintf("\tstx %s\n", b.memAccess(b.paramSlots[p.Name])))
+		}
+		if p == firstByte {
+			b.buf.WriteString(fmt.Sprintf("\t; Param %s passed in B\n", firstByte.Name))
+			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.paramSlots[firstByte.Name])))
+		}
 	}
 
+	xClobbered := false
+	bClobbered := false
 	for _, p := range f.Parameters {
 		size := b.getTypeSizeByType(p.Typ)
 		if p == firstWord || p == firstByte {
@@ -754,25 +773,55 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if size == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", b.memAccess(stackArgOffset)))
 				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.paramSlots[p.Name])))
+				bClobbered = true
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(stackArgOffset)))
 				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
+				bClobbered = true
 			}
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tleay %s\n", b.memAccess(stackArgOffset)))
+			b.flushRegisters()
+			b.emitLoadAddr("y", b.memAccess(stackArgOffset))
 			b.emitLoadAddr("x", b.memAccess(b.paramSlots[p.Name]))
 			b.emitCopyYX(size)
+			xClobbered = true
+			bClobbered = true
 		}
 		stackArgOffset += aligned
 	}
 
-	for _, blk := range f.Blocks {
+	for i, blk := range f.Blocks {
 		b.buf.WriteString(fmt.Sprintf(".L_%s_b%d:\n", f.Name, blk.ID))
 
 		b.activeRegs = map[string]int{}
 		b.valInReg = map[int]string{}
 		b.slotOwner = map[int]int{}
 		b.freeRegs = b.availableRegisters()
+
+		if i == 0 && firstWord != nil && !xClobbered {
+			pseudoID := b.paramPseudoIDs[firstWord.Name]
+			b.activeRegs["X"] = pseudoID
+			b.valInReg[pseudoID] = "X"
+			var newFree []string
+			for _, r := range b.freeRegs {
+				if r != "X" {
+					newFree = append(newFree, r)
+				}
+			}
+			b.freeRegs = newFree
+		}
+		if i == 0 && firstByte != nil && !bClobbered {
+			pseudoID := b.paramPseudoIDs[firstByte.Name]
+			b.activeRegs["B"] = pseudoID
+			b.valInReg[pseudoID] = "B"
+			var newFree []string
+			for _, r := range b.freeRegs {
+				if r != "B" {
+					newFree = append(newFree, r)
+				}
+			}
+			b.freeRegs = newFree
+		}
 
 		for _, instr := range blk.Instructions {
 			if phi, isPhi := instr.(*ir.Phi); isPhi {
@@ -825,6 +874,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 					}
 				} else {
 					if b.retSlot > 0 {
+						b.flushRegisters()
 						b.emitLoadAddr("y", b.getAddrStr(term.Val))
 						b.emitLoadAddr("x", b.memAccess(b.retSlot))
 						b.emitCopyYX(retSize)
@@ -847,13 +897,25 @@ func (b *Backend) emitFunc(f *ir.Function) {
 }
 
 func (b *Backend) loadVal(val ir.Value) {
+	fmt.Printf("DEBUG loadVal: %v (type %T)\n", val, val)
 	val = b.resolveVal(val)
 	switch v := val.(type) {
 	case *ir.Parameter:
-		if b.getTypeSizeByType(v.Typ) == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.paramSlots[v.Name])))
+		pseudoID := b.paramPseudoIDs[v.Name]
+		if reg, ok := b.valInReg[pseudoID]; ok {
+			if reg == "X" {
+				b.buf.WriteString("\ttfr x,d\n")
+			} else if reg == "Y" {
+				b.buf.WriteString("\ttfr y,d\n")
+			} else if reg == "U" {
+				b.buf.WriteString("\ttfr u,d\n")
+			}
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.paramSlots[v.Name])))
+			if b.getTypeSizeByType(v.Typ) == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.paramSlots[v.Name])))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.paramSlots[v.Name])))
+			}
 		}
 	case *ir.ConstWord:
 		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", v.Val&0xFFFF))
@@ -861,6 +923,7 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n\tclra\n", v.Val&0xFF))
 	case ir.Instruction:
 		if reg, ok := b.valInReg[v.GetID()]; ok {
+			fmt.Printf("DEBUG: reg is %q\n", reg)
 			if reg == "X" {
 				b.buf.WriteString("\ttfr x,d\n")
 			}

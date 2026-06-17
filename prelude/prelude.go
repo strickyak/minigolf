@@ -342,13 +342,14 @@ func malloc_init(heap_start *byte, heap_size word) {
 const TOO_BIG = 4000 // Assume an error, if malloc more than this big.
 
 // zalloc allocates zeroed memory using alloc
-func zalloc(nbytes word) *byte {
+func zalloc(nbytes word) word {
 	p := word(malloc(nbytes))
 	for i := range nbytes {
 		pokeb(p+i, 0)
 	}
-	return (*byte)(p)
+	return p
 }
+
 func malloc(nbytes word) *byte {
     if HEAP_SIZE < 1 {
         panic("4041")
