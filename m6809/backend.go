@@ -760,7 +760,6 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	xClobbered := false
-	bClobbered := false
 	for _, p := range f.Parameters {
 		size := b.getTypeSizeByType(p.Typ)
 		if p == firstWord || p == firstByte {
@@ -773,11 +772,9 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if size == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", b.memAccess(stackArgOffset)))
 				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(b.paramSlots[p.Name])))
-				bClobbered = true
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(stackArgOffset)))
 				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(b.paramSlots[p.Name])))
-				bClobbered = true
 			}
 		} else {
 			b.flushRegisters()
@@ -785,7 +782,6 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			b.emitLoadAddr("x", b.memAccess(b.paramSlots[p.Name]))
 			b.emitCopyYX(size)
 			xClobbered = true
-			bClobbered = true
 		}
 		stackArgOffset += aligned
 	}
@@ -805,18 +801,6 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			var newFree []string
 			for _, r := range b.freeRegs {
 				if r != "X" {
-					newFree = append(newFree, r)
-				}
-			}
-			b.freeRegs = newFree
-		}
-		if i == 0 && firstByte != nil && !bClobbered {
-			pseudoID := b.paramPseudoIDs[firstByte.Name]
-			b.activeRegs["B"] = pseudoID
-			b.valInReg[pseudoID] = "B"
-			var newFree []string
-			for _, r := range b.freeRegs {
-				if r != "B" {
 					newFree = append(newFree, r)
 				}
 			}
@@ -909,6 +893,10 @@ func (b *Backend) loadVal(val ir.Value) {
 				b.buf.WriteString("\ttfr y,d\n")
 			} else if reg == "U" {
 				b.buf.WriteString("\ttfr u,d\n")
+			} else if reg == "B" {
+				b.buf.WriteString("\tclra\n")
+			} else if reg == "D" {
+				// already in D
 			}
 		} else {
 			if b.getTypeSizeByType(v.Typ) == 1 {
@@ -926,12 +914,14 @@ func (b *Backend) loadVal(val ir.Value) {
 			fmt.Printf("DEBUG: reg is %q\n", reg)
 			if reg == "X" {
 				b.buf.WriteString("\ttfr x,d\n")
-			}
-			if reg == "Y" {
+			} else if reg == "Y" {
 				b.buf.WriteString("\ttfr y,d\n")
-			}
-			if reg == "U" {
+			} else if reg == "U" {
 				b.buf.WriteString("\ttfr u,d\n")
+			} else if reg == "B" {
+				b.buf.WriteString("\tclra\n")
+			} else if reg == "D" {
+				// already in D
 			}
 		} else {
 			if b.slotSizes[v.GetID()] == 1 {
