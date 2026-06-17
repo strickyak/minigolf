@@ -13,6 +13,8 @@ import (
 	"github.com/strickyak/minigolf/ir"
 )
 
+const needs_clra = true
+
 var GLOBAL_VAR_OFFSET = flag.Int("global_var_offset", 16, "must be positive, so address 0 is not used, that is nil")
 
 func align(sz int) int {
@@ -836,7 +838,15 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", f.Name, term.Target.ID))
 		case *ir.Branch:
 			b.loadVal(term.Condition)
-			b.buf.WriteString("\tcmpd #0\n")
+
+			condType := term.Condition.Type()
+			if b.getTypeSizeByType(condType) == 1 {
+				b.buf.WriteString("\tcmpb #0 ;;(ir.Branch)\n")
+			} else {
+				b.buf.WriteString("\tcmpd #0 ;;(ir.Branch)\n")
+				panic("bool should be 1 byte")
+			}
+
 			b.buf.WriteString(fmt.Sprintf("\tbne .L_%s_b%d_true\n", f.Name, blk.ID))
 			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d_false\n", f.Name, blk.ID))
 
@@ -894,13 +904,17 @@ func (b *Backend) loadVal(val ir.Value) {
 			} else if reg == "U" {
 				b.buf.WriteString("\ttfr u,d\n")
 			} else if reg == "B" {
-				b.buf.WriteString("\tclra\n")
+				//dont_clra// b.buf.WriteString("\tclra\n")
 			} else if reg == "D" {
 				// already in D
 			}
 		} else {
 			if b.getTypeSizeByType(v.Typ) == 1 {
-				b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.paramSlots[v.Name])))
+				if needs_clra {
+					b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.paramSlots[v.Name])))
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", b.memAccess(b.paramSlots[v.Name]))) //dont_clra//
+				}
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.paramSlots[v.Name])))
 			}
@@ -919,13 +933,17 @@ func (b *Backend) loadVal(val ir.Value) {
 			} else if reg == "U" {
 				b.buf.WriteString("\ttfr u,d\n")
 			} else if reg == "B" {
-				b.buf.WriteString("\tclra\n")
+				//dont_clra// b.buf.WriteString("\tclra\n")
 			} else if reg == "D" {
 				// already in D
 			}
 		} else {
 			if b.slotSizes[v.GetID()] == 1 {
-				b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.slots[v.GetID()])))
+				if needs_clra {
+					b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.slots[v.GetID()])))
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", b.memAccess(b.slots[v.GetID()])))
+				}
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.slots[v.GetID()])))
 			}
@@ -1022,7 +1040,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		switch size {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
@@ -1101,7 +1119,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 
 		if size == 1 {
-			b.buf.WriteString("\tclra\n\tclrb\n")
+			//dont_clra// b.buf.WriteString("\tclra\n\tclrb\n")
+			b.buf.WriteString("\tclrb\n") //dont_clra//
 			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		} else if size == 2 {
 			b.buf.WriteString("\tclra\n\tclrb\n")
@@ -1158,7 +1177,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		switch eltSize {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
@@ -1277,7 +1296,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		switch fieldSize {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
@@ -1425,7 +1444,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		switch fieldSize {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
@@ -1493,7 +1512,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		switch fieldSize {
 		case 1:
 			b.buf.WriteString("\tldb ,y\n")
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destStr))
 		case 2:
 			b.buf.WriteString("\tldd ,y\n")
@@ -1616,17 +1635,44 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			log.Panicf("Unknown BinaryOp in M6809: %q", i.Op)
 		}
 		if b.getTypeSizeByType(i.Typ) == 1 {
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 		}
 		b.storeResult(id)
 
 	case *ir.Compare:
-		b.loadVal(i.Right)
-		b.buf.WriteString(fmt.Sprintf("\tstd ,--s\t; starting ir.Compare(%v,%v,%v\n", i.Left, i.Op, i.Right))
-		b.pushBytes(2)
-		b.loadVal(i.Left)
-		b.buf.WriteString("\tcmpd ,s++\n")
-		b.popBytes(2)
+
+		leftType := i.Left.Type()
+		rightType := i.Right.Type()
+		sizeOne := false
+		if b.getTypeSizeUsingIrt(&leftType) == 1 {
+			b.buf.WriteString(fmt.Sprintf("\t\t*CMP* Left %q is size 1\n", i.Left.String()))
+			sizeOne = true
+		}
+		if b.getTypeSizeUsingIrt(&rightType) == 1 {
+			b.buf.WriteString(fmt.Sprintf("\t\t*CMP* Right %q is size 1\n", i.Right.String()))
+			Assert(sizeOne)
+		} else {
+			Assert(!sizeOne)
+		}
+
+		if sizeOne {
+
+			b.loadVal(i.Right)
+			b.buf.WriteString(fmt.Sprintf("\tstb ,-s\t; starting ir.Compare(%v,%v,%v) 1-byte\n", i.Left, i.Op, i.Right))
+			b.pushBytes(1)
+			b.loadVal(i.Left)
+			b.buf.WriteString("\tcmpb ,s+\n")
+			b.popBytes(1)
+
+		} else {
+
+			b.loadVal(i.Right)
+			b.buf.WriteString(fmt.Sprintf("\tstd ,--s\t; starting ir.Compare(%v,%v,%v) 2-byte\n", i.Left, i.Op, i.Right))
+			b.pushBytes(2)
+			b.loadVal(i.Left)
+			b.buf.WriteString("\tcmpd ,s++\n")
+			b.popBytes(2)
+		}
 
 		lblTrue := b.nextLabel()
 		lblEnd := b.nextLabel()
@@ -1666,7 +1712,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 		b.buf.WriteString("\tclrb\n\tbra " + lblEnd + "\n")
 		b.buf.WriteString(lblTrue + ":\n\tldb #1\n")
-		b.buf.WriteString(lblEnd + ":\n\tclra\n")
+		//dont_clra// b.buf.WriteString(lblEnd + ":\n\tclra\n")
+		b.buf.WriteString(lblEnd + ":\n") //dont_clra//
 		b.storeResult(id)
 
 	case *ir.Call:
@@ -1767,7 +1814,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if retSize == 2 {
 			b.buf.WriteString("\ttfr x,d\n")
 		} else if retSize == 1 {
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 		}
 
 		if !i.Typ.Equals(ir.TypeVoid) && retSize <= 2 {
@@ -1859,7 +1906,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if retSize == 2 {
 			b.buf.WriteString("\ttfr x,d\n")
 		} else if retSize == 1 {
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 		}
 
 		if !i.Typ.Equals(ir.TypeVoid) && retSize <= 2 {
@@ -2087,7 +2134,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.Cast:
 		b.loadVal(i.Operand)
 		if i.Op == "trunc" {
-			b.buf.WriteString("\tclra\n")
+			//dont_clra// b.buf.WriteString("\tclra\n")
 		}
 		b.storeResult(id)
 	}
@@ -2216,5 +2263,11 @@ func (b *Backend) emitData(val ir.Value) {
 		}
 	default:
 		log.Panicf("unsupported init value type %T", val)
+	}
+}
+
+func Assert(pred bool) {
+	if !pred {
+		panic("Assertion Failed")
 	}
 }
