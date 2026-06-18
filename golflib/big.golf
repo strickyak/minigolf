@@ -128,3 +128,139 @@ func (z *Dec) Print() {
 	}
 	println(".")
 }
+
+func CmpShifted(a *Dec, b *Dec, offset byte) byte {
+	if a.Size > b.Size+offset {
+		return 1
+	}
+	if a.Size < b.Size+offset {
+		return 255
+	}
+	for i := b.Size; i > 0; i-- {
+		ai := a.Guts[i-1+offset]
+		bi := b.Guts[i-1]
+		if ai > bi {
+			return 1
+		}
+		if ai < bi {
+			return 255
+		}
+	}
+	for i := offset; i > 0; i-- {
+		if a.Guts[i-1] > 0 {
+			return 1
+		}
+	}
+	return 0
+}
+
+func SubShifted(a *Dec, b *Dec, offset byte) {
+	borrow := byte(0)
+	for i := range b.Size {
+		ai := a.Guts[i+offset]
+		bi := b.Guts[i] + borrow
+		if ai < bi {
+			ai += 10
+			borrow = 1
+		} else {
+			borrow = 0
+		}
+		a.Guts[i+offset] = ai - bi
+	}
+	for i := b.Size + offset; borrow > 0 && i < a.Size; i++ {
+		ai := a.Guts[i]
+		if ai < borrow {
+			ai += 10
+			borrow = 1
+		} else {
+			borrow = 0
+		}
+		a.Guts[i] = ai - borrow
+	}
+	for a.Size > 0 && a.Guts[a.Size-1] == 0 {
+		a.Size--
+	}
+}
+
+func DivMod(q *Dec, r *Dec, a *Dec, b *Dec) {
+	if b.Size == 0 {
+		panic("div by zero")
+	}
+	r.Dup(a)
+	q.Size = 0
+
+	if r.Size < b.Size {
+		return
+	}
+
+	shift := r.Size - b.Size
+	q.Size = shift + 1
+	for i := range q.Size {
+		q.Guts[i] = 0
+	}
+
+	i := shift
+	for {
+		for CmpShifted(r, b, i) != 255 {
+			SubShifted(r, b, i)
+			q.Guts[i]++
+		}
+		if i == 0 {
+			break
+		}
+		i--
+	}
+
+	for q.Size > 0 && q.Guts[q.Size-1] == 0 {
+		q.Size--
+	}
+}
+
+func Div2(z *Dec, a *Dec) {
+	var t Dec
+	t.Size = a.Size
+	rem := byte(0)
+	for i := a.Size; i > 0; i-- {
+		val := a.Guts[i-1] + rem*10
+		t.Guts[i-1] = 0
+		for val >= 2 {
+			val = val - 2
+			t.Guts[i-1]++
+		}
+		rem = val
+	}
+	for t.Size > 0 && t.Guts[t.Size-1] == 0 {
+		t.Size--
+	}
+	z.Dup(&t)
+}
+
+func (z *Dec) Pow(a *Dec, b *Dec, m *Dec) {
+	var res Dec
+	res.SetSmall(1)
+
+	var base Dec
+	var q Dec
+	DivMod(&q, &base, a, m)
+
+	var exp Dec
+	exp.Dup(b)
+
+	var t Dec
+	for exp.Size > 0 {
+		if exp.Guts[0]&1 != 0 {
+			t.Mul(&res, &base)
+			DivMod(&q, &res, &t, m)
+		}
+
+		Div2(&exp, &exp)
+
+		if exp.Size == 0 {
+			break
+		}
+
+		t.Mul(&base, &base)
+		DivMod(&q, &base, &t, m)
+	}
+	z.Dup(&res)
+}

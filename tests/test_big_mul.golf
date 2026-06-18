@@ -5,8 +5,12 @@ import "big"
 func main() {
 	var a big.Dec
 	var b big.Dec
-	var c big.Dec
+	var m big.Dec
+	var q big.Dec
+	var r big.Dec
+	var z big.Dec
 
+	// --- Multiplication Tests ---
 	// Construct 12: 1 * 10 + 2 -> Guts = {2, 1}, Size = 2
 	a.Size = 2
 	a.Guts[0] = 2
@@ -16,14 +20,14 @@ func main() {
 	b.Guts[0] = 2
 	b.Guts[1] = 1
 
-	c.Mul(&a, &b)
-	c.Print()
+	z.Mul(&a, &b)
+	z.Print()
 
 	a.Size = 0
 	b.Size = 1
 	b.Guts[0] = 5
-	c.Mul(&a, &b)
-	c.Print()
+	z.Mul(&a, &b)
+	z.Print()
 
 	// Construct 255: Guts = {5, 5, 2}, Size = 3
 	a.Size = 3
@@ -36,6 +40,58 @@ func main() {
 	b.Guts[1] = 5
 	b.Guts[2] = 2
 
-	c.Mul(&a, &b)
-	c.Print()
+	z.Mul(&a, &b)
+	z.Print()
+
+	// --- DivMod test ---
+	// 255 / 12 = 21, remainder 3
+	a.Size = 3
+	a.Guts[0] = 5
+	a.Guts[1] = 5
+	a.Guts[2] = 2
+
+	b.Size = 2
+	b.Guts[0] = 2
+	b.Guts[1] = 1
+
+	big.DivMod(&q, &r, &a, &b)
+	q.Print()
+	r.Print()
+
+	// Div2 test
+	// 255 / 2 = 127
+	big.Div2(&z, &a)
+	z.Print()
+
+	// Pow test
+	// 2 ^ 10 mod 1000 = 1024 mod 1000 = 24
+	a.Size = 1
+	a.Guts[0] = 2
+
+	// b = 10 -> {0, 1}
+	b.Size = 2
+	b.Guts[0] = 0
+	b.Guts[1] = 1
+
+	// m = 1000 -> {0, 0, 0, 1}
+	m.Size = 4
+	m.Guts[0] = 0
+	m.Guts[1] = 0
+	m.Guts[2] = 0
+	m.Guts[3] = 1
+
+	z.Pow(&a, &b, &m)
+	z.Print()
+
+	// 2 ^ 10 mod 10000 = 1024
+	// m = 10000 -> {0, 0, 0, 0, 1}
+	m.Size = 5
+	m.Guts[0] = 0
+	m.Guts[1] = 0
+	m.Guts[2] = 0
+	m.Guts[3] = 0
+	m.Guts[4] = 1
+
+	z.Pow(&a, &b, &m)
+	z.Print()
 }

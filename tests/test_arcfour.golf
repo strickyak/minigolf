@@ -1,0 +1,53 @@
+package main
+
+import "arcfour"
+
+func strptr(s string) *byte { return s }
+
+func printHex(b byte) {
+	var hex string = "0123456789ABCDEF"
+	var p *byte = strptr(hex)
+
+	var h byte = b >> 4
+	var l byte = b & 15
+
+	var wp word = word(p)
+	var ph *byte = (*byte)(wp + word(h))
+	print(*ph)
+
+	var pl *byte = (*byte)(wp + word(l))
+	print(*pl)
+}
+
+func testCrypt(key string, plain string) {
+	var rc4 arcfour.ArcFour
+	rc4.Init(strptr(key))
+
+	rc4.Crypt(plain)
+
+	var p *byte = strptr(plain)
+	for i := range len(plain) {
+		printHex(*p)
+		var w word = word(p)
+		w = w + 1
+		p = (*byte)(w)
+	}
+	println("")
+}
+
+func main() {
+	// Wikipedia test vectors
+	// Plaintext, Key -> Ciphertext
+
+	// Key: "Key", Plaintext: "Plaintext"
+	// Expected: BBF316E8D940AF0AD3
+	testCrypt("Key", strdup("Plaintext"))
+
+	// Key: "Wiki", Plaintext: "pedia"
+	// Expected: 1021BF0420
+	testCrypt("Wiki", strdup("pedia"))
+
+	// Key: "Secret", Plaintext: "Attack at dawn"
+	// Expected: 45A01F645FC35B383552544B9BF5
+	testCrypt("Secret", strdup("Attack at dawn"))
+}
