@@ -76,6 +76,47 @@ func (z *Dec) Add(a *Dec, b *Dec) {
 	}
 }
 
+func (z *Dec) Mul(a *Dec, b *Dec) {
+	if a.Size == 0 || b.Size == 0 {
+		z.Size = 0
+		return
+	}
+
+	var t Dec
+	sz := a.Size + b.Size
+	if sz < a.Size || sz > 255 {
+		panic("overflow")
+	}
+
+	for i := range sz {
+		t.Guts[i] = 0
+	}
+	t.Size = sz
+
+	for i := range a.Size {
+		carry := byte(0)
+		for j := range b.Size {
+			k := i + j
+			prod := a.Guts[i]*b.Guts[j] + t.Guts[k] + carry
+			carry = 0
+			for prod >= 10 {
+				prod = prod - 10
+				carry++
+			}
+			t.Guts[k] = prod
+		}
+		if carry > 0 {
+			t.Guts[i+b.Size] = t.Guts[i+b.Size] + carry
+		}
+	}
+
+	for t.Size > 0 && t.Guts[t.Size-1] == 0 {
+		t.Size--
+	}
+
+	z.Dup(&t)
+}
+
 func (z *Dec) Print() {
 	if z.Size == 0 {
 		println("0.")

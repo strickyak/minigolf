@@ -1,0 +1,41 @@
+package main
+
+import "big"
+
+func main() {
+	var a big.Dec
+	var b big.Dec
+	var c big.Dec
+
+	// Construct 12: 1 * 10 + 2 -> Guts = {2, 1}, Size = 2
+	a.Size = 2
+	a.Guts[0] = 2
+	a.Guts[1] = 1
+
+	b.Size = 2
+	b.Guts[0] = 2
+	b.Guts[1] = 1
+
+	c.Mul(&a, &b)
+	c.Print()
+
+	a.Size = 0
+	b.Size = 1
+	b.Guts[0] = 5
+	c.Mul(&a, &b)
+	c.Print()
+
+	// Construct 255: Guts = {5, 5, 2}, Size = 3
+	a.Size = 3
+	a.Guts[0] = 5
+	a.Guts[1] = 5
+	a.Guts[2] = 2
+
+	b.Size = 3
+	b.Guts[0] = 5
+	b.Guts[1] = 5
+	b.Guts[2] = 2
+
+	c.Mul(&a, &b)
+	c.Print()
+}
