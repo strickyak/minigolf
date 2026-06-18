@@ -3,7 +3,7 @@ package prelude
 const Source = `
 package prelude
 
-const HEAP_SIZE = 10000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*512 // 26K on M6809, 16M on Intel
+const HEAP_SIZE = 20000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*256 // 28K on M6809, 8M on Intel
 
 func peek[T any](addr word) T {
 	return *((*T)(addr))
@@ -332,14 +332,13 @@ func malloc_init(heap_start *byte, heap_size word) {
 	p.size = div_word(heap_size, sizeof[MallocHeader]())
 	p.magic = 42424
 	p.next = &base
-	// println("#malloc_init: p.size =", p.size, heap_size, sizeof[MallocHeader]() )
 
 	base.next = p
 	base.size = 0
 	freep = &base
 }
 
-const TOO_BIG = 4000 // Assume an error, if malloc more than this big.
+const TOO_BIG = 20000 // Assume an error, if malloc more than this big.
 
 // zalloc allocates zeroed memory using alloc
 func zalloc(nbytes word) word {
@@ -351,7 +350,7 @@ func zalloc(nbytes word) word {
 }
 
 func malloc(nbytes word) *byte {
-    if HEAP_SIZE < 1 {
+	if HEAP_SIZE < 1 {
         panic("4041")
         var null *byte
         return null

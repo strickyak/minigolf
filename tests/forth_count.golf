@@ -1,0 +1,27 @@
+package main
+
+import "forth"
+
+const MEMORY_SIZE = 10000
+
+var f forth.Forth
+
+func main() {
+	source := `
+    variable x
+    : double
+        dup + ; 
+    : count
+        10 0 do
+            i double .
+        loop ;
+    count cr
+`
+	print("1 ")
+	f.Init(MEMORY_SIZE)
+	print("2 ")
+	f.Eval(source)
+	print("3\n")
+}
+
+// want: 0 2 4 6 8 10 12 14 16 18

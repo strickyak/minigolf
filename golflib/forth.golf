@@ -1,0 +1,343 @@
+package forth
+
+const PRIM_EXIT = 0
+const PRIM_DOCOL = 1
+const PRIM_DOVAR = 2
+const PRIM_DUP = 3
+const PRIM_PLUS = 4
+const PRIM_FETCH = 5
+const PRIM_STORE = 6
+const PRIM_DOT = 7
+const PRIM_CR = 8
+const PRIM_DO = 9      // Compiler word for DO
+const PRIM_DODO = 10   // Run-time DO
+const PRIM_LOOP = 11   // Compiler word for LOOP
+const PRIM_DOLOOP = 12 // Run-time LOOP
+const PRIM_I = 13
+const PRIM_COLON = 14
+const PRIM_SEMICOLON = 15
+const PRIM_VARIABLE = 16
+const PRIM_LIT = 17
+
+type Forth struct {
+	Memory word
+	Here   word
+	Latest word
+	State  byte
+
+	DataStack [64]word
+	DPtr      byte
+
+	RetStack [64]word
+	RPtr     byte
+
+	CtrlStack [64]word
+	CPtr      byte
+
+	IP word
+
+	WORD_SIZE word
+	Source    string
+	SrcPos    word
+
+	TokStart word
+	TokLen   word
+
+	XT_EXIT   word
+	XT_LIT    word
+	XT_DODO   word
+	XT_DOLOOP word
+}
+
+func (f *Forth) Push(v word) {
+	f.DataStack[f.DPtr] = v
+	f.DPtr++
+}
+
+func (f *Forth) Pop() word {
+	f.DPtr--
+	return f.DataStack[f.DPtr]
+}
+
+func (f *Forth) Top() word {
+	return f.DataStack[f.DPtr-1]
+}
+
+func (f *Forth) RPush(v word) {
+	f.RetStack[f.RPtr] = v
+	f.RPtr++
+}
+
+func (f *Forth) RPop() word {
+	f.RPtr--
+	return f.RetStack[f.RPtr]
+}
+
+func (f *Forth) CPush(v word) {
+	f.CtrlStack[f.CPtr] = v
+	f.CPtr++
+}
+
+func (f *Forth) CPop() word {
+	f.CPtr--
+	return f.CtrlStack[f.CPtr]
+}
+
+func (f *Forth) CompileWord(w word) {
+	pokew(f.Here, w)
+	f.Here += f.WORD_SIZE
+}
+
+func (f *Forth) AddHeader(immediate byte) {
+	prev := f.Latest
+	f.Latest = f.Here
+	f.CompileWord(prev)
+
+	flags := f.TokLen
+	if immediate != 0 {
+		flags |= 128
+	}
+	f.CompileWord(flags)
+
+	for i := range f.TokLen {
+		c := word(f.Source[f.TokStart+i])
+		f.CompileWord(c)
+	}
+}
+
+func (f *Forth) AddPrimitive(name string, prim word, immediate byte) {
+	f.Source = name
+	f.TokStart = 0
+	f.TokLen = word(len(name))
+	f.AddHeader(immediate)
+	f.CompileWord(prim)
+}
+
+func (f *Forth) Init(memory_size word) {
+	f.WORD_SIZE = sizeof[*word]()
+	f.Memory = word(malloc(memory_size))
+	f.Here = f.Memory
+	f.Latest = 0
+	f.State = 0
+	f.DPtr = 0
+	f.RPtr = 0
+	f.CPtr = 0
+	f.SrcPos = 0
+
+	// Bootstrap Primitives
+	f.AddPrimitive("dup", PRIM_DUP, 0)
+	f.AddPrimitive("+", PRIM_PLUS, 0)
+	f.AddPrimitive("@", PRIM_FETCH, 0)
+	f.AddPrimitive("!", PRIM_STORE, 0)
+	f.AddPrimitive(".", PRIM_DOT, 0)
+	f.AddPrimitive("cr", PRIM_CR, 0)
+	f.AddPrimitive("i", PRIM_I, 0)
+
+	// Compiler Words
+	f.AddPrimitive(":", PRIM_COLON, 0)
+	f.AddPrimitive(";", PRIM_SEMICOLON, 1)
+	f.AddPrimitive("variable", PRIM_VARIABLE, 0)
+	f.AddPrimitive("do", PRIM_DO, 1)
+	f.AddPrimitive("loop", PRIM_LOOP, 1)
+
+	// Internal XTs for compilation
+	f.AddPrimitive("exit", PRIM_EXIT, 0)
+	f.XT_EXIT = f.Here - f.WORD_SIZE
+
+	f.AddPrimitive("lit", PRIM_LIT, 0)
+	f.XT_LIT = f.Here - f.WORD_SIZE
+
+	f.AddPrimitive("dodo", PRIM_DODO, 0)
+	f.XT_DODO = f.Here - f.WORD_SIZE
+
+	f.AddPrimitive("doloop", PRIM_DOLOOP, 0)
+	f.XT_DOLOOP = f.Here - f.WORD_SIZE
+}
+
+func (f *Forth) Execute(xt word) {
+	prim := peekw(xt)
+	if prim == PRIM_DOCOL {
+		f.RPush(f.IP)
+		f.IP = xt + f.WORD_SIZE
+	} else if prim == PRIM_DOVAR {
+		f.Push(xt + f.WORD_SIZE)
+	} else if prim == PRIM_EXIT {
+		f.IP = f.RPop()
+	} else if prim == PRIM_DUP {
+		f.Push(f.Top())
+	} else if prim == PRIM_PLUS {
+		a := f.Pop()
+		b := f.Pop()
+		f.Push(b + a)
+	} else if prim == PRIM_FETCH {
+		addr := f.Pop()
+		f.Push(peekw(addr))
+	} else if prim == PRIM_STORE {
+		addr := f.Pop()
+		val := f.Pop()
+		pokew(addr, val)
+	} else if prim == PRIM_DOT {
+		val := f.Pop()
+		print(val)
+		print(" ")
+	} else if prim == PRIM_CR {
+		println("")
+	} else if prim == PRIM_I {
+		f.Push(f.RetStack[f.RPtr-1]) // top of ret stack is index
+	} else if prim == PRIM_DODO {
+		start := f.Pop()
+		limit := f.Pop()
+		f.RPush(limit)
+		f.RPush(start)
+	} else if prim == PRIM_DOLOOP {
+		start := f.RPop()
+		limit := f.RPop()
+		start++
+		if start < limit {
+			// Jump back
+			f.RPush(limit)
+			f.RPush(start)
+			dest := peekw(f.IP)
+			f.IP = dest
+		} else {
+			// Skip the destination address
+			f.IP += f.WORD_SIZE
+		}
+	} else if prim == PRIM_LIT {
+		val := peekw(f.IP)
+		f.IP += f.WORD_SIZE
+		f.Push(val)
+	} else if prim == PRIM_COLON {
+		f.NextToken()
+		f.AddHeader(0)
+		f.CompileWord(PRIM_DOCOL)
+		f.State = 1
+	} else if prim == PRIM_SEMICOLON {
+		f.CompileWord(f.XT_EXIT)
+		f.State = 0
+	} else if prim == PRIM_VARIABLE {
+		f.NextToken()
+		f.AddHeader(0)
+		f.CompileWord(PRIM_DOVAR)
+		f.CompileWord(0) // allocate 1 cell
+	} else if prim == PRIM_DO {
+		f.CompileWord(f.XT_DODO)
+		f.CPush(f.Here)
+	} else if prim == PRIM_LOOP {
+		f.CompileWord(f.XT_DOLOOP)
+		dest := f.CPop()
+		f.CompileWord(dest)
+	} else {
+		panic("Unknown Primitive")
+	}
+}
+
+func (f *Forth) Find() (word, byte) {
+	if f.TokLen == 0 {
+		return 0, 0
+	}
+	curr := f.Latest
+	for curr != 0 {
+		lenFlags := peekw(curr + f.WORD_SIZE)
+		length := lenFlags & 127
+		if length == f.TokLen {
+			match := 1
+			for i := range length {
+				if peekw(curr+f.WORD_SIZE*2+word(i)*f.WORD_SIZE) != word(f.Source[f.TokStart+i]) {
+					match = 0
+					break
+				}
+			}
+			if match == 1 {
+				xt := curr + f.WORD_SIZE*2 + length*f.WORD_SIZE
+				return xt, byte(lenFlags & 128)
+			}
+		}
+		curr = peekw(curr) // Link to previous
+	}
+	return 0, 0
+}
+
+func (f *Forth) NextToken() byte {
+	for f.SrcPos < word(len(f.Source)) {
+		c := f.Source[f.SrcPos]
+		if c <= byte(' ') {
+			f.SrcPos++
+		} else {
+			break
+		}
+	}
+	if f.SrcPos >= word(len(f.Source)) {
+		f.TokLen = 0
+		return 0
+	}
+	f.TokStart = f.SrcPos
+	for f.SrcPos < word(len(f.Source)) {
+		c := f.Source[f.SrcPos]
+		if c <= byte(' ') {
+			break
+		}
+		f.SrcPos++
+	}
+	f.TokLen = f.SrcPos - f.TokStart
+	return 1
+}
+
+func (f *Forth) parseNum() (word, byte) {
+	if f.TokLen == 0 {
+		return 0, 0
+	}
+	var n word = 0
+	for i := range f.TokLen {
+		c := f.Source[f.TokStart+i]
+		if c >= byte('0') && c <= byte('9') {
+			n = n*10 + word(c-byte('0'))
+		} else {
+			return 0, 0
+		}
+	}
+	return n, 1
+}
+
+func (f *Forth) Inner() {
+	for f.IP != 0 {
+		xt := peekw(f.IP)
+		f.IP += f.WORD_SIZE
+		f.Execute(xt)
+	}
+}
+
+func (f *Forth) Eval(source string) {
+	f.Source = source
+	f.SrcPos = 0
+	for {
+		ok := f.NextToken()
+		if ok == 0 {
+			break
+		}
+
+		xt, immediate := f.Find()
+		if xt != 0 {
+			if f.State == 0 || immediate != 0 {
+				f.Execute(xt)
+				if peekw(xt) == PRIM_DOCOL {
+					f.Inner()
+				}
+			} else {
+				f.CompileWord(xt)
+			}
+		} else {
+			num, ok2 := f.parseNum()
+			if ok2 != 0 {
+				if f.State == 0 {
+					f.Push(num)
+				} else {
+					f.CompileWord(f.XT_LIT)
+					f.CompileWord(num)
+				}
+			} else {
+				panic("Forth Error: Unknown Word")
+			}
+		}
+	}
+}
