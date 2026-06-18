@@ -1,0 +1,76 @@
+package arcfour
+
+type ArcFour struct {
+	S [256]byte
+	i byte
+	j byte
+}
+
+func (rc4 *ArcFour) Init(key *byte) {
+	for i := range 256 {
+		rc4.S[i] = byte(i)
+	}
+
+	rc4.i = 0
+	rc4.j = 0
+
+	var keylen byte = 0
+	var p *byte = key
+	for *p != 0 {
+		keylen++
+		var w word = word(p)
+		w = w + 1
+		p = (*byte)(w)
+	}
+
+	if keylen == 0 {
+		return
+	}
+
+	var j byte = 0
+	p = key
+	var k byte = 0
+	for i := range 256 {
+		j = j + rc4.S[i] + *p
+
+		temp := rc4.S[i]
+		rc4.S[i] = rc4.S[j]
+		rc4.S[j] = temp
+
+		var w word = word(p)
+		w = w + 1
+		p = (*byte)(w)
+		k++
+		if k == keylen {
+			p = key
+			k = 0
+		}
+	}
+}
+
+func (rc4 *ArcFour) Next() byte {
+	rc4.i++
+	rc4.j = rc4.j + rc4.S[rc4.i]
+
+	temp := rc4.S[rc4.i]
+	rc4.S[rc4.i] = rc4.S[rc4.j]
+	rc4.S[rc4.j] = temp
+
+	idx := rc4.S[rc4.i] + rc4.S[rc4.j]
+	return rc4.S[idx]
+}
+
+func strptr(s string) *byte { return s }
+
+func (rc4 *ArcFour) Crypt(a string) {
+	var p *byte = strptr(a)
+	for i := range len(a) {
+		val := *p
+		val = val ^ rc4.Next()
+		*p = val
+
+		var w word = word(p)
+		w = w + 1
+		p = (*byte)(w)
+	}
+}

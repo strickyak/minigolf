@@ -1,0 +1,286 @@
+package regexp
+
+const INST_CHAR = 0
+const INST_ANY = 1
+const INST_JMP = 2
+const INST_SPLIT = 3
+const INST_MATCH = 4
+
+type Regexp struct {
+	Code [256]word
+	Len  byte
+}
+
+type compiler struct {
+	re  *Regexp
+	pat string
+	pos byte
+}
+
+func (c *compiler) peek() byte {
+	if c.pos < byte(len(c.pat)) {
+		return c.pat[c.pos]
+	}
+	return 0
+}
+
+func (c *compiler) next() byte {
+	if c.pos < byte(len(c.pat)) {
+		ch := c.pat[c.pos]
+		c.pos++
+		return ch
+	}
+	return 0
+}
+
+func (c *compiler) emit(op byte, arg byte) byte {
+	idx := c.re.Len
+	c.re.Code[idx] = (word(op) << 8) | word(arg)
+	c.re.Len++
+	return idx
+}
+
+func (c *compiler) insert(idx byte, op byte, arg byte) {
+	for i := c.re.Len; i > idx; i-- {
+		c.re.Code[i] = c.re.Code[i-1]
+	}
+	c.re.Code[idx] = (word(op) << 8) | word(arg)
+	c.re.Len++
+
+	for i := range c.re.Len {
+		if i == idx {
+			continue
+		}
+		w := c.re.Code[i]
+		cop := byte(w >> 8)
+		carg := byte(w & 255)
+		if cop == INST_JMP || cop == INST_SPLIT {
+			if carg >= idx {
+				c.re.Code[i] = (word(cop) << 8) | word(carg+1)
+			}
+		}
+	}
+}
+
+func (c *compiler) expr() byte {
+	start := c.seq()
+	if c.peek() == '|' {
+		c.next() // consume '|'
+		c.insert(start, INST_SPLIT, 0)
+		split_idx := start
+
+		jmp_idx := c.emit(INST_JMP, 0)
+
+		alt_start := c.re.Len
+		c.re.Code[split_idx] = (word(INST_SPLIT) << 8) | word(alt_start)
+
+		c.expr() // compile right side
+
+		end_idx := c.re.Len
+		c.re.Code[jmp_idx] = (word(INST_JMP) << 8) | word(end_idx)
+	}
+	return start
+}
+
+func (c *compiler) seq() byte {
+	start := c.re.Len
+	for {
+		p := c.peek()
+		if p == 0 || p == '|' || p == ')' {
+			break
+		}
+		c.term()
+	}
+	return start
+}
+
+func (c *compiler) term() byte {
+	start := c.atom()
+	p := c.peek()
+	if p == '*' {
+		c.next()
+		c.insert(start, INST_SPLIT, 0)
+		split_idx := start
+		c.emit(INST_JMP, start)
+		c.re.Code[split_idx] = (word(INST_SPLIT) << 8) | word(c.re.Len)
+	} else if p == '?' {
+		c.next()
+		c.insert(start, INST_SPLIT, 0)
+		c.re.Code[start] = (word(INST_SPLIT) << 8) | word(c.re.Len)
+	}
+	return start
+}
+
+func (c *compiler) atom() byte {
+	start := c.re.Len
+	p := c.peek()
+	if p == '(' {
+		c.next()
+		c.expr()
+		if c.peek() == ')' {
+			c.next()
+		}
+	} else if p == '.' {
+		c.next()
+		c.emit(INST_ANY, 0)
+	} else {
+		c.next()
+		c.emit(INST_CHAR, p)
+	}
+	return start
+}
+
+func (re *Regexp) Compile(pat string) {
+	re.Len = 0
+	var c compiler
+	c.re = re
+	c.pat = pat
+	c.pos = 0
+	c.expr()
+	c.emit(INST_MATCH, 0)
+}
+
+func getByte(arr *byte, idx byte) byte {
+	var w word = word(arr) + word(idx)
+	var p *byte = (*byte)(w)
+	return *p
+}
+
+func setByte(arr *byte, idx byte, val byte) {
+	var w word = word(arr) + word(idx)
+	var p *byte = (*byte)(w)
+	*p = val
+}
+
+func (re *Regexp) closeEpsilon(states *byte) {
+	changed := byte(1)
+	for changed != 0 {
+		changed = 0
+		for pc := byte(0); pc < re.Len; pc++ {
+			if getByte(states, pc) != 0 {
+				w := re.Code[pc]
+				op := byte(w >> 8)
+				arg := byte(w & 255)
+
+				if op == INST_JMP {
+					if getByte(states, arg) == 0 {
+						setByte(states, arg, 1)
+						changed = 1
+					}
+				} else if op == INST_SPLIT {
+					if getByte(states, pc+1) == 0 {
+						setByte(states, pc+1, 1)
+						changed = 1
+					}
+					if getByte(states, arg) == 0 {
+						setByte(states, arg, 1)
+						changed = 1
+					}
+				}
+			}
+		}
+	}
+}
+
+// MatchFull matches the string strictly from start to end (equivalent to ^pattern$)
+func (re *Regexp) MatchFull(s string) byte {
+	var curr [256]byte
+	var next [256]byte
+
+	for j := range 256 {
+		curr[j] = 0
+	}
+	setByte(&curr[0], 0, 1)
+	re.closeEpsilon(&curr[0])
+
+	for i := range len(s) {
+		for j := range 256 {
+			next[j] = 0
+		}
+		ch := s[i]
+		for pc := byte(0); pc < re.Len; pc++ {
+			if getByte(&curr[0], pc) != 0 {
+				w := re.Code[pc]
+				op := byte(w >> 8)
+				arg := byte(w & 255)
+
+				if op == INST_CHAR && arg == ch {
+					setByte(&next[0], pc+1, 1)
+				} else if op == INST_ANY {
+					setByte(&next[0], pc+1, 1)
+				}
+			}
+		}
+		for j := range 256 {
+			curr[j] = next[j]
+		}
+		re.closeEpsilon(&curr[0])
+	}
+
+	for pc := byte(0); pc < re.Len; pc++ {
+		if getByte(&curr[0], pc) != 0 {
+			w := re.Code[pc]
+			if byte(w>>8) == INST_MATCH {
+				return 1 // true
+			}
+		}
+	}
+	return 0 // false
+}
+
+// Match checks if the pattern matches any substring within s
+func (re *Regexp) Match(s string) byte {
+	var curr [256]byte
+	var next [256]byte
+
+	for j := range 256 {
+		curr[j] = 0
+	}
+
+	for i := range len(s) {
+		setByte(&curr[0], 0, 1) // Start new match attempt at this index
+		re.closeEpsilon(&curr[0])
+
+		for pc := byte(0); pc < re.Len; pc++ {
+			if getByte(&curr[0], pc) != 0 {
+				w := re.Code[pc]
+				if byte(w>>8) == INST_MATCH {
+					return 1 // true
+				}
+			}
+		}
+
+		for j := range 256 {
+			next[j] = 0
+		}
+		ch := s[i]
+		for pc := byte(0); pc < re.Len; pc++ {
+			if getByte(&curr[0], pc) != 0 {
+				w := re.Code[pc]
+				op := byte(w >> 8)
+				arg := byte(w & 255)
+
+				if op == INST_CHAR && arg == ch {
+					setByte(&next[0], pc+1, 1)
+				} else if op == INST_ANY {
+					setByte(&next[0], pc+1, 1)
+				}
+			}
+		}
+		for j := range 256 {
+			curr[j] = next[j]
+		}
+	}
+
+	setByte(&curr[0], 0, 1)
+	re.closeEpsilon(&curr[0])
+	for pc := byte(0); pc < re.Len; pc++ {
+		if getByte(&curr[0], pc) != 0 {
+			w := re.Code[pc]
+			if byte(w>>8) == INST_MATCH {
+				return 1 // true
+			}
+		}
+	}
+	return 0 // false
+}

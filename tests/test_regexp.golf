@@ -1,0 +1,83 @@
+package main
+
+import "regexp"
+
+func boolToInt(b byte) byte {
+	if b != 0 {
+		return 1
+	}
+	return 0
+}
+
+func printMatchFull(pat string, s string) {
+	var re regexp.Regexp
+	re.Compile(pat)
+	print("MatchFull('", pat, "', '", s, "') -> ")
+	print(boolToInt(re.MatchFull(s)))
+	println("")
+}
+
+func printMatch(pat string, s string) {
+	var re regexp.Regexp
+	re.Compile(pat)
+	print("Match('", pat, "', '", s, "') -> ")
+	print(boolToInt(re.Match(s)))
+	println("")
+}
+
+func main() {
+	// Exact matches
+	printMatchFull("abc", "abc")
+	printMatchFull("abc", "ab")
+	printMatchFull("abc", "abcd")
+
+	// ANY
+	printMatchFull("a.c", "abc")
+	printMatchFull("a.c", "adc")
+	printMatchFull("a.c", "ac")
+
+	// Alternatives
+	printMatchFull("a|b", "a")
+	printMatchFull("a|b", "b")
+	printMatchFull("a|b", "c")
+	printMatchFull("ab|cd", "ab")
+	printMatchFull("ab|cd", "cd")
+
+	// Kleene Star
+	printMatchFull("a*", "")
+	printMatchFull("a*", "a")
+	printMatchFull("a*", "aaa")
+	printMatchFull("a*b", "b")
+	printMatchFull("a*b", "ab")
+	printMatchFull("a*b", "aaab")
+	printMatchFull("a*b", "aaac")
+
+	// Optional
+	printMatchFull("a?", "")
+	printMatchFull("a?", "a")
+	printMatchFull("a?", "aa")
+	printMatchFull("a?b", "b")
+	printMatchFull("a?b", "ab")
+	printMatchFull("a?b", "aab")
+
+	// Grouping
+	printMatchFull("(ab)*c", "c")
+	printMatchFull("(ab)*c", "abc")
+	printMatchFull("(ab)*c", "ababc")
+	printMatchFull("(ab)*c", "abbc")
+
+	// Complex nested
+	printMatchFull("(a|b)*c?", "")
+	printMatchFull("(a|b)*c?", "a")
+	printMatchFull("(a|b)*c?", "b")
+	printMatchFull("(a|b)*c?", "ab")
+	printMatchFull("(a|b)*c?", "c")
+	printMatchFull("(a|b)*c?", "ac")
+	printMatchFull("(a|b)*c?", "bbbc")
+
+	// Substring match
+	printMatch("a*b", "cccaaaabccc")
+	printMatch("a*b", "cccaccc")
+	printMatch("ab(ab)*", "xyababyx")
+	printMatch("ab(ab)*", "xyayx")
+}

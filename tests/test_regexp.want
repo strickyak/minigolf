@@ -1,0 +1,39 @@
+MatchFull(' abc ', ' abc ') -> 1
+MatchFull(' abc ', ' ab ') -> 0
+MatchFull(' abc ', ' abcd ') -> 0
+MatchFull(' a.c ', ' abc ') -> 1
+MatchFull(' a.c ', ' adc ') -> 1
+MatchFull(' a.c ', ' ac ') -> 0
+MatchFull(' a|b ', ' a ') -> 1
+MatchFull(' a|b ', ' b ') -> 1
+MatchFull(' a|b ', ' c ') -> 0
+MatchFull(' ab|cd ', ' ab ') -> 1
+MatchFull(' ab|cd ', ' cd ') -> 1
+MatchFull(' a* ', '  ') -> 1
+MatchFull(' a* ', ' a ') -> 1
+MatchFull(' a* ', ' aaa ') -> 1
+MatchFull(' a*b ', ' b ') -> 1
+MatchFull(' a*b ', ' ab ') -> 1
+MatchFull(' a*b ', ' aaab ') -> 1
+MatchFull(' a*b ', ' aaac ') -> 0
+MatchFull(' a? ', '  ') -> 1
+MatchFull(' a? ', ' a ') -> 1
+MatchFull(' a? ', ' aa ') -> 0
+MatchFull(' a?b ', ' b ') -> 1
+MatchFull(' a?b ', ' ab ') -> 1
+MatchFull(' a?b ', ' aab ') -> 0
+MatchFull(' (ab)*c ', ' c ') -> 1
+MatchFull(' (ab)*c ', ' abc ') -> 1
+MatchFull(' (ab)*c ', ' ababc ') -> 1
+MatchFull(' (ab)*c ', ' abbc ') -> 0
+MatchFull(' (a|b)*c? ', '  ') -> 0
+MatchFull(' (a|b)*c? ', ' a ') -> 0
+MatchFull(' (a|b)*c? ', ' b ') -> 0
+MatchFull(' (a|b)*c? ', ' ab ') -> 0
+MatchFull(' (a|b)*c? ', ' c ') -> 1
+MatchFull(' (a|b)*c? ', ' ac ') -> 1
+MatchFull(' (a|b)*c? ', ' bbbc ') -> 1
+Match(' a*b ', ' cccaaaabccc ') -> 1
+Match(' a*b ', ' cccaccc ') -> 0
+Match(' ab(ab)* ', ' xyababyx ') -> 1
+Match(' ab(ab)* ', ' xyayx ') -> 0

@@ -1,0 +1,81 @@
+package main
+
+import "big"
+import "arcfour"
+
+func strptr(s string) *byte { return s }
+
+func parseDec(z *big.Dec, s string) {
+	var p *byte = strptr(s)
+	z.Size = byte(len(s))
+	for i := range len(s) {
+		var w word = word(p)
+		w = w + word(len(s)-1-i)
+		var curr *byte = (*byte)(w)
+		z.Guts[i] = *curr - '0'
+	}
+}
+
+func genPriv(z *big.Dec, rc4 *arcfour.ArcFour, digits byte) {
+	z.Size = digits
+	for i := range digits {
+		val := rc4.Next()
+		for val >= 10 {
+			val = val - 10
+		}
+		z.Guts[i] = val
+	}
+	// normalize size
+	for z.Size > 0 && z.Guts[z.Size-1] == 0 {
+		z.Size--
+	}
+}
+
+func main() {
+	var p big.Dec
+	parseDec(&p, "115792089237316195423570985008687907853269984665640564039457584007913129639029")
+
+	var g big.Dec
+	g.Size = 1
+	g.Guts[0] = 2
+
+	var rc4 arcfour.ArcFour
+	rc4.Init(strptr("HELLO"))
+
+	var a big.Dec
+	// 64 bits is roughly 19 decimal digits
+	genPriv(&a, &rc4, 19)
+	print("Alice private key: ")
+	a.Print()
+
+	var b big.Dec
+	genPriv(&b, &rc4, 19)
+	print("Bob private key: ")
+	b.Print()
+
+	var a_pub big.Dec
+	a_pub.Pow(&g, &a, &p)
+
+	var b_pub big.Dec
+	b_pub.Pow(&g, &b, &p)
+
+	var k_a big.Dec
+	k_a.Pow(&b_pub, &a, &p)
+
+	var k_b big.Dec
+	k_b.Pow(&a_pub, &b, &p)
+
+	print("Alice computes shared key: ")
+	k_a.Print()
+
+	print("Bob computes shared key: ")
+	k_b.Print()
+
+	print("64-bit truncated shared key (lowest 19 digits): ")
+	var trunc big.Dec
+	trunc.Dup(&k_a)
+	if trunc.Size > 19 {
+		trunc.Size = 19
+	}
+	trunc.Print()
+}

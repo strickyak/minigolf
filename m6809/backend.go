@@ -1592,22 +1592,26 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tleas 2,s\n")
 			b.popBytes(2)
 		case "shl":
+			lblLoop := b.nextLabel()
+			lblDone := b.nextLabel()
 			b.buf.WriteString(fmt.Sprintf("\ttst 1,s\t; test shift amount\n"))
-			b.buf.WriteString(fmt.Sprintf("\tbeq shl_done_%d\n", id))
-			b.buf.WriteString(fmt.Sprintf("shl_loop_%d:\n", id))
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblDone))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
 			b.buf.WriteString("\taslb\n")
 			if b.getTypeSizeByType(i.Typ) != 1 {
 				b.buf.WriteString("\trola\n")
 			}
 			b.buf.WriteString("\tdec 1,s\n")
-			b.buf.WriteString(fmt.Sprintf("\tbne shl_loop_%d\n", id))
-			b.buf.WriteString(fmt.Sprintf("shl_done_%d:\n", id))
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblLoop))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblDone))
 			b.buf.WriteString("\tleas 2,s\n")
 			b.popBytes(2)
 		case "shr":
+			lblLoop := b.nextLabel()
+			lblDone := b.nextLabel()
 			b.buf.WriteString(fmt.Sprintf("\ttst 1,s\t; test shift amount\n"))
-			b.buf.WriteString(fmt.Sprintf("\tbeq shr_done_%d\n", id))
-			b.buf.WriteString(fmt.Sprintf("shr_loop_%d:\n", id))
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblDone))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
 			if b.getTypeSizeByType(i.Typ) != 1 {
 				b.buf.WriteString("\tlsra\n")
 				b.buf.WriteString("\trorb\n")
@@ -1615,8 +1619,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString("\tlsrb\n")
 			}
 			b.buf.WriteString("\tdec 1,s\n")
-			b.buf.WriteString(fmt.Sprintf("\tbne shr_loop_%d\n", id))
-			b.buf.WriteString(fmt.Sprintf("shr_done_%d:\n", id))
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblLoop))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblDone))
 			b.buf.WriteString("\tleas 2,s\n")
 			b.popBytes(2)
 		case "and":
