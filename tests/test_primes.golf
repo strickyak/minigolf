@@ -1,0 +1,16 @@
+package main
+
+func main() {
+	var sieve [1000]bool
+	
+	for i := word(2); i < 1000; i++ {
+		if sieve[i] {
+			// not prime
+		} else {
+			println(i)
+			for j := i * i; j < 1000; j = j + i {
+				sieve[j] = true
+			}
+		}
+	}
+}
