@@ -95,11 +95,26 @@ time - lwasm --format=raw -o'moto.rom' moto.asm
 
 #############
 
-test -s /home/strick/modoc/coco-shelf/gomar/gomar0n || \
-( cd /home/strick/modoc/coco-shelf/gomar/ ; go build -o gomar0n --tags=noos,coco0,trace gomar.go )
+if test -z "$TRACE"
+then
+    test -s /home/strick/modoc/coco-shelf/gomar/gomar0n || \
+    ( cd /home/strick/modoc/coco-shelf/gomar/ ; go build -o gomar0n --tags=noos,coco0 gomar.go )
 
-/home/strick/modoc/coco-shelf/gomar/gomar0n  \
+    /home/strick/modoc/coco-shelf/gomar/gomar0n  \
         -ttl=600s \
-        -write_rom_fail=1 -t=1 --entry=0x8000 -n=1 -raw_hyper_print=1   \
+        -write_rom_fail=1 \
+        --entry=0x8000 -n=1 -raw_hyper_print=1   \
          -big_rom  moto.rom \
          -external_rom_listing   moto.rom.list
+else
+    test -s /home/strick/modoc/coco-shelf/gomar/gomar0nt || \
+    ( cd /home/strick/modoc/coco-shelf/gomar/ ; go build -o gomar0nt --tags=noos,coco0,trace gomar.go )
+
+    /home/strick/modoc/coco-shelf/gomar/gomar0nt  \
+        -t=1  \
+        -ttl=600s \
+        -write_rom_fail=1 \
+        --entry=0x8000 -n=1 -raw_hyper_print=1   \
+         -big_rom  moto.rom \
+         -external_rom_listing   moto.rom.list
+fi
