@@ -3,7 +3,7 @@ package prelude
 const Source = `
 package prelude
 
-const HEAP_SIZE = 20000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*128 // 28K on M6809, 8M on Intel
+const HEAP_SIZE = 16000 + sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*sizeof[*word]()*128 // 28K on M6809, 8M on Intel
 
 func peek[T any](addr word) T {
 	return *((*T)(addr))
