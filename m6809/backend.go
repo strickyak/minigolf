@@ -26,7 +26,7 @@ func align(sz int) int {
 
 func (b *Backend) getTypeSizeUsingIrt(irt *ir.Type) int {
 	z := b.getTypeSizeUsingIrt9(irt)
-	log.Printf("NANDO99 getTypeSizeUsingIrt %#v -> %#v", irt, z)
+	// log.Printf("NANDO99 getTypeSizeUsingIrt %#v -> %#v", irt, z)
 	return z
 }
 func (b *Backend) getTypeSizeUsingIrt9(irt *ir.Type) int {
@@ -100,7 +100,7 @@ func (b *Backend) getTypeSizeByType(irt ir.Type) int {
 
 func (b *Backend) getTypeSize(typ string, irt *ir.Type) int {
 	z := b.getTypeSize9(typ, irt)
-	log.Printf("NANDO9 getTypeSize %#v %#v -> %#v", typ, irt, z)
+	// log.Printf("NANDO9 getTypeSize %#v %#v -> %#v", typ, irt, z)
 	return z
 }
 func (b *Backend) getTypeSize9(typ string, irt *ir.Type) int {
@@ -126,7 +126,7 @@ func (b *Backend) getEltSizeUsingIrt(irt ir.Type) int {
 
 	case irt.IsAnArray():
 		et := irt.ArrayElementType()
-		log.Printf("NANDO ARRAY %v ELEMENT %v", irt, et)
+		// log.Printf("NANDO ARRAY %v ELEMENT %v", irt, et)
 		fmt.Fprintf(os.Stderr, "F-NANDO ARRAY %v ELEMENT %v", irt, et)
 		return b.getTypeSizeUsingIrt(&et)
 	default:
@@ -179,7 +179,7 @@ func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int,
 			if fIdx < fieldIndex {
 				byteOffset += sz
 			} else if fIdx == fieldIndex {
-				log.Printf("NAN getFieldOffsetAndSize: struct=%q field=%d off=%d sz=%d", structName, fieldIndex, byteOffset, sz)
+				// log.Printf("NAN getFieldOffsetAndSize: struct=%q field=%d off=%d sz=%d", structName, fieldIndex, byteOffset, sz)
 				return byteOffset, sz
 			}
 			fIdx++
@@ -891,7 +891,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 }
 
 func (b *Backend) loadVal(val ir.Value) {
-	fmt.Printf("DEBUG loadVal: %v (type %T)\n", val, val)
+	// fmt.Printf("DEBUG loadVal: %v (type %T)\n", val, val)
 	val = b.resolveVal(val)
 	switch v := val.(type) {
 	case *ir.Parameter:
@@ -925,7 +925,7 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n\tclra\n", v.Val&0xFF))
 	case ir.Instruction:
 		if reg, ok := b.valInReg[v.GetID()]; ok {
-			fmt.Printf("DEBUG: reg is %q\n", reg)
+			// fmt.Printf("DEBUG: reg is %q\n", reg)
 			if reg == "X" {
 				b.buf.WriteString("\ttfr x,d\n")
 			} else if reg == "Y" {
