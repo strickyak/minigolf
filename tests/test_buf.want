@@ -1,25 +1,24 @@
 initial : 1
 baseline 1 : 1
  one_char 1 : 1
-just_one 1 : *
-scenario 1 : *one 1 minus-two -2 three 3 minus-four -4
+just_star 1 : *
+scenario 1 : *** one 1 minus-two -2 three 3 minus-four -4
 more_chars 1 : 1
 recover 1 : 0
 cleanup 1 (expect 0) : 0
 baseline 2 : 1
  one_char 2 : 1
-just_one 2 : *
-scenario 2 : *one 1 minus-two -2 three 3 minus-four -4
+just_star 2 : *
+scenario 2 : *** one 1 minus-two -2 three 3 minus-four -4
 more_chars 2 : 1
 recover 2 : 0
 cleanup 2 (expect 0) : 0
 baseline 3 : 1
  one_char 3 : 1
-just_one 3 : *
-scenario 3 : *one 1 minus-two -2 three 3 minus-four -4
+just_star 3 : *
+scenario 3 : *** one 1 minus-two -2 three 3 minus-four -4
 more_chars 3 : 1
 
 *PANIC* scenario three
 recover 3 : 1
-recover 3 : 0
-cleanup 3 (expect 0) : 72
+cleanup 3 (expect 0) : 0

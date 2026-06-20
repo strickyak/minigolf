@@ -448,7 +448,7 @@ func free(ap *byte) {
 	}
 
 	// Coalesce (merge) with the next block if they are physically adjacent
-	if word(bp)+(bp.size*sizeof[MallocHeader]()) == word(p.next) {
+	if word(bp)+mul_word(bp.size, sizeof[MallocHeader]()) == word(p.next) {
 		bp.size = bp.size + p.next.size
 		bp.next = p.next.next
 	} else {
@@ -456,7 +456,7 @@ func free(ap *byte) {
 	}
 
 	// Coalesce (merge) with the previous block if they are physically adjacent
-	if word(p)+(p.size*sizeof[MallocHeader]()) == word(bp) {
+	if word(p)+mul_word(p.size, sizeof[MallocHeader]()) == word(bp) {
 		p.size = p.size + bp.size
 		p.next = bp.next
 	} else {

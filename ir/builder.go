@@ -766,6 +766,26 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	entry := b.newBlock()
 	b.currentBlock = entry
 
+	var funcPanicBlk *BasicBlock
+	var funcNormalBlk *BasicBlock
+	if b.hasDestructiblesOrDefers(s.Body) {
+		setjmpVal := b.addInstr(&SetJmp{BaseInstruction: BaseInstruction{Typ: TypeWord}}, s)
+		zero := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, s)
+		cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "neq", Left: setjmpVal, Right: zero}, s)
+
+		funcPanicBlk = b.newBlock()
+		funcNormalBlk = b.newBlock()
+
+		b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: funcPanicBlk, FalseBlock: funcNormalBlk}, s)
+		b.addEdge(b.currentBlock, funcPanicBlk)
+		b.addEdge(b.currentBlock, funcNormalBlk)
+
+		b.sealBlock(funcPanicBlk)
+		b.sealBlock(funcNormalBlk)
+
+		b.currentBlock = funcNormalBlk
+	}
+
 	b.currentDestructBlock = b.newBlock()
 	b.deferredActions = nil
 	if !b.currentFunc.ReturnType.Equals(TypeUnknown) && !b.currentFunc.ReturnType.Equals(TypeVoid) {
@@ -800,6 +820,9 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	}
 
 	b.currentBlock = b.currentDestructBlock
+	if funcNormalBlk != nil {
+		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, nil)
+	}
 	if len(b.deferredActions) > 0 {
 		// Destruct in reverse order of declaration
 		for i := len(b.deferredActions) - 1; i >= 0; i-- {
@@ -840,6 +863,29 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, s)
 	}
 	b.sealBlock(b.currentDestructBlock)
+
+	if funcPanicBlk != nil {
+		oldBlock := b.currentBlock
+		b.currentBlock = funcPanicBlk
+
+		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, s)
+
+		// Run destructors of all local variables
+		for i := len(b.deferredActions) - 1; i >= 0; i-- {
+			action := b.deferredActions[i]
+			if action.IsDestructible {
+				vname := action.VarName
+				val := b.readVariable(vname, b.currentBlock)
+				ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: b.variableInitVal[vname]}, s)
+				b.emitDestruction(val.Type(), ptr, s)
+			}
+		}
+
+		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_propagate_panic_"}, s)
+		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, s)
+
+		b.currentBlock = oldBlock
+	}
 
 	b.currentDestructBlock = nil
 	b.deferredActions = nil
@@ -1738,8 +1784,9 @@ func (b *Builder) buildDefer(s *ast.DeferStatement) {
 		b.buildBlock(s.Block)
 		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_propagate_panic_"}, s)
 
-		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: b.currentDestructBlock}, s)
-		b.addEdge(b.currentBlock, b.currentDestructBlock)
+		panicDestruct := b.buildPanicDestructBlock(b.deferredActions, s)
+		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: panicDestruct}, s)
+		b.addEdge(b.currentBlock, panicDestruct)
 
 		// -- Normal Block --
 		b.currentBlock = normalBlk
@@ -3841,4 +3888,93 @@ func isNil(node ast.Node) bool {
 		return n == nil
 	}
 	return false
+}
+
+func (b *Builder) hasDestructiblesOrDefers(node ast.Node) bool {
+	if isNil(node) {
+		return false
+	}
+	switch n := node.(type) {
+	case *ast.BlockStatement:
+		for _, s := range n.Statements {
+			if b.hasDestructiblesOrDefers(s) {
+				return true
+			}
+		}
+	case *ast.VarStatement:
+		if n.ValueType != nil {
+			typ := b.astToIRType(n.ValueType)
+			if b.isDestructable(typ) {
+				return true
+			}
+		} else {
+			return true
+		}
+	case *ast.AssignStatement:
+		if n.Token.Literal == ":=" {
+			return true
+		}
+		for _, v := range n.Values {
+			if b.hasDestructiblesOrDefers(v) {
+				return true
+			}
+		}
+	case *ast.DeferStatement:
+		return true
+	case *ast.IfStatement:
+		return b.hasDestructiblesOrDefers(n.Condition) || b.hasDestructiblesOrDefers(n.Consequence) || b.hasDestructiblesOrDefers(n.Alternative)
+	case *ast.ForStatement:
+		return b.hasDestructiblesOrDefers(n.Condition) || b.hasDestructiblesOrDefers(n.Body)
+	case *ast.For3Statement:
+		return b.hasDestructiblesOrDefers(n.Init) || b.hasDestructiblesOrDefers(n.Condition) || b.hasDestructiblesOrDefers(n.Increment) || b.hasDestructiblesOrDefers(n.Body)
+	case *ast.ForRangeStatement:
+		return b.hasDestructiblesOrDefers(n.RangeValue) || b.hasDestructiblesOrDefers(n.Body)
+	}
+	return false
+}
+
+func (b *Builder) buildPanicDestructBlock(actions []DeferredAction, tokenNode ast.Node) *BasicBlock {
+	blk := b.newBlock()
+	oldBlock := b.currentBlock
+	b.currentBlock = blk
+	b.sealBlock(blk)
+
+	for i := len(actions) - 1; i >= 0; i-- {
+		action := actions[i]
+		if action.IsDestructible {
+			vname := action.VarName
+			val := b.readVariable(vname, b.currentBlock)
+			ptr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: b.variableInitVal[vname]}, tokenNode)
+			b.emitDestruction(val.Type(), ptr, tokenNode)
+		} else if action.Block != nil {
+			if action.IsPanicDefer {
+				b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, nil)
+			}
+			b.buildBlock(action.Block)
+		} else {
+			if action.BuiltinName != "" {
+				b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: action.BuiltinName, Args: action.Args}, action.Token)
+			} else if action.Func != nil {
+				b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: action.Func.ReturnType}, Func: action.Func, Args: action.Args}, action.Token)
+			} else if action.FuncPtr != nil {
+				retTyp := TypeWord
+				if ptrType, ok := action.FuncPtr.Type().PointedType().Expr.(*ast.FuncType); ok {
+					retTyp = b.getFuncReturnType(ptrType.ReturnParameters)
+				} else if ft, ok := action.FuncPtr.Type().Expr.(*ast.FuncType); ok {
+					retTyp = b.getFuncReturnType(ft.ReturnParameters)
+				}
+				b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: action.FuncPtr, Args: action.Args}, action.Token)
+			}
+		}
+	}
+
+	if !b.currentFunc.ReturnType.Equals(TypeUnknown) && !b.currentFunc.ReturnType.Equals(TypeVoid) {
+		retVal := b.readVariable("__retval", b.currentBlock)
+		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Val: retVal}, tokenNode)
+	} else {
+		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, tokenNode)
+	}
+
+	b.currentBlock = oldBlock
+	return blk
 }

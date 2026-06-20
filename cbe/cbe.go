@@ -327,13 +327,13 @@ func (c *CBE) emitFunc(f *ir.Function) {
 		for _, instr := range b.Instructions {
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				id := instr.GetID()
+				if _, ok := instr.(*ir.SetJmp); ok {
+					c.buf.WriteString(fmt.Sprintf("\tstruct jmp_struct jumper_%d;\n", instr.GetID()))
+				}
 				if c.f != nil && c.f.SlotAlias != nil {
 					if _, ok := c.f.SlotAlias[id]; ok {
 						continue // Alias, already declared by target
 					}
-				}
-				if _, ok := instr.(*ir.SetJmp); ok {
-					c.buf.WriteString(fmt.Sprintf("\tstruct jmp_struct jumper_%d;\n", instr.GetID()))
 				}
 				c.buf.WriteString(fmt.Sprintf("\t%s v%d;\n", c.mapType(instr.Type().Name), id))
 			}

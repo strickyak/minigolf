@@ -12,9 +12,9 @@ func work(x byte) {
 	b.Format("*")
 	for_one_char := BytesFree()
 	println(" one_char", x, ":", for_zero_value > for_one_char) // 1: now some is allocated
-	println("just_one", x, ":", b.String())
+	println("just_star", x, ":", b.String())
 
-	b.Format("one %d minus-two %d three %d minus-four %d", 1, -2, 3, -4)
+	b.Format("** one %d minus-two %d three %d minus-four %d", 1, -2, 3, -4)
 	println("scenario", x, ":", b.String())
 
 	for_more_chars := BytesFree()
@@ -35,7 +35,7 @@ func scenario(x byte) {
 
 	defer func() {
 		r := recover()
-        println("recover", x, ":", r!=nil)
+		println("recover", x, ":", r != nil)
 	}()
 
 	work(x)
@@ -46,11 +46,11 @@ func main() {
 	println("initial :", Baseline > 0) // 1: there is free memory
 
 	scenario(1)
-	println("cleanup 1 (expect 0) :", Baseline - BytesFree()) // 0: now all is cleaned up
+	println("cleanup 1 (expect 0) :", Baseline-BytesFree()) // 0: now all is cleaned up
 
 	scenario(2)
-	println("cleanup 2 (expect 0) :", Baseline - BytesFree()) // 0: now all is cleaned up
+	println("cleanup 2 (expect 0) :", Baseline-BytesFree()) // 0: now all is cleaned up
 
 	scenario(3)
-	println("cleanup 3 (expect 0) :", Baseline - BytesFree()) // 0: now all is cleaned up
+	println("cleanup 3 (expect 0) :", Baseline-BytesFree()) // 0: now all is cleaned up
 }

@@ -696,12 +696,15 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		b.slotSizes[pseudoID] = size
 		fmt.Fprintf(&b.buf, "\t\t; Note: with param %q, type %q, size %d, b.stackSize becomes %d, slot becomes %v\n", p.Name, p.Type(), aligned, b.stackSize, b.paramSlots[p.Name])
 	}
-	// Pre-scan for all AddressOfLocal targets first.
+	// Pre-scan: collect cast IDs that are targeted by addrof_local (they need a real stack slot).
+	castNeedsSlot := make(map[int]bool)
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
 			if addrLocal, ok := instr.(*ir.AddressOfLocal); ok {
 				if localInstr, isInstr := addrLocal.Local.(ir.Instruction); isInstr {
-					b.getSlot(localInstr.GetID(), localInstr.Type())
+					if cast, isCast := localInstr.(*ir.Cast); isCast && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
+						castNeedsSlot[cast.GetID()] = true
+					}
 				}
 			}
 		}
@@ -717,10 +720,14 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 	}
 
-	// Pre-scan for all other instructions
+	// Pre-scan for all other instructions (in program order).
+	// Casts get slots only if addrof_local targets them (castNeedsSlot).
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
 			if cast, ok := instr.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
+				if castNeedsSlot[cast.GetID()] {
+					b.getSlot(cast.GetID(), cast.Type()) // allocate in program order
+				}
 				continue
 			}
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
@@ -1008,7 +1015,10 @@ func (b *Backend) emitCopyYX(size int) {
 
 func (b *Backend) emitInstr(instr ir.Instruction) {
 	if cast, ok := instr.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
-		return
+		// Only emit this cast if addrof_local gave it a slot; otherwise it is a transparent no-op.
+		if _, hasSlot := b.slots[cast.GetID()]; !hasSlot {
+			return
+		}
 	}
 	id := instr.GetID()
 	offset := b.slots[id]
