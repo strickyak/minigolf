@@ -1,0 +1,38 @@
+package main
+
+type Fnord struct {
+	Number word
+}
+
+func (f *Fnord) Hello(w word) {
+	f.Number = w
+	println("Hello Fnord", w)
+}
+func (f *Fnord) destructor() {
+	if f.Number == 0 {
+		println("error: Number is already 0")
+	}
+	println("Destructing number", f.Number)
+	f.Number = 0
+}
+
+func work() {
+	var fnord Fnord
+	fnord.Hello(555)
+
+	panic("aborting work")
+}
+
+func scenario() {
+
+	defer func() {
+		r := recover()
+		println("recover:", r != nil)
+	}()
+
+	work()
+}
+
+func main() {
+	scenario()
+}
