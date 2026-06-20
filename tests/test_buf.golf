@@ -1,0 +1,56 @@
+package main
+
+import "mem"
+
+var Baseline word
+
+func work(x byte) {
+	var b mem.Buffer
+	for_zero_value := BytesFree()
+	println("baseline", x, ":", Baseline == for_zero_value) // 1: none allocated yet
+
+	b.Format("*")
+	for_one_char := BytesFree()
+	println(" one_char", x, ":", for_zero_value > for_one_char) // 1: now some is allocated
+	println("just_one", x, ":", b.String())
+
+	b.Format("one %d minus-two %d three %d minus-four %d", 1, -2, 3, -4)
+	println("scenario", x, ":", b.String())
+
+	for_more_chars := BytesFree()
+	println("more_chars", x, ":", for_one_char > for_more_chars) // 1: now more is allocated
+
+	// Destructor for `b` occurs on return.
+
+	if x == 2 {
+		return // explicit return
+	}
+	if x == 3 {
+		panic("scenario three")
+	}
+	// if (x==1), fall off bottom.
+}
+
+func scenario(x byte) {
+
+	defer func() {
+		r := recover()
+        println("recover", x, ":", r!=nil)
+	}()
+
+	work(x)
+}
+
+func main() {
+	Baseline = BytesFree()
+	println("initial :", Baseline > 0) // 1: there is free memory
+
+	scenario(1)
+	println("cleanup 1 (expect 0) :", Baseline - BytesFree()) // 0: now all is cleaned up
+
+	scenario(2)
+	println("cleanup 2 (expect 0) :", Baseline - BytesFree()) // 0: now all is cleaned up
+
+	scenario(3)
+	println("cleanup 3 (expect 0) :", Baseline - BytesFree()) // 0: now all is cleaned up
+}

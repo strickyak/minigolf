@@ -529,7 +529,8 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			opStr = "UNKNOWN_COMPARE_OP(" + i.Op + ")"
 		}
 		// Cast to byte to ensure strictly byte-level boolean properties
-		return fmt.Sprintf("(byte)(%s %s %s)", c.formatVal(i.Left), opStr, c.formatVal(i.Right))
+		tName := c.mapType(i.Left.Type().Name)
+		return fmt.Sprintf("(byte)((%s)(%s) %s (%s)(%s))", tName, c.formatVal(i.Left), opStr, tName, c.formatVal(i.Right))
 	case *ir.Return:
 		if i.Val != nil {
 			valStr := c.formatVal(i.Val)

@@ -466,6 +466,20 @@ func free(ap *byte) {
 	freep = p
 }
 
+func BytesFree() word {
+	if HEAP_SIZE < 1 {
+		return 0
+	}
+	var total_units word = 0
+	curr := freep.next
+	for word(curr) != word(freep) {
+		total_units = total_units + curr.size
+		curr = curr.next
+	}
+	total_units = total_units + freep.size
+	return mul_word(total_units, sizeof[MallocHeader]())
+}
+
 func init() {
 	if HEAP_SIZE > 0 {
 	    malloc_init(&Heap[0], HEAP_SIZE)
