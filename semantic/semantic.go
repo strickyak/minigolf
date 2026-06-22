@@ -70,6 +70,11 @@ type Analyzer struct {
 	localIdCounter   int
 	blockDepth       int
 	inDeferBlock     int
+	// magicFuncs are functions that the IR builder calls implicitly for certain
+	// operators (strcmp for string '<', div_word for word '/', etc.).  They
+	// must survive TrimDeadFunctions even when not yet reachable from main,
+	// because their call-sites are only emitted after IR generation begins.
+	magicFuncs map[string]bool
 }
 
 func builtinType(name string) ast.Expression {
@@ -120,7 +125,16 @@ func New(resolver *Resolver) *Analyzer {
 		resolver:         resolver,
 		instantiatedArgs: make(map[string][]ast.Expression),
 		typeAliases:      make(map[string]ast.Expression),
+		magicFuncs:       make(map[string]bool),
 	}
+}
+
+// AddMagicFunc registers a function name as "magic" — implicitly called by the
+// IR builder for certain operators.  Magic functions are unconditionally kept
+// alive by TrimDeadFunctions so that the IR builder can always find them.
+// Call this before Analyze().
+func (a *Analyzer) AddMagicFunc(qname string) {
+	a.magicFuncs[qname] = true
 }
 
 func (a *Analyzer) unwrapAlias(expr ast.Expression) ast.Expression {
@@ -411,6 +425,11 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 	// Pass 2: Reachability-driven Type Checking (DCE)
 	a.markReachable("main.main")
 	a.markReachable("prelude.init_0")
+	// Magic functions are pre-seeded as reachable so TrimDeadFunctions never
+	// removes them before the IR builder gets a chance to emit implicit calls.
+	for name := range a.magicFuncs {
+		a.markReachable(name)
+	}
 
 	// Pre-analyze generic templates to ensure their internal dependencies are discovered
 	var sortedFuncs []string

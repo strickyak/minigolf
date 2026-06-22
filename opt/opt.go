@@ -69,7 +69,13 @@ func OptimizeProgram(p *ir.Program, config Config) {
 	}
 
 	if config.EnableDFE {
-		EliminateDeadFunctions(p)
+		// Normal round: magic functions are unconditional roots so they survive
+		// until after all template expansions have emitted implicit calls to them.
+		EliminateDeadFunctions(p, true /* protectMagic */)
+
+		// Final round: now that all operator-to-helper calls are in the IR, any
+		// magic function that is still unreachable can be safely removed.
+		EliminateDeadFunctions(p, false /* protectMagic */)
 	}
 
 	if config.EnableDebugOpt {

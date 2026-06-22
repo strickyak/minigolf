@@ -1,0 +1,139 @@
+package main
+
+import "sort"
+
+func cmpInt(a *int, b *int) int {
+	if *a < *b {
+		return -1
+	}
+	if *a > *b {
+		return 1
+	}
+	return 0
+}
+
+func cmpWord(a *word, b *word) int {
+	if *a < *b {
+		return -1
+	}
+	if *a > *b {
+		return 1
+	}
+	return 0
+}
+
+func cmpString(a *string, b *string) int {
+	if a == nil {
+		panic("a nil")
+	}
+	if b == nil {
+		panic("b nil")
+	}
+	if *a < *b {
+		return -1
+	}
+	if *a > *b {
+		return 1
+	}
+	return 0
+}
+
+// cmpStringSlicesByTail compares two slice[string] values by their last element.
+// aa and bb are pointers to slice[string] (MiniGolf only supports pointer receivers).
+// NOTE: *a < *b where a is *string (=*slice[byte]) requires comparing slice structs,
+// which hits a builder issue with nested slice types.  Work-in-progress.
+//
+// func cmpStringSlicesByTail(aa *slice[string], bb *slice[string]) int { ... }
+
+func main() {
+	// Test 1: sort a small slice of ints
+	var nums slice[int]
+	nums.Append(5)
+	nums.Append(-3)
+	nums.Append(3)
+	nums.Append(8)
+	nums.Append(1)
+	nums.Append(-1)
+	nums.Append(9)
+	nums.Append(2)
+	nums.Append(-2)
+	nums.Append(7)
+	nums.Append(0)
+	nums.Append(0) // dup
+	nums.Append(4)
+	nums.Append(6)
+
+	sort.QuickSort[int](nums, cmpInt)
+	print("ints:")
+	for i := range nums.Len {
+		print(" ", nums.Get(i))
+	}
+	println()
+
+	// Test 2: already-sorted slice
+	var sorted slice[int]
+	for i := 0; i < 5; i++ {
+		sorted.Append(i)
+	}
+	sort.QuickSort[int](sorted, cmpInt)
+	print("already sorted:")
+	for i := range sorted.Len {
+		print(" ", sorted.Get(i))
+	}
+	println()
+
+	// Test 3: reverse-sorted slice (load descending, sort ascending)
+	var rev slice[int]
+	rev.Append(4)
+	rev.Append(3)
+	rev.Append(2)
+	rev.Append(1)
+	rev.Append(0)
+	sort.QuickSort[int](rev, cmpInt)
+	print("reverse sorted:")
+	for i := range rev.Len {
+		print(" ", rev.Get(i))
+	}
+	println()
+
+	// Test 4: single element
+	var one slice[int]
+	one.Append(42)
+	sort.QuickSort[int](one, cmpInt)
+	println("single:", one.Get(0))
+
+	// Test 5: words
+	var words slice[word]
+	words.Append(100)
+	words.Append(0)
+	words.Append(3)
+	words.Append(word(-1))
+	words.Append(word(-2))
+	words.Append(word(-2))
+	words.Append(word(-100))
+	words.Append(77)
+	words.Append(50)
+	words.Append(1)
+	sort.QuickSort[word](words, cmpWord)
+	print("words:")
+	for i := range words.Len {
+		print(" ", 65535&words.Get(i))
+	}
+	println()
+
+	// Test 6: strings
+	var strs slice[string]
+	strs.Append("zero")
+	strs.Append("one")
+	strs.Append("two")
+	strs.Append("three")
+	strs.Append("four") // dup
+	strs.Append("five")
+	strs.Append("") // empty
+	sort.QuickSort[string](strs, cmpString)
+	print("strs:")
+	for i := range strs.Len {
+		print(" <", strs.Get(i), "> ")
+	}
+	println()
+}

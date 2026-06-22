@@ -153,6 +153,10 @@ type Function struct {
 	LeafLevel                int
 	TrunkLevel               int
 	Popularity               int
+	// IsMagic marks functions that are implicitly called by the IR builder
+	// when compiling certain operators (e.g. strcmp for string '<', div_word
+	// for word '/'). These must survive DCE until after all templates expand.
+	IsMagic bool
 }
 
 // Parameter represents a function parameter.

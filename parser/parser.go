@@ -1014,39 +1014,13 @@ func (p *Parser) parseFuncTypeParameters() []*ast.Parameter {
 
 	p.nextToken()
 
-	// Parse first parameter (just type)
-	param := &ast.Parameter{}
-	if p.curTokenIs(token.ELLIPSIS) {
-		param.IsVariadic = true
-		p.nextToken()
-	}
-	param.Type = p.parseExpression(LOWEST)
-	if param.IsVariadic {
-		param.Type = &ast.IndexExpression{
-			Left:    &ast.Identifier{Token: p.curToken, Value: "slice"},
-			Indices: []ast.Expression{param.Type},
-		}
-	}
-	parameters = append(parameters, param)
+	parameters = append(parameters, p.parseFuncTypeOneParam())
 
 	// Parse subsequent parameters
 	for p.peekTokenIs(token.COMMA) {
 		p.nextToken() // comma
-		p.nextToken() // next expression
-
-		param := &ast.Parameter{}
-		if p.curTokenIs(token.ELLIPSIS) {
-			param.IsVariadic = true
-			p.nextToken()
-		}
-		param.Type = p.parseExpression(LOWEST)
-		if param.IsVariadic {
-			param.Type = &ast.IndexExpression{
-				Left:    &ast.Identifier{Token: p.curToken, Value: "slice"},
-				Indices: []ast.Expression{param.Type},
-			}
-		}
-		parameters = append(parameters, param)
+		p.nextToken() // first token of next param
+		parameters = append(parameters, p.parseFuncTypeOneParam())
 	}
 
 	if !p.expectPeek(token.RPAREN) {
@@ -1054,6 +1028,38 @@ func (p *Parser) parseFuncTypeParameters() []*ast.Parameter {
 	}
 
 	return parameters
+}
+
+// parseFuncTypeOneParam parses one parameter of a func type.
+// It handles both anonymous types ("*T") and named types ("a *T").
+// curToken is the first token of this parameter.
+func (p *Parser) parseFuncTypeOneParam() *ast.Parameter {
+	param := &ast.Parameter{}
+
+	if p.curTokenIs(token.ELLIPSIS) {
+		param.IsVariadic = true
+		p.nextToken()
+	}
+
+	// If current token is an identifier and peek is ASTERISK, treat it as
+	// "name *type" — e.g. "a *T". This is the only unambiguous case:
+	// a bare IDENT peeked by * cannot be a type expression (would be multiply).
+	// We don't generalize to other peek tokens because e.g. "slice" peeked by
+	// "[" is legitimately the type "slice[T]", not a name.
+	if !param.IsVariadic && p.curTokenIs(token.IDENT) && p.peekTokenIs(token.ASTERISK) {
+		param.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		p.nextToken() // move to * (type token)
+	}
+
+	param.Type = p.parseExpression(LOWEST)
+
+	if param.IsVariadic {
+		param.Type = &ast.IndexExpression{
+			Left:    &ast.Identifier{Token: p.curToken, Value: "slice"},
+			Indices: []ast.Expression{param.Type},
+		}
+	}
+	return param
 }
 
 func (p *Parser) parseFuncType() ast.Expression {

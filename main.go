@@ -350,6 +350,12 @@ func main() {
 
 	// 3. Perform semantic analysis & type checking.
 	analyzer := semantic.New(resolver)
+	// Tell the analyzer which prelude functions are implicitly called by the IR
+	// builder for certain operators.  This prevents TrimDeadFunctions from
+	// removing them before the IR builder gets a chance to reference them.
+	for _, name := range opt.MagicFuncNames {
+		analyzer.AddMagicFunc(name)
+	}
 	analyzer.Analyze(program)
 	if len(analyzer.Errors()) > 0 {
 		fmt.Fprintln(os.Stderr, "Semantic errors:")
@@ -383,6 +389,7 @@ func main() {
 		builder.CheckBounds = *checkBoundsFlag
 		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
 
 		optConfig := opt.Config{
 			EnableConstFold:   !*noConstfold,
@@ -420,6 +427,7 @@ func main() {
 		builder.CheckBounds = *checkBoundsFlag
 		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
 
 		optConfig := opt.Config{
 			EnableConstFold:   !*noConstfold,
@@ -459,6 +467,7 @@ func main() {
 		builder.CheckBounds = *checkBoundsFlag
 		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
 
 		optConfig := opt.Config{
 			EnableConstFold:   !*noConstfold,
@@ -498,6 +507,7 @@ func main() {
 		builder.CheckBounds = *checkBoundsFlag
 		builder.CheckNil = *checkNilFlag
 		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
 
 		optConfig := opt.Config{
 			EnableConstFold:  !*noConstfold,
