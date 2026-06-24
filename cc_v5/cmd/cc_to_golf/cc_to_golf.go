@@ -1,17 +1,25 @@
-// cc_to_golf.go — simple C-to-MiniGolf translator
+// cc_to_golf.go — C to MiniGolf translator
 //
-// Translates simple C programs to MiniGolf syntax.  Designed for programs
-// like count.c.txt; not a general-purpose translator.
+// Usage (run from the repo root):
 //
-// Usage (run from inside the cc_v5 directory):
+//	go run cc_v5/cmd/cc_to_golf/cc_to_golf.go [-k] <file.c>
 //
-//	go run cmd/cc_to_golf.go cmd/count.c.txt
+// -k  keep going: emit /* comment */ instead of panic() for unsupported
+//     constructs so the output can be inspected as a best-effort translation.
 //
-// It sends the MiniGolf output to stdout.
+// The translator uses the modernc.org/cc/v5 typed AST and walks it directly,
+// so most C constructs map cleanly to MiniGolf.  Hard cases:
+//   - Ternary (? :)         → inline temp-var split when possible
+//   - Pointer arithmetic    → (*T)(word(p)+1) cast idiom or comment
+//   - va_list / va_arg      → unsupported, emits panic/comment
+//   - __builtin_*           → unsupported
+//   - volatile / const      → silently stripped
+//   - Comma expression      → split into separate statements where possible
 
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -20,9 +28,14 @@ import (
 	cc "modernc.org/cc/v5"
 )
 
+var keepGoing = flag.Bool("k", false,
+	"keep going after unsupported constructs (emit comments instead of panics)")
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: cc_to_golf <file.c>")
+	flag.Parse()
+	args := flag.Args()
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: cc_to_golf [-k] <file.c>")
 		os.Exit(1)
 	}
 
@@ -31,20 +44,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "NewConfig: %v\n", err)
 		os.Exit(1)
 	}
-	// Provide built-in definitions; the file may rely on them even without
-	// a full #include.
 	cfg.Predefined += cc.Builtin
 
-	// Parse as a free-standing file (no system headers unless the file
-	// itself #includes them).
 	sources := []cc.Source{
 		{Name: "<predefined>", Value: cfg.Predefined},
-		{Name: os.Args[1]},
+		{Name: args[0]},
 	}
 
 	ast, err := cc.Translate(cfg, sources)
 	if err != nil {
-		// Non-fatal: some constructs may cause warnings; proceed anyway.
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 	if ast == nil {
@@ -52,88 +60,446 @@ func main() {
 		os.Exit(1)
 	}
 
-	tr := &translator{}
+	tr := newTranslator()
 	tr.translateProgram(ast)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Translator
+// Translator state
 // ─────────────────────────────────────────────────────────────────────────────
 
-type translator struct {
-	out    strings.Builder
-	depth  int // indentation level
+type staticVar struct {
+	golfName string
+	golfType string
 }
 
-// writeln writes one indented line to the output buffer.
-func (t *translator) writeln(format string, args ...interface{}) {
-	fmt.Fprintf(&t.out, "%s%s\n", strings.Repeat("    ", t.depth),
+type translator struct {
+	out   strings.Builder
+	depth int
+
+	// typedef C-name → MiniGolf type string
+	typedefMap map[string]string
+
+	// struct tag → MiniGolf struct type name (e.g. "bin" → "Bin")
+	structTagMap map[string]string
+
+	// emitted struct types (to avoid duplicate definitions)
+	emittedStructs map[string]bool
+
+	// static local vars extracted to globals
+	staticVars []staticVar
+
+	// already-emitted global names
+	emittedGlobals map[string]bool
+
+	// temp-var counter (for ternary extraction)
+	tempCount int
+
+	// current function name (for static-var naming)
+	curFunc string
+
+	// static locals: local name → mangled global name for current function
+	staticNameMap   map[string]string
+}
+
+func newTranslator() *translator {
+	return &translator{
+		typedefMap:     make(map[string]string),
+		structTagMap:   make(map[string]string),
+		emittedStructs: make(map[string]bool),
+		emittedGlobals: make(map[string]bool),
+		staticNameMap:  make(map[string]string),
+	}
+}
+
+// ── Output helpers ────────────────────────────────────────────────────────────
+
+func (t *translator) line(format string, args ...interface{}) {
+	fmt.Fprintf(&t.out, "%s%s\n",
+		strings.Repeat("    ", t.depth),
 		fmt.Sprintf(format, args...))
 }
 
-// write writes text without a trailing newline.
-func (t *translator) write(s string) { t.out.WriteString(s) }
+func (t *translator) raw(s string) { t.out.WriteString(s) }
 
-// ── Top-level ────────────────────────────────────────────────────────────────
+// unsupported emits either a panic or a comment depending on -k.
+func (t *translator) unsupported(reason string) string {
+	if *keepGoing {
+		return fmt.Sprintf("/* UNSUPPORTED: %s */", reason)
+	}
+	return fmt.Sprintf(`panic(%q)`, "unsupported: "+reason)
+}
 
-func (t *translator) translateProgram(ast *cc.AST) {
-	t.write("package main\n")
+func (t *translator) tempVar() string {
+	t.tempCount++
+	return fmt.Sprintf("_t%d", t.tempCount)
+}
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Type resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+// cTypeToGolf converts a cc.Type to a MiniGolf type string.
+func (t *translator) cTypeToGolf(typ cc.Type) string {
+	if typ == nil {
+		return "/* nil */"
+	}
+	// If this type has a typedef name, consult our map first.
+	if td := typ.Typedef(); td != nil {
+		name := td.Name()
+		if gname, ok := t.typedefMap[name]; ok {
+			return gname
+		}
+	}
+	switch typ.Kind() {
+	case cc.Void:
+		return ""
+	case cc.Bool:
+		return "byte"
+	case cc.Char, cc.SChar, cc.UChar:
+		return "byte"
+	case cc.Int, cc.Short, cc.Long, cc.LongLong,
+		cc.Int8, cc.Int16, cc.Int32, cc.Int64:
+		return "int"
+	case cc.UInt, cc.UShort, cc.ULong, cc.ULongLong,
+		cc.UInt8, cc.UInt16, cc.UInt32, cc.UInt64:
+		return "word"
+	case cc.Ptr:
+		pt, ok := typ.(*cc.PointerType)
+		if !ok {
+			return "*byte"
+		}
+		elem := pt.Elem()
+		if elem.Kind() == cc.Void {
+			return "*byte"
+		}
+		return "*" + t.cTypeToGolf(elem)
+	case cc.Array:
+		at, ok := typ.(*cc.ArrayType)
+		if !ok {
+			return t.unsupported("unknown array")
+		}
+		n := at.Len()
+		elem := t.cTypeToGolf(at.Elem())
+		return fmt.Sprintf("[%d]%s", n, elem)
+	case cc.Struct:
+		st, ok := typ.(*cc.StructType)
+		if !ok {
+			return t.unsupported("unknown struct")
+		}
+		tag := tokenStr(st.Tag())
+		if gname, ok := t.structTagMap[tag]; ok {
+			return gname
+		}
+		return t.unsupported("unnamed/unregistered struct " + tag)
+	case cc.Union:
+		return t.unsupported("union type")
+	case cc.Function:
+		return t.unsupported("function type in field/var")
+	default:
+		return fmt.Sprintf("/* %s */", typ.String())
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1: pre-scan for typedefs and struct definitions
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (t *translator) prescan(ast *cc.AST) {
 	for _, d := range ast.Declarations {
-		fd, ok := d.(*cc.FunctionDefinition)
+		cd, ok := d.(*cc.CommonDeclaration)
 		if !ok {
 			continue
 		}
-		// Skip built-in / system declarations.
-		if isBuiltin(fd.Declarator) {
+		if isBuiltinDecl(cd) {
 			continue
 		}
-		t.write("\n")
-		t.translateFuncDef(fd)
+		for _, id := range cd.InitDeclarators {
+			decl := id.Declarator
+			if !decl.IsTypename() {
+				continue
+			}
+			name := decl.Name()
+			typ := decl.Type()
+
+			// typedef of pointer-to-struct → define struct, map name → *Name
+			if typ.Kind() == cc.Ptr {
+				elem := stripPtr(typ)
+				if elem.Kind() == cc.Struct {
+					st := elem.(*cc.StructType)
+					tag := tokenStr(st.Tag())
+					if _, exists := t.structTagMap[tag]; !exists && tag != "" {
+						t.structTagMap[tag] = name
+					}
+					t.typedefMap[name] = "*" + name
+					continue
+				}
+			}
+			// typedef of struct by value → define struct, map name → Name
+			if typ.Kind() == cc.Struct {
+				st := typ.(*cc.StructType)
+				tag := tokenStr(st.Tag())
+				if _, exists := t.structTagMap[tag]; !exists && tag != "" {
+					t.structTagMap[tag] = name
+				}
+				t.typedefMap[name] = name
+				continue
+			}
+			// Primitive typedef
+			golf := t.cTypeToGolf(typ)
+			t.typedefMap[name] = golf
+		}
+
+		// Also scan bare struct declarations like `struct bin q;`
+		for _, spec := range cd.DeclarationSpecifiers {
+			if ts, ok2 := spec.(*cc.TypeSpecStructOrUnion); ok2 {
+				sou := ts.StructOrUnion
+				if sou == nil {
+					continue
+				}
+				if st2, ok3 := sou.Type().(*cc.StructType); ok3 {
+					tag := tokenStr(st2.Tag())
+					if tag != "" {
+						if _, exists := t.structTagMap[tag]; !exists {
+							// Use capitalised tag as the name.
+							t.structTagMap[tag] = capitalise(tag)
+						}
+					}
+				}
+			}
+		}
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2: emission
+// ─────────────────────────────────────────────────────────────────────────────
+
+func (t *translator) translateProgram(ast *cc.AST) {
+	t.prescan(ast)
+
+	t.raw("package main\n")
+
+	// Emit struct type definitions (in declaration order).
+	t.emitStructDefs(ast)
+
+	// Emit static globals collected during function translation.
+	// (They will be filled in during function translation below.)
+
+	// Translate all top-level items in source order.
+	for _, d := range ast.Declarations {
+		switch x := d.(type) {
+		case *cc.FunctionDefinition:
+			if isBuiltin(x.Declarator) {
+				continue
+			}
+			// Emit any accumulated static globals before this function.
+			t.flushStaticVars()
+			t.translateFuncDef(x)
+		case *cc.CommonDeclaration:
+			if isBuiltinDecl(x) {
+				continue
+			}
+			t.translateTopLevelDecl(x)
+		}
+	}
+	t.flushStaticVars()
 
 	fmt.Print(t.out.String())
+}
+
+func (t *translator) flushStaticVars() {
+	for _, sv := range t.staticVars {
+		t.raw(fmt.Sprintf("\nvar %s %s\n", sv.golfName, sv.golfType))
+	}
+	t.staticVars = nil
+}
+
+// emitStructDefs emits MiniGolf type definitions for every struct we know about.
+func (t *translator) emitStructDefs(ast *cc.AST) {
+	// Walk declarations in order so structs appear before functions that use them.
+	for _, d := range ast.Declarations {
+		cd, ok := d.(*cc.CommonDeclaration)
+		if !ok {
+			continue
+		}
+		if isBuiltinDecl(cd) {
+			continue
+		}
+		// Check each specifier for an inline struct definition.
+		for _, spec := range cd.DeclarationSpecifiers {
+			ts, ok2 := spec.(*cc.TypeSpecStructOrUnion)
+			if !ok2 {
+				continue
+			}
+			sou := ts.StructOrUnion
+			if sou == nil {
+				continue
+			}
+			st, ok3 := sou.Type().(*cc.StructType)
+			if !ok3 || st.IsIncomplete() || st.NumFields() == 0 {
+				continue
+			}
+			tag := tokenStr(st.Tag())
+			golfName, exists := t.structTagMap[tag]
+			if !exists {
+				continue
+			}
+			if t.emittedStructs[golfName] {
+				continue
+			}
+			t.emitStructType(golfName, st)
+		}
+		// Also check typedef-pointed struct types.
+		for _, id := range cd.InitDeclarators {
+			decl := id.Declarator
+			if !decl.IsTypename() {
+				continue
+			}
+			typ := decl.Type()
+			elem := stripPtr(typ)
+			if elem.Kind() != cc.Struct {
+				continue
+			}
+			st, ok2 := elem.(*cc.StructType)
+			if !ok2 || st.IsIncomplete() || st.NumFields() == 0 {
+				continue
+			}
+			tag := tokenStr(st.Tag())
+			golfName, exists := t.structTagMap[tag]
+			if !exists {
+				continue
+			}
+			if t.emittedStructs[golfName] {
+				continue
+			}
+			t.emitStructType(golfName, st)
+		}
+	}
+}
+
+func (t *translator) emitStructType(golfName string, st *cc.StructType) {
+	t.emittedStructs[golfName] = true
+	t.raw("\n")
+	t.raw(fmt.Sprintf("type %s struct {\n", golfName))
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.FieldByIndex(i)
+		if f == nil || f.Name() == "" {
+			continue
+		}
+		golfType := t.cTypeToGolf(f.Type())
+		t.raw(fmt.Sprintf("    %s %s\n", f.Name(), golfType))
+	}
+	t.raw("}\n")
+}
+
+// ── Top-level declarations ────────────────────────────────────────────────────
+
+func (t *translator) translateTopLevelDecl(cd *cc.CommonDeclaration) {
+	for _, id := range cd.InitDeclarators {
+		decl := id.Declarator
+		name := decl.Name()
+		if name == "" || strings.HasPrefix(name, "__") {
+			continue
+		}
+		if decl.IsTypename() {
+			// Emit a comment for non-struct primitive typedefs.
+			if golfT, ok := t.typedefMap[name]; ok {
+				if !strings.Contains(golfT, "UNSUPPORTED") && !strings.HasPrefix(golfT, "*") {
+					t.raw(fmt.Sprintf("\n// typedef %s = %s\n", name, golfT))
+				}
+			}
+			continue
+		}
+		typ := decl.Type()
+		if typ.Kind() == cc.Function {
+			// Forward declaration / prototype — emit as comment.
+			t.emitProtoComment(decl)
+			continue
+		}
+		if t.emittedGlobals[name] {
+			continue
+		}
+		t.emittedGlobals[name] = true
+		golfType := t.cTypeToGolf(typ)
+		if id.Initializer != nil {
+			initStr := t.xExpr(id.Initializer.Expression)
+			t.raw(fmt.Sprintf("\nvar %s %s = %s\n", name, golfType, initStr))
+		} else {
+			t.raw(fmt.Sprintf("\nvar %s %s\n", name, golfType))
+		}
+	}
+}
+
+func (t *translator) emitProtoComment(decl *cc.Declarator) {
+	if isBuiltin(decl) {
+		return
+	}
+	name := decl.Name()
+	ft, ok := decl.Type().(*cc.FunctionType)
+	if !ok {
+		return
+	}
+	t.raw(fmt.Sprintf("\n// func %s\n", t.funcSig(name, ft)))
 }
 
 // ── Function definition ───────────────────────────────────────────────────────
 
 func (t *translator) translateFuncDef(f *cc.FunctionDefinition) {
-	d := f.Declarator
-	name := d.Name()
-
-	ft, ok := d.Type().(*cc.FunctionType)
+	decl := f.Declarator
+	name := decl.Name()
+	ft, ok := decl.Type().(*cc.FunctionType)
 	if !ok {
-		t.writeln("// (skipping %s: not a function type)", name)
+		t.raw(fmt.Sprintf("\n// skipping %s: not a function type\n", name))
 		return
 	}
 
-	// Parameters
+	prev := t.curFunc
+	t.curFunc = name
+	// Reset static-name substitution map for this function.
+	prevStaticMap := t.staticNameMap
+	t.staticNameMap = make(map[string]string)
+
+	sig := t.funcSig(name, ft)
+	t.raw(fmt.Sprintf("\nfunc %s {\n", sig))
+	t.depth++
+	t.translateCompound(f.Body)
+	t.depth--
+	t.raw("}\n")
+
+	t.curFunc = prev
+	t.staticNameMap = prevStaticMap
+}
+
+func (t *translator) funcSig(name string, ft *cc.FunctionType) string {
 	var params []string
 	for _, p := range ft.Parameters() {
 		pname := p.Name()
-		ptype := cTypeToGolf(p.Type())
+		ptype := t.cTypeToGolf(p.Type())
+		if ptype == "" {
+			continue // void
+		}
 		if pname == "" {
 			params = append(params, ptype)
 		} else {
 			params = append(params, pname+" "+ptype)
 		}
 	}
-
-	// Return type (int main → no return in MiniGolf; void → nothing)
-	ret := ""
-	if ft.Result().Kind() != cc.Void &&
-		!(name == "main" && ft.Result().Kind() == cc.Int) {
-		ret = " " + cTypeToGolf(ft.Result())
+	if ft.IsVariadic() {
+		params = append(params, "_ ...any")
 	}
-
-	t.writeln("func %s(%s)%s {", name, strings.Join(params, ", "), ret)
-	t.depth++
-	t.translateCompound(f.Body)
-	t.depth--
-	t.writeln("}")
+	ret := ""
+	if ft.Result().Kind() != cc.Void {
+		if !(name == "main" && ft.Result().Kind() == cc.Int) {
+			ret = " " + t.cTypeToGolf(ft.Result())
+		}
+	}
+	return fmt.Sprintf("%s(%s)%s", name, strings.Join(params, ", "), ret)
 }
 
-// ── Statements ───────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Statement translation
+// ─────────────────────────────────────────────────────────────────────────────
 
 func (t *translator) translateCompound(cs *cc.CompoundStatement) {
 	if cs == nil {
@@ -146,6 +512,8 @@ func (t *translator) translateCompound(cs *cc.CompoundStatement) {
 
 func (t *translator) translateBlockItem(item cc.BlockItem) {
 	switch x := item.(type) {
+	case *cc.CommonDeclaration:
+		t.translateLocalDecl(x)
 	case *cc.ExpressionStatement:
 		t.translateExprStmt(x)
 	case *cc.IterationStatement:
@@ -154,27 +522,20 @@ func (t *translator) translateBlockItem(item cc.BlockItem) {
 		t.translateSelection(x)
 	case *cc.JumpStatement:
 		t.translateJump(x)
-	case *cc.CompoundStatement:
-		t.writeln("{")
-		t.depth++
-		t.translateCompound(x)
-		t.depth--
-		t.writeln("}")
-	case *cc.CommonDeclaration:
-		// local variable declarations (e.g. `int x = 5;`)
-		t.translateLocalDecl(x)
 	case *cc.LabeledStatement:
 		t.translateLabeled(x)
+	case *cc.CompoundStatement:
+		t.translateCompound(x)
+	case *cc.AsmStatement:
+		t.line("%s", t.unsupported("asm statement"))
 	default:
-		t.writeln("/* TODO block item: %T */", item)
+		t.line("%s", t.unsupported(fmt.Sprintf("block item %T", item)))
 	}
 }
 
 func (t *translator) translateStatement(stmt cc.Statement) {
 	switch x := stmt.(type) {
 	case *cc.CompoundStatement:
-		// Already inside a function; just translate the body inline
-		// (curly braces will be emitted by the parent).
 		t.translateCompound(x)
 	case *cc.ExpressionStatement:
 		t.translateExprStmt(x)
@@ -186,15 +547,16 @@ func (t *translator) translateStatement(stmt cc.Statement) {
 		t.translateJump(x)
 	case *cc.LabeledStatement:
 		t.translateLabeled(x)
+	case *cc.AsmStatement:
+		t.line("%s", t.unsupported("asm statement"))
 	default:
-		t.writeln("/* TODO statement: %T */", stmt)
+		t.line("%s", t.unsupported(fmt.Sprintf("statement %T", stmt)))
 	}
 }
 
-// translateBodyStmt handles the body of a control structure.  If the body is
-// a CompoundStatement the braces are already emitted by the caller; otherwise
-// we add the indented single statement.
-func (t *translator) translateBodyStmt(stmt cc.Statement) {
+// translateBody emits the contents of a braced block statement.
+// The opening/closing braces are emitted by the caller.
+func (t *translator) translateBody(stmt cc.Statement) {
 	if cs, ok := stmt.(*cc.CompoundStatement); ok {
 		t.translateCompound(cs)
 	} else {
@@ -204,274 +566,595 @@ func (t *translator) translateBodyStmt(stmt cc.Statement) {
 	}
 }
 
-// ExpressionStatement: `expr;`
+// ── Expression statement ──────────────────────────────────────────────────────
+
 func (t *translator) translateExprStmt(s *cc.ExpressionStatement) {
 	if s == nil || s.ExpressionList == nil {
 		return
 	}
-	t.writeln("%s", t.expr(s.ExpressionList))
+	// Comma-expression list at statement level → split into separate lines.
+	if el, ok := s.ExpressionList.(*cc.ExpressionList); ok && len(el.List) > 1 {
+		for _, e := range el.List {
+			t.line("%s", t.xExpr(e))
+		}
+		return
+	}
+	t.line("%s", t.xExpr(s.ExpressionList))
 }
 
-// IterationStatement: while, do-while, for
-func (t *translator) translateIteration(s *cc.IterationStatement) {
-	switch s.Case {
+// ── Local declarations ────────────────────────────────────────────────────────
 
-	case cc.IterationStatementWhile:
-		// while (cond) stmt
-		cond := t.expr(s.ExpressionList)
-		t.writeln("for %s {", cond)
-		t.depth++
-		t.translateBodyStmt(s.Statement)
-		t.depth--
-		t.writeln("}")
+func (t *translator) translateLocalDecl(cd *cc.CommonDeclaration) {
+	isStatic := false
+	for _, spec := range cd.DeclarationSpecifiers {
+		if sc, ok := spec.(*cc.StorageClassSpecifier); ok {
+			if sc.Case == cc.StorageClassSpecifierStatic {
+				isStatic = true
+			}
+		}
+	}
 
-	case cc.IterationStatementDo:
-		// do stmt while (cond)  → approximate as: for { stmt; if !cond { break } }
-		t.writeln("for {")
-		t.depth++
-		t.translateBodyStmt(s.Statement)
-		cond := t.expr(s.ExpressionList)
-		t.writeln("if !(%s) { break }", cond)
-		t.depth--
-		t.writeln("}")
+	for _, id := range cd.InitDeclarators {
+		decl := id.Declarator
+		name := decl.Name()
+		if name == "" || strings.HasPrefix(name, "__") {
+			continue
+		}
+		if decl.IsTypename() {
+			continue
+		}
+		typ := decl.Type()
+		golfType := t.cTypeToGolf(typ)
 
-	case cc.IterationStatementFor:
-		// for (init; cond; post)
-		init := ""
-		if s.ExpressionList != nil {
-			init = t.expr(s.ExpressionList)
+		if isStatic {
+			// Extract static local to a global with a mangled name.
+			gname := "_" + t.curFunc + "_" + name
+			if !t.emittedGlobals[gname] {
+				t.emittedGlobals[gname] = true
+				t.staticVars = append(t.staticVars, staticVar{gname, golfType})
+			}
+			// Register substitution: references to 'name' use 'gname' in this scope.
+			t.staticNameMap[name] = gname
+			// Inside the body, note the mapping.
+			t.line("// static %s → global %s", name, gname)
+			if id.Initializer != nil {
+				init := t.xExpr(id.Initializer.Expression)
+				t.line("%s = %s(%s)", gname, golfType, init)
+			}
+			continue
 		}
-		cond := ""
-		if s.ExpressionList2 != nil {
-			cond = t.expr(s.ExpressionList2)
-		}
-		post := ""
-		if s.ExpressionList3 != nil {
-			post = t.expr(s.ExpressionList3)
-		}
-		t.writeln("for %s; %s; %s {", init, cond, post)
-		t.depth++
-		t.translateBodyStmt(s.Statement)
-		t.depth--
-		t.writeln("}")
 
-	case cc.IterationStatementForDecl:
-		// for (T var = init; cond; post)  — declaration in init
-		initDecl := t.forInitDecl(s.Declaration)
-		cond := ""
-		if s.ExpressionList != nil {
-			cond = t.expr(s.ExpressionList)
+		if id.Initializer != nil {
+			init := t.xExpr(id.Initializer.Expression)
+			t.line("var %s %s = %s", name, golfType, init)
+		} else {
+			t.line("var %s %s", name, golfType)
 		}
-		post := ""
-		if s.ExpressionList2 != nil {
-			post = t.expr(s.ExpressionList2)
-		}
-		t.writeln("for %s; %s; %s {", initDecl, cond, post)
-		t.depth++
-		t.translateBodyStmt(s.Statement)
-		t.depth--
-		t.writeln("}")
 	}
 }
 
-// forInitDecl converts the declaration part of `for (T v = init; ...; ...)`.
-// Returns "v := T(init)" or "v := T" for zero init.
+// ── Iteration statements ──────────────────────────────────────────────────────
+
+func (t *translator) translateIteration(s *cc.IterationStatement) {
+	switch s.Case {
+	case cc.IterationStatementWhile:
+		cond := t.xExpr(s.ExpressionList)
+		// `while (1)` or `while (1 != 0)` → emit as `for {}` (infinite loop).
+		condSrc := strings.TrimSpace(cc.NodeSource(s.ExpressionList))
+		if condSrc == "1" {
+			t.line("for {")
+		} else {
+			t.line("while %s {", cond)
+		}
+		t.depth++
+		t.translateBody(s.Statement)
+		t.depth--
+		t.line("}")
+
+	case cc.IterationStatementDo:
+		// do { body } while (cond)
+		condSrc := strings.TrimSpace(cc.NodeSource(s.ExpressionList))
+		if condSrc == "0" {
+			// Common macro idiom do { ... } while (0) → just emit body.
+			t.translateBody(s.Statement)
+		} else {
+			// Real do-while → for { body; if !(cond) { break } }
+			t.line("for {")
+			t.depth++
+			t.translateBody(s.Statement)
+			cond := t.xExpr(s.ExpressionList)
+			t.line("if !(%s) { break }", cond)
+			t.depth--
+			t.line("}")
+		}
+
+	case cc.IterationStatementFor:
+		initStr := ""
+		if s.ExpressionList != nil {
+			initStr = t.xExpr(s.ExpressionList)
+		}
+		condStr := ""
+		if s.ExpressionList2 != nil {
+			condStr = t.xExpr(s.ExpressionList2)
+		}
+		postStr := ""
+		if s.ExpressionList3 != nil {
+			postStr = t.xExpr(s.ExpressionList3)
+		}
+		if initStr == "" && condStr == "" && postStr == "" {
+			t.line("for {")
+		} else {
+			t.line("for %s; %s; %s {", initStr, condStr, postStr)
+		}
+		t.depth++
+		t.translateBody(s.Statement)
+		t.depth--
+		t.line("}")
+
+	case cc.IterationStatementForDecl:
+		initStr := t.forInitDecl(s.Declaration)
+		condStr := ""
+		if s.ExpressionList != nil {
+			condStr = t.xExpr(s.ExpressionList)
+		}
+		postStr := ""
+		if s.ExpressionList2 != nil {
+			postStr = t.xExpr(s.ExpressionList2)
+		}
+		t.line("for %s; %s; %s {", initStr, condStr, postStr)
+		t.depth++
+		t.translateBody(s.Statement)
+		t.depth--
+		t.line("}")
+	}
+}
+
 func (t *translator) forInitDecl(decl cc.Declaration) string {
 	switch x := decl.(type) {
 	case *cc.CommonDeclaration:
 		if len(x.InitDeclarators) == 0 {
-			return "/* empty decl */"
+			return ""
 		}
 		id := x.InitDeclarators[0]
 		name := id.Declarator.Name()
-		golfType := cTypeToGolf(id.Declarator.Type())
+		golfType := t.cTypeToGolf(id.Declarator.Type())
 		if id.Initializer != nil {
-			initSrc := t.expr(id.Initializer.Expression)
-			return fmt.Sprintf("%s := %s(%s)", name, golfType, initSrc)
+			init := t.xExpr(id.Initializer.Expression)
+			return fmt.Sprintf("%s := %s", name, castInit(golfType, init))
 		}
 		return fmt.Sprintf("var %s %s", name, golfType)
 	case *cc.AutoDeclaration:
 		name := x.Declarator.Name()
-		golfType := cTypeToGolf(x.Declarator.Type())
+		golfType := t.cTypeToGolf(x.Declarator.Type())
 		if x.Initializer != nil {
-			initSrc := t.expr(x.Initializer.Expression)
-			return fmt.Sprintf("%s := %s(%s)", name, golfType, initSrc)
+			init := t.xExpr(x.Initializer.Expression)
+			return fmt.Sprintf("%s := %s", name, castInit(golfType, init))
 		}
 		return fmt.Sprintf("var %s %s", name, golfType)
 	default:
-		return fmt.Sprintf("/* TODO decl %T */", decl)
+		return t.unsupported(fmt.Sprintf("for-init decl %T", decl))
 	}
 }
 
-// SelectionStatement: if / switch
+// ── Selection statements ──────────────────────────────────────────────────────
+
 func (t *translator) translateSelection(s *cc.SelectionStatement) {
 	switch s.Case {
 	case cc.SelectionStatementIf:
-		cond := t.expr(s.ExpressionList)
-		t.writeln("if %s {", cond)
+		t.line("if %s {", t.xExpr(s.ExpressionList))
 		t.depth++
-		t.translateBodyStmt(s.Statement)
+		t.translateBody(s.Statement)
 		t.depth--
-		t.writeln("}")
+		t.line("}")
+
 	case cc.SelectionStatementIfElse:
-		cond := t.expr(s.ExpressionList)
-		t.writeln("if %s {", cond)
+		t.line("if %s {", t.xExpr(s.ExpressionList))
 		t.depth++
-		t.translateBodyStmt(s.Statement)
+		t.translateBody(s.Statement)
 		t.depth--
-		// Check if else branch is itself an if (else-if chain)
+		// Detect else-if chain.
 		if inner, ok := s.Statement2.(*cc.SelectionStatement); ok &&
-			inner.Case == cc.SelectionStatementIf {
-			t.writeln("} else {")
-			t.depth++
+			(inner.Case == cc.SelectionStatementIf || inner.Case == cc.SelectionStatementIfElse) {
+			t.raw(strings.Repeat("    ", t.depth) + "} else ")
 			t.translateSelection(inner)
-			t.depth--
-			t.writeln("}")
 		} else {
-			t.writeln("} else {")
+			t.line("} else {")
 			t.depth++
-			t.translateBodyStmt(s.Statement2)
+			t.translateBody(s.Statement2)
 			t.depth--
-			t.writeln("}")
+			t.line("}")
 		}
+
 	case cc.SelectionStatementSwitch:
-		t.writeln("switch %s {", t.expr(s.ExpressionList))
+		t.line("switch %s {", t.xExpr(s.ExpressionList))
 		t.depth++
-		t.translateBodyStmt(s.Statement)
+		t.translateBody(s.Statement)
 		t.depth--
-		t.writeln("}")
+		t.line("}")
 	}
 }
 
-// JumpStatement: return / break / continue
+// ── Jump statements ───────────────────────────────────────────────────────────
+
 func (t *translator) translateJump(s *cc.JumpStatement) {
 	switch s.Case {
 	case cc.JumpStatementReturn:
 		if s.ExpressionList != nil {
-			t.writeln("return %s", t.expr(s.ExpressionList))
+			t.line("return %s", t.xExpr(s.ExpressionList))
 		} else {
-			t.writeln("return")
+			t.line("return")
 		}
 	case cc.JumpStatementBreak:
-		t.writeln("break")
+		t.line("break")
 	case cc.JumpStatementContinue:
-		t.writeln("continue")
+		t.line("continue")
+	case cc.JumpStatementGoto:
+		label := strings.TrimSpace(cc.NodeSource(s))
+		label = strings.TrimPrefix(label, "goto")
+		t.line("%s", t.unsupported("goto "+strings.TrimSpace(label)))
 	default:
-		t.writeln("/* TODO jump: %v */", s.Case)
+		t.line("%s", t.unsupported(fmt.Sprintf("jump %v", s.Case)))
 	}
 }
 
-// LabeledStatement: case / default / label
+// ── Labeled statements ────────────────────────────────────────────────────────
+
 func (t *translator) translateLabeled(s *cc.LabeledStatement) {
 	switch s.Case {
 	case cc.LabeledStatementCaseLabel:
 		t.depth--
-		t.writeln("case %s:", t.expr(s.Expression))
+		t.line("case %s:", t.xExpr(s.Expression))
 		t.depth++
-		t.translateStatement(s.Statement)
+		if !isBreakOnly(s.Statement) {
+			t.translateStatement(s.Statement)
+		}
+	case cc.LabeledStatementRange:
+		t.depth--
+		t.line("case %s ... %s:", t.xExpr(s.Expression), t.xExpr(s.Expression2))
+		t.depth++
+		if !isBreakOnly(s.Statement) {
+			t.translateStatement(s.Statement)
+		}
 	case cc.LabeledStatementDefault:
 		t.depth--
-		t.writeln("default:")
+		t.line("default:")
 		t.depth++
-		t.translateStatement(s.Statement)
+		if !isBreakOnly(s.Statement) {
+			t.translateStatement(s.Statement)
+		}
 	case cc.LabeledStatementLabel:
-		name := cc.NodeSource(s)
-		t.writeln("/* label: %s */", strings.Split(name, ":")[0])
+		lbl := s.Token.SrcStr()
+		t.line("/* label: %s */", lbl)
 		t.translateStatement(s.Statement)
+	default:
+		t.line("%s", t.unsupported(fmt.Sprintf("labeled %v", s.Case)))
 	}
 }
 
-// translateLocalDecl: local variable declaration like `int x = 5;`
-func (t *translator) translateLocalDecl(cd *cc.CommonDeclaration) {
-	for _, id := range cd.InitDeclarators {
-		d := id.Declarator
-		name := d.Name()
-		if name == "" {
-			continue
-		}
-		// __func__ is a magic compiler-injected variable; skip it.
-		if strings.HasPrefix(name, "__") {
-			continue
-		}
-		golfType := cTypeToGolf(d.Type())
-		if id.Initializer != nil {
-			init := t.expr(id.Initializer.Expression)
-			t.writeln("var %s %s = %s(%s)", name, golfType, golfType, init)
-		} else {
-			t.writeln("var %s %s", name, golfType)
-		}
-	}
+func isBreakOnly(stmt cc.Statement) bool {
+	js, ok := stmt.(*cc.JumpStatement)
+	return ok && js.Case == cc.JumpStatementBreak
 }
 
-// ── Expressions ──────────────────────────────────────────────────────────────
-//
-// For simple scalar expressions, C and MiniGolf syntax are nearly identical.
-// We use cc.NodeSource(n) to retrieve the original C source text and apply
-// only the minimal transformations needed.
+// ─────────────────────────────────────────────────────────────────────────────
+// Expression translation
+// ─────────────────────────────────────────────────────────────────────────────
 
-func (t *translator) expr(n cc.Expression) string {
+// xExpr recursively translates a C expression to MiniGolf syntax.
+func (t *translator) xExpr(n cc.Expression) string {
 	if n == nil {
 		return ""
 	}
-	// NodeSource reconstructs the source text from the token stream — almost
-	// always valid MiniGolf for simple expressions.
-	src := cc.NodeSource(n)
-	// Trim trailing semicolons (ExpressionStatement sometimes includes them).
-	src = strings.TrimRight(src, ";")
-	return strings.TrimSpace(src)
-}
+	switch x := n.(type) {
 
-// ── Type mapping ─────────────────────────────────────────────────────────────
+	case *cc.ExpressionList:
+		if len(x.List) == 1 {
+			return t.xExpr(x.List[0])
+		}
+		// Comma-expr in expression context is problematic.
+		parts := make([]string, len(x.List))
+		for i, e := range x.List {
+			parts[i] = t.xExpr(e)
+		}
+		return t.unsupported("comma-expr(" + strings.Join(parts, ", ") + ")")
 
-// cTypeToGolf converts a C type to the corresponding MiniGolf type name.
-func cTypeToGolf(t cc.Type) string {
-	if t == nil {
-		panic("/* nil type */")
-	}
-	switch t.Kind() {
-	case cc.Void:
-		return "" // MiniGolf functions with no return type just omit it
-	case cc.Int, cc.Short, cc.Long, cc.LongLong,
-		cc.SChar, cc.Int8, cc.Int16, cc.Int32, cc.Int64:
-		return "int"
-	case cc.UInt, cc.UShort, cc.ULong, cc.ULongLong,
-		cc.UChar, cc.UInt8, cc.UInt16, cc.UInt32, cc.UInt64:
-		return "word" // unsigned → word in MiniGolf
-	case cc.Char:
-		return "byte"
-	case cc.Bool:
-		return "bool"
-	case cc.Float, cc.Double, cc.LongDouble:
-		panic("/* float: unsupported */")
-	case cc.Ptr:
-		if pt, ok := t.(*cc.PointerType); ok {
-			elem := cTypeToGolf(pt.Elem())
-			if elem == "" {
-				return "*byte" // void* → *byte
-			}
-			return "*" + elem
+	case *cc.PrimaryExpression:
+		return t.xPrimary(x)
+
+	case *cc.SelectorExpr:
+		base := t.xExpr(x.Expr)
+		field := x.Sel.SrcStr()
+		// Both . and -> become . in MiniGolf (auto-deref through pointer).
+		return base + "." + field
+
+	case *cc.IndexExpr:
+		return t.xExpr(x.Expr) + "[" + t.xExpr(x.Index) + "]"
+
+	case *cc.CallExpr:
+		return t.xCall(x)
+
+	case *cc.PostfixExpr:
+		base := t.xExpr(x.Expr)
+		if x.Dec {
+			return base + "--"
 		}
-		return "*byte"
-	case cc.Struct:
-		td := t.Typedef()
-		if td != nil && td.Name() != "" {
-			return td.Name()
+		return base + "++"
+
+	case *cc.PrefixExpr:
+		base := t.xExpr(x.Expr)
+		if x.Dec {
+			return "--" + base
 		}
-		return "/* struct */"
-	case cc.Array:
-		return "/* array */"
+		return "++" + base
+
+	case *cc.UnaryExpr:
+		return t.xUnary(x)
+
+	case *cc.CastExpr:
+		return t.xCast(x)
+
+	case *cc.BinaryExpression:
+		lhs := t.xExpr(x.Lhs)
+		rhs := t.xExpr(x.Rhs)
+		op := binaryOpStr(x.Op)
+		return lhs + " " + op + " " + rhs
+
+	case *cc.AssignmentExpression:
+		lhs := t.xExpr(x.Lhs)
+		rhs := t.xExpr(x.Rhs)
+		op := assignOpStr(x.Op)
+		return lhs + " " + op + " " + rhs
+
+	case *cc.ConditionalExpression:
+		return t.xConditional(x)
+
 	default:
-		// Fall back to what cc prints; caller can fix manually.
-		panic("/* " + t.String() + " */")
+		// Fallback: NodeSource with -> → . post-processing.
+		src := cc.NodeSource(n)
+		src = strings.TrimRight(src, ";")
+		src = strings.ReplaceAll(src, "->", ".")
+		return strings.TrimSpace(src)
 	}
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+func (t *translator) xPrimary(x *cc.PrimaryExpression) string {
+	switch x.Case {
+	case cc.PrimaryExpressionIdent:
+		name := x.Token.SrcStr()
+		// Substitute static-local names with their mangled global names.
+		if gname, ok := t.staticNameMap[name]; ok {
+			return gname
+		}
+		return name
+	case cc.PrimaryExpressionInt:
+		return sanitizeIntLit(x.Token.SrcStr())
+	case cc.PrimaryExpressionFloat:
+		return x.Token.SrcStr()
+	case cc.PrimaryExpressionChar:
+		return x.Token.SrcStr()
+	case cc.PrimaryExpressionString:
+		return x.Token.SrcStr()
+	case cc.PrimaryExpressionExpr:
+		return "(" + t.xExpr(x.ExpressionList) + ")"
+	default:
+		return t.unsupported(fmt.Sprintf("primary %v", x.Case))
+	}
+}
 
-// isBuiltin returns true for declarations coming from the predefined / system
-// sources so they are excluded from translation.
+func (t *translator) xCall(x *cc.CallExpr) string {
+	fnStr := t.xExpr(x.Func)
+
+	// __builtin_va_* → unsupported
+	if strings.HasPrefix(fnStr, "__builtin_va") {
+		return t.unsupported("va_arg/va_start: " + fnStr)
+	}
+
+	// Collect arguments in source order (first to last).
+	var args []string
+	for ael := x.Arguments; ael != nil; ael = ael.ArgumentExpressionList {
+		args = append(args, t.xExpr(ael.Expression))
+	}
+	return fnStr + "(" + strings.Join(args, ", ") + ")"
+}
+
+func (t *translator) xUnary(x *cc.UnaryExpr) string {
+	inner := t.xExpr(x.Expr)
+	switch x.Case {
+	case cc.UnaryExpressionAddrof:
+		return "&" + inner
+	case cc.UnaryExpressionDeref:
+		return "*" + inner
+	case cc.UnaryExpressionPlus:
+		return "+" + inner
+	case cc.UnaryExpressionMinus:
+		return "-" + inner
+	case cc.UnaryExpressionNot:
+		return "!" + inner
+	case cc.UnaryExpressionCpl:
+		return "^" + inner
+	default:
+		return t.unsupported(fmt.Sprintf("unary %v (%s)", x.Case, inner))
+	}
+}
+
+func (t *translator) xCast(x *cc.CastExpr) string {
+	inner := t.xExpr(x.Expr)
+	golfType := t.typeNameToGolf(x.TypeName)
+	if golfType == "" {
+		// Cast to void → just the inner expression.
+		return inner
+	}
+	if strings.Contains(golfType, "UNSUPPORTED") || strings.HasPrefix(golfType, "/*") {
+		if *keepGoing {
+			return fmt.Sprintf("/* cast(%s) */(%s)", golfType, inner)
+		}
+		return inner
+	}
+	// Pointer types need outer parens: (*T)(val) not *T(val).
+	if strings.HasPrefix(golfType, "*") {
+		return "(" + golfType + ")(" + inner + ")"
+	}
+	return golfType + "(" + inner + ")"
+}
+
+// xConditional handles ternary  a ? b : c.
+// MiniGolf has no ternary operator; we hoist a temp variable.
+func (t *translator) xConditional(x *cc.ConditionalExpression) string {
+	cond := t.xExpr(x.Condition)
+	thn := t.xExpr(x.Then)
+	els := t.xExpr(x.Else)
+	if *keepGoing {
+		return fmt.Sprintf("/* TERNARY(%s) ? (%s) : (%s) */0", cond, thn, els)
+	}
+	// Hoist: emit lines for temp var, then return its name.
+	tmp := t.tempVar()
+	t.line("var %s = %s", tmp, els)
+	t.line("if %s { %s = %s }", cond, tmp, thn)
+	return tmp
+}
+
+func (t *translator) typeNameToGolf(tn *cc.TypeName) string {
+	if tn == nil {
+		return ""
+	}
+	return t.cTypeToGolf(tn.Type())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+func sanitizeIntLit(s string) string {
+	s = strings.ToLower(s)
+	s = strings.TrimRight(s, "ul")
+	return s
+}
+
+func binaryOpStr(op cc.BinaryOperation) string {
+	switch op {
+	case cc.BinaryOperationAdd:
+		return "+"
+	case cc.BinaryOperationSub:
+		return "-"
+	case cc.BinaryOperationMul:
+		return "*"
+	case cc.BinaryOperationDiv:
+		return "/"
+	case cc.BinaryOperationMod:
+		return "%"
+	case cc.BinaryOperationOr:
+		return "|"
+	case cc.BinaryOperationAnd:
+		return "&"
+	case cc.BinaryOperationXor:
+		return "^"
+	case cc.BinaryOperationLsh:
+		return "<<"
+	case cc.BinaryOperationRsh:
+		return ">>"
+	case cc.BinaryOperationEq:
+		return "=="
+	case cc.BinaryOperationNeq:
+		return "!="
+	case cc.BinaryOperationLt:
+		return "<"
+	case cc.BinaryOperationGt:
+		return ">"
+	case cc.BinaryOperationLeq:
+		return "<="
+	case cc.BinaryOperationGeq:
+		return ">="
+	case cc.BinaryOperationLOr:
+		return "||"
+	case cc.BinaryOperationLAnd:
+		return "&&"
+	default:
+		return fmt.Sprintf("/* binop %d */", int(op))
+	}
+}
+
+func assignOpStr(op cc.AssignmentOperation) string {
+	switch op {
+	case cc.AssignmentOperationAssign:
+		return "="
+	case cc.AssignmentOperationMul:
+		return "*="
+	case cc.AssignmentOperationDiv:
+		return "/="
+	case cc.AssignmentOperationMod:
+		return "%="
+	case cc.AssignmentOperationAdd:
+		return "+="
+	case cc.AssignmentOperationSub:
+		return "-="
+	case cc.AssignmentOperationLsh:
+		return "<<="
+	case cc.AssignmentOperationRsh:
+		return ">>="
+	case cc.AssignmentOperationAnd:
+		return "&="
+	case cc.AssignmentOperationXor:
+		return "^="
+	case cc.AssignmentOperationOr:
+		return "|="
+	default:
+		return fmt.Sprintf("/* assignop%d */=", int(op))
+	}
+}
+
+// tokenStr safely calls SrcStr() on a cc.Token return value.
+// SrcStr has a pointer receiver, so we must store the token in a local first.
+func tokenStr(tok cc.Token) string {
+	t := tok
+	return t.SrcStr()
+}
+
+func structTag(typ cc.Type) string {
+	inner := stripPtr(typ)
+	if inner.Kind() == cc.Struct {
+		if st, ok := inner.(*cc.StructType); ok {
+			return tokenStr(st.Tag())
+		}
+	}
+	return ""
+}
+
+func stripPtr(typ cc.Type) cc.Type {
+	if typ.Kind() == cc.Ptr {
+		if pt, ok := typ.(*cc.PointerType); ok {
+			return pt.Elem()
+		}
+	}
+	return typ
+}
+
+// capitalise uppercases the first letter of s.
+func capitalise(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func isBuiltin(d *cc.Declarator) bool {
 	pos := d.Position()
-	return strings.HasPrefix(pos.Filename, "<") ||
-		strings.HasPrefix(d.Name(), "__")
+	return strings.HasPrefix(pos.Filename, "<") || strings.HasPrefix(d.Name(), "__")
+}
+
+func isBuiltinDecl(cd *cc.CommonDeclaration) bool {
+	if len(cd.InitDeclarators) == 0 {
+		return false
+	}
+	for _, id := range cd.InitDeclarators {
+		if !isBuiltin(id.Declarator) {
+			return false
+		}
+	}
+	return true
+}
+
+func reverse(s []string) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
 }
