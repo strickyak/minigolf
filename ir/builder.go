@@ -1005,6 +1005,8 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 			return rtype
 		case "uint":
 			return rtype
+		case "bool":
+			return rtype
 		case "const_integer":
 			return rtype
 		default:
@@ -1020,6 +1022,8 @@ func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string,
 		case "int":
 			return ltype
 		case "uint":
+			return ltype
+		case "bool":
 			return ltype
 		case "const_integer":
 			return ltype

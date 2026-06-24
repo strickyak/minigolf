@@ -1,6 +1,7 @@
 b= 88
 w= 888
-s= hello
+s[b]= hello
+*b= world
 b= 111
 b= 110
 b= 101

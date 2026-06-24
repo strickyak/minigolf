@@ -7,6 +7,10 @@ func main() {
 	printany(word(888))
 	printany("hello")
 
+	worldBase := "world".Base
+	worldBasePtr := (*byte)(worldBase)
+	printany(worldBasePtr) /* bug */
+
 	s := "one two three"
 	pre2.printany2(s[0])
 	pre2.printany2(s[1])

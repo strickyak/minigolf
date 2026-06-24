@@ -17,7 +17,7 @@ import (
 	"github.com/strickyak/minigolf/m6809"
 	"github.com/strickyak/minigolf/opt"
 	"github.com/strickyak/minigolf/parser"
-	"github.com/strickyak/minigolf/prelude"
+	// "github.com/strickyak/minigolf/prelude"
 	"github.com/strickyak/minigolf/semantic"
 	"github.com/strickyak/minigolf/x86_64"
 )
@@ -50,12 +50,12 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 		}
 	}
 
-	// If "prelude.golf" is not found in the path, we use the version included in this compiler.
-	if base == "prelude.golf" {
-		content = []byte(prelude.Source)
-		err = nil
-		return
-	}
+	//disabled// // If "prelude.golf" is not found in the path, we use the version included in this compiler.
+	//disabled// if base == "prelude.golf" {
+	//disabled// 	content = []byte(prelude.Source)
+	//disabled// 	err = nil
+	//disabled// 	return
+	//disabled// }
 
 	return nil, fmt.Errorf("Cannot find filename %q in path %v", base, path)
 }
