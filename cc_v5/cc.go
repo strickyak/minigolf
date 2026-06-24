@@ -7,17 +7,17 @@
 
 // Package cc is a C99 compiler front end.
 //
-// Online documentation
+// # Online documentation
 //
 // See https://godoc.org/modernc.org/cc/v4.
 //
-// Links
+// # Links
 //
 // Referenced from elsewhere:
 //
-//  [0]: http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf
-//  [1]: https://www.spinellis.gr/blog/20060626/cpp.algo.pdf
-//  [2]: https://jhjourdan.mketjh.fr/pdf/jourdan2017simple.pdf
+//	[0]: http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf
+//	[1]: https://www.spinellis.gr/blog/20060626/cpp.algo.pdf
+//	[2]: https://jhjourdan.mketjh.fr/pdf/jourdan2017simple.pdf
 package cc // import "modernc.org/cc/v5"
 
 import (
