@@ -1,0 +1,13 @@
+/*
+#include <stdio.h>
+
+void println(unsigned x) {
+    printf("%u\n", x);
+}
+*/
+
+int main() {
+    for (unsigned i = 0; i < 10; i++) {
+        println(i);
+    }
+}
