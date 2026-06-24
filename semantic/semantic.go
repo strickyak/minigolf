@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
+	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/parser"
 	"github.com/strickyak/minigolf/token"
 )
@@ -551,7 +552,7 @@ func (a *Analyzer) ResolveFunc(expr ast.Expression) *ast.FuncStatement {
 		if qname != "" {
 			instName := qname
 			for _, indexExpr := range idx.Indices {
-				instName += "_" + a.exprToString(indexExpr)
+				instName += "_" + strings.ReplaceAll(a.exprToString(indexExpr), "*", "P__")
 			}
 			qname = instName
 		}
@@ -853,20 +854,45 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 }
 
 func (a *Analyzer) substituteGenericTokens(instName string, argTyps []ast.Expression, tmpl *GenericTemplate, instantiateToken *token.Token) []token.Token {
+	expandedFrom := ""
+	if instantiateToken != nil {
+		expandedFrom = fmt.Sprintf("expanded %s at %s:%d", instName, instantiateToken.Filename, instantiateToken.Line)
+	}
+
 	var res []token.Token
 	for _, tok := range tmpl.Tokens {
-		newTok := tok
-		if instantiateToken != nil {
-			newTok.ExpandedFrom = fmt.Sprintf("expanded %s at %s:%d", instName, instantiateToken.Filename, instantiateToken.Line)
-		}
+		replaced := false
 		if tok.Type == token.IDENT {
 			for i, tp := range tmpl.TypeParams {
 				if tok.Literal == tp && i < len(argTyps) {
-					newTok.Literal = a.exprToRawString(argTyps[i])
+					rawStr := a.exprToRawString(argTyps[i])
+					argTokens := lexer.Lex(rawStr, "generic_inst")
+					// Trim EOF and SEMICOLON
+					for len(argTokens) > 0 && (argTokens[len(argTokens)-1].Type == token.EOF || argTokens[len(argTokens)-1].Type == token.SEMICOLON) {
+						argTokens = argTokens[:len(argTokens)-1]
+					}
+					// Wrap pointer type arguments in parentheses to prevent
+					// parser ambiguity (e.g., *byte must not merge with adjacent * tokens).
+					if len(argTokens) > 1 && argTokens[0].Type == token.ASTERISK {
+						wrapped := []token.Token{{Type: token.LPAREN, Literal: "("}}
+						wrapped = append(wrapped, argTokens...)
+						wrapped = append(wrapped, token.Token{Type: token.RPAREN, Literal: ")"})
+						argTokens = wrapped
+					}
+					for j := range argTokens {
+						argTokens[j].ExpandedFrom = expandedFrom
+					}
+					res = append(res, argTokens...)
+					replaced = true
+					break
 				}
 			}
 		}
-		res = append(res, newTok)
+		if !replaced {
+			newTok := tok
+			newTok.ExpandedFrom = expandedFrom
+			res = append(res, newTok)
+		}
 	}
 	res = append(res, token.Token{Type: token.EOF, Literal: ""})
 	return res
@@ -1108,7 +1134,7 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			// It's a generic instantiation!
 			instName := qname
 			for _, idx := range e.Indices {
-				instName += "_" + a.exprToString(idx) // Simplified
+				instName += "_" + strings.ReplaceAll(a.exprToString(idx), "*", "P__") // Simplified
 			}
 
 			if !a.suppressErrors {

@@ -56,7 +56,7 @@ type Smap[T any] struct {
 	values slice[T]
 }
 
-func (o *Smap[T]) Lookup(key /* interned */ string) (T, bool) {
+func (o *Smap[T]) Lookup(key string) (T, bool) {
 	for i, e := range o.keys {
 		if e == key { // string comparison, slow.
 			return o.values[i], true
@@ -67,7 +67,7 @@ func (o *Smap[T]) Lookup(key /* interned */ string) (T, bool) {
 }
 
 // Insert returns true if the key is fresh, false if value is replaced at old key slot.
-func (o *Smap[T]) Insert(key /* interned */ string, value T) bool {
+func (o *Smap[T]) Insert(key string, value T) bool {
 	for i, e := range o.keys {
 		if e == key { // string comparison, slow.
 			o.values[i] = value

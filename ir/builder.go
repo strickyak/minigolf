@@ -361,6 +361,17 @@ func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate,
 			argTokens = argTokens[:len(argTokens)-1]
 		}
 
+		// Wrap multi-token type arguments in parentheses when the first token
+		// is a pointer star, to prevent parser ambiguity (e.g., *byte must not
+		// merge with adjacent * tokens). Don't wrap other multi-token types
+		// like qualified names (prelude.slice_byte) since parens break var decls.
+		if len(argTokens) > 1 && argTokens[0].Type == token.ASTERISK {
+			wrapped := []token.Token{{Type: token.LPAREN, Literal: "("}}
+			wrapped = append(wrapped, argTokens...)
+			wrapped = append(wrapped, token.Token{Type: token.RPAREN, Literal: ")"})
+			argTokens = wrapped
+		}
+
 		// and add it to the list
 		for i := range argTokens {
 			if instantiateToken != nil {
@@ -1930,7 +1941,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			for _, idx := range idxExpr.Indices {
 				argTyp := b.astToIRType(idx)
 				argTyps = append(argTyps, argTyp)
-				instTypStr += "_" + argTyp.Name
+				instTypStr += "_" + strings.ReplaceAll(argTyp.Name, "*", "P__")
 			}
 			funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 			if _, ok := b.funcs[funcName]; !ok {
@@ -1965,7 +1976,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 							argTyp = TypeWord
 						}
 						argTyps = append(argTyps, argTyp)
-						instTypStr += "_" + argTyp.Name
+						instTypStr += "_" + strings.ReplaceAll(argTyp.Name, "*", "P__")
 					}
 					funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 					if _, ok := b.funcs[funcName]; !ok {

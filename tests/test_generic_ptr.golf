@@ -1,0 +1,21 @@
+package main
+
+func peek[T any](addr word) T {
+	return *((*T)(addr))
+}
+
+func poke[T any](addr word, value T) {
+	*((*T)(addr)) = value
+}
+
+func main() {
+	var x word = 42
+	var p *word = &x
+
+	// peek with a pointer type argument: peek[*word]
+	var pp *word = peek[*word](word(&p))
+	println(*pp)
+
+	// peek with simple types (regression check)
+	println(peek[word](word(&x)))
+}
