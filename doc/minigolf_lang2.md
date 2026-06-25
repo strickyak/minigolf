@@ -117,14 +117,47 @@ Actually in MiniGolf, *all types* are *copied by value*.  In Go, there are two t
 
 ### 3.5 Type `slice[T]`
 
-*   `slice[T]` (for any type T) is internally backed by a struct containing 3 fields:
+A slice references some range of memory as contiguous elements of type T.
+As with pointers in C99, you are responsible for keeping track of where that
+memory came from and how it is to be freed.  There is no safety here.
+
+* `slice[T]` (for any type T) is internally backed by a struct containing 3 fields:
     *   `Base word`: A pointer to the Base address, the address of the first element, with the index 0.
     *   `Len word`: the length of the slice, counted in elements of type T, not in bytes.
     *   `Cap word`: the capacity of the slice, counted in elements of type T, not in bytes.
         More elements of type T can be allocated from the storage behind the slice,
         up until `.Len == .Cap`.
 
-* A slice must be backed by memory from somewhere.
+*   Index syntax is supported for elements of slices: `x := mySlice[index]`
+*   Indexes may be checked, if enabled in the compiler
+*   Assignment is also supported by index: `mySlice[index] = x`
+*   You may chop a slice into a subslice: `part := mySlice[ inclusive_start : exclusive_limit ]`
+
+If your compiler mode has a heap mechanism like malloc/free or a garbage-collected heap allocation
+mechanism, then you may use the Append method to construct slices:
+
+```
+func g() {
+    ...
+
+    var v slice[word]  // it starts out empty (the "zero value")
+    for i := range 10 {
+        v.Append(i)   // allocs and re-allocs/copies/frees the slice v as needed.
+    }
+    if v.Len != 10 {
+        panic("OHNO")
+    }
+
+    ...
+}
+```
+
+Append is defined in the prelude, if you need to change it.
+
+If you know what you are doing, you are also welcome to construct your own slices:
+```go
+    v := slice[word]{ Base: myBase, Len: myLen, Cap: myCap }
+```
 
 ### 3.6 Type `string`
 
