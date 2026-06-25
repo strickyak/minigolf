@@ -226,6 +226,15 @@ func (o *slice[T]) Chop(start word, limit word) slice[T] {
 	return z
 }
 
+func (o *slice[T]) Pop() T {
+	if o.Len == 0 {
+		panic("calling Pop() on empty slice")
+	}
+	result := o.Get(0)
+	*o = o.Chop(1, o.Len)
+	return result
+}
+
 // makeslice[T](n) is like make([]T, n) in golang.
 func makeslice[T any](n word) slice[T] {
 	var z slice[T]

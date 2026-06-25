@@ -302,6 +302,25 @@ func (l *Lexer) readIdentifier() string {
 
 func (l *Lexer) readNumber() string {
 	position := l.position
+	// Hex literal: 0x... or 0X...
+	if l.ch == '0' && (l.peekChar() == 'x' || l.peekChar() == 'X') {
+		l.readChar() // consume 'x'/'X'
+		l.readChar() // move to first hex digit
+		for isHexDigit(l.ch) {
+			l.readChar()
+		}
+		return l.input[position:l.position]
+	}
+	// Octal literal: 0 followed by more digits
+	// (plain '0' with no following digit is fine too)
+	if l.ch == '0' && isDigit(l.peekChar()) {
+		l.readChar() // move past leading '0'
+		for isDigit(l.ch) {
+			l.readChar()
+		}
+		return l.input[position:l.position]
+	}
+	// Decimal literal
 	for isDigit(l.ch) {
 		l.readChar()
 	}
@@ -343,6 +362,12 @@ func isLetter(ch byte) bool {
 
 func isDigit(ch byte) bool {
 	return '0' <= ch && ch <= '9'
+}
+
+func isHexDigit(ch byte) bool {
+	return ('0' <= ch && ch <= '9') ||
+		('a' <= ch && ch <= 'f') ||
+		('A' <= ch && ch <= 'F')
 }
 
 func (l *Lexer) skipWhitespace() {

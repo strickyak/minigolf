@@ -98,8 +98,11 @@ type translator struct {
 	// current function name (for static-var naming)
 	curFunc string
 
+	// va_list variable name in the current variadic function (e.g. "ap")
+	curVaName string
+
 	// static locals: local name → mangled global name for current function
-	staticNameMap   map[string]string
+	staticNameMap map[string]string
 }
 
 func newTranslator() *translator {
@@ -146,8 +149,12 @@ func (t *translator) cTypeToGolf(typ cc.Type) string {
 	}
 	// If this type has a typedef name, consult our map first.
 	if td := typ.Typedef(); td != nil {
-		name := td.Name()
-		if gname, ok := t.typedefMap[name]; ok {
+		tdName := td.Name()
+		// va_list (and its platform aliases) → slice[any]
+		if tdName == "va_list" || tdName == "__gnuc_va_list" || tdName == "__builtin_va_list" {
+			return "slice[any]"
+		}
+		if gname, ok := t.typedefMap[tdName]; ok {
 			return gname
 		}
 	}
@@ -456,6 +463,8 @@ func (t *translator) translateFuncDef(f *cc.FunctionDefinition) {
 
 	prev := t.curFunc
 	t.curFunc = name
+	prevVaName := t.curVaName
+	t.curVaName = t.vaListName(f.Body)
 	// Reset static-name substitution map for this function.
 	prevStaticMap := t.staticNameMap
 	t.staticNameMap = make(map[string]string)
@@ -468,6 +477,7 @@ func (t *translator) translateFuncDef(f *cc.FunctionDefinition) {
 	t.raw("}\n")
 
 	t.curFunc = prev
+	t.curVaName = prevVaName
 	t.staticNameMap = prevStaticMap
 }
 
@@ -486,7 +496,11 @@ func (t *translator) funcSig(name string, ft *cc.FunctionType) string {
 		}
 	}
 	if ft.IsVariadic() {
-		params = append(params, "_ ...any")
+		vaName := t.curVaName
+		if vaName == "" {
+			vaName = "_"
+		}
+		params = append(params, vaName+" ...any")
 	}
 	ret := ""
 	if ft.Result().Kind() != cc.Void {
@@ -627,7 +641,10 @@ func (t *translator) translateExprStmtOne(e cc.Expression) {
 			return
 		}
 	}
-	t.line("%s", t.xExpr(e))
+	result := t.xExpr(e)
+	if result != "" {
+		t.line("%s", result)
+	}
 }
 
 // ── Local declarations ────────────────────────────────────────────────────────
@@ -652,6 +669,11 @@ func (t *translator) translateLocalDecl(cd *cc.CommonDeclaration) {
 			continue
 		}
 		typ := decl.Type()
+		// va_list declarations are no-ops: the variable is already a parameter
+		// (named by curVaName) after our varargs transformation.
+		if t.isVaListType(typ) {
+			continue
+		}
 		golfType := t.cTypeToGolf(typ)
 
 		if isStatic {
@@ -1055,9 +1077,14 @@ func (t *translator) xPrimary(x *cc.PrimaryExpression) string {
 func (t *translator) xCall(x *cc.CallExpr) string {
 	fnStr := t.xExpr(x.Func)
 
-	// __builtin_va_* → unsupported
+	// __builtin_va_start / __builtin_va_end → no-op (va list is a parameter)
+	if fnStr == "__builtin_va_start" || fnStr == "__builtin_va_end" {
+		return ""
+	}
+	// __builtin_va_arg_impl is handled by tryVaArg() in the surrounding
+	// *((*T)(...)) dereference pattern; if seen bare, emit unsupported.
 	if strings.HasPrefix(fnStr, "__builtin_va") {
-		return t.unsupported("va_arg/va_start: " + fnStr)
+		return t.unsupported("bare " + fnStr)
 	}
 
 	// Collect arguments in source order (first to last).
@@ -1069,22 +1096,26 @@ func (t *translator) xCall(x *cc.CallExpr) string {
 }
 
 func (t *translator) xUnary(x *cc.UnaryExpr) string {
-	inner := t.xExpr(x.Expr)
 	switch x.Case {
 	case cc.UnaryExpressionAddrof:
-		return "&" + inner
+		return "&" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionDeref:
-		return "*" + inner
+		// Detect: *((*T)(__builtin_va_arg_impl(ap)))
+		// → peek[T](ap.Pop().BaseAddr)
+		if va := t.tryVaArg(x.Expr); va != "" {
+			return va
+		}
+		return "*" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionPlus:
-		return "+" + inner
+		return "+" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionMinus:
-		return "-" + inner
+		return "-" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionNot:
-		return "!" + inner
+		return "!" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionCpl:
-		return "^" + inner
+		return "^" + t.xExpr(x.Expr)
 	default:
-		return t.unsupported(fmt.Sprintf("unary %v (%s)", x.Case, inner))
+		return t.unsupported(fmt.Sprintf("unary %v (%s)", x.Case, t.xExpr(x.Expr)))
 	}
 }
 
@@ -1257,7 +1288,82 @@ func isBuiltinDecl(cd *cc.CommonDeclaration) bool {
 	return true
 }
 
-// castInit wraps a type+value pair into a MiniGolf cast expression.
+// ── va_list / varargs helpers ─────────────────────────────────────────────────
+
+// isVaListType reports whether typ is a C va_list type (or its platform aliases).
+func (t *translator) isVaListType(typ cc.Type) bool {
+	if typ == nil {
+		return false
+	}
+	td := typ.Typedef()
+	if td == nil {
+		return false
+	}
+	n := td.Name()
+	return n == "va_list" || n == "__gnuc_va_list" || n == "__builtin_va_list"
+}
+
+// vaListName scans the top-level declarations of a function body looking for
+// a local variable of va_list type and returns its name.
+// This is used to rename the "..." parameter of a variadic function.
+func (t *translator) vaListName(body *cc.CompoundStatement) string {
+	if body == nil {
+		return ""
+	}
+	for _, item := range body.List {
+		cd, ok := item.(*cc.CommonDeclaration)
+		if !ok {
+			continue
+		}
+		for _, id := range cd.InitDeclarators {
+			if t.isVaListType(id.Declarator.Type()) {
+				return id.Declarator.Name()
+			}
+		}
+	}
+	return ""
+}
+
+// tryVaArg detects the pattern produced by cc_v5 for __builtin_va_arg(ap, T):
+//
+//	*((*T)(__builtin_va_arg_impl(ap)))
+//
+// The outer UnaryExpr(Deref) calls this with its inner expression.
+// If the pattern matches, it returns the equivalent MiniGolf expression:
+//
+//	peek[T](ap.Pop().BaseAddr)
+//
+// where T is the element type extracted from the (*T) cast, and ap is the
+// va_list argument name.  Returns "" if the pattern does not match.
+func (t *translator) tryVaArg(expr cc.Expression) string {
+	castExpr, ok := expr.(*cc.CastExpr)
+	if !ok {
+		return ""
+	}
+	golfPtrType := t.typeNameToGolf(castExpr.TypeName)
+	if !strings.HasPrefix(golfPtrType, "*") {
+		return ""
+	}
+	elemType := golfPtrType[1:] // strip leading *
+
+	callExpr, ok := castExpr.Expr.(*cc.CallExpr)
+	if !ok {
+		return ""
+	}
+	fnStr := t.xExpr(callExpr.Func)
+	if fnStr != "__builtin_va_arg_impl" {
+		return ""
+	}
+	if callExpr.Arguments == nil {
+		return ""
+	}
+	apName := t.xExpr(callExpr.Arguments.Expression)
+	// Wrap element type in parens if it is not a plain identifier
+	// (e.g. peek[*byte] needs no extra wrapping, but the generic syntax
+	// already handles it).
+	return fmt.Sprintf("peek[%s](%s.Pop().BaseAddr)", elemType, apName)
+}
+
 // If golfType is a plain identifier (e.g. "int", "word", "Bin",
 // "prelude.Bin"), it emits T(expr).
 // If golfType is compound (e.g. "*byte", "[4]byte", "/* ... */"),
