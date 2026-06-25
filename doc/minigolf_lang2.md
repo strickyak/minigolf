@@ -136,6 +136,8 @@ The primitive types:
     * `true` is a predefined constant for 1
     * `false` is a predefined constant for 0.
 *   `string`:  an alias for `prelude.slice[byte]`.  Whereas `string` and `[]byte` (slice of byte) are very different types in Go, they are the same in MiniGolf, implemented by `prelude.slice[byte]`.
+*   `noreturn`:  a placeholder for a type, only used as the return type of a function
+        that never, ever returns.  It might panic or abort or exit, but it never returns.
 
 ### 3.2 Composite Types
 *   **Arrays:** `[N]T` represents a contiguous, fixed-size array of `N` elements of type `T`. `N` must be a compile-time constant.
