@@ -575,11 +575,59 @@ func (t *translator) translateExprStmt(s *cc.ExpressionStatement) {
 	// Comma-expression list at statement level → split into separate lines.
 	if el, ok := s.ExpressionList.(*cc.ExpressionList); ok && len(el.List) > 1 {
 		for _, e := range el.List {
-			t.line("%s", t.xExpr(e))
+			t.translateExprStmtOne(e)
 		}
 		return
 	}
-	t.line("%s", t.xExpr(s.ExpressionList))
+	t.translateExprStmtOne(s.ExpressionList)
+}
+
+// translateExprStmtOne emits a single expression as a statement, with special
+// handling for pointer arithmetic patterns that MiniGolf cannot express directly.
+func (t *translator) translateExprStmtOne(e cc.Expression) {
+	// Pattern: *p++ = expr  (assign to dereferenced pointer, then advance pointer)
+	// Detect AssignmentExpression where LHS is UnaryExpr(Deref, PostfixExpr(++))
+	if asgn, ok := e.(*cc.AssignmentExpression); ok && asgn.Op == cc.AssignmentOperationAssign {
+		if unary, ok := asgn.Lhs.(*cc.UnaryExpr); ok && unary.Case == cc.UnaryExpressionDeref {
+			if postfix, ok := unary.Expr.(*cc.PostfixExpr); ok && !postfix.Dec {
+				// This is *(p++) = rhs → split into: *p = rhs ; p = (*T)(word(p)+1)
+				pStr := t.xExpr(postfix.Expr)
+				rhsStr := t.xExpr(asgn.Rhs)
+				golfType := t.cTypeToGolf(postfix.Expr.Type())
+				t.line("*%s = %s", pStr, rhsStr)
+				t.line("%s = (%s)(word(%s) + 1)", pStr, golfType, pStr)
+				return
+			}
+		}
+	}
+	// Pattern: p++  or  p--  where p is a pointer type
+	// Emit:  p = (*T)(word(p) ± 1)   instead of bare p++/p--
+	if postfix, ok := e.(*cc.PostfixExpr); ok {
+		if postfix.Expr.Type().Kind() == cc.Ptr {
+			base := t.xExpr(postfix.Expr)
+			golfType := t.cTypeToGolf(postfix.Expr.Type())
+			if postfix.Dec {
+				t.line("%s = (%s)(word(%s) - 1)", base, golfType, base)
+			} else {
+				t.line("%s = (%s)(word(%s) + 1)", base, golfType, base)
+			}
+			return
+		}
+	}
+	// Pattern: ++p  or  --p  where p is a pointer type
+	if prefix, ok := e.(*cc.PrefixExpr); ok {
+		if prefix.Expr.Type().Kind() == cc.Ptr {
+			base := t.xExpr(prefix.Expr)
+			golfType := t.cTypeToGolf(prefix.Expr.Type())
+			if prefix.Dec {
+				t.line("%s = (%s)(word(%s) - 1)", base, golfType, base)
+			} else {
+				t.line("%s = (%s)(word(%s) + 1)", base, golfType, base)
+			}
+			return
+		}
+	}
+	t.line("%s", t.xExpr(e))
 }
 
 // ── Local declarations ────────────────────────────────────────────────────────
@@ -677,17 +725,34 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 		if s.ExpressionList2 != nil {
 			condStr = t.xExpr(s.ExpressionList2)
 		}
+		// Check if post-expression is a pointer increment/decrement.
+		// If so, we can't inline it in the for-header; rewrite as for { body; post }.
+		var postPtrStmts []string
 		postStr := ""
 		if s.ExpressionList3 != nil {
-			postStr = t.xExpr(s.ExpressionList3)
+			if stmts := t.ptrPostExprStmts(s.ExpressionList3); len(stmts) > 0 {
+				postPtrStmts = stmts
+			} else {
+				postStr = t.xExpr(s.ExpressionList3)
+			}
 		}
-		if initStr == "" && condStr == "" && postStr == "" {
+		if initStr == "" && condStr == "" && postStr == "" && len(postPtrStmts) == 0 {
 			t.line("for {")
+		} else if len(postPtrStmts) > 0 {
+			// Rewrite: for init; cond { body; post }
+			if initStr == "" {
+				t.line("for ; %s {", condStr)
+			} else {
+				t.line("for %s; %s {", initStr, condStr)
+			}
 		} else {
 			t.line("for %s; %s; %s {", initStr, condStr, postStr)
 		}
 		t.depth++
 		t.translateBody(s.Statement)
+		for _, stmt := range postPtrStmts {
+			t.line("%s", stmt)
+		}
 		t.depth--
 		t.line("}")
 
@@ -697,16 +762,62 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 		if s.ExpressionList != nil {
 			condStr = t.xExpr(s.ExpressionList)
 		}
+		// Same pointer-post treatment as IterationStatementFor.
+		var postPtrStmts []string
 		postStr := ""
 		if s.ExpressionList2 != nil {
-			postStr = t.xExpr(s.ExpressionList2)
+			if stmts := t.ptrPostExprStmts(s.ExpressionList2); len(stmts) > 0 {
+				postPtrStmts = stmts
+			} else {
+				postStr = t.xExpr(s.ExpressionList2)
+			}
 		}
-		t.line("for %s; %s; %s {", initStr, condStr, postStr)
+		if len(postPtrStmts) > 0 {
+			t.line("for %s; %s {", initStr, condStr)
+		} else {
+			t.line("for %s; %s; %s {", initStr, condStr, postStr)
+		}
 		t.depth++
 		t.translateBody(s.Statement)
+		for _, stmt := range postPtrStmts {
+			t.line("%s", stmt)
+		}
 		t.depth--
 		t.line("}")
 	}
+}
+
+// ptrPostExprStmts checks if a for-loop post-expression contains pointer
+// increment/decrement (which can't be inlined in MiniGolf's for-header).
+// If so, returns the equivalent MiniGolf statement strings; otherwise nil.
+func (t *translator) ptrPostExprStmts(e cc.Expression) []string {
+	// Unwrap single-element ExpressionList.
+	if el, ok := e.(*cc.ExpressionList); ok && len(el.List) == 1 {
+		e = el.List[0]
+	}
+	switch x := e.(type) {
+	case *cc.PostfixExpr:
+		if x.Expr.Type().Kind() == cc.Ptr {
+			base := t.xExpr(x.Expr)
+			gt := t.cTypeToGolf(x.Expr.Type())
+			op := "+"
+			if x.Dec {
+				op = "-"
+			}
+			return []string{fmt.Sprintf("%s = (%s)(word(%s) %s 1)", base, gt, base, op)}
+		}
+	case *cc.PrefixExpr:
+		if x.Expr.Type().Kind() == cc.Ptr {
+			base := t.xExpr(x.Expr)
+			gt := t.cTypeToGolf(x.Expr.Type())
+			op := "+"
+			if x.Dec {
+				op = "-"
+			}
+			return []string{fmt.Sprintf("%s = (%s)(word(%s) %s 1)", base, gt, base, op)}
+		}
+	}
+	return nil
 }
 
 func (t *translator) forInitDecl(decl cc.Declaration) string {
@@ -1146,8 +1257,36 @@ func isBuiltinDecl(cd *cc.CommonDeclaration) bool {
 	return true
 }
 
-func reverse(s []string) {
-	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
-		s[i], s[j] = s[j], s[i]
+// castInit wraps a type+value pair into a MiniGolf cast expression.
+// If golfType is a plain identifier (e.g. "int", "word", "Bin",
+// "prelude.Bin"), it emits T(expr).
+// If golfType is compound (e.g. "*byte", "[4]byte", "/* ... */"),
+// it emits (T)(expr) to avoid parse ambiguity.
+func castInit(golfType, init string) string {
+	if isSingleIdent(golfType) {
+		return golfType + "(" + init + ")"
 	}
+	return "(" + golfType + ")(" + init + ")"
+}
+
+// isSingleIdent reports whether s is a plain MiniGolf identifier,
+// i.e. consists only of letters, digits, underscores, and dots
+// (for package-qualified names like "prelude.Bin"), with no leading digit.
+func isSingleIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_' || r == '.' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			// always ok
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false // can't start with digit
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
