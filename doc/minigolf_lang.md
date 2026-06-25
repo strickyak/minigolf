@@ -77,12 +77,15 @@ MiniGolf's lexical structure mirrors Go.  Only ASCII characters are supported (n
 *   **Comments:** Line comments `//` and block comments `/* ... */` are supported.
 *   **Identifiers:** Begin with a letter or underscore, followed by letters, digits, or underscores.
                     Identifiers beginning with an uppercase letter are not special (like they are in Go).
-*   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `any`, `nil`, `for`, `break`, `continue`.
-*   **Literals:** Integer literals (decimal, octal, or hex), and ASCII string literals. String literals are assumed to be immutable and are allocated in the `code` section of the resulting binary.
+*   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `for`, `break`, `continue`, `defer`, `range`.
+*   **Builtin Names:** `bool`, `byte`, `word`, `int`, `any`, `nil`, `sizeof`, `noreturn`, `panic`, `recover`.
+*   **Literals:** Integer literals (decimal, octal, hex, or character literals), and ASCII string literals. String literals are assumed to be immutable and are allocated in the `code` section of the resulting binary.
 
-String literals are in "double quotes" (backslash escapes apply) or backticks (may be multi-line, and no escapes apply).  Do not expect many backslash escapes to work.
+String literals are in "double quotes" (backslash escapes apply) or backticks (may be multi-line, and no escapes apply).
 
 Character literals are in 's' 'i' 'n' 'g' 'l' 'e' quotes, and are like integer constants.
+
+These escapes are available: `'\t'` tab, `'\r'` return, `'\n'` newline, `'\\'`, `'\''`, `'\"'`.
 
 Hex integers start `0x` and octal integers start `0` or `0o`.
 
@@ -149,6 +152,7 @@ The primitive types:
 ### 3.2 Composite Types
 *   **Arrays:** `[N]T` represents a contiguous, fixed-size array of `N` elements of type `T`. `N` must be a compile-time constant.
 *   **Structs:** `struct { f1 T1; f2 T2; ... }` defines a contiguous memory layout of heterogeneous fields.
+*   **Functions:** See section "7. Functions"
 
 Arrays and Structs are *copied by value*, when assigned, when passed as parameters, and when returned from a function.
 
@@ -280,9 +284,12 @@ Top-level declarations define the file's structure:
 
 Expressions compute values. Operands in binary expressions must be of the exact same type.
 
+*   **Unary:** `-` negation, `!` logical not, `^` bitwise invert.
 *   **Arithmetic:** `+`, `-`, `*`, `/`, `%`
-*   **Bitwise:** `&`, `|`, `^`, `<<`, `>>`
+*   **Bitwise:** `&`, `|`, `^`, `&^`, `<<`, `>>`.  The `&^` clears bits specified on the RHS from the LHS.
+*   **Logical / Branching:** `&&` and, `||` or, `!` not.  Short-circuit evaluation is available.
 *   **Logical / Comparison:** `==`, `!=`, `<`, `<=`, `>`, `>=`. Comparisons evaluate conceptually to a boolean, represented internally as a `byte` (0 for false, 1 for true).
+    **Compound assignment operators:** `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `&^=`
 *   **Addressing and Dereferencing:** 
     *   `&x` yields a pointer (`*T`) to the operand `x`. The operand must be addressable (an L-value like a variable or struct field).
     *   `*p` yields the value of type `T` pointed to by `p`.
@@ -310,20 +317,26 @@ Statements control execution flow.
         *   The underlying reason is that internally, this is how functions return multiple values, via anonymous, synthetic structs
 
 *   **Control Flow:**
-    *   `if condition { ... } else { ... }`. The condition must evaluate to a comparison.
+    *   `if condition { ... }`.
+    *   `if condition { ... } else { ... }`. The condition can be any expression.
+            Zero or nil values are considered false, and other values are considered true.
     *   `for { ... }`. Executes the block forever.
     *   `for condition { ... }`. Executes the block as long as the condition is true.
-    *   `for init; condition; augment { ... }`. Like in C99.
+    *   `for init; condition; augment { ... }`. The three-part `for`, like in C99.
     *   `for i := range N { ... }` executes the block for i ranging from 0 to N-1
     *   `for k, v := range mySlice { ... }` executes the block for each element slice
-    *   The special form `cond(p, y, n)` is like `( p ? y : n )` in C99.
-        It looks like a function call, but all three of its arguments are not evaluated
+    *   `break`: as in C99
+    *   `continue`: as in C99
+    *   `return value`: as in C99
+    *   `return value1, value2, value3`: functions may return multiple values.
+    *   `return`: A function with named return variables may be returned from by an empty `return`.
+    *   The special form `cond(p, y, n)` is a control-flow expression, like `( p ? y : n )` in C99.
+        It looks like a function call, but all three of its arguments are not automatically evaluated
         like in a function call.  Instead, the predicate p is evaluated first,
         and if p is true, the `y` is evaluated and becomes the result; otherwise, the `n`
         is evaluated and becomes the result.  The types of `y` and `n` must be the same
-        (or use compatable constants).
-    *   `break`: as in C99
-    *   `continue`: as in C99
+        (or use compatable constants).  Since it is an expression, not a statement,
+        it can be used inside larger expressions.
 
 *   **Increment / Decrement:** `x++` and `x--` are statements, not expressions.
 
@@ -332,7 +345,42 @@ Statements control execution flow.
     * `switch/case`
     * `select`
 
-## 7. Methods
+## 7. Functions
+
+Functions are defined as top-level entities.  They have a name and a signature.
+
+The signature includes a parenthesized list of zero or more parameter names and types.
+
+There may be zero or more return types.   If there are more than one, the the return types
+must be parenthesized.  Return variable names may be included with the return types.
+
+Examples:
+
+```go
+func Print(x word, y word) { println("x is", x, "and y is", y) }
+func Print(x word, y word) { println("x is", x, "and y is", y); return }
+func Double(x word) word { return x+x }
+func Double(x word) (result word) { result = x+x; return }
+func Decompose(color word) (red byte, green byte, blue byte) {
+    red = (color>>4) & 3
+    green = (color>>2) & 3
+    blue = color & 3
+    return
+}
+func Decompose(color word) (byte, byte, byte) {
+    return (color>>4) & 3, (color>>2) & 3, color & 3
+}
+```
+
+The type of a function is the keyword `func` followed by the signature:
+
+```go
+var fn func(color word) (byte, byte, byte)
+fn = Decompose
+fn = nil
+```
+
+### 7.1 Methods
 
 MiniGolf supports receiver methods on struct types, enabling an object-oriented style without runtime dispatch overhead.
 
@@ -361,7 +409,7 @@ func g() {
 }
 ```
 
-### 7.1 Destructors
+### 7.2 Destructors
 
 If a struct type has a method `destructor()` (taking no arguments and returning no result)
 then that method is guaranteed to be called on instances of the struct
@@ -432,8 +480,8 @@ To support basic debugging and bootstrapping without a standard library,
 MiniGolf provides intrinsic functions:
 *   `print(arg1, arg2, ...)`: Prints the provided arguments to standard output.
 *   `println(arg1, arg2, ...)`: Prints the provided arguments followed by a newline character. 
-*   `Sizeof[T]()`: Fill in an actual type for the letter T, and you get the size of the values.
-    Unlike other things that look like function calls, this is a special form resulting in
+*   `sizeof[T]()`: Fill in an actual type for the letter T, and you get the byte size of the values.
+    Although it looks like a function call, this is a special form resulting in
     a const value, which can be used when a const value is needed (to define the length
     of an array or to define other const values).
 
