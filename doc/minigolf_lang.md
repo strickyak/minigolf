@@ -247,11 +247,23 @@ If you know what you are doing, you are also welcome to construct your own slice
 *   The "zero value" will actually have all bytes in the object set to 0 bytes.
 *   All variables are initialized to their zero value, unless initialized to something else.
 
+### Types NOT AVAILABLE (yet) in MiniGolf
+
+*   Maps  ( but see `golflib/smap.golf` for Imap[T] and Smap[T] )
+*   Channels
+*   Interfaces ( except we do have `any` )
+*   integers longer than the word size
+*   floating point numbers, complex numbers
+
 ## 4. Declarations
 
-A MiniGolf program consists of a single flat module containing one or more files. Every file must begin with a `package` declaration (compilation targets require `package main`).
+A MiniGolf program consists of a main module specified in one file.
+The file may import other packages.
+A package named `prelude` is always imported (but its items appear in the builtin namespace).
 
 Top-level declarations define the file's structure:
+*   **Package** `package _` (ignored, but for compatability with Go syntax)
+*   **Import** `import "modulename" _`  (the module name must be an identifier, that becomes the name qualifier)
 *   **Types:** `type Name UnderlyingType` (e.g., `type Apple struct { worms byte }`).
 *   **Constants:** `const Name = Value`. Constants are evaluated at compile time.
 *   **Variables:** `var Name Type` allocates global memory.
@@ -273,6 +285,10 @@ Expressions compute values. Operands in binary expressions must be of the exact 
     *   `a[inclusive_start : exclusive_limit]` will chop a subslice from a slice.
 *   **Type Conversions:** Explicit casts are required to change primitive types: `byte(x)` truncates a word to a byte; `word(x)` zero-extends a byte to a word.
 
+* Missing from MiniGolf
+    * runtime type-assertion expressions (as in Go)
+    * "comma ok" expressions (as in Go)
+
 ## 6. Statements
 
 Statements control execution flow.
@@ -290,6 +306,7 @@ Statements control execution flow.
     *   `if condition { ... } else { ... }`. The condition must evaluate to a comparison.
     *   `for { ... }`. Executes the block forever.
     *   `for condition { ... }`. Executes the block as long as the condition is true.
+    *   `for init; condition; augment { ... }`. Like in C99.
     *   `for i := range N { ... }` executes the block for i ranging from 0 to N-1
     *   `for k, v := range mySlice { ... }` executes the block for each element slice
     *   The special form `cond(p, y, n)` is like `( p ? y : n )` in C99.
@@ -298,7 +315,15 @@ Statements control execution flow.
         and if p is true, the `y` is evaluated and becomes the result; otherwise, the `n`
         is evaluated and becomes the result.  The types of `y` and `n` must be the same
         (or use compatable constants).
+    *   `break`: as in C99
+    *   `continue`: as in C99
+
 *   **Increment / Decrement:** `x++` and `x--` are statements, not expressions.
+
+* Familiar C99 or Go statements thayt are NOT AVAILABLE (yet) in MiniGolf
+    * `goto`
+    * `switch/case`
+    * `select`
 
 ## 7. Methods
 
@@ -551,6 +576,10 @@ space, as in `-I=mylib` or `-I mylib`.)
 
 Conventionally a standard library of modules in a directory named `golflib` is 
 the last -I flag:  `-I $HOME/minigolf/golflib`
+
+In Go, only names beginning with an uppercase ASCII letter are imported.
+In MiniGolf, all names are imported.   There are no enforced private names.
+(This may change.)
 
 ### 14.  Prelude
 
