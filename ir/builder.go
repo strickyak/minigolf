@@ -2165,6 +2165,11 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: arg}, e)
 			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 		}
+		if ident.Value == "int" {
+			arg := b.buildExpr(e.Arguments[0])
+			val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeInt}, Op: "bitcast", Operand: arg}, e)
+			return ExprResult{IsLValue: false, Value: val, Typ: TypeInt}
+		}
 
 		args := []Value{}
 		for _, arg := range e.Arguments {

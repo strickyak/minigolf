@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	cc "modernc.org/cc/v5"
@@ -103,6 +104,9 @@ type translator struct {
 
 	// static locals: local name → mangled global name for current function
 	staticNameMap map[string]string
+	// static array globals: global name → element pointer type (e.g. "*byte")
+	// used to emit the array-to-pointer cast when the name is referenced.
+	staticArrayMap map[string]string
 }
 
 func newTranslator() *translator {
@@ -112,6 +116,7 @@ func newTranslator() *translator {
 		emittedStructs: make(map[string]bool),
 		emittedGlobals: make(map[string]bool),
 		staticNameMap:  make(map[string]string),
+		staticArrayMap: make(map[string]string),
 	}
 }
 
@@ -685,6 +690,15 @@ func (t *translator) translateLocalDecl(cd *cc.CommonDeclaration) {
 			}
 			// Register substitution: references to 'name' use 'gname' in this scope.
 			t.staticNameMap[name] = gname
+			// If it's an array type, record the element pointer so xPrimary can
+			// emit the implicit array-to-pointer cast.
+			if strings.HasPrefix(golfType, "[") {
+				// "[N]elem" → "*elem"
+				if idx := strings.Index(golfType, "]"); idx >= 0 {
+					elem := golfType[idx+1:]
+					t.staticArrayMap[gname] = "*" + elem
+				}
+			}
 			// Inside the body, note the mapping.
 			t.line("// static %s → global %s", name, gname)
 			if id.Initializer != nil {
@@ -696,7 +710,14 @@ func (t *translator) translateLocalDecl(cd *cc.CommonDeclaration) {
 
 		if id.Initializer != nil {
 			init := t.xExpr(id.Initializer.Expression)
-			t.line("var %s %s = %s", name, golfType, init)
+			// Use := (short declaration) to work in all contexts including
+			// switch-case bodies. Append a unique suffix to avoid redeclaration
+			// if the same C name appears in multiple case blocks.
+			uniq := fmt.Sprintf("%s_%d", name, t.tempCount)
+			t.tempCount++
+			t.line("%s := %s // %s", uniq, castInit(golfType, init), name)
+			// Register the unique name so references in this scope resolve correctly.
+			t.staticNameMap[name] = uniq
 		} else {
 			t.line("var %s %s", name, golfType)
 		}
@@ -714,7 +735,7 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 		if condSrc == "1" {
 			t.line("for {")
 		} else {
-			t.line("while %s {", cond)
+		t.line("for %s {", cond)
 		}
 		t.depth++
 		t.translateBody(s.Statement)
@@ -761,11 +782,11 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 		if initStr == "" && condStr == "" && postStr == "" && len(postPtrStmts) == 0 {
 			t.line("for {")
 		} else if len(postPtrStmts) > 0 {
-			// Rewrite: for init; cond { body; post }
+			// Rewrite: for [init;] cond { body; post }
 			if initStr == "" {
-				t.line("for ; %s {", condStr)
+				t.line("for %s {", condStr)
 			} else {
-				t.line("for %s; %s {", initStr, condStr)
+				t.line("for %s; %s; {", initStr, condStr)
 			}
 		} else {
 			t.line("for %s; %s; %s {", initStr, condStr, postStr)
@@ -795,7 +816,7 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			}
 		}
 		if len(postPtrStmts) > 0 {
-			t.line("for %s; %s {", initStr, condStr)
+			t.line("for %s; %s; {", initStr, condStr)
 		} else {
 			t.line("for %s; %s; %s {", initStr, condStr, postStr)
 		}
@@ -899,11 +920,82 @@ func (t *translator) translateSelection(s *cc.SelectionStatement) {
 		}
 
 	case cc.SelectionStatementSwitch:
-		t.line("switch %s {", t.xExpr(s.ExpressionList))
-		t.depth++
-		t.translateBody(s.Statement)
-		t.depth--
-		t.line("}")
+		// MiniGolf has no switch — emit an if/else-if/else chain.
+		// Evaluate switch expression once into a temp.
+		swExpr := t.xExpr(s.ExpressionList)
+		swVar := fmt.Sprintf("_sw_%d_", t.tempCount)
+		t.tempCount++
+		t.line("%s := %s", swVar, swExpr)
+
+		type caseGroup struct {
+			isDefault bool
+			expr      string
+			items     []cc.BlockItem
+		}
+		var groups []caseGroup
+
+		addItem := func(item cc.BlockItem) {
+			if len(groups) > 0 {
+				groups[len(groups)-1].items = append(groups[len(groups)-1].items, item)
+			}
+		}
+
+		if cs, ok := s.Statement.(*cc.CompoundStatement); ok {
+			for _, item := range cs.List {
+				ls, isLabel := item.(*cc.LabeledStatement)
+				if !isLabel {
+					// Skip top-level break (end-of-case in C; not needed in if-else).
+					if js, ok := item.(*cc.JumpStatement); ok && js.Case == cc.JumpStatementBreak {
+						continue
+					}
+					addItem(item)
+					continue
+				}
+				switch ls.Case {
+				case cc.LabeledStatementCaseLabel:
+					groups = append(groups, caseGroup{expr: t.xExpr(ls.Expression)})
+				case cc.LabeledStatementRange:
+					groups = append(groups, caseGroup{expr: t.xExpr(ls.Expression)})
+				case cc.LabeledStatementDefault:
+					groups = append(groups, caseGroup{isDefault: true})
+				default:
+					addItem(item)
+					continue
+				}
+				// The label's own Statement belongs to the new group.
+				if ls.Statement != nil && !isBreakOnly(ls.Statement) {
+					groups[len(groups)-1].items = append(groups[len(groups)-1].items, ls.Statement)
+				}
+			}
+		}
+
+		indent := strings.Repeat("    ", t.depth)
+		for i, g := range groups {
+			var header string
+			if g.isDefault {
+				if i == 0 {
+					header = indent + "{\n"
+				} else {
+					header = indent + "} else {\n"
+				}
+			} else {
+				cond := fmt.Sprintf("%s == %s", swVar, g.expr)
+				if i == 0 {
+					header = indent + fmt.Sprintf("if %s {\n", cond)
+				} else {
+					header = indent + fmt.Sprintf("} else if %s {\n", cond)
+				}
+			}
+			t.raw(header)
+			t.depth++
+			for _, item := range g.items {
+				t.translateBlockItem(item)
+			}
+			t.depth--
+		}
+		if len(groups) > 0 {
+			t.line("}")
+		}
 	}
 }
 
@@ -1008,10 +1100,20 @@ func (t *translator) xExpr(n cc.Expression) string {
 
 	case *cc.PostfixExpr:
 		base := t.xExpr(x.Expr)
-		if x.Dec {
-			return base + "--"
+		// Pointer types: only valid at statement level (handled by translateExprStmtOne
+		// and ptrPostExprStmts). If reached here in expression context, emit a comment.
+		if x.Expr.Type().Kind() == cc.Ptr {
+			if x.Dec {
+				return t.unsupported("ptr postfix-- in expr: " + base)
+			}
+			return t.unsupported("ptr postfix++ in expr: " + base)
 		}
-		return base + "++"
+		// Non-pointer: use prelude helper that returns old value then mutates.
+		golfType := t.cTypeToGolf(x.Expr.Type())
+		if x.Dec {
+			return fmt.Sprintf("post_decrement[%s](&%s)", golfType, base)
+		}
+		return fmt.Sprintf("post_increment[%s](&%s)", golfType, base)
 
 	case *cc.PrefixExpr:
 		base := t.xExpr(x.Expr)
@@ -1030,12 +1132,31 @@ func (t *translator) xExpr(n cc.Expression) string {
 		lhs := t.xExpr(x.Lhs)
 		rhs := t.xExpr(x.Rhs)
 		op := binaryOpStr(x.Op)
+		// Apply C's usual arithmetic conversions.
+		resultGolf := t.cTypeToGolf(x.Type())
+		lGolf := t.cTypeToGolf(x.Lhs.Type())
+		rGolf := t.cTypeToGolf(x.Rhs.Type())
+		if resultGolf == "word" || resultGolf == "int" {
+			// Promote any byte operand to the wider result type.
+			if golfTypeRank(lGolf) == 0 {
+				lhs = castInit(resultGolf, lhs)
+			}
+			if golfTypeRank(rGolf) == 0 {
+				rhs = castInit(resultGolf, rhs)
+			}
+		}
+		// Always resolve any remaining int/word or byte/word mismatches.
+		lhs, rhs = t.promoteForBinop(x.Lhs.Type(), lhs, x.Rhs.Type(), rhs)
 		return lhs + " " + op + " " + rhs
 
 	case *cc.AssignmentExpression:
 		lhs := t.xExpr(x.Lhs)
 		rhs := t.xExpr(x.Rhs)
 		op := assignOpStr(x.Op)
+		// For compound assignment ops (+=, -=, …) promote the RHS if narrower.
+		if op != "=" {
+			_, rhs = t.promoteForBinop(x.Lhs.Type(), lhs, x.Rhs.Type(), rhs)
+		}
 		return lhs + " " + op + " " + rhs
 
 	case *cc.ConditionalExpression:
@@ -1056,6 +1177,10 @@ func (t *translator) xPrimary(x *cc.PrimaryExpression) string {
 		name := x.Token.SrcStr()
 		// Substitute static-local names with their mangled global names.
 		if gname, ok := t.staticNameMap[name]; ok {
+			// If the global is an array, decay it to a pointer as C would.
+			if ptrType, ok := t.staticArrayMap[gname]; ok {
+				return fmt.Sprintf("(%s)(%s)", ptrType, gname)
+			}
 			return gname
 		}
 		return name
@@ -1064,7 +1189,7 @@ func (t *translator) xPrimary(x *cc.PrimaryExpression) string {
 	case cc.PrimaryExpressionFloat:
 		return x.Token.SrcStr()
 	case cc.PrimaryExpressionChar:
-		return x.Token.SrcStr()
+		return sanitizeCharLit(x.Token.SrcStr())
 	case cc.PrimaryExpressionString:
 		return x.Token.SrcStr()
 	case cc.PrimaryExpressionExpr:
@@ -1107,7 +1232,7 @@ func (t *translator) xUnary(x *cc.UnaryExpr) string {
 		}
 		return "*" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionPlus:
-		return "+" + t.xExpr(x.Expr)
+		return t.xExpr(x.Expr) // unary + is a no-op
 	case cc.UnaryExpressionMinus:
 		return "-" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionNot:
@@ -1145,6 +1270,19 @@ func (t *translator) xConditional(x *cc.ConditionalExpression) string {
 	cond := t.xExpr(x.Condition)
 	thn := t.xExpr(x.Then)
 	els := t.xExpr(x.Else)
+	// Promote branch arguments to the C result type when branches are narrower.
+	// e.g. 'byte_val ? byte_val : 0' has C result type int/word.
+	resultGolf := t.cTypeToGolf(x.Type())
+	if resultGolf == "word" || resultGolf == "int" {
+		thnGolf := t.cTypeToGolf(x.Then.Type())
+		elsGolf := t.cTypeToGolf(x.Else.Type())
+		if golfTypeRank(thnGolf) < 1 {
+			thn = castInit(resultGolf, thn)
+		}
+		if golfTypeRank(elsGolf) < 1 {
+			els = castInit(resultGolf, els)
+		}
+	}
 	return fmt.Sprintf("cond(%s, %s, %s)", cond, thn, els)
 }
 
@@ -1163,6 +1301,79 @@ func sanitizeIntLit(s string) string {
 	s = strings.ToLower(s)
 	s = strings.TrimRight(s, "ul")
 	return s
+}
+
+// sanitizeCharLit converts a C character literal to a valid MiniGolf literal.
+// Simple printable ASCII characters are kept as 'c'.  Non-printable or
+// non-simple characters (escape sequences like '\0', '\n', '\x41', octal) are
+// converted to their decimal integer value, which MiniGolf always accepts.
+func sanitizeCharLit(src string) string {
+	// src looks like 'a', '\n', '\0', '\x41', '\101', etc.
+	if len(src) < 3 || src[0] != '\'' || src[len(src)-1] != '\'' {
+		return src // malformed — pass through
+	}
+	inner := src[1 : len(src)-1]
+
+	var val rune
+	if len(inner) == 1 {
+		val = rune(inner[0])
+	} else if len(inner) >= 2 && inner[0] == '\\' {
+		switch inner[1] {
+		case 'n':
+			val = '\n'
+		case 't':
+			val = '\t'
+		case 'r':
+			val = '\r'
+		case 'a':
+			val = '\a'
+		case 'b':
+			val = '\b'
+		case 'f':
+			val = '\f'
+		case 'v':
+			val = '\v'
+		case '\\':
+			val = '\\'
+		case '\'':
+			val = '\''
+		case '"':
+			val = '"'
+		case 'x', 'X':
+			n, err := strconv.ParseInt(inner[2:], 16, 32)
+			if err != nil {
+				return src
+			}
+			val = rune(n)
+		default:
+			// C octal escape: \0, \012, etc.
+			if inner[1] >= '0' && inner[1] <= '7' {
+				n, err := strconv.ParseInt(inner[1:], 8, 32)
+				if err != nil {
+					return src
+				}
+				val = rune(n)
+			} else {
+				return src // unknown escape — pass through
+			}
+		}
+	} else {
+		return src // multi-byte char — pass through
+	}
+
+	// Simple printable ASCII (space to ~) with no quoting needed.
+	if val >= 32 && val <= 126 && val != '\'' && val != '\\' {
+		return fmt.Sprintf("'%c'", val)
+	}
+	// Single-quote and backslash need escaping but are still valid literals.
+	if val == '\'' {
+		return "'\\'"
+	}
+	if val == '\\' {
+		return "'\\\\'"
+	}
+	// Everything else (NUL, newline, tab, …): emit as plain decimal.
+	return fmt.Sprintf("%d", val)
 }
 
 func binaryOpStr(op cc.BinaryOperation) string {
@@ -1289,6 +1500,60 @@ func isBuiltinDecl(cd *cc.CommonDeclaration) bool {
 }
 
 // ── va_list / varargs helpers ─────────────────────────────────────────────────
+
+// ── Integer promotion helpers ─────────────────────────────────────────────────
+
+// golfTypeRank assigns a numeric width rank to a MiniGolf type string so that
+// promoteForBinop can decide which side needs a widening cast.
+//   0 = byte (8-bit)
+//   1 = int or word (16-bit signed / unsigned)
+//   2 = const_integer or unknown (compatible with any numeric type)
+//  -1 = pointer / struct / other non-numeric — left alone
+func golfTypeRank(gt string) int {
+	switch gt {
+	case "byte":
+		return 0
+	case "word", "int":
+		return 1
+	case "const_integer", "":
+		return 2 // untyped literal — compatible with any numeric
+	}
+	// Pointer types, structs, etc.
+	if strings.HasPrefix(gt, "*") || strings.HasPrefix(gt, "[") || strings.HasPrefix(gt, "/*") {
+		return -1
+	}
+	return 2 // treat unknown as untyped
+}
+
+// promoteForBinop applies C's usual-arithmetic-conversion rule: when the two
+// operands have different ranks, wrap the narrower one in a cast to the wider
+// type.  It returns the (possibly-wrapped) lhs and rhs strings.
+func (t *translator) promoteForBinop(lTyp cc.Type, lhs string, rTyp cc.Type, rhs string) (string, string) {
+	lg := t.cTypeToGolf(lTyp)
+	rg := t.cTypeToGolf(rTyp)
+	lr := golfTypeRank(lg)
+	rr := golfTypeRank(rg)
+	// Skip non-numeric types (pointers, structs, etc.).
+	if lr < 0 || rr < 0 {
+		return lhs, rhs
+	}
+	// byte vs word/int: promote the byte side.
+	if lr < rr && rr == 1 {
+		return castInit(rg, lhs), rhs
+	}
+	if rr < lr && lr == 1 {
+		return lhs, castInit(lg, rhs)
+	}
+	// int vs word (same rank but different signedness): cast int→word.
+	// In C, unsigned dominates in mixed signed/unsigned arithmetic.
+	if lr == 1 && rr == 1 && lg != rg {
+		if lg == "int" {
+			return castInit("word", lhs), rhs
+		}
+		return lhs, castInit("word", rhs)
+	}
+	return lhs, rhs
+}
 
 // isVaListType reports whether typ is a C va_list type (or its platform aliases).
 func (t *translator) isVaListType(typ cc.Type) bool {

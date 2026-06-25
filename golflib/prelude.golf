@@ -36,6 +36,24 @@ func pointer_sub[T any](ptr *T, i int) {
 
 /////////////////////////////////////////////
 
+// post_decrement returns the current value of *p and then decrements *p.
+// Use this to translate C's postfix -- operator when used as an expression.
+func post_decrement[T any](p *T) T {
+	z := *p
+	*p--
+	return z
+}
+
+// post_increment returns the current value of *p and then increments *p.
+// Use this to translate C's postfix ++ operator when used as an expression.
+func post_increment[T any](p *T) T {
+	z := *p
+	*p++
+	return z
+}
+
+/////////////////////////////////////////////
+
 func clear[T any](p *T) {
 	addr := word(p)
 	for i := range sizeof[T]() {
@@ -318,6 +336,63 @@ func mod_word(a0 word, b word) word {
 		}
 	}
 	return r
+}
+
+/////////////////////////////////////////////
+// Signed integer (int) arithmetic.
+// MiniGolf's int is a signed word; mul/div/mod are not built-in
+// so we implement them by stripping the sign, doing unsigned word
+// arithmetic, and restoring the sign.
+
+// abs_int returns the absolute value of x as an unsigned word.
+func abs_int(x int) word {
+	if x < 0 {
+		return word(int(0) - x)
+	}
+	return word(x)
+}
+
+// mul_int multiplies two signed integers.
+// Sign rule: same signs → positive; different signs → negative.
+func mul_int(a int, b int) int {
+	var neg byte
+	if a < 0 {
+		neg ^= 1
+	}
+	if b < 0 {
+		neg ^= 1
+	}
+	result := int(mul_word(abs_int(a), abs_int(b)))
+	if neg != 0 {
+		return int(0) - result
+	}
+	return result
+}
+
+// div_int divides two signed integers (truncated toward zero, C99 semantics).
+// Sign rule: same signs → positive; different signs → negative.
+func div_int(a int, b int) int {
+	var neg byte
+	if a < 0 {
+		neg ^= 1
+	}
+	if b < 0 {
+		neg ^= 1
+	}
+	result := int(div_word(abs_int(a), abs_int(b)))
+	if neg != 0 {
+		return int(0) - result
+	}
+	return result
+}
+
+// mod_int computes the signed remainder (C99 semantics: result has sign of dividend).
+func mod_int(a int, b int) int {
+	result := int(mod_word(abs_int(a), abs_int(b)))
+	if a < 0 {
+		return int(0) - result
+	}
+	return result
 }
 
 /////////////////////////////////////////////
