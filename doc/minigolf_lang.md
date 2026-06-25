@@ -76,8 +76,15 @@ MiniGolf's lexical structure mirrors Go.  Only ASCII characters are supported (n
 
 *   **Comments:** Line comments `//` and block comments `/* ... */` are supported.
 *   **Identifiers:** Begin with a letter or underscore, followed by letters, digits, or underscores.
-*   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `any`, `nil`, `for`.
+                    Identifiers beginning with an uppercase letter are not special (like they are in Go).
+*   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `any`, `nil`, `for`, `break`, `continue`.
 *   **Literals:** Integer literals (decimal, octal, or hex), and ASCII string literals. String literals are assumed to be immutable and are allocated in the `code` section of the resulting binary.
+
+String literals are in "double quotes" (backslash escapes apply) or backticks (may be multi-line, and no escapes apply).  Do not expect many backslash escapes to work.
+
+Character literals are in 's' 'i' 'n' 'g' 'l' 'e' quotes, and are like integer constants.
+
+Hex integers start `0x` and octal integers start `0` or `0o`.
 
 In MiniGolf, as in Go, there are invisible semicolons at the end of statements.
 They are inserted automatically for you by the parser.  However this means the
