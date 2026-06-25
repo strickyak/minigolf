@@ -1998,6 +1998,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 		if !ok {
 			panic(fmt.Sprintf("MISSING GENERIC FUNC: %s", funcName))
 		}
+		b.coerceCallArgs(f, args, e)
 		if isDefer {
 			b.deferredActions = append(b.deferredActions, DeferredAction{Func: f, Args: args, Token: e})
 			return ExprResult{}

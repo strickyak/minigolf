@@ -1,6 +1,6 @@
 package main
 
-type S struct { x word }
+type S struct{ x word }
 
 func test_cond() {
 	var a int = 1

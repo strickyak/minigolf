@@ -1,6 +1,7 @@
 package main
 
-type S struct { x word }
+type S struct{ x word }
+
 func fff() {}
 
 func peek[T any](addr word) T {
