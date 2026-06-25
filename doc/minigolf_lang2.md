@@ -79,6 +79,44 @@ MiniGolf's lexical structure mirrors Go.  Only ASCII characters are supported (n
 *   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `any`, `nil`, `for`.
 *   **Literals:** Integer literals (decimal, octal, or hex), and ASCII string literals. String literals are assumed to be immutable and are allocated in the `code` section of the resulting binary.
 
+In MiniGolf, as in Go, there are invisible semicolons at the end of statements.
+They are inserted automatically for you by the parser.  However this means the
+parser needs to know when you are finished with your statement, so use style like
+shown here, which leave some part of the grammer unfinished when an end-of-statement
+is not wanted yet:
+
+GOOD:
+```go
+func g() {
+    if ready > 0 {
+      x := a +
+              b
+    } else {
+        println("not ready")
+    }
+}
+```
+
+BAD:
+```go
+func g()
+{
+    if ready > 0
+    {
+      x := a
+            + b
+    }
+    else {
+        println
+            ("not ready")
+    }
+}
+```
+
+Because MiniGolf syntax is a strict subset of Go syntax,
+the Go language formatter `gofmt` can (and should) be used to format MiniGolf code.
+`gofmt` settles all debates about correct MiniGolf style (:
+
 ## 3. Types
 
 MiniGolf enforces strict typing. There are very few implicit type conversions. 
@@ -188,7 +226,7 @@ If you know what you are doing, you are also welcome to construct your own slice
 ### 3.7 Type `any`
 
 *   The builtin `any` type is the only type that would be considered an "interface" in Go.
-*   An `any` can be created referencing any data type.
+*   An `any` can be created referencing an object of any data type.
 *   Internally, an `any` is defined in the prelude to be backed by a struct containing
     two fields:  A pointer to the referenced data, and a `*byte` to a literal ASCII string contents
     naming the type of the data in a Human-friendly way, terminated by a 0 byte.
@@ -233,6 +271,11 @@ Expressions compute values. Operands in binary expressions must be of the exact 
 
 Statements control execution flow.
 *   **Assignments:** `x = y`.
+    *   A simple `=` is used to assign existing variables.
+    *   If one or more new variables are being created at this point, use `:=` instead.
+        The new variable will have a type determined automatically by the type of the value assigned.
+    *   New variables can also be created inside functions with a `var` statement: `var x int`
+        They are initialized with a zero value unless initialized otherwise: `var x int = 888`
     *   Multi-value assignments are allowed:  `a, b, c := 1, 2, 3;  x, y = y, x`
     *   Multi-value unpacking is supported for struct fields (e.g., `a, b = myStruct`).
         *   The underlying reason is that internally, this is how functions return multiple values, via anonymous, synthetic structs
