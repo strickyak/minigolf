@@ -77,7 +77,7 @@ MiniGolf's lexical structure mirrors Go.  Only ASCII characters are supported (n
 *   **Comments:** Line comments `//` and block comments `/* ... */` are supported.
 *   **Identifiers:** Begin with a letter or underscore, followed by letters, digits, or underscores.
 *   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `any`, `nil`, `for`.
-*   **Literals:** Integer literals (decimal, octal, or hex), and ASCII string literals. String literals are assumed to be immutable and are allocated in the `code` section of the 
+*   **Literals:** Integer literals (decimal, octal, or hex), and ASCII string literals. String literals are assumed to be immutable and are allocated in the `code` section of the resulting binary.
 
 ## 3. Types
 
@@ -110,6 +110,10 @@ Actually in MiniGolf, *all types* are *copied by value*.  In Go, there are two t
 ### 3.3 Pointer Types
 *   `*T` denotes a pointer to type `T`. Pointers hold the absolute memory address of a value. 
 *   Pointer arithmetic is not supported directly; pointers must be cast to `word` if raw address manipulation is required.
+    *  But see `pointer_add` and `pointer_sub` in the prelude, for helper functions.
+
+* `func peek[T any](addr word) T` and `func poke[T any](addr word, x T)` are also provided in the Prelude.
+    These can be used to manipulate raw memory.
 
 ### 3.5 Type `slice[T]`
 
@@ -392,3 +396,51 @@ more exceptional than `panic`:
 
 These exits violate the guarantee that defer'ed actions and destructors will
 be called, because the process just goes away.
+
+## 12. Package
+
+Every module starts with a `package` statement,
+for compatiblity with Go syntax.
+
+It takes only one form:
+```go
+    package foo
+```
+
+The package name (like `foo`) must be present, but is always ignored.
+
+The name of the package is actually one of two things:
+*   If this is the main module whose file was named on the compiler command line, the module name is `main`.
+*   If the package file named `bar.golf` was found by an `import "bar"` statement, it module name `bar`.
+
+## 13. Import
+
+Zero or more `import` statements may follow the `package` statement.
+
+Import statements take only one form:
+```go
+    import "xyz"
+```
+
+The module "xyz" will be a source file named `xyz.golf` in the directory search path.
+First the directory of the main module is searched.  Then any directories named with `-I`
+flags on the command line are searched.
+
+(Go's `flag` module is used for command-line flags, so Go's convention must be used:
+Do not jam the directory name onto the -I flag like `-Imylib`.  You may use `=` or white
+space, as in `-I=mylib` or `-I mylib`.)
+
+Conventionally a standard library of modules in a directory named `golflib` is 
+the last -I flag:  `-I $HOME/minigolf/golflib`
+
+### 14.  Prelude
+
+A module named `prelude` is always imported.  Its source will be in the search path,
+named `prelude.golf`, like any other module.  However is very special, containing some
+definitions essential to the language (like `type slice[T any]`).  Items defined in
+the prelude enter the `builtin` namespace.  So you do not refer to things in the 
+prelude with qualified names like `prelude.slice`; rather they have the simple name
+like `slice`.
+
+Some builtin names like `byte` and `word` and `nil` are so fundmental that they are
+not defined in the prelude, but in the compiler.  They are in the builtin namespace, too.
