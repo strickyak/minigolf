@@ -998,19 +998,12 @@ func (t *translator) xCast(x *cc.CastExpr) string {
 }
 
 // xConditional handles ternary  a ? b : c.
-// MiniGolf has no ternary operator; we hoist a temp variable.
+// MiniGolf has no ternary operator.
 func (t *translator) xConditional(x *cc.ConditionalExpression) string {
 	cond := t.xExpr(x.Condition)
 	thn := t.xExpr(x.Then)
 	els := t.xExpr(x.Else)
-	if *keepGoing {
-		return fmt.Sprintf("/* TERNARY(%s) ? (%s) : (%s) */0", cond, thn, els)
-	}
-	// Hoist: emit lines for temp var, then return its name.
-	tmp := t.tempVar()
-	t.line("var %s = %s", tmp, els)
-	t.line("if %s { %s = %s }", cond, tmp, thn)
-	return tmp
+	return fmt.Sprintf("cond(%s, %s, %s)", cond, thn, els)
 }
 
 func (t *translator) typeNameToGolf(tn *cc.TypeName) string {

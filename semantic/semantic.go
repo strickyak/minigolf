@@ -99,6 +99,7 @@ func New(resolver *Resolver) *Analyzer {
 	global.Define("sizeof", FuncTypeBuiltin)
 	global.Define("len", FuncTypeBuiltin)
 	global.Define("cap", FuncTypeBuiltin)
+	global.Define("cond", FuncTypeBuiltin)
 
 	global.Define("byte", builtinType("type"))
 	global.Define("word", builtinType("type"))

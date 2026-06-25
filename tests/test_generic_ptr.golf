@@ -1,5 +1,8 @@
 package main
 
+type S struct { x word }
+func fff() {}
+
 func peek[T any](addr word) T {
 	return *((*T)(addr))
 }
@@ -18,4 +21,25 @@ func main() {
 
 	// peek with simple types (regression check)
 	println(peek[word](word(&x)))
+
+	var b byte = 0
+	poke[byte](word(&b), 111)
+	println(b)
+
+	var w word = 0
+	poke[word](word(&w), 222)
+	println(w)
+
+	var s S
+	var sp *S = &s
+	poke[*S](word(&sp), nil)
+	if sp == nil {
+		println(333)
+	}
+
+	var fn func() = fff
+	poke[func()](word(&fn), nil)
+	if fn == nil {
+		println(444)
+	}
 }

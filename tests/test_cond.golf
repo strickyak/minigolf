@@ -1,0 +1,103 @@
+package main
+
+type S struct { x word }
+
+func test_cond() {
+	var a int = 1
+	var b int = 2
+
+	// Test basic
+	var r1 int = cond(true, a, b)
+	if r1 != 1 {
+		panic(1)
+	}
+
+	var r2 int = cond(false, a, b)
+	if r2 != 2 {
+		panic(2)
+	}
+
+	// Test short-circuiting: if false branch panic() is evaluated, it crashes.
+	var r3 int = cond(true, a, panic())
+	if r3 != 1 {
+		panic(3)
+	}
+
+	// Test literal coercion
+	var r4 int = cond(true, 100, b)
+	if r4 != 100 {
+		panic(4)
+	}
+
+	var r5 int = cond(false, a, 200)
+	if r5 != 200 {
+		panic(5)
+	}
+
+	// Test nil coercion (using a pointer type)
+	var ptr *byte = cond(true, nil, nil)
+	if ptr != nil {
+		panic(6)
+	}
+
+	var r6 *byte = cond(true, ptr, nil)
+	if r6 != nil {
+		panic(7)
+	}
+
+	var r7 *byte = cond(false, nil, ptr)
+	if r7 != nil {
+		panic(8)
+	}
+
+	// Test byte coercion
+	var b_var byte = 10
+	var r_byte byte = cond(true, 111, b_var)
+	if r_byte != 111 {
+		panic(10)
+	}
+	r_byte = cond(false, b_var, 111)
+	if r_byte != 111 {
+		panic(11)
+	}
+
+	// Test word coercion
+	var w_var word = 20
+	var r_word word = cond(true, 222, w_var)
+	if r_word != 222 {
+		panic(12)
+	}
+	r_word = cond(false, w_var, 222)
+	if r_word != 222 {
+		panic(13)
+	}
+
+	// Test nil coercion to struct pointer
+	var s_var S
+	var sp_var *S = &s_var
+	var r_sp *S = cond(true, nil, sp_var)
+	if r_sp != nil {
+		panic(14)
+	}
+	r_sp = cond(false, sp_var, nil)
+	if r_sp != nil {
+		panic(15)
+	}
+
+	// Test nil coercion to function reference
+	var fn_var func() = test_cond
+	var r_fn func() = cond(true, nil, fn_var)
+	if r_fn != nil {
+		panic(16)
+	}
+	r_fn = cond(false, fn_var, nil)
+	if r_fn != nil {
+		panic(17)
+	}
+
+	println("cond OK")
+}
+
+func main() {
+	test_cond()
+}

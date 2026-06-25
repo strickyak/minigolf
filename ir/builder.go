@@ -2064,6 +2064,59 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	}
 
 	if ident, ok := e.Function.(*ast.Identifier); ok {
+		if ident.Value == "cond" {
+			if len(e.Arguments) != 3 {
+				panic(fmt.Sprintf("cond requires exactly 3 arguments, got %d", len(e.Arguments)))
+			}
+			condVal := b.coerceType(b.buildExpr(e.Arguments[0]), TypeBool)
+
+			trueBlk := b.newBlock()
+			falseBlk := b.newBlock()
+			endBlk := b.newBlock()
+
+			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: condVal, TrueBlock: trueBlk, FalseBlock: falseBlk}, e)
+			b.addEdge(b.currentBlock, trueBlk)
+			b.addEdge(b.currentBlock, falseBlk)
+			b.sealBlock(trueBlk)
+			b.sealBlock(falseBlk)
+
+			b.currentBlock = trueBlk
+			yVal := b.buildExpr(e.Arguments[1])
+			trueEndBlk := b.currentBlock
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, e)
+			b.addEdge(b.currentBlock, endBlk)
+
+			b.currentBlock = falseBlk
+			nVal := b.buildExpr(e.Arguments[2])
+			falseEndBlk := b.currentBlock
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, e)
+			b.addEdge(b.currentBlock, endBlk)
+			b.sealBlock(endBlk)
+
+			b.currentBlock = endBlk
+
+			// Handle literals and type matching
+			resTyp := yVal.Type()
+			if (yVal.Type().Name == "const_integer" || yVal.Type().Name == "nil" || yVal.Type().Name == "noreturn") && (nVal.Type().Name != "const_integer" && nVal.Type().Name != "nil" && nVal.Type().Name != "noreturn") {
+				resTyp = nVal.Type()
+				yVal = b.coerceType(yVal, resTyp)
+			} else if (nVal.Type().Name == "const_integer" || nVal.Type().Name == "nil" || nVal.Type().Name == "noreturn") && (yVal.Type().Name != "const_integer" && yVal.Type().Name != "nil" && yVal.Type().Name != "noreturn") {
+				resTyp = yVal.Type()
+				nVal = b.coerceType(nVal, resTyp)
+			} else if yVal.Type().Name != nVal.Type().Name {
+				panic(fmt.Sprintf("cond branches must have same type, got %s and %s", yVal.Type().Name, nVal.Type().Name))
+			}
+
+			phi := b.addInstr(&Phi{
+				BaseInstruction: BaseInstruction{Typ: resTyp},
+				Edges: []PhiEdge{
+					{Block: trueEndBlk, Value: yVal},
+					{Block: falseEndBlk, Value: nVal},
+				},
+			}, e)
+
+			return ExprResult{IsLValue: false, Value: phi, Typ: resTyp}
+		}
 		if ident.Value == "print" || ident.Value == "println" || ident.Value == "exit" || ident.Value == "panic" {
 			args := []Value{}
 			for _, arg := range e.Arguments {
