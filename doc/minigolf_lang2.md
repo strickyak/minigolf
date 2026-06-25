@@ -128,6 +128,10 @@ memory came from and how it is to be freed.  There is no safety here.
         More elements of type T can be allocated from the storage behind the slice,
         up until `.Len == .Cap`.
 
+Do use the `.Len` field for accessing the length of the slice.
+Be more careful with the `.Base` and `.Cap` fields;
+they are not needed unless you are crafting your own slice mechanisms.
+
 *   Index syntax is supported for elements of slices: `x := mySlice[index]`
 *   Indexes may be checked, if enabled in the compiler
 *   Assignment is also supported by index: `mySlice[index] = x`
@@ -164,6 +168,7 @@ If you know what you are doing, you are also welcome to construct your own slice
 *   `string` is an alias for the type `slice[byte]` which is a parameterized type defined in the prelude. 
 *   Literal strings like `"Hello World"` are an object of type `slice[byte]` backed by read-only
     memory containing ASCII bytes.   These bytes are terminated by a 0 byte, as C strings are.
+    The 0-termination byte does not count in the `.Len` of the string.
 *   The type `*byte` is largely compatible with `string`, and might be sometimes used
     if we want a smaller reference object for the string, and we are willing to use 0 byte termination
     (or some other means) to find the Length of the string.
