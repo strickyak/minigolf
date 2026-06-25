@@ -265,6 +265,10 @@ Expressions compute values. Operands in binary expressions must be of the exact 
 *   **Addressing and Dereferencing:** 
     *   `&x` yields a pointer (`*T`) to the operand `x`. The operand must be addressable (an L-value like a variable or struct field).
     *   `*p` yields the value of type `T` pointed to by `p`.
+*   **Indexing and Slicing:** 
+    *   `a[i]` indexes an array or a slice[T].
+    *   `a[i] = ...` indexes an array or a slice[T] for assignment.
+    *   `a[inclusive_start : exclusive_limit]` will chop a subslice from a slice.
 *   **Type Conversions:** Explicit casts are required to change primitive types: `byte(x)` truncates a word to a byte; `word(x)` zero-extends a byte to a word.
 
 ## 6. Statements
@@ -282,7 +286,16 @@ Statements control execution flow.
 
 *   **Control Flow:**
     *   `if condition { ... } else { ... }`. The condition must evaluate to a comparison.
-    *   `while condition { ... }`. Executes the block as long as the condition is true.
+    *   `for { ... }`. Executes the block forever.
+    *   `for condition { ... }`. Executes the block as long as the condition is true.
+    *   `for i := range N { ... }` executes the block for i ranging from 0 to N-1
+    *   `for k, v := range mySlice { ... }` executes the block for each element slice
+    *   The special form `cond(p, y, n)` is like `( p ? y : n )` in C99.
+        It looks like a function call, but all three of its arguments are not evaluated
+        like in a function call.  Instead, the predicate p is evaluated first,
+        and if p is true, the `y` is evaluated and becomes the result; otherwise, the `n`
+        is evaluated and becomes the result.  The types of `y` and `n` must be the same
+        (or use compatable constants).
 *   **Increment / Decrement:** `x++` and `x--` are statements, not expressions.
 
 ## 7. Methods
@@ -319,7 +332,10 @@ func g() {
 If a struct type has a method `destructor()` (taking no arguments and returning no result)
 then that method is guaranteed to be called on instances of the struct
 that are local to a function or a method (that is, they are on the call stack)
-when the function or method ends and the struct goes out of scope.
+when the function or method ends and the struct goes out of scope ( unless the
+object has a zero value, in which case
+the destructor may or may not be called;
+it is implementation-depenedant).
 
 This guarantee holds regardless of whether the flow of control hit an explicit
 return function, "falls off the the bottom" of the function, or exits due
@@ -328,6 +344,21 @@ to a `panic()`.
 (Notice we do not have "lexical scoping lifetimes" of variables declared in
 nested blocks; those variables actually have a lifetime of the function or method,
 even if they are not visible outside the nested block.)
+
+The idea is to declare your destructable object with a zero value,
+then only use appropriate methods to change it, which always leave your
+object in a destructable state, and finally expect destructor() to be called
+once (or optionally called, if you called no methods).
+
+```go
+func g() {
+    var buf MyDestructableBuffer
+    if changes != nil {
+        buf.ApplyChanges(changes)
+    }
+    // destructor gets automatically called (or maybe not, if changes was nil).
+}
+```
 
 ## 8. Generics
 
@@ -359,6 +390,7 @@ func First[T any](root *Link[T]) T {
 ```
 *   When a generic function is called (e.g., `First(&myNode)`), the compiler infers `T` from the argument types.
 *   Upon inference, the compiler instantiates a unique, strongly-typed copy of the function for that specific set of type arguments.
+*   If the type cannot be inferred from parameters, you may specify the type: `peek[byte](0x8000)`
 *   Generic parameters abstract the exact memory layout of `T` while maintaining strict type safety during compilation.
 
 ## 9. Built-in Functions
@@ -367,6 +399,10 @@ To support basic debugging and bootstrapping without a standard library,
 MiniGolf provides intrinsic functions:
 *   `print(arg1, arg2, ...)`: Prints the provided arguments to standard output.
 *   `println(arg1, arg2, ...)`: Prints the provided arguments followed by a newline character. 
+*   `Sizeof[T]()`: Fill in an actual type for the letter T, and you get the size of the values.
+    Unlike other things that look like function calls, this is a special form resulting in
+    a const value, which can be used when a const value is needed (to define the length
+    of an array or to define other const values).
 
 The arguments to `print` or `println` can be
 *   Integer literals or values of type `bool`, `byte`, `word`, or `int`.
