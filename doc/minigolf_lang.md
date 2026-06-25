@@ -29,7 +29,7 @@ The compiler is designed for multiple M6809 code generation scenarios:
 ### 1.02.2 Future M6809 Target Modes
 
 *   OS9 Machine Language Module:  The read-only code segment must be relocatable
-    (that is, uses Position Independant Code (PIC).   The data segment must be
+    (that is, uses Position Independent Code (PIC).   The data segment must be
     DP or some index-register -relative.
 
 *   Same as above, but for Level II OS9 in which the data segment is always
@@ -89,7 +89,7 @@ Hex integers start `0x` and octal integers start `0` or `0o`.
 In MiniGolf, as in Go, there are invisible semicolons at the end of statements.
 They are inserted automatically for you by the parser.  However this means the
 parser needs to know when you are finished with your statement, so use style like
-shown here, which leave some part of the grammer unfinished when an end-of-statement
+shown here, which leave some part of the grammar unfinished when an end-of-statement
 is not wanted yet:
 
 GOOD:
@@ -162,7 +162,7 @@ Actually in MiniGolf, *all types* are *copied by value*.  In Go, there are two t
 * `func peek[T any](addr word) T` and `func poke[T any](addr word, x T)` are also provided in the Prelude.
     These can be used to manipulate raw memory.
 
-### 3.5 Type `slice[T]`
+### 3.4 Type `slice[T]`
 
 A slice references some range of memory as contiguous elements of type T.
 As with pointers in C99, you are responsible for keeping track of where that
@@ -210,7 +210,7 @@ If you know what you are doing, you are also welcome to construct your own slice
     v := slice[word]{ Base: myBase, Len: myLen, Cap: myCap }
 ```
 
-### 3.6 Type `string`
+### 3.5 Type `string`
 
 *   `string` is an alias for the type `slice[byte]` which is a parameterized type defined in the prelude. 
 *   Literal strings like `"Hello World"` are an object of type `slice[byte]` backed by read-only
@@ -232,7 +232,7 @@ If you know what you are doing, you are also welcome to construct your own slice
     *   If the initialzer is another string, it copies the reference object, not the underlying bytes:
         `var t string ; s := t`
 
-### 3.7 Type `any`
+### 3.6 Type `any`
 
 *   The builtin `any` type is the only type that would be considered an "interface" in Go.
 *   An `any` can be created referencing an object of any data type.
@@ -240,14 +240,14 @@ If you know what you are doing, you are also welcome to construct your own slice
     two fields:  A pointer to the referenced data, and a `*byte` to a literal ASCII string contents
     naming the type of the data in a Human-friendly way, terminated by a 0 byte.
 
-### 3.8 Allowed Conversions
+### 3.7 Allowed Conversions
 
 *   **Pointers:** Pointer types can be cast to `word`, and `word` can be cast to pointer types.
 *   **Bool:** Integer types can be used where a `bool` is required.  Nonzero integers convert to 1, and the integer 0 converts to 0.
 *   **`*byte`:** Strings can be cast to `*byte` and `*byte` can be cast to `string`.
     In the later case, there will be a count of the bytes up to a 0 byte, to determine the `.Len` of the string.
 
-### 3.9 Zero Values
+### 3.8 Zero Values
 
 *   All data types have a "zero value" which is a natural "zero" or "empty" or "nil" value for
     that type of object.
@@ -366,10 +366,9 @@ func g() {
 If a struct type has a method `destructor()` (taking no arguments and returning no result)
 then that method is guaranteed to be called on instances of the struct
 that are local to a function or a method (that is, they are on the call stack)
-when the function or method ends and the struct goes out of scope ( unless the
-object has a zero value, in which case
+when the function or method ends and the struct goes out of scope ( unless the object has a zero value, in which case
 the destructor may or may not be called;
-it is implementation-depenedant).
+it is implementation-dependent).
 
 This guarantee holds regardless of whether the flow of control hit an explicit
 return function, "falls off the the bottom" of the function, or exits due
@@ -407,7 +406,7 @@ type Link[T any] struct {
     Next  *Link[T]
 }
 ```
-*   The "noise word" `any` must occur as shown, for compatability with Go syntax.
+*   The "noise word" `any` must occur as shown, for compatibility with Go syntax.
 
 *   When a generic type is used, it must be explicitly instantiated with concrete type arguments (e.g., `var myNode Link[byte]`).
 
@@ -474,12 +473,12 @@ If a panic was active when the defer'ed action is invoked,
 and recover() does not occur without a new panic being started,
 the panicking continues after the defer'ed action is invoked.
 
-There is a strong commonality between `defer` invocatoin
+There is a strong commonality between `defer` invocation
 and `destructor` invocation.  Both occur in the same chain
 of deferred actions, in BACKWARDS ORDER of the order in which
 they were introduced.
 
-## 10. `panic` and `recover`
+## 11. `panic` and `recover`
 
 MiniGolf supports a panic/recover framework much like in Go.
 
@@ -533,25 +532,25 @@ func g() {
 That is exactly as it is in Go, except that we constrain the panic value
 and recover'ed value to be `*byte`, but in Go it can be any value.
 
-## 11. `abort` and `exit`
+## 12. `abort` and `exit`
 
 If appropriate, the runtime library should provide two exits that are
 more exceptional than `panic`:
 
-*   `func abort(p *byte) notreturn` : Use your OS's process-aborting mechanism,
+*   `func abort(p *byte) noreturn` : Use your OS's process-aborting mechanism,
     which might produce debug artifacts like a core dump.
 
-*   `func exit(status byte) noreturn` : Use your OS's process-exiting mechansm,
+*   `func exit(status byte) noreturn` : Use your OS's process-exiting mechanism,
     which might use the status byte to signal success (a zero status) versus
     a non-successful (nonzero) status.
 
 These exits violate the guarantee that defer'ed actions and destructors will
 be called, because the process just goes away.
 
-## 12. Package
+## 13. Package
 
 Every module starts with a `package` statement,
-for compatiblity with Go syntax.
+for compatibility with Go syntax.
 
 It takes only one form:
 ```go
@@ -564,7 +563,7 @@ The name of the package is actually one of two things:
 *   If this is the main module whose file was named on the compiler command line, the module name is `main`.
 *   If the package file named `bar.golf` was found by an `import "bar"` statement, it module name `bar`.
 
-## 13. Import
+## 14. Import
 
 Zero or more `import` statements may follow the `package` statement.
 
@@ -588,7 +587,7 @@ In Go, only names beginning with an uppercase ASCII letter are imported.
 In MiniGolf, all names are imported.   There are no enforced private names.
 (This may change.)
 
-### 14.  Prelude
+## 15.  Prelude
 
 A module named `prelude` is always imported.  Its source will be in the search path,
 named `prelude.golf`, like any other module.  However is very special, containing some
