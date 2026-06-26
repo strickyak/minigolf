@@ -1948,46 +1948,6 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 				val := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 			}
-			// pointer_add[T](ptr, i) → (*T)(word(ptr) + word(i)*sizeof[T])
-			// pointer_sub[T](ptr, i) → (*T)(word(ptr) - word(i)*sizeof[T])
-			// pointer_diff[T](a, b)  → int(word(a) - word(b)) / sizeof[T]
-			if ident.Value == "pointer_add" || ident.Value == "pointer_sub" || ident.Value == "pointer_diff" {
-				if len(idxExpr.Indices) != 1 {
-					log.Panicf("%s requires exactly one type argument", ident.Value)
-				}
-				elemTyp := b.astToIRType(idxExpr.Indices[0])
-				ptrTyp := elemTyp.PointerTo()
-				sizeofVal := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: elemTyp}, e)
-				// Build actual arguments from the call.
-				var callArgs []Value
-				for _, arg := range e.Arguments {
-					callArgs = append(callArgs, b.buildExpr(arg))
-				}
-				if ident.Value == "pointer_diff" {
-					if len(callArgs) != 2 {
-						log.Panicf("pointer_diff requires exactly 2 arguments")
-					}
-					aWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: callArgs[0]}, e)
-					bWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: callArgs[1]}, e)
-					diff := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "sub", Left: aWord, Right: bWord}, e)
-					result := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "div", Left: diff, Right: sizeofVal}, e)
-					return ExprResult{IsLValue: false, Value: result, Typ: TypeWord}
-				}
-				// pointer_add or pointer_sub
-				if len(callArgs) != 2 {
-					log.Panicf("%s requires exactly 2 arguments", ident.Value)
-				}
-				ptrWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: callArgs[0]}, e)
-				iWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "zero_ext", Operand: callArgs[1]}, e)
-				stride := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "mul", Left: iWord, Right: sizeofVal}, e)
-				binOp := "add"
-				if ident.Value == "pointer_sub" {
-					binOp = "sub"
-				}
-				newWord := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: binOp, Left: ptrWord, Right: stride}, e)
-				result := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: ptrTyp}, Op: "word_to_ptr", Operand: newWord}, e)
-				return ExprResult{IsLValue: false, Value: result, Typ: ptrTyp}
-			}
 			rawFuncName = ident.FullName()
 		}
 		if rawFuncName != "" {
