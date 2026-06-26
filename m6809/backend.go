@@ -645,9 +645,9 @@ func (b *Backend) Generate(program *ir.Program) string {
 	}
 
 	if b.picMode {
-		b.buf.WriteString("\tlbsr f_main\n")
+		b.buf.WriteString("\tlbsr f_main__main\n")
 	} else {
-		b.buf.WriteString("\tjsr f_main\n")
+		b.buf.WriteString("\tjsr f_main__main\n")
 	}
 
 	if usesPanic {
@@ -737,7 +737,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 
 	//no-section// b.buf.WriteString(fmt.Sprintf("\n\texport f_%s\n", f.Name))
-	b.buf.WriteString(fmt.Sprintf("f_%s:\n", f.Name))
+	b.buf.WriteString(fmt.Sprintf("%s:\n", f.EmitName()))
 	if b.useFramePointer {
 		b.buf.WriteString("\tpshs u\n")
 		b.buf.WriteString("\ttfr s,u\n")
@@ -1389,7 +1389,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfGlobal(%s)\n", b.memAccess(offset), i.Global.Name))
 	case *ir.AddressOfFunc:
-		b.buf.WriteString(fmt.Sprintf("\tldd #f_%s\n", i.Func.Name))
+		b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
 		b.storeResult(id)
 	case *ir.AddressOfLocal:
 		b.flushRegisters()
@@ -1806,9 +1806,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 
 		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tlbsr f_%s\t\t; CALL (PIC)\n", i.Func.Name))
+			b.buf.WriteString(fmt.Sprintf("\tlbsr %s\t\t; CALL (PIC)\n", i.Func.EmitName()))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tjsr f_%s\t\t; CALL\n", i.Func.Name))
+			b.buf.WriteString(fmt.Sprintf("\tjsr %s\t\t; CALL\n", i.Func.EmitName()))
 		}
 
 		if retSize > 2 {

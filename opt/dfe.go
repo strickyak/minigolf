@@ -35,7 +35,7 @@ func EliminateDeadFunctions(p *ir.Program, protectMagic bool) bool {
 	// 1. Initial roots: always-live entry points.
 	for _, fn := range p.Functions {
 		name := fn.Name
-		if name == "main" || name == "prelude.init_0" || name == "main.init_0" || name == "init_main" {
+		if name == "main.main" || name == "prelude.init_0" || name == "main.init_0" || name == "init__main" {
 			markReachable(name)
 		}
 		// In the normal round, magic functions are unconditional roots so that

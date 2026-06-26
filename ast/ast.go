@@ -101,6 +101,7 @@ type VarStatement struct {
 	Name      *Identifier
 	ValueType Expression // Optional, e.g. 'byte' or 'word'
 	Value     Expression // Optional
+	Linkage   string     // If non-empty, override the emitted symbol name (from // minigolf:linkage(...))
 }
 
 func (s *VarStatement) statementNode()         {}
@@ -120,6 +121,7 @@ type FuncStatement struct {
 	IsVariadic bool
 	TrunkLevel int
 	Popularity int
+	Linkage    string // If non-empty, override the emitted symbol name (from // minigolf:linkage(...))
 }
 
 func (s *FuncStatement) statementNode()         {}

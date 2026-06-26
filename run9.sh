@@ -56,7 +56,8 @@ __exit:
 stuck:
     bra stuck         ; 3. Infinite Loop
 
-f_prelude.putchar:
+putchar:
+_putchar:
     ; first byte arg is already in B
     clra
     fcb  $12,$21,104  ; Hyper ShowChar
@@ -67,7 +68,7 @@ _printf:
     fcb  $12,$21,111  ; Hyper Printf
     rts
 
-f_prelude.mul_byte:
+f_prelude__mul_byte:
     ; first byte arg is already in B
     lda 2,s   ; get second byte arg
     mul

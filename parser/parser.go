@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/strickyak/minigolf/ast"
 	"github.com/strickyak/minigolf/token"
@@ -195,6 +196,28 @@ func (p *Parser) parseTopLevelStatement(overridePackage string) ast.Statement {
 	case token.CONST:
 		return p.parseConstStatement()
 	case token.PRAGMA:
+		// Check for linkage override: // minigolf:linkage("symbolname")
+		lit := p.curToken.Literal
+		if strings.HasPrefix(lit, `linkage("`) && strings.HasSuffix(lit, `")`) {
+			linkageName := lit[len(`linkage("`):len(lit)-len(`")`)]
+			// Consume the pragma token (and its trailing semicolon if present)
+			if p.peekTokenIs(token.SEMICOLON) {
+				p.nextToken()
+			}
+			p.nextToken() // advance to func/var keyword
+			stmt := p.parseTopLevelStatement(overridePackage)
+			switch s := stmt.(type) {
+			case *ast.FuncStatement:
+				if len(s.TypeParameters) > 0 {
+					p.addError(p.curToken, "linkage override cannot be applied to a generic function")
+				} else {
+					s.Linkage = linkageName
+				}
+			case *ast.VarStatement:
+				s.Linkage = linkageName
+			}
+			return stmt
+		}
 		return p.parsePragmaStatement()
 	case token.TYPE:
 		return p.parseTypeStatement()

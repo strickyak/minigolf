@@ -144,6 +144,7 @@ type Program struct {
 // Function represents a single function in SSA form.
 type Function struct {
 	Name                     string
+	Linkage                  string // If non-empty, use this as the emitted symbol name instead of f_MangleName(Name)
 	Parameters               []*Parameter
 	ReturnType               Type
 	Blocks                   []*BasicBlock
@@ -157,6 +158,16 @@ type Function struct {
 	// when compiling certain operators (e.g. strcmp for string '<', div_word
 	// for word '/'). These must survive DCE until after all templates expand.
 	IsMagic bool
+}
+
+// EmitName returns the symbol name to use in generated code.
+// If a linkage override was set (via // minigolf:linkage), that name is used;
+// otherwise the standard mangled form  f_<MangleName>  is returned.
+func (f *Function) EmitName() string {
+	if f.Linkage != "" {
+		return f.Linkage
+	}
+	return "f_" + MangleName(f.Name)
 }
 
 // Parameter represents a function parameter.
@@ -186,10 +197,19 @@ type BasicBlock struct {
 // Global represents a global variable in the flat namespace.
 type Global struct {
 	Name       string
+	Linkage    string // If non-empty, use this as the emitted symbol name
 	Typ        Type
 	InitString string
 	InitVal    Value
 	IsInit     bool
+}
+
+// EmitName returns the symbol name to use in generated code.
+func (g *Global) EmitName() string {
+	if g.Linkage != "" {
+		return g.Linkage
+	}
+	return MangleName(g.Name)
 }
 
 func (g *Global) Type() Type     { return g.Typ }

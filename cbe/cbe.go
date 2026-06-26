@@ -278,7 +278,7 @@ func (c *CBE) Generate(program *ir.Program) string {
 		c.buf.WriteString("\t\tabort();\n")
 		c.buf.WriteString("\t}\n")
 	}
-	c.buf.WriteString("\tf_main();\n")
+	c.buf.WriteString("\tf_main__main();\n")
 	c.buf.WriteString("\treturn 0;\n")
 	c.buf.WriteString("}\n")
 
@@ -287,9 +287,9 @@ func (c *CBE) Generate(program *ir.Program) string {
 	finalBuf.WriteString("typedef uint8_t byte;\n")
 	finalBuf.WriteString("typedef uintptr_t word;\n\n")
 
-	finalBuf.WriteString("word f_prelude_shl_word(word x, word n) { return x << n; }\n")
-	finalBuf.WriteString("word f_prelude_shr_word(word x, word n) { return x >> n; }\n")
-	finalBuf.WriteString("word f_prelude_mul_byte(byte a, byte b) { return (word)a * (word)b; }\n\n")
+	finalBuf.WriteString("word f_prelude__shl_word(word x, word n) { return x << n; }\n")
+	finalBuf.WriteString("word f_prelude__shr_word(word x, word n) { return x >> n; }\n")
+	finalBuf.WriteString("word f_prelude__mul_byte(byte a, byte b) { return (word)a * (word)b; }\n\n")
 
 	finalBuf.WriteString(c.typedefBuf.String())
 	finalBuf.WriteString("\n")
@@ -299,6 +299,13 @@ func (c *CBE) Generate(program *ir.Program) string {
 }
 
 func (c *CBE) emitFuncSignature(f *ir.Function, isForward bool) {
+	// If this function has a linkage override and no body, it's an external
+	// C symbol (e.g. putchar from <stdio.h>). Don't emit a conflicting
+	// forward declaration — the system headers already declare it.
+	if isForward && f.Linkage != "" && len(f.Blocks) == 0 {
+		return
+	}
+
 	retType := "void"
 	if !f.ReturnType.Equals(ir.TypeVoid) {
 		retType = c.mapType(f.ReturnType.Name)
@@ -309,8 +316,7 @@ func (c *CBE) emitFuncSignature(f *ir.Function, isForward bool) {
 		params = append(params, fmt.Sprintf("%s v_%s", c.mapType(p.Typ.Name), p.Name))
 	}
 
-	fName := strings.ReplaceAll(f.Name, ".", "_")
-	c.buf.WriteString(fmt.Sprintf("%s f_%s(%s)", retType, fName, strings.Join(params, ", ")))
+	c.buf.WriteString(fmt.Sprintf("%s %s(%s)", retType, f.EmitName(), strings.Join(params, ", ")))
 	if isForward {
 		c.buf.WriteString(";\n")
 	} else {
@@ -459,8 +465,7 @@ func (c *CBE) formatVal(v ir.Value) string {
 		gName := strings.ReplaceAll(val.Global.Name, ".", "_")
 		return fmt.Sprintf("(&v_%s)", gName)
 	case *ir.AddressOfFunc:
-		fName := strings.ReplaceAll(val.Func.Name, ".", "_")
-		return fmt.Sprintf("((word)(&f_%s))", fName)
+		return fmt.Sprintf("((word)(&%s))", val.Func.EmitName())
 	case ir.Instruction:
 		return fmt.Sprintf("v%d", c.getSlot(val.(interface{ GetID() int }).GetID()))
 	default:
@@ -569,8 +574,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			}
 			args = append(args, argStr)
 		}
-		fName := strings.ReplaceAll(i.Func.Name, ".", "_")
-		return fmt.Sprintf("f_%s(%s)", fName, strings.Join(args, ", "))
+		return fmt.Sprintf("%s(%s)", i.Func.EmitName(), strings.Join(args, ", "))
 	case *ir.IndirectCall:
 		var args []string
 		var argTypes []string
@@ -639,8 +643,7 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 			return fmt.Sprintf("(&%s)", c.formatVal(i.Local))
 		}
 	case *ir.AddressOfFunc:
-		fName := strings.ReplaceAll(i.Func.Name, ".", "_")
-		return fmt.Sprintf("((word)(&f_%s))", fName)
+		return fmt.Sprintf("((word)(&%s))", i.Func.EmitName())
 	case *ir.AddressOfField:
 		return fmt.Sprintf("(&(%s->f%d))", c.formatVal(i.Ptr), i.FieldIndex)
 	case *ir.AddressOfElement:

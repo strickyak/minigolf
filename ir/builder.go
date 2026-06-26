@@ -675,9 +675,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 	if len(b.varInitStatements) > 0 {
 		b.buildSyntheticInit()
 
-		mainFunc := b.funcs["main"]
+		mainFunc := b.funcs["main.main"]
 		if mainFunc != nil && len(mainFunc.Blocks) > 0 {
-			initFunc := b.funcs["init_main"]
+			initFunc := b.funcs["init__main"]
 			callInstr := &Call{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Func: initFunc}
 
 			// We need a unique ID for callInstr
@@ -708,11 +708,9 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		}
 		funcName = MangleName(baseType.String()) + "_" + funcName
 	} else {
-		if b.currentPackage != "main" || funcName != "main" {
-			funcName = b.currentPackage + "." + funcName
-		}
+		funcName = b.currentPackage + "." + funcName
 	}
-	f := &Function{Name: funcName}
+	f := &Function{Name: funcName, Linkage: s.Linkage}
 	f.ReturnType = b.getFuncReturnType(s.ReturnParameters)
 	paramIdx := 0
 	if s.Receiver != nil {
@@ -758,9 +756,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 
 		funcName = MangleName(baseType.String()) + "_" + funcName
 	} else {
-		if b.currentPackage != "main" || funcName != "main" {
-			funcName = b.currentPackage + "." + funcName
-		}
+		funcName = b.currentPackage + "." + funcName
 	}
 	b.currentFunc = b.funcs[funcName]
 	b.currentASTFunc = s
@@ -3589,7 +3585,7 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 }
 
 func (b *Builder) buildSyntheticInit() {
-	f := &Function{Name: "init_main", ReturnType: TypeVoid}
+	f := &Function{Name: "init__main", ReturnType: TypeVoid}
 	b.funcs[f.Name] = f
 	b.Program.Functions = append(b.Program.Functions, f)
 

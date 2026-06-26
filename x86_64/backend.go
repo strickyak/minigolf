@@ -179,22 +179,22 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString(".intel_syntax noprefix\n")
 	b.buf.WriteString(".text\n")
 
-	b.buf.WriteString("\t.globl f_prelude.shl_word\n")
-	b.buf.WriteString("f_prelude.shl_word:\n")
+	b.buf.WriteString("\t.globl f_prelude__shl_word\n")
+	b.buf.WriteString("f_prelude__shl_word:\n")
 	b.buf.WriteString("\tmov rax, rdi\n")
 	b.buf.WriteString("\tmov rcx, rsi\n")
 	b.buf.WriteString("\tshl rax, cl\n")
 	b.buf.WriteString("\tret\n")
 
-	b.buf.WriteString("\t.globl f_prelude.shr_word\n")
-	b.buf.WriteString("f_prelude.shr_word:\n")
+	b.buf.WriteString("\t.globl f_prelude__shr_word\n")
+	b.buf.WriteString("f_prelude__shr_word:\n")
 	b.buf.WriteString("\tmov rax, rdi\n")
 	b.buf.WriteString("\tmov rcx, rsi\n")
 	b.buf.WriteString("\tshr rax, cl\n")
 	b.buf.WriteString("\tret\n")
 
-	b.buf.WriteString("\t.globl f_prelude.mul_byte\n")
-	b.buf.WriteString("f_prelude.mul_byte:\n")
+	b.buf.WriteString("\t.globl f_prelude__mul_byte\n")
+	b.buf.WriteString("f_prelude__mul_byte:\n")
 	b.buf.WriteString("\tmovzx rax, dil\n")
 	b.buf.WriteString("\tmovzx rcx, sil\n")
 	b.buf.WriteString("\timul rax, rcx\n")
@@ -287,7 +287,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 
 		b.buf.WriteString(".L_main_call_f_main:\n")
 	}
-	b.buf.WriteString("\tcall f_main\n")
+	b.buf.WriteString("\tcall f_main__main\n")
 
 	// TODO -- fix this, to call fflush(stdout), where stdout is `extern FILE* stdout;`
 	// b.buf.WriteString("\tlea eax, [rip + stdout]\n")
@@ -336,8 +336,8 @@ func (b *Backend) getSlot(id int, typ string) int {
 
 func (b *Backend) emitFunc(f *ir.Function) {
 	b.f = f
-	b.buf.WriteString(fmt.Sprintf("\n\t.globl f_%s\n", f.Name))
-	b.buf.WriteString(fmt.Sprintf("f_%s:\n", f.Name))
+	b.buf.WriteString(fmt.Sprintf("\n\t.globl %s\n", f.EmitName()))
+	b.buf.WriteString(fmt.Sprintf("%s:\n", f.EmitName()))
 	b.buf.WriteString("\tpush rbp\n")
 	b.buf.WriteString("\tmov rbp, rsp\n")
 
@@ -638,7 +638,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + v_%s]\n", i.Global.Name))
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.AddressOfFunc:
-		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + f_%s]\n", i.Func.Name))
+		b.buf.WriteString(fmt.Sprintf("\tlea rax, [rip + %s]\n", i.Func.EmitName()))
 		b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
 	case *ir.AddressOfLocal:
 		var localOffset int
@@ -846,7 +846,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 		}
 
-		b.buf.WriteString(fmt.Sprintf("\tcall f_%s\n", i.Func.Name))
+		b.buf.WriteString(fmt.Sprintf("\tcall %s\n", i.Func.EmitName()))
 
 		if stackSub > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tadd rsp, %d\n", stackSub))

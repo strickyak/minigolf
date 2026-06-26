@@ -24,7 +24,8 @@ DyadicArith: first arg not a number 1
 --- cmds ---
 cmd1 arg1
  cmd2 {arg2; arg2b}
- cmd3\ncmd4
+ cmd3
+cmd4
 --- words ---
 word1
 word2 with spaces
