@@ -3,15 +3,17 @@ package main_test
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/strickyak/minigolf/ctranslator"
 )
 
-// TestAllCFiles globs c-tests/*.c, translates each with cc_to_golf into a
-// temporary .golf file, then runs it through all three backends (CBE,
-// x86_64, m6809) comparing stdout against the matching .want file.
+// TestAllCFiles globs c-tests/*.c, translates each with the in-process
+// ctranslator into a temporary .golf file, then runs it through all three
+// backends (CBE, x86_64, m6809) comparing stdout against the matching .want
+// file.
 //
 // Naming conventions (mirroring system_test.go):
 //   - foo.c          – normal test, must match foo.want
@@ -28,15 +30,6 @@ func TestAllCFiles(t *testing.T) {
 	}
 	if len(files) == 0 {
 		t.Skip("No *.c files found in c-tests/")
-	}
-
-	// Build (or reuse) the cc_to_golf binary once per test run.
-	ccToGolf := filepath.Join("_tmp", fmt.Sprintf("cc_to_golf.%d", os.Getpid()))
-	if _, err := os.Stat(ccToGolf); err != nil {
-		cmd := exec.Command("go", "build", "-o", ccToGolf, "./cc_v5/cmd/cc_to_golf/")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("Failed to build cc_to_golf: %v\n%s", err, out)
-		}
 	}
 
 	backends := []string{"CBE", "x86_64", "m6809"}
@@ -67,24 +60,22 @@ func TestAllCFiles(t *testing.T) {
 			wantStr = string(wb)
 		}
 
-		// Run cc_to_golf to produce the .golf file.
-		translateCmd := exec.Command(ccToGolf, cFile)
-		golfBytes, translateErr := translateCmd.Output()
-		if translateErr != nil {
+		// Translate in-process using ctranslator.
+		golfSrc, warn := ctranslator.TranslateFile(cFile, ctranslator.Options{
+			IncludePaths: []string{"golflib"},
+		})
+		if warn != nil {
+			t.Logf("cc warning for %s: %v", cFile, warn)
+		}
+		if golfSrc == "" {
 			if expectCompileError {
-				// Translation failure counts as a compile error — all backends pass.
+				// Empty output on error path counts as a compile-error — all backends pass.
 				continue
 			}
-			t.Errorf("cc_to_golf failed for %s: %v\nStderr: %s", cFile, translateErr,
-				func() string {
-					if ee, ok := translateErr.(*exec.ExitError); ok {
-						return string(ee.Stderr)
-					}
-					return ""
-				}())
+			t.Errorf("ctranslator returned empty output for %s", cFile)
 			continue
 		}
-		if err := os.WriteFile(golfFile, golfBytes, 0666); err != nil {
+		if err := os.WriteFile(golfFile, []byte(golfSrc), 0666); err != nil {
 			t.Fatalf("Cannot write translated golf file %s: %v", golfFile, err)
 		}
 

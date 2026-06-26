@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
 	"github.com/strickyak/minigolf/cbe"
+	"github.com/strickyak/minigolf/ctranslator"
 	"github.com/strickyak/minigolf/ir"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6809"
@@ -20,6 +22,8 @@ import (
 	// "github.com/strickyak/minigolf/prelude"
 	"github.com/strickyak/minigolf/semantic"
 	"github.com/strickyak/minigolf/x86_64"
+
+	cclib "modernc.org/cc/v5"
 )
 
 // Define a custom type that is a slice of strings
@@ -271,25 +275,133 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Parse -D overrides
-	defines := make(map[string]string)
+	// =========================================================================
+	// -D flag routing
+	// =========================================================================
+	//
+	// A -D flag whose name contains a '.' is a MiniGolf constant override
+	// (e.g. -D=mymodule.CONST=42). A -D flag whose name has no '.' is a C
+	// preprocessor #define (e.g. -D=DEBUG=1), forwarded to ctranslator when
+	// the source is a .c file.
+	//
+	// NOTE: Go flag convention requires -D=NAME=value or -D NAME=value.
+	// The C-compiler style -DNAME (no separator) is NOT supported.
+	golfDefines := make(map[string]string)
+	cDefines := make(map[string]string)
 	for _, d := range defineFlags {
 		parts := strings.SplitN(d, "=", 2)
 		if len(parts) != 2 {
-			fmt.Fprintf(os.Stderr, "Error: Invalid syntax for -D flag '%s'. Expected format: -Dmodule.const=value\n", d)
+			fmt.Fprintf(os.Stderr, "Error: -D=%s has no '=VALUE' part. Use -D=NAME=value\n", d)
 			os.Exit(1)
 		}
-		defines[parts[0]] = parts[1]
+		if strings.Contains(parts[0], ".") {
+			golfDefines[parts[0]] = parts[1] // MiniGolf constant
+		} else {
+			cDefines[parts[0]] = parts[1] // C preprocessor macro
+		}
 	}
 
-	// Remaining arguments are source files
+	// Remaining arguments are source files.
 	sourceFiles := flag.Args()
 	if len(sourceFiles) != 1 {
-		fmt.Fprintln(os.Stderr, "Error: Exactly one GOLF source file must be provided.")
+		fmt.Fprintln(os.Stderr, "Error: Exactly one source file must be provided.")
 		flag.Usage()
 		os.Exit(1)
 	}
 	mainSourceFile := sourceFiles[0]
+
+	// =========================================================================
+	// -m=NEWCONFIG: spawn the host C compiler to harvest its predefined macros
+	// and include paths, then print the result to stdout or -o.
+	//
+	// Use this once on a new host/target to capture the configuration, then
+	// bake it into the compiler as a named built-in config:
+	//
+	//  1. Run:  minigolf -m=newconfig -o myhost.cfg
+	//  2. The output contains two sections:
+	//       === PREDEFINED MACROS ===      (content for cc.Config.Predefined)
+	//       === INCLUDE PATHS ===          (one path per line)
+	//       === SYS INCLUDE PATHS ===      (one path per line)
+	//  3. In ctranslator/configs.go (create if absent), add a named entry:
+	//       var builtinConfigs = map[string]builtinConfig{
+	//           "linux-x86_64": { Predefined: "...", IncludePaths: [...], SysIncludePaths: [...] },
+	//       }
+	//  4. In ctranslator/translator.go, make TranslateFile check
+	//     opts.ConfigName against builtinConfigs before calling cc.NewConfig.
+	//     This allows cross-compilation without a host C compiler.
+	// =========================================================================
+	if strings.ToUpper(*archFlag) == "NEWCONFIG" {
+		cfg, err := cclib.NewConfig(runtime.GOOS, runtime.GOARCH)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "NewConfig failed: %v\n", err)
+			os.Exit(1)
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "=== PREDEFINED MACROS ===\n%s\n", cfg.Predefined)
+		fmt.Fprintf(&sb, "=== INCLUDE PATHS ===\n%s\n", strings.Join(cfg.IncludePaths, "\n"))
+		fmt.Fprintf(&sb, "=== SYS INCLUDE PATHS ===\n%s\n", strings.Join(cfg.SysIncludePaths, "\n"))
+		if err := writeOutput(*outFlag, sb.String()); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing NewConfig output: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// =========================================================================
+	// C source detection: if the source file ends in .c, run the C→Golf
+	// translation phase first.  The intermediate .golf file is written to
+	// <outFlag>.tmp.golf (kept for inspection), or to a temp file if -o is
+	// not given (Golf source also printed to stderr for debugging).
+	//
+	// -m=CC_TO_GOLF stops after this phase.
+	// =========================================================================
+	if strings.HasSuffix(mainSourceFile, ".c") {
+		golfSrc, warn := ctranslator.TranslateFile(mainSourceFile, ctranslator.Options{
+			IncludePaths: []string(importDirPath),
+			Defines:      cDefines,
+		})
+		if warn != nil {
+			fmt.Fprintln(os.Stderr, warn)
+		}
+		if golfSrc == "" {
+			fmt.Fprintln(os.Stderr, "Error: C translation produced empty output.")
+			os.Exit(1)
+		}
+
+		// Determine where to write the .tmp.golf intermediate.
+		var tmpGolfPath string
+		if *outFlag != "" {
+			tmpGolfPath = *outFlag + ".tmp.golf"
+			if err := os.WriteFile(tmpGolfPath, []byte(golfSrc), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", tmpGolfPath, err)
+				os.Exit(1)
+			}
+		} else {
+			// No -o: print Golf source to stderr; write a temp file for the parser.
+			fmt.Fprint(os.Stderr, golfSrc)
+			f, err := os.CreateTemp("", "minigolf-*.tmp.golf")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Cannot create temp file: %v\n", err)
+				os.Exit(1)
+			}
+			f.WriteString(golfSrc)
+			f.Close()
+			tmpGolfPath = f.Name()
+			// Keep it — temp files in the system temp dir are cleaned up on
+			// reboot; removing it here would prevent error inspection.
+		}
+		mainSourceFile = tmpGolfPath
+
+		// -m=CC_TO_GOLF: translation is the only goal, stop here.
+		if strings.ToUpper(*archFlag) == "CC_TO_GOLF" {
+			if *outFlag == "" {
+				// Already printed to stderr above.
+			} else {
+				fmt.Printf("Wrote %s\n", tmpGolfPath)
+			}
+			os.Exit(0)
+		}
+	}
 
 	if *outFlag != "" {
 		logFilename := *outFlag + ".log"
@@ -336,7 +448,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	resolver := semantic.NewResolver(defines)
+	resolver := semantic.NewResolver(golfDefines)
 	resolver.Resolve(program)
 	resolveCallback := func(node ast.Node, defPkg string) ast.Node {
 		if stmt, ok := node.(ast.Statement); ok {
