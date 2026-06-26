@@ -441,6 +441,13 @@ func g() {
 }
 ```
 
+### 7.3 func init()
+
+You may include a `func init()` in any module.  These will be called before main.main().
+
+Do not let your `func init()` in one module depend on the `func init()` of any other module.
+We do not any analysis of dependencies, but call them in alphabetical order based on module name.
+
 ## 8. Generics
 
 MiniGolf supports a limited, compile-time monomorphization generic system for both types and functions. Type parameters are declared using the `[T any]` or `[A any, B any]` syntax.
