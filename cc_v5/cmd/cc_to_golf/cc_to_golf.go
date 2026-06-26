@@ -251,7 +251,11 @@ func (t *translator) prescan(ast *cc.AST) {
 			if typ.Kind() == cc.Struct {
 				st := typ.(*cc.StructType)
 				tag := tokenStr(st.Tag())
-				if _, exists := t.structTagMap[tag]; !exists && tag != "" {
+				if tag == "" {
+					// Anonymous struct: use the typedef name as the key.
+					tag = name
+				}
+				if _, exists := t.structTagMap[tag]; !exists {
 					t.structTagMap[tag] = name
 				}
 				t.typedefMap[name] = name
@@ -362,7 +366,7 @@ func (t *translator) emitStructDefs(ast *cc.AST) {
 			}
 			t.emitStructType(golfName, st)
 		}
-		// Also check typedef-pointed struct types.
+		// Also check typedef-pointed struct types (handles anonymous structs too).
 		for _, id := range cd.InitDeclarators {
 			decl := id.Declarator
 			if !decl.IsTypename() {
@@ -378,6 +382,10 @@ func (t *translator) emitStructDefs(ast *cc.AST) {
 				continue
 			}
 			tag := tokenStr(st.Tag())
+			if tag == "" {
+				// Anonymous struct: prescan registered it under the typedef name.
+				tag = decl.Name()
+			}
 			golfName, exists := t.structTagMap[tag]
 			if !exists {
 				continue
@@ -1132,10 +1140,52 @@ func (t *translator) xExpr(n cc.Expression) string {
 		lhs := t.xExpr(x.Lhs)
 		rhs := t.xExpr(x.Rhs)
 		op := binaryOpStr(x.Op)
-		// Apply C's usual arithmetic conversions.
-		resultGolf := t.cTypeToGolf(x.Type())
 		lGolf := t.cTypeToGolf(x.Lhs.Type())
 		rGolf := t.cTypeToGolf(x.Rhs.Type())
+
+		// Pointer arithmetic: ptr+n, ptr-n, n+ptr, ptr-ptr.
+		lIsPtr := strings.HasPrefix(lGolf, "*")
+		rIsPtr := strings.HasPrefix(rGolf, "*")
+		if lIsPtr && (op == "+" || op == "-") {
+			elemType := lGolf[1:] // strip leading *
+			if rIsPtr && op == "-" {
+				// ptr - ptr → element-count difference
+				return fmt.Sprintf("prelude.pointer_diff[%s](%s, %s)", elemType, lhs, rhs)
+			}
+			// ptr ± int: for byte* use the direct word-cast idiom (avoids Sizeof).
+			// For other element types use the generic prelude helper.
+			fn := "pointer_add"
+			if op == "-" {
+				fn = "pointer_sub"
+			}
+			rhsInt := rhs
+			if rGolf != "int" {
+				rhsInt = "int(" + rhs + ")"
+			}
+			if elemType == "byte" {
+				wordOp := "+"
+				if op == "-" {
+					wordOp = "-"
+				}
+				return fmt.Sprintf("(*byte)(word(%s) %s word(%s))", lhs, wordOp, rhsInt)
+			}
+			return fmt.Sprintf("prelude.%s[%s](%s, %s)", fn, elemType, lhs, rhsInt)
+		}
+		if rIsPtr && op == "+" {
+			// int + ptr → commute to ptr + int
+			elemType := rGolf[1:]
+			lhsInt := lhs
+			if lGolf != "int" {
+				lhsInt = "int(" + lhs + ")"
+			}
+			if elemType == "byte" {
+				return fmt.Sprintf("(*byte)(word(%s) + word(%s))", rhs, lhsInt)
+			}
+			return fmt.Sprintf("prelude.pointer_add[%s](%s, %s)", elemType, rhs, lhsInt)
+		}
+
+		// Apply C's usual arithmetic conversions.
+		resultGolf := t.cTypeToGolf(x.Type())
 		if resultGolf == "word" || resultGolf == "int" {
 			// Promote any byte operand to the wider result type.
 			if golfTypeRank(lGolf) == 0 {
@@ -1153,8 +1203,28 @@ func (t *translator) xExpr(n cc.Expression) string {
 		lhs := t.xExpr(x.Lhs)
 		rhs := t.xExpr(x.Rhs)
 		op := assignOpStr(x.Op)
-		// For compound assignment ops (+=, -=, …) promote the RHS if narrower.
-		if op != "=" {
+		lGolf := t.cTypeToGolf(x.Lhs.Type())
+		rGolf := t.cTypeToGolf(x.Rhs.Type())
+		if op == "=" {
+			// C silently narrows when storing a wider int/word result into a byte
+			// variable. MiniGolf requires an explicit cast.
+			if lGolf == "byte" && (rGolf == "int" || rGolf == "word") {
+				rhs = "byte(" + rhs + ")"
+			}
+		} else if (op == "+=" || op == "-=") && strings.HasPrefix(lGolf, "*") {
+			// Pointer compound assignment: p += n  →  p = prelude.pointer_add[T](p, n)
+			elemType := lGolf[1:]
+			fn := "pointer_add"
+			if op == "-=" {
+				fn = "pointer_sub"
+			}
+			rhsInt := rhs
+			if rGolf != "int" {
+				rhsInt = "int(" + rhs + ")"
+			}
+			return fmt.Sprintf("%s = prelude.%s[%s](%s, %s)", lhs, fn, elemType, lhs, rhsInt)
+		} else {
+			// For other compound assignment ops (+=, -=, …) promote the RHS if narrower.
 			_, rhs = t.promoteForBinop(x.Lhs.Type(), lhs, x.Rhs.Type(), rhs)
 		}
 		return lhs + " " + op + " " + rhs
@@ -1212,10 +1282,31 @@ func (t *translator) xCall(x *cc.CallExpr) string {
 		return t.unsupported("bare " + fnStr)
 	}
 
-	// Collect arguments in source order (first to last).
+	// Collect arguments in source order (first to last), narrowing int→byte
+	// when the callee's parameter type is byte (C does this implicitly).
+	var paramTypes []cc.Type
+	callType := x.Func.Type()
+	// In cc/v5, function identifiers may appear as either *FunctionType or
+	// *PointerType → *FunctionType (the usual C function-pointer decay).
+	if pt, ok := callType.(*cc.PointerType); ok {
+		callType = pt.Elem()
+	}
+	if ft, ok := callType.(*cc.FunctionType); ok {
+		for _, p := range ft.Parameters() {
+			paramTypes = append(paramTypes, p.Type())
+		}
+	}
 	var args []string
-	for ael := x.Arguments; ael != nil; ael = ael.ArgumentExpressionList {
-		args = append(args, t.xExpr(ael.Expression))
+	for i, ael := 0, x.Arguments; ael != nil; i, ael = i+1, ael.ArgumentExpressionList {
+		arg := t.xExpr(ael.Expression)
+		argGolf := t.cTypeToGolf(ael.Expression.Type())
+		if i < len(paramTypes) {
+			paramGolf := t.cTypeToGolf(paramTypes[i])
+			if paramGolf == "byte" && (argGolf == "int" || argGolf == "word") {
+				arg = "byte(" + arg + ")"
+			}
+		}
+		args = append(args, arg)
 	}
 	return fnStr + "(" + strings.Join(args, ", ") + ")"
 }

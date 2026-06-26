@@ -27,12 +27,13 @@ func vpokeb(addr word, value byte) { *((*byte)(addr)) = value }
 // golf:volatile
 func vpokew(addr word, value word) { *((*byte)(word)) = value }
 
-func pointer_add[T any](ptr *T, i int) {
-	return (*T)(word(ptr) + word(i)*Sizeof[T]())
-}
-func pointer_sub[T any](ptr *T, i int) {
-	return (*T)(word(ptr) - word(i)*Sizeof[T]())
-}
+// pointer_add, pointer_sub, and pointer_diff are compiler built-ins handled
+// specially by the IR builder, which emits stride-correct word arithmetic using
+// the Sizeof instruction. These empty stubs make the names visible to the
+// semantic pass without requiring Sizeof (which is not a callable function).
+func pointer_add[T any](ptr *T, i int)   {}
+func pointer_sub[T any](ptr *T, i int)   {}
+func pointer_diff[T any](a *T, b *T) int {}
 
 /////////////////////////////////////////////
 

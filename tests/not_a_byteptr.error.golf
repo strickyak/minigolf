@@ -7,6 +7,6 @@ import "prelude"
 // This file must cause a compile-time error.
 
 func main() {
-    words := prelude.slice[word]{1, 2, 3}
-    _ = (*byte)(words) // ERROR: cannot cast slice[word] to *byte
+	words := prelude.slice[word]{1, 2, 3}
+	_ = (*byte)(words) // ERROR: cannot cast slice[word] to *byte
 }
