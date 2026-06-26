@@ -1924,13 +1924,41 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: ptrWord}, e)
 			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
 		}
+		// Special case: (*byte)([N]byte expr) — array-to-pointer decay.
+		// A [N]byte local array decays to a pointer to its first element,
+		// just like a C array decays to T* when cast to a char*.
+		// Only [N]byte (element type byte) is permitted; other element types are rejected.
+		if targetTyp.Name == "*byte" && val.Type().IsAnArray() {
+			eltTyp := val.Type().ArrayElementType()
+			if eltTyp.Name != "byte" {
+				panic(fmt.Sprintf("cannot cast %s to *byte: only [N]byte arrays may be cast to *byte, not [N]%s", srcName, eltTyp.Name))
+			}
+			// Re-eval the argument to get the lvalue address of the array.
+			argRes := b.eval(e.Arguments[0])
+			var addrVal Value
+			if argRes.IsLValue {
+				// Stack array: Address is already a pointer to element[0].
+				addrVal = argRes.Address
+			} else {
+				// Non-lvalue (e.g. returned struct): spill to a temp local.
+				tmpName := fmt.Sprintf(".arrtmp_%d", b.nextValueID)
+				b.varTypes[tmpName] = val.Type()
+				b.writeVariable(tmpName, b.currentBlock, val)
+				tmpLocal := b.readVariable(tmpName, b.currentBlock)
+				addrVal = b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: val.Type().PointerTo()}, Local: tmpLocal}, e)
+			}
+			// Cast the array address (type *[N]byte) to *byte.
+			addrWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: addrVal}, e)
+			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: addrWord}, e)
+			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
+		}
 		// Disallow casting any other struct or non-string slice to (*byte): only
-		// slice[byte] (a.k.a. string) has a defined base-pointer layout.
+		// slice[byte] (a.k.a. string) and [N]byte arrays have a defined base-pointer layout.
 		srcIsStruct := val.Type().IsAStruct() || val.Type().IsAnArray() ||
 			strings.HasPrefix(srcName, "prelude.slice_") ||
 			strings.HasPrefix(srcName, "slice_")
 		if targetTyp.Name == "*byte" && srcIsStruct {
-			panic(fmt.Sprintf("cannot cast %s to *byte: only slice[byte] (string) may be cast to *byte", srcName))
+			panic(fmt.Sprintf("cannot cast %s to *byte: only slice[byte] (string) or [N]byte arrays may be cast to *byte", srcName))
 		}
 		res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, e)
 		return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
@@ -2410,7 +2438,30 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				}
 			}
 		} else if base.Typ.IsAPointer() {
-			panic("Pointer indexing not supported yet")
+			// Pointer indexing: p[i] ≡ *(p + i) in C.
+			// Compute element address = word(p) + word(i) * sizeof(eltType).
+			eltTyp = base.Typ.PointedType()
+			// Get the base pointer as a word.
+			var ptrWord Value
+			if base.IsLValue {
+				ptrVal := b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: base.Typ}, Ptr: base.Address}, e)
+				ptrWord = b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: ptrVal}, e)
+			} else {
+				ptrWord = b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: base.Value}, e)
+			}
+			// Compute byte offset = i * sizeof(eltType).
+			idxWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "bitcast", Operand: idx}, e)
+			eltSize := b.getTypeSize(eltTyp)
+			var byteOffset Value
+			if eltSize == 1 {
+				byteOffset = idxWord
+			} else {
+				sizeVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(eltSize)}, e)
+				byteOffset = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "mul", Left: idxWord, Right: sizeVal}, e)
+			}
+			elemAddrWord := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "add", Left: ptrWord, Right: byteOffset}, e)
+			elemAddr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: eltTyp.PointerTo()}, Op: "word_to_ptr", Operand: elemAddrWord}, e)
+			return ExprResult{IsLValue: true, Address: elemAddr, Typ: eltTyp}
 		} else {
 			panic("Indexing non-array type")
 		}

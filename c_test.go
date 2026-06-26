@@ -60,9 +60,23 @@ func TestAllCFiles(t *testing.T) {
 			wantStr = string(wb)
 		}
 
+		// Load extra include paths from a sidecar <stem>.ipath file, if present.
+		// Each non-empty, non-comment line is an include path (relative to the
+		// repo root). Paths are prepended so that golflib remains last (system).
+		includePaths := []string{"golflib"}
+		iPaths, err2 := os.ReadFile(filepath.Join("c-tests", stem+".ipath"))
+		if err2 == nil {
+			for _, line := range strings.Split(strings.TrimSpace(string(iPaths)), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "#") {
+					includePaths = append([]string{line}, includePaths...) // prepend; golflib stays last
+				}
+			}
+		}
+
 		// Translate in-process using ctranslator.
 		golfSrc, warn := ctranslator.TranslateFile(cFile, ctranslator.Options{
-			IncludePaths: []string{"golflib"},
+			IncludePaths: includePaths,
 		})
 		if warn != nil {
 			t.Logf("cc warning for %s: %v", cFile, warn)

@@ -7,9 +7,9 @@ test: _FORCE_
 	go test -count=1  ./...
 
 format: _FORCE_
-	test -f /usr/local/bin/ci-l && ci-l *.go */*.go */*.golf */*.want *.sh doc/*.md
-	gofmt -w *.go */*.go */*.golf
-	test -f /usr/local/bin/ci-l && ci-l *.go */*.go */*.golf */*.want *.sh doc/*.md
+	test -f /usr/local/bin/ci-l && ci-l [a-z]*.go [a-z]*/*.go [a-z]*/*.golf [a-z]*/*.want [a-z]*.sh doc/*.md
+	gofmt -w [a-z]*.go [a-z]*/*.go [a-z]*/*.golf
+	test -f /usr/local/bin/ci-l && ci-l [a-z]*.go [a-z]*/*.go [a-z]*/*.golf [a-z]*/*.want [a-z]*.sh doc/*.md
 
 clean: _FORCE_
 	rm -f minigolf

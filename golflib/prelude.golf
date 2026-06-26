@@ -27,6 +27,12 @@ func vpokeb(addr word, value byte) { *((*byte)(addr)) = value }
 // golf:volatile
 func vpokew(addr word, value word) { *((*byte)(word)) = value }
 
+// abort terminates the program abnormally, satisfying the C extern void abort(void)
+// declaration that cc_to_golf emits for <assert.h> and similar headers.
+func abort() {
+	panic("abort")
+}
+
 func pointer_add[T any](ptr *T, i int) *T {
 	return (*T)(word(ptr) + word(i)*sizeof[T]())
 }
@@ -53,6 +59,20 @@ func post_increment[T any](p *T) T {
 	z := *p
 	*p++
 	return z
+}
+
+// pre_increment increments *p and returns the new value.
+// Use this to translate C's prefix ++ operator when used as an expression.
+func pre_increment[T any](p *T) T {
+	*p++
+	return *p
+}
+
+// pre_decrement decrements *p and returns the new value.
+// Use this to translate C's prefix -- operator when used as an expression.
+func pre_decrement[T any](p *T) T {
+	*p--
+	return *p
 }
 
 /////////////////////////////////////////////

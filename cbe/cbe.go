@@ -607,7 +607,19 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		case "word_to_ptr":
 			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), c.formatVal(i.Operand))
 		case "ptr_to_word":
-			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
+			operandStr := c.formatVal(i.Operand)
+			// If the operand is a pointer to an array struct (e.g. *[N]byte →
+			// t_arr_N_byte*), we want the address of element 0, not the struct.
+			operandTyp := i.Operand.Type()
+			if operandTyp.IsAPointer() && operandTyp.PointedType().IsAnArray() {
+				// operandStr is a ptr expression like (&(ctx->f2)); use -> to deref.
+				return fmt.Sprintf("(word)(&(%s)->data[0])", operandStr)
+			}
+			if operandTyp.IsAnArray() {
+				// operandStr is a value expression; use & + .data[0]
+				return fmt.Sprintf("(word)(&(%s).data[0])", operandStr)
+			}
+			return fmt.Sprintf("(word)(%s)", operandStr)
 		case "bitcast":
 			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), c.formatVal(i.Operand))
 		default:

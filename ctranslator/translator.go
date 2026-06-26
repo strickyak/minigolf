@@ -62,12 +62,19 @@ func TranslateFile(cFile string, opts Options) (string, error) {
 	sources = append(sources, cc.Source{Name: cFile})
 
 	ast, err := cc.Translate(cfg, sources)
+	if ast == nil {
+		// cc.Translate returns nil AST only on fatal errors (missing includes,
+		// severe syntax errors, etc.). The error IS the diagnosis.
+		if err != nil {
+			return "", fmt.Errorf("C frontend: %w", err)
+		}
+		return "", fmt.Errorf("C frontend: cc.Translate returned nil AST (no error details available)")
+	}
+	// Non-nil AST with an error means a recoverable warning (e.g. unknown
+	// __attribute__). Translation can proceed.
 	var warning error
 	if err != nil {
 		warning = fmt.Errorf("warning: %w", err)
-	}
-	if ast == nil {
-		return "", fmt.Errorf("fatal: nil AST from cc.Translate")
 	}
 
 	tr := newTranslator(opts.KeepGoing)
@@ -82,6 +89,15 @@ func TranslateFile(cFile string, opts Options) (string, error) {
 type staticVar struct {
 	golfName string
 	golfType string
+}
+
+// arrStrInit records a C global char array initialised from a string literal.
+// We can't emit `var name [N]byte = "..."` in Golf (type mismatch: [N]byte vs
+// slice[byte]), so we defer the bytes to a generated func init().
+type arrStrInit struct {
+	varName string
+	nBytes  int    // total bytes to copy (array length, includes NUL)
+	strLit  string // the Golf string literal, e.g. `"0123456789ABCDEF"`
 }
 
 type translator struct {
@@ -121,6 +137,9 @@ type translator struct {
 	// keepGoing controls error handling for unsupported C constructs.
 	// When true, emit /* UNSUPPORTED: ... */ comments; when false, emit panic().
 	keepGoing bool
+
+	// Deferred string-to-array initializations emitted into func init().
+	arrStrInits []arrStrInit
 }
 
 func newTranslator(keepGoing bool) *translator {
@@ -335,6 +354,22 @@ func (t *translator) translateProgram(ast *cc.AST) {
 		}
 	}
 	t.flushStaticVars()
+	// Emit a func init() for any global arrays that were initialized from
+	// C string literals (which can't be expressed as var [N]byte = "...").
+	if len(t.arrStrInits) > 0 {
+		t.raw("\nfunc init() {\n")
+		for i, asi := range t.arrStrInits {
+			srcVar := fmt.Sprintf("_asinit_src%d", i)
+			dstVar := fmt.Sprintf("_asinit_dst%d", i)
+			nVar := fmt.Sprintf("_asinit_n%d", i)
+			t.raw(fmt.Sprintf("    %s := (*byte)(%s)\n", srcVar, asi.strLit))
+			t.raw(fmt.Sprintf("    %s := (*byte)(%s)\n", dstVar, asi.varName))
+			t.raw(fmt.Sprintf("    for %s := word(0); %s < word(%d); %s++ {\n", nVar, nVar, asi.nBytes, nVar))
+			t.raw(fmt.Sprintf("        %s[%s] = %s[%s]\n", dstVar, nVar, srcVar, nVar))
+			t.raw("    }\n")
+		}
+		t.raw("}\n")
+	}
 	// Note: the caller (TranslateFile) returns t.out.String().
 }
 
@@ -458,7 +493,25 @@ func (t *translator) translateTopLevelDecl(cd *cc.CommonDeclaration) {
 		golfType := t.cTypeToGolf(typ)
 		if id.Initializer != nil {
 			initStr := t.xExpr(id.Initializer.Expression)
-			t.raw(fmt.Sprintf("\nvar %s %s = %s\n", name, golfType, initStr))
+			// Detect [N]byte = "string" — type mismatch in Golf ([N]byte vs
+			// slice[byte]). Emit a bare var and defer copy to func init().
+			if strings.HasPrefix(golfType, "[") && strings.HasSuffix(golfType, "byte") &&
+				len(initStr) >= 2 && initStr[0] == '"' {
+				// Parse array length from golfType "[N]byte".
+				close := strings.Index(golfType, "]")
+				nBytes := 0
+				if close > 1 {
+					fmt.Sscanf(golfType[1:close], "%d", &nBytes)
+				}
+				t.raw(fmt.Sprintf("\nvar %s %s\n", name, golfType))
+				t.arrStrInits = append(t.arrStrInits, arrStrInit{
+					varName: name,
+					nBytes:  nBytes,
+					strLit:  initStr,
+				})
+			} else {
+				t.raw(fmt.Sprintf("\nvar %s %s = %s\n", name, golfType, initStr))
+			}
 		} else {
 			t.raw(fmt.Sprintf("\nvar %s %s\n", name, golfType))
 		}
@@ -635,6 +688,17 @@ func (t *translator) translateExprStmtOne(e cc.Expression) {
 				pStr := t.xExpr(postfix.Expr)
 				rhsStr := t.xExpr(asgn.Rhs)
 				golfType := t.cTypeToGolf(postfix.Expr.Type())
+				// Narrow the RHS to byte if the destination is *byte and the
+				// source expression is wider (int or word). In C, char literals
+				// and arithmetic promote to int; storing into a *char needs
+				// truncation. In Golf, char literals are const_integer and adapt
+				// to context, but explicit int(...) casts in the RHS force int type.
+				if golfType == "*byte" {
+					rhsGolf := t.cTypeToGolf(asgn.Rhs.Type())
+					if rhsGolf == "int" || rhsGolf == "word" {
+						rhsStr = "byte(" + rhsStr + ")"
+					}
+				}
 				t.line("*%s = %s", pStr, rhsStr)
 				t.line("%s = (%s)(word(%s) + 1)", pStr, golfType, pStr)
 				return
@@ -1112,7 +1176,35 @@ func (t *translator) xExpr(n cc.Expression) string {
 		base := t.xExpr(x.Expr)
 		field := x.Sel.SrcStr()
 		// Both . and -> become . in MiniGolf (auto-deref through pointer).
-		return base + "." + field
+		result := base + "." + field
+		// Array-to-pointer decay for struct fields: if the struct field's
+		// un-decayed type is an array (e.g. unsigned char[256]), and cc/v5
+		// has already decayed x.Type() to a pointer, we must emit (*T)(result)
+		// so MiniGolf knows to take the array address rather than copying it.
+		if x.Type().Kind() == cc.Ptr {
+			// Check the struct type for the field's declared type.
+			baseTyp := x.Expr.Type()
+			if baseTyp.Kind() == cc.Ptr {
+				if pt, ok := baseTyp.(*cc.PointerType); ok {
+					baseTyp = pt.Elem()
+				}
+			}
+			if st, ok := baseTyp.(*cc.StructType); ok {
+				for i := 0; i < st.NumFields(); i++ {
+					f := st.FieldByIndex(i)
+					if f == nil {
+						continue
+					}
+					if f.Name() == field && f.Type().Kind() == cc.Array {
+						// Field is an array — emit the explicit decay cast.
+						golfPtrType := t.cTypeToGolf(x.Type())
+						result = "(" + golfPtrType + ")(" + result + ")"
+						break
+					}
+				}
+			}
+		}
+		return result
 
 	case *cc.IndexExpr:
 		return t.xExpr(x.Expr) + "[" + t.xExpr(x.Index) + "]"
@@ -1139,10 +1231,20 @@ func (t *translator) xExpr(n cc.Expression) string {
 
 	case *cc.PrefixExpr:
 		base := t.xExpr(x.Expr)
-		if x.Dec {
-			return "--" + base
+		if x.Expr.Type().Kind() == cc.Ptr {
+			// Pointer prefix increment/decrement in expression context.
+			// These are rare; if reached, we cannot inline the side-effect cleanly.
+			if x.Dec {
+				return t.unsupported("ptr prefix-- in expr: " + base)
+			}
+			return t.unsupported("ptr prefix++ in expr: " + base)
 		}
-		return "++" + base
+		// Non-pointer: use prelude helper that mutates and returns new value.
+		golfType := t.cTypeToGolf(x.Expr.Type())
+		if x.Dec {
+			return fmt.Sprintf("pre_decrement[%s](&%s)", golfType, base)
+		}
+		return fmt.Sprintf("pre_increment[%s](&%s)", golfType, base)
 
 	case *cc.UnaryExpr:
 		return t.xUnary(x)
@@ -1225,6 +1327,25 @@ func (t *translator) xExpr(n cc.Expression) string {
 			if lGolf == "byte" && (rGolf == "int" || rGolf == "word") {
 				rhs = "byte(" + rhs + ")"
 			}
+			// C implicit array-to-pointer decay: assigning [N]T to *T, or an
+			// array field (which cc/v5 may report as already-decayed *T) to *T.
+			if strings.HasPrefix(lGolf, "*") {
+				switch x.Rhs.Type().Kind() {
+				case cc.Array:
+					// RHS is array type — cc/v5 has not decayed it yet.
+					// Extract element from "[N]elem" and check it matches.
+					if strings.HasPrefix(rGolf, "[") {
+						if idx := strings.Index(rGolf, "]"); idx >= 0 {
+							eltGolf := rGolf[idx+1:]
+							if "*"+eltGolf == lGolf {
+								rhs = "(" + lGolf + ")(" + rhs + ")"
+							}
+						}
+					}
+				}
+				// If RHS kind is already Ptr (already-decayed array field),
+				// no explicit cast is needed — it's already the right pointer type.
+			}
 		} else if (op == "+=" || op == "-=") && strings.HasPrefix(lGolf, "*") {
 			// Pointer compound assignment: p += n  →  p = prelude.pointer_add[T](p, n)
 			elemType := lGolf[1:]
@@ -1266,6 +1387,23 @@ func (t *translator) xPrimary(x *cc.PrimaryExpression) string {
 				return fmt.Sprintf("(%s)(%s)", ptrType, gname)
 			}
 			return gname
+		}
+		// Array-to-pointer decay for regular (non-static) variables:
+		// if the declared type of this identifier is an array (e.g. char buf[5]),
+		// cc/v5 decays the expression type to a pointer but Golf keeps the
+		// variable as [N]T. Emit (*EltType)(name) to force the decay.
+		if resolved := x.ResolvedTo(); resolved != nil {
+			type typer interface{ Type() cc.Type }
+			if typerNode, ok := resolved.(typer); ok {
+				declaredTyp := typerNode.Type()
+				if declaredTyp != nil && declaredTyp.Kind() == cc.Array {
+					at, ok := declaredTyp.(*cc.ArrayType)
+					if ok {
+						eltGolf := t.cTypeToGolf(at.Elem())
+						return fmt.Sprintf("(*%s)(%s)", eltGolf, name)
+					}
+				}
+			}
 		}
 		return name
 	case cc.PrimaryExpressionInt:
@@ -1313,11 +1451,46 @@ func (t *translator) xCall(x *cc.CallExpr) string {
 	var args []string
 	for i, ael := 0, x.Arguments; ael != nil; i, ael = i+1, ael.ArgumentExpressionList {
 		arg := t.xExpr(ael.Expression)
-		argGolf := t.cTypeToGolf(ael.Expression.Type())
+		argExprTyp := ael.Expression.Type() // may be decayed by cc/v5
+		argGolf := t.cTypeToGolf(argExprTyp)
 		if i < len(paramTypes) {
 			paramGolf := t.cTypeToGolf(paramTypes[i])
 			if paramGolf == "byte" && (argGolf == "int" || argGolf == "word") {
 				arg = "byte(" + arg + ")"
+			}
+			// Array-to-pointer decay for call arguments: when the un-decayed
+			// argument expression is an array (e.g. char buf[5]) passed to a
+			// parameter expecting a pointer (e.g. char*), emit (*EltType)(arg).
+			// cc/v5 decays it to *T in argExprTyp, so check the arg node's kind
+			// via the parameter's expected pointer type vs the Golf type.
+			if strings.HasPrefix(paramGolf, "*") && strings.HasPrefix(argGolf, "*") {
+				// Both look like pointers — but the arg Golf name may be a
+				// local/global [N]T array whose Golf type in the struct is
+				// still [N]T. Check the actual argument expression node type
+				// before decay.
+				if ael.Expression.Type().Kind() == cc.Array {
+					eltType := t.cTypeToGolf(ael.Expression.Type().(*cc.ArrayType).Elem())
+					if "*"+eltType == paramGolf {
+						arg = "(" + paramGolf + ")(" + arg + ")"
+					}
+				}
+			}
+		} else {
+			// Variadic / excess argument: apply C default argument promotions.
+			// In C, integer types narrower than int (char, unsigned char, short,
+			// etc.) are promoted to int when passed to variadic functions. This
+			// is critical on big-endian targets like M6809: a byte any stores
+			// only 1 byte, but peek[word] reads 2 bytes and gets the value in
+			// the high byte (VV00 instead of 00VV). On little-endian x86_64 it
+			// accidentally works because the low byte is the value byte.
+			if argGolf == "byte" {
+				arg = "word(" + arg + ")"
+			}
+			// Array-to-pointer decay for variadic args.
+			if argExprTyp.Kind() == cc.Array {
+				at := argExprTyp.(*cc.ArrayType)
+				eltGolf := t.cTypeToGolf(at.Elem())
+				arg = "(*" + eltGolf + ")(" + arg + ")"
 			}
 		}
 		args = append(args, arg)
