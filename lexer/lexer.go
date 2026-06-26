@@ -328,14 +328,54 @@ func (l *Lexer) readNumber() string {
 }
 
 func (l *Lexer) readString() string {
-	position := l.position + 1
+	var buf []byte
 	for {
 		l.readChar()
 		if l.ch == '"' || l.ch == 0 {
 			break
 		}
+		if l.ch != '\\' {
+			buf = append(buf, l.ch)
+			continue
+		}
+		// Escape sequence: consume the character after backslash.
+		l.readChar()
+		switch l.ch {
+		case 'n':
+			buf = append(buf, '\n')
+		case 't':
+			buf = append(buf, '\t')
+		case 'r':
+			buf = append(buf, '\r')
+		case 'a':
+			buf = append(buf, '\a')
+		case 'b':
+			buf = append(buf, '\b')
+		case 'f':
+			buf = append(buf, '\f')
+		case 'v':
+			buf = append(buf, '\v')
+		case '\\':
+			buf = append(buf, '\\')
+		case '"':
+			buf = append(buf, '"')
+		case '\'':
+			buf = append(buf, '\'')
+		case '0':
+			buf = append(buf, 0)
+		case 'x', 'X':
+			// \xNN — two hex digits.
+			l.readChar()
+			hi := hexDigitVal(l.ch)
+			l.readChar()
+			lo := hexDigitVal(l.ch)
+			buf = append(buf, hi*16+lo)
+		default:
+			// Unknown escape — pass through unchanged.
+			buf = append(buf, '\\', l.ch)
+		}
 	}
-	return l.input[position:l.position]
+	return string(buf)
 }
 
 func (l *Lexer) readRawString() string {
@@ -362,6 +402,19 @@ func isLetter(ch byte) bool {
 
 func isDigit(ch byte) bool {
 	return '0' <= ch && ch <= '9'
+}
+
+func hexDigitVal(ch byte) byte {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return ch - '0'
+	case ch >= 'a' && ch <= 'f':
+		return ch - 'a' + 10
+	case ch >= 'A' && ch <= 'F':
+		return ch - 'A' + 10
+	default:
+		return 0
+	}
 }
 
 func isHexDigit(ch byte) bool {

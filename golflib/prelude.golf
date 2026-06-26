@@ -594,3 +594,7 @@ func init() {
 		malloc_init(&Heap[0], HEAP_SIZE)
 	}
 }
+
+///////////////////////////////
+
+func putchar(b byte) // External

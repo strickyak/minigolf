@@ -29,13 +29,14 @@ void assert_6809(bool b, const char* s, uint n) {
     while (1) {}
 }
 
+#if 0
 void putchar_raw(int ch) {
     *(volatile byte*)TURBO9SIMPUTCHAR = (byte)ch;
     //*(volatile byte*)ACIA_DATA = (byte)ch;
 }
-void putchar(int ch) {
-    *(volatile byte*)TURBO9SIMPUTCHAR = (byte)ch;
-    //*(volatile byte*)ACIA_DATA = (byte)ch;
+#endif
+void putchar_raw(int ch) {
+    putchar(ch);
 }
 
 #elif  defined(unix)

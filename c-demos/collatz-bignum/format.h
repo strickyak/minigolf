@@ -115,7 +115,7 @@ void printf(const char* format, ...) {
   va_start(ap, format);
   Vprintf(buffer, format, ap);
   for (const char* p = buffer; *p; p++) {
-      putchar_raw(*p);
+      putchar(*p);
   }
 }
 

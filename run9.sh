@@ -56,6 +56,12 @@ __exit:
 stuck:
     bra stuck         ; 3. Infinite Loop
 
+f_prelude.putchar:
+    ; first byte arg is already in B
+    clra
+    fcb  $12,$21,104  ; Hyper ShowChar
+    rts
+
 _printf:
     leax 2,s
     fcb  $12,$21,111  ; Hyper Printf
@@ -68,7 +74,8 @@ f_prelude.mul_byte:
     tfr d,x   ; leave result in X
     rts
 
-
+percent_c:
+    fcb '%,'c,0
 
     daa
     daa
