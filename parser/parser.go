@@ -199,7 +199,7 @@ func (p *Parser) parseTopLevelStatement(overridePackage string) ast.Statement {
 		// Check for linkage override: // minigolf:linkage("symbolname")
 		lit := p.curToken.Literal
 		if strings.HasPrefix(lit, `linkage("`) && strings.HasSuffix(lit, `")`) {
-			linkageName := lit[len(`linkage("`):len(lit)-len(`")`)]
+			linkageName := lit[len(`linkage("`) : len(lit)-len(`")`)]
 			// Consume the pragma token (and its trailing semicolon if present)
 			if p.peekTokenIs(token.SEMICOLON) {
 				p.nextToken()
