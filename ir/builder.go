@@ -1913,6 +1913,17 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	if ptrType, ok := e.Function.(*ast.PointerType); ok {
 		targetTyp := b.astToIRType(ptrType)
 		val := b.buildExpr(e.Arguments[0])
+		// Special case: (*byte)(sliceExpr) where sliceExpr is a slice[byte] / string.
+		// Extract the base pointer from field 0 of the slice struct rather than
+		// blindly reinterpreting the struct as a word — that produces invalid C.
+		srcName := val.Type().Name
+		if targetTyp.Name == "*byte" &&
+			(srcName == "prelude.slice_byte" || srcName == "slice_byte" ||
+				srcName == "prelude__slice_byte" || srcName == "slice__byte") {
+			ptrWord := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: val, FieldIndex: 0}, e)
+			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: ptrWord}, e)
+			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
+		}
 		res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, e)
 		return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
 	}
