@@ -1,0 +1,12 @@
+package main
+
+import "prelude"
+
+// Casting slice[word] to (*byte) is illegal: only slice[byte] (string)
+// has a defined base-pointer layout and may be cast to *byte.
+// This file must cause a compile-time error.
+
+func main() {
+    words := prelude.slice[word]{1, 2, 3}
+    _ = (*byte)(words) // ERROR: cannot cast slice[word] to *byte
+}

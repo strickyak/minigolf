@@ -1924,6 +1924,14 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: ptrWord}, e)
 			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
 		}
+		// Disallow casting any other struct or non-string slice to (*byte): only
+		// slice[byte] (a.k.a. string) has a defined base-pointer layout.
+		srcIsStruct := val.Type().IsAStruct() || val.Type().IsAnArray() ||
+			strings.HasPrefix(srcName, "prelude.slice_") ||
+			strings.HasPrefix(srcName, "slice_")
+		if targetTyp.Name == "*byte" && srcIsStruct {
+			panic(fmt.Sprintf("cannot cast %s to *byte: only slice[byte] (string) may be cast to *byte", srcName))
+		}
 		res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: val}, e)
 		return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
 	}
