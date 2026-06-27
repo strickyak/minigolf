@@ -604,9 +604,16 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseBreakStatement()
 	case token.CONTINUE:
 		return p.parseContinueStatement()
+	case token.GOTO:
+		return p.parseGotoStatement()
 	case token.SEMICOLON:
 		return nil
 	default:
+		// Detect a label: `ident :` — must check before parseExpressionOrAssignStatement
+		// because the colon is not an operator and would confuse the expression parser.
+		if p.curTokenIs(token.IDENT) && p.peekTokenIs(token.COLON) {
+			return p.parseLabelStatement()
+		}
 		return p.parseExpressionOrAssignStatement()
 	}
 }
@@ -783,6 +790,30 @@ func (p *Parser) parseContinueStatement() *ast.ContinueStatement {
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()
 	}
+	return stmt
+}
+
+func (p *Parser) parseGotoStatement() *ast.GotoStatement {
+	stmt := &ast.GotoStatement{Token: p.curToken}
+	if !p.expectPeek(token.IDENT) {
+		return nil
+	}
+	stmt.Label = p.curToken.Literal
+	if p.peekTokenIs(token.SEMICOLON) {
+		p.nextToken()
+	}
+	return stmt
+}
+
+// parseLabelStatement parses `labelName:` as a standalone statement.
+// curToken is the IDENT (the label name); peekToken is COLON.
+// We consume the colon but leave the following statement for the outer
+// block-parsing loop, making the label a standalone sibling.
+func (p *Parser) parseLabelStatement() *ast.LabelStatement {
+	stmt := &ast.LabelStatement{Token: p.curToken, Label: p.curToken.Literal}
+	p.nextToken() // consume ':'
+	// The COLON token is now curToken. The outer loop will call nextToken()
+	// before parsing the next statement, which is what we want.
 	return stmt
 }
 

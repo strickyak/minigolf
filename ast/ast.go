@@ -260,6 +260,30 @@ func (s *ContinueStatement) statementNode()         {}
 func (s *ContinueStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *ContinueStatement) GetToken() *token.Token { return &s.Token }
 
+// GotoStatement represents `goto labelName`
+// NOTE: if we later support labeled break/continue, the LabelStatement will
+// need to track the following for-statement it owns.
+type GotoStatement struct {
+	Token token.Token // The 'goto' token
+	Label string      // Target label name
+}
+
+func (s *GotoStatement) statementNode()         {}
+func (s *GotoStatement) TokenLiteral() string   { return s.Token.Literal }
+func (s *GotoStatement) GetToken() *token.Token { return &s.Token }
+
+// LabelStatement represents a label definition `labelName:` as a standalone
+// statement.  The statement(s) that follow it are separate siblings in the
+// enclosing block's statement list.
+type LabelStatement struct {
+	Token token.Token // The IDENT token (the label name)
+	Label string      // The label name
+}
+
+func (s *LabelStatement) statementNode()         {}
+func (s *LabelStatement) TokenLiteral() string   { return s.Token.Literal }
+func (s *LabelStatement) GetToken() *token.Token { return &s.Token }
+
 // ExpressionStatement allows expressions (like function calls: `print(x)`) to stand alone
 type ExpressionStatement struct {
 	Token      token.Token // The first token of the expression

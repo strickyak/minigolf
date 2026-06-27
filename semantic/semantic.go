@@ -842,6 +842,12 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 			if a.inDeferBlock > 0 {
 				a.reportError(s, "continue is not allowed inside a defer block")
 			}
+		case *ast.GotoStatement:
+			if a.inDeferBlock > 0 {
+				a.reportError(s, "goto is not allowed inside a defer block")
+			}
+		case *ast.LabelStatement:
+			// No type checking needed for a label definition.
 		case *ast.ExpressionStatement:
 			s.Expression = a.foldExpression(s.Expression)
 			a.analyzeExpression(s.Expression)

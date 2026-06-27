@@ -63,7 +63,7 @@ func TestAllCFiles(t *testing.T) {
 		// Load extra include paths from a sidecar <stem>.ipath file, if present.
 		// Each non-empty, non-comment line is an include path (relative to the
 		// repo root). Paths are prepended so that golflib remains last (system).
-		includePaths := []string{"golflib"}
+		includePaths := []string{"c-tests", "golflib"}
 		iPaths, err2 := os.ReadFile(filepath.Join("c-tests", stem+".ipath"))
 		if err2 == nil {
 			for _, line := range strings.Split(strings.TrimSpace(string(iPaths)), "\n") {

@@ -90,6 +90,7 @@ const (
 	BREAK    = "BREAK"
 	CONTINUE = "CONTINUE"
 	DEFER    = "DEFER"
+	GOTO     = "GOTO"
 
 	PRAGMA = "PRAGMA"
 	NIL    = "NIL"
@@ -111,6 +112,7 @@ var keywords = map[string]TokenType{
 	"break":    BREAK,
 	"continue": CONTINUE,
 	"defer":    DEFER,
+	"goto":     GOTO,
 	"nil":      NIL,
 }
 

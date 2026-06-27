@@ -1,0 +1,12 @@
+abracadabra ajax* 0
+abracadabra *ajax* 0
+abracadabra *dab* 1
+abracadabra ab* 1
+abracadabra *bra 1
+abracadabra ab*bra 1
+abracadabra a??a?a??a 0
+abracadabra a??a?a?a??a 1
+abracadabra [A-Z]* 0
+abracadabra [a-z]* 1
+abracadabra *[A-Z]* 0
+abracadabra *[a-z]* 1

@@ -77,7 +77,7 @@ MiniGolf's lexical structure mirrors Go.  Only ASCII characters are supported (n
 *   **Comments:** Line comments `//` and block comments `/* ... */` are supported.
 *   **Identifiers:** Begin with a letter or underscore, followed by letters, digits, or underscores.
                     Identifiers beginning with an uppercase letter are not special (like they are in Go).
-*   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `for`, `break`, `continue`, `defer`, `range`.
+*   **Keywords:** `package`, `import`, `func`, `var`, `const`, `type`, `struct`, `if`, `else`, `return`, `for`, `break`, `continue`, `defer`, `range`, `goto`.
 *   **Builtin Names:** `bool`, `byte`, `word`, `int`, `any`, `nil`, `sizeof`, `noreturn`, `panic`, `recover`.
 *   **Literals:** Integer literals (decimal, octal, hex, or character literals), and ASCII string literals. String literals are assumed to be immutable and are allocated in the `code` section of the resulting binary.
 
@@ -330,6 +330,19 @@ Statements control execution flow.
     *   `return value`: as in C99
     *   `return value1, value2, value3`: functions may return multiple values.
     *   `return`: A function with named return variables may be returned from by an empty `return`.
+    *   `goto labelName`: Unconditional jump to `labelName:` within the same function.
+        Labels are defined as `labelName:` on its own line (a standalone statement).
+        Forward gotos (where the label appears after the goto) are fully supported.
+        This is the common C99 idiom for skipping to cleanup or tail code.
+        Example:
+        ```go
+        if p == '?' {
+            goto thisCharOK
+        }
+        // ... more checks ...
+        thisCharOK:
+        p++
+        ```
     *   The special form `cond(p, y, n)` is a control-flow expression, like `( p ? y : n )` in C99.
         It looks like a function call, but all three of its arguments are not automatically evaluated
         like in a function call.  Instead, the predicate p is evaluated first,
@@ -340,8 +353,7 @@ Statements control execution flow.
 
 *   **Increment / Decrement:** `x++` and `x--` are statements, not expressions.
 
-* Familiar C99 or Go statements thayt are NOT AVAILABLE (yet) in MiniGolf
-    * `goto`
+* Familiar C99 or Go statements that are NOT AVAILABLE (yet) in MiniGolf
     * `switch/case`
     * `select`
 

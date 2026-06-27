@@ -67,6 +67,7 @@ type Builder struct {
 
 	breakStack        []*BasicBlock
 	continueStack     []*BasicBlock
+	labelBlocks       map[string]*BasicBlock // for goto/label support
 	resolveCallback   func(node ast.Node, defPkg string) ast.Node
 	varInitStatements []*GlobalItem
 	WordSize          int
@@ -768,6 +769,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.varTypes = make(map[string]Type)
 	b.addressTakenVars = make(map[string]bool)
 	b.variableInitVal = make(map[string]Value)
+	b.labelBlocks = make(map[string]*BasicBlock)
 	b.findEscapingVars(s.Body)
 
 	entry := b.newBlock()
@@ -1192,6 +1194,17 @@ func (b *Builder) sealBlock(block *BasicBlock) {
 		b.addPhiOperands(variable, phi, block)
 	}
 	b.sealedBlocks[block] = true
+}
+
+// getLabelBlock returns the BasicBlock for a goto/label name, creating it
+// lazily if this is the first reference (forward goto before label definition).
+func (b *Builder) getLabelBlock(name string) *BasicBlock {
+	if blk, ok := b.labelBlocks[name]; ok {
+		return blk
+	}
+	blk := b.newBlock()
+	b.labelBlocks[name] = blk
+	return blk
 }
 
 func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
@@ -1750,6 +1763,34 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: targetBlk}, s)
 		b.addEdge(b.currentBlock, targetBlk)
 		b.currentBlock = b.newBlock() // Unreachable block
+
+	case *ast.GotoStatement:
+		b.addInstr(&SourceMarker{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Comment:         fmt.Sprintf("Line %d: goto %s", s.Token.Line, s.Label),
+		}, s)
+		targetBlk := b.getLabelBlock(s.Label)
+		if b.currentBlock.Terminator == nil {
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: targetBlk}, s)
+			b.addEdge(b.currentBlock, targetBlk)
+		}
+		b.currentBlock = b.newBlock() // unreachable continuation
+
+	case *ast.LabelStatement:
+		b.addInstr(&SourceMarker{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Comment:         fmt.Sprintf("Line %d: label %s:", s.Token.Line, s.Label),
+		}, s)
+		targetBlk := b.getLabelBlock(s.Label)
+		// Connect fall-through from the current block (if it has no terminator yet).
+		if b.currentBlock.Terminator == nil {
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: targetBlk}, s)
+			b.addEdge(b.currentBlock, targetBlk)
+		}
+		// Seal the label block now: for forward gotos, all predecessor edges
+		// (from goto statements processed earlier) are already registered.
+		b.sealBlock(targetBlk)
+		b.currentBlock = targetBlk
 	}
 }
 

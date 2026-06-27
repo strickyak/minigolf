@@ -1054,9 +1054,11 @@ func (t *translator) translateJump(s *cc.JumpStatement) {
 	case cc.JumpStatementContinue:
 		t.line("continue")
 	case cc.JumpStatementGoto:
-		label := strings.TrimSpace(cc.NodeSource(s))
-		label = strings.TrimPrefix(label, "goto")
-		t.line("%s", t.unsupported("goto "+strings.TrimSpace(label)))
+		// Extract the label name from the source text of the jump statement.
+		src := strings.TrimSpace(cc.NodeSource(s))
+		src = strings.TrimPrefix(src, "goto")
+		src = strings.TrimSuffix(strings.TrimSpace(src), ";")
+		t.line("goto %s", strings.TrimSpace(src))
 	default:
 		t.line("%s", t.unsupported(fmt.Sprintf("jump %v", s.Case)))
 	}
@@ -1089,8 +1091,11 @@ func (t *translator) translateLabeled(s *cc.LabeledStatement) {
 		}
 	case cc.LabeledStatementLabel:
 		lbl := s.Token.SrcStr()
-		t.line("/* label: %s */", lbl)
-		t.translateStatement(s.Statement)
+		// Emit the label as a standalone MiniGolf label statement.
+		t.line("%s:", lbl)
+		if s.Statement != nil {
+			t.translateStatement(s.Statement)
+		}
 	default:
 		t.line("%s", t.unsupported(fmt.Sprintf("labeled %v", s.Case)))
 	}
