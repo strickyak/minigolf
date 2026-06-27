@@ -1,0 +1,570 @@
+Following transcript.jsonl...
+----------------------------------------
+[USER_INPUT] #0
+<USER_REQUEST>
+The antigravity-IDE crashed, and we are starting a new session.  We have a new C99 test with a new problem:  goto statements.   Look at these files `c-tests/ctlib/string-match.c
+c-tests/match.c
+c-tests/match.want
+`  and find the `goto` statement.  Can we add `goto` to both MiniGolf and the ctranslator? 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T21:52:11-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/c-tests/star_pattern.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/c-tests/helper_func.c (LANGUAGE_C)
+- /home/strick/antig/cbe/cbe.go (LANGUAGE_GO)
+- /home/strick/antig/c_test.go (LANGUAGE_GO)
+- /home/strick/antig/c-tests/string_func.want (LANGUAGE_UNSPECIFIED)
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from None to Claude Sonnet 4.6 (Thinking). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>
+
+[PLANNER_RESPONSE] #3
+Let me start by examining the relevant files to understand the codebase and the goto usage.
+[thinking] %!s(int=3)%!(EXTRA string=Let me start by looking at the files mentioned by the user to understand the codebase and the goto statement usage.)
+
+[PLANNER_RESPONSE] #8
+Good. Now let me explore the project structure to understand MiniGolf and the ctranslator:
+
+[USER_INPUT] #17
+<USER_REQUEST>
+`doc/minigolf_lang.md` is useful manual. 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T21:52:55-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/main.go (LANGUAGE_GO)
+- /home/strick/antig/c-tests/array_literal.c (LANGUAGE_C)
+- /home/strick/antig/c-tests/ptr_to_local.c (LANGUAGE_C)
+- /home/strick/antig/c-tests/star_pattern.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/c-tests/helper_func.c (LANGUAGE_C)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #18
+Let me read the manual and also explore the token/AST packages in parallel:
+[thinking] %!s(int=18)%!(EXTRA string=Let me read the manual and also look at the token and AST packages to understand the full picture before planning.)
+
+[PLANNER_RESPONSE] #25
+Now let me look at the ctranslator and the CBE to understand how statements are currently handled:
+
+[PLANNER_RESPONSE] #32
+Now I have a thorough understanding of the codebase. Let me also look at the CBE (C backend) to understand how it handles statements — specifically how it would need to handle `goto`:
+
+[PLANNER_RESPONSE] #36
+Now I have a clear picture of the full system. Let me also look at how the IR builder (semantic/IR) handles statements, to understand what I need to add there:
+
+[PLANNER_RESPONSE] #48
+Now I have a thorough understanding of the whole system. Let me also look at the `c_test.go` to understand how tests are structured:
+
+[USER_INPUT] #50
+<USER_REQUEST>
+So far, we have done simple `break` and simple `continue`.   We have not added those with labels to MiniGolf. 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T21:55:39-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/c-tests/struct_basic.c (LANGUAGE_C)
+- /home/strick/antig/c-tests/echo_char.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/tests/not_a_byteptr.error.golf (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/tests/test_cond.golf (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/ir/ir.go (LANGUAGE_GO)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #51
+Now I have a thorough understanding. Let me search for the `sealBlock` mechanism in the IR builder before I write the implementation plan:
+[thinking] %!s(int=51)%!(EXTRA string=The user is giving me context: MiniGolf has `break` and `continue` (without labels), but not `goto`. The task is to add `goto` support to both MiniGolf and the ctranslator.
+
+Let me now plan this out clearly. Here's what I need to understand about the `goto` pattern in `string-match.c`:
+
+```c
+if (*pattern == '?') {
+    goto thisCharOK;
+}
+// ... more code ...
+if (*pattern == '[') {
+    // ...
+    goto thisCharOK;
+}
+// ...
+thisCharOK:
+    pattern += 1;
+    string += 1;
+```
+
+This is a forward `goto` - both `goto` statements jump forward to a label `thisCharOK:`. The code between them still needs to execute in the normal path (when neither `?` nor `[` matches), it just falls through to `thisCharOK`.
+
+Now I need to add support for this across the codebase. I'll start by adding the `GOTO` token and keyword, then create the AST structures for goto statements and labels, and finally implement the parsing and translation logic.
+
+The tricky part is handling label detection in the parser - when we encounter an identifier followed by a colon, we need to recognize it as a label statement rather than treating it as a regular expression or assignment. I'll need to peek ahead in the parser to distinguish between these cases.
+
+For the IR builder, the challenge is managing the control flow graph with labels and gotos. I need to create a label map that tracks which basic blocks correspond to which labels, then when processing a goto statement, emit an unconditional jump instruction to the appropriate block.
+
+The tricky part is handling forward references—a goto might reference a label that hasn't been encountered yet. I'll use a lazy approach where the label's basic block gets created on first reference, whether that's at the goto or at the label definition itself.
+
+In the ctranslator, I need to replace the unsupported placeholder for goto statements with actual MiniGolf goto emission, and convert the labeled statement handler to emit proper label syntax instead of comments.
+
+But wait—MiniGolf doesn't support goto yet, so the ctranslator will need to emit it once we add that feature. And the CBE already handles C gotos for its internal block jumps, but the real work is in the IR builder, which needs to process goto and label statements from the AST to construct the proper IR jumps.
+
+Other backends like x86_64 and m6809 should handle this correctly since goto just maps to unconditional jumps between blocks. For the IR builder, I'd maintain a map of label names to their BasicBlocks—when encountering a label, create or retrieve its block and jump to it, then continue processing from there; when encountering a goto, jump to the target label's block.
+
+The challenge is handling forward gotos where the target block hasn't been processed yet, so it can't be sealed until we actually reach the label statement. I'll track unsealed label blocks and seal them once we process their corresponding labels. the time we reach the label definition, all forward gotos have already been processed. So when encountering a label, I create its block if needed, connect the fall-through from the current block, and seal it. For backward gotos (jumping to a label that's already been defined), I just emit a jump back to the existing block—the sealing issue remains the same since the block might receive additional predecessors later.
+
+For practical purposes, I can simplify this by treating gotos as direct IR-level jumps without worrying about perfect SSA construction. The `string-match.c` example only uses forward gotos within a loop, so I can handle it by jumping over the conditional code when needed and continuing execution at the label. Building the label block handling...)
+
+[PLANNER_RESPONSE] #59
+Excellent! Now I have a complete picture. I'm ready to create the implementation plan. Here's the full scope:
+
+**`goto` in `string-match.c` uses:**
+1. `goto thisCharOK;` (a forward jump statement)
+2. `thisCharOK:` (a label definition before the next statements)
+
+**The pattern is forward-only gotos** — both `goto` statements appear before the label. This is the most common and tractable case.
+
+[PLANNER_RESPONSE] #61
+Here's the plan. A few key design points worth highlighting:
+
+**The `goto` pattern in `string-match.c`** is purely forward jumps — both `goto thisCharOK` appear *above* the `thisCharOK:` label, which is the classic "skip to tail" C idiom. This is the most tractable case for SSA construction.
+
+**7 files need changes**, in dependency order:
+1. `token.go` — add the keyword
+2. `ast.go` — add `GotoStatement` + `LabelStatement` nodes  
+3. `parser.go` — parse `goto ident;` and `ident:` (the tricky part: detecting `IDENT ":"` in the default case)
+4. `semantic.go` — pass-through for type-check walk
+5. `ir/builder.go` — the meat: a `labelBlocks` map, get-or-create label blocks, emit `Jump` IR
+6. `doc/minigolf_lang.md` — update "NOT AVAILABLE" section
+7. `ctranslator/translator.go` — stop emitting `unsupported`, emit real `goto lbl` and `lbl:` MiniGolf
+
+**SSA sealing strategy:** For forward gotos, the label block gets all its predecessor edges (from the goto statements) added *before* we hit the `LabelStatement`, so sealing at the label definition site is correct.
+
+One design question for you before I proceed:
+
+**In Go syntax, a label must be followed by a statement** (you can't have just `label:` at the end of a block). In `string-match.c`, `thisCharOK:` is followed by two statements (`pattern += 1; string += 1;`). Should I model `LabelStatement` as a standalone marker (the statements after it are parsed normally by the outer loop), or should it "own" the next statement? The standalone marker approach is simpler. Approve to proceed with that.
+
+[USER_INPUT] #62
+<USER_REQUEST>
+I approve of the stand-alone marker, with one caveat:   if we later support `break Label` and `continue Label`, we will have to recognize that the label owns the following `for` statement.  Proceed. 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T22:01:20-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/semantic/semantic.go (LANGUAGE_GO)
+- /home/strick/antig/parser/parser.go (LANGUAGE_GO)
+- /home/strick/antig/ast/ast.go (LANGUAGE_GO)
+- /home/strick/antig/ctranslator/translator.go (LANGUAGE_GO)
+- /home/strick/antig/tests/test_cond.want (LANGUAGE_UNSPECIFIED)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #63
+Let me create the task tracker and start implementing. I'll first check the semantic layer to know what to add there:
+[thinking] %!s(int=63)%!(EXTRA string=The user approved the plan. Let me now execute it step by step. I'll create a task.md and then implement all the changes.
+
+Let me start implementing all the changes in parallel where possible, then sequentially where there are dependencies.
+
+Order:
+1. token/token.go - add GOTO keyword
+2. ast/ast.go - add GotoStatement and LabelStatement
+3. parser/parser.go - parse goto and label statements
+4. semantic/semantic.go - pass-through cases
+5. ir/builder.go - labelBlocks map and buildStatement cases
+6. doc/minigolf_lang.md - update docs
+7. ctranslator/translator.go - emit goto/label MiniGolf
+Let me check semantic.go to see how break and continue are currently handled so I can follow the same pattern.)
+
+[PLANNER_RESPONSE] #69
+Now I have everything I need. Let me implement all the changes simultaneously:
+
+[PLANNER_RESPONSE] #73
+Now the parser:
+
+[PLANNER_RESPONSE] #76
+Now the semantic layer — add pass-through cases for both new statement types:
+
+[PLANNER_RESPONSE] #80
+Now the IR builder — the most complex change. Add `labelBlocks` to the struct and the two new `buildStatement` cases:
+
+[PLANNER_RESPONSE] #82
+Now I need to add the `getLabelBlock` helper and find where `labelBlocks` should be initialized. Let me find the function-building entry point:
+
+[PLANNER_RESPONSE] #90
+I can see that the per-function state is reset at lines 764-771. I need to add `labelBlocks` initialization there, and also add the `getLabelBlock` helper method. Let me do both:
+
+[PLANNER_RESPONSE] #92
+Now fix the ctranslator to emit real MiniGolf `goto` and `label:` syntax:
+
+[PLANNER_RESPONSE] #94
+Now update the language manual:
+
+[PLANNER_RESPONSE] #96
+All 7 files are changed. Now let's build and test:
+
+[PLANNER_RESPONSE] #98
+Clean build. Now run the match test:
+
+[PLANNER_RESPONSE] #100
+The test needs an `ipath` file because `match.c` uses `#include "ctlib/string-match.c"`. Let me check what `ipath` files exist and how other ctlib tests handle it:
+
+[USER_INPUT] #105
+<USER_REQUEST>
+Instead of an ipath, use `-I c-tests -I golflib` on the minigolf command line.      continue. 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T22:09:31-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/c-tests/global_var.c (LANGUAGE_C)
+- /home/strick/antig/c-tests/alphabet.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/semantic/semantic.go (LANGUAGE_GO)
+- /home/strick/antig/parser/parser.go (LANGUAGE_GO)
+- /home/strick/antig/ast/ast.go (LANGUAGE_GO)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #106
+The fix is to add `"c-tests"` to the default `includePaths` in `c_test.go` — that way every C test automatically gets `c-tests/ctlib/...` on the include path without needing per-test `.ipath` files:
+[thinking] %!s(int=106)%!(EXTRA string=The user wants to use `-I c-tests -I golflib` as include paths instead of using an ipath file. Looking at the `c_test.go`, the include paths are set to `["golflib"]` by default and can be augmented with ipath files. But the user wants `c-tests` to also be in the include path so that `#include "ctlib/string-match.c"` works.
+
+Let me look at the c_test.go more carefully to understand how to add `c-tests` as a default include path.
+
+Looking at the code:
+```go
+includePaths := []string{"golflib"}
+iPaths, err2 := os.ReadFile(filepath.Join("c-tests", stem+".ipath"))
+```
+
+The code reads ipath files and prepends any paths found in them to the include paths list, keeping golflib at the end. To fix this, I need to change the default include paths to include `c-tests` as well, so I'd update the initial slice to `[]string{"c-tests", "golflib"}`.)
+
+[PLANNER_RESPONSE] #110
+All three backends pass. Now let's run the full regression suite:
+
+[PLANNER_RESPONSE] #112
+Everything passes. Let me update the task tracker:
+
+[PLANNER_RESPONSE] #114
+All done. Here's a summary of what was implemented:
+
+## Summary
+
+**8 files changed** to add `goto`/label support end-to-end:
+
+| File | Change |
+|---|---|
+| [token.go](file:///home/strick/antig/token/token.go) | `GOTO = "GOTO"` keyword constant + map entry |
+| [ast.go](file:///home/strick/antig/ast/ast.go) | `GotoStatement{Label string}` + `LabelStatement{Label string}` |
+| [parser.go](file:///home/strick/antig/parser/parser.go) | `token.GOTO` case → `parseGotoStatement()`; default case peeks for `IDENT ":"` → `parseLabelStatement()` |
+| [semantic.go](file:///home/strick/antig/semantic/semantic.go) | Pass-through cases (forbid inside `defer` blocks) |
+| [builder.go](file:///home/strick/antig/ir/builder.go) | `labelBlocks map[string]*BasicBlock` field; `getLabelBlock()` helper (lazy creation for forward refs); `GotoStatement` emits `Jump` + unreachable continuation; `LabelStatement` connects fall-through, seals block, makes it current |
+| [minigolf_lang.md](file:///home/strick/antig/doc/minigolf_lang.md) | `goto` added to keywords; new docs with example; removed from NOT AVAILABLE list |
+| [translator.go](file:///home/strick/antig/ctranslator/translator.go) | `goto label;` → `goto label`, `label:` comment → `label:` real MiniGolf |
+| [c_test.go](file:///home/strick/antig/c_test.go) | Default include paths changed to `["c-tests", "golflib"]` |
+
+**Results:** `match/CBE`, `match/x86_64`, `match/m6809` all **PASS**. Full regression: all existing tests still **PASS**.
+
+[USER_INPUT] #115
+<USER_REQUEST>
+Now that we have labels and goto, how hard is it to support `continue Label` and `break Label` in MiniGolf?   Since we don't have `switch` or `select` statements, I think the only statement types that understand break & continue are the various `for` loops. 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T22:21:32-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/tests/test_cond.golf (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/ir/ir.go (LANGUAGE_GO)
+- /home/strick/antig/ir/builder.go (LANGUAGE_GO)
+- /home/strick/antig/tests/test_generic_ptr.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/c-tests/count_up.c (LANGUAGE_C)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #116
+Good question. Let me do a quick assessment by tracing through exactly what needs to change:
+
+**What labeled `break`/`continue` requires:**
+
+In Go (and therefore MiniGolf), `break Label` and `continue Label` jump to the loop *named by the label*. The label must appear immediately before the `for` statement it names.
+
+```go
+outer:
+    for i := range 10 {
+        for j := range 10 {
+            if done { break outer }      // breaks the outer loop
+            if skip { continue outer }   // continues the outer loop
+        }
+    }
+```
+
+### The 5 changes needed
+
+**1. AST** — add an optional `Label string` to `BreakStatement` and `ContinueStatement`. (2 lines)
+
+**2. Parser** — after `break`/`continue`, if `peekToken` is `IDENT`, consume it as the label. (4 lines each)
+
+**3. IR Builder struct** — add two maps alongside the existing stacks:
+```go
+labelBreakBlocks    map[string]*BasicBlock
+labelContinueBlocks map[string]*BasicBlock
+```
+
+**4. IR Builder `buildBlock`** — notice when a `LabelStatement` immediately precedes a `for` statement and pass the label name to the for-loop builder:
+```go
+func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
+    pendingLabel := ""
+    for _, stmt := range blockAst.Statements {
+        if ls, ok := stmt.(*ast.LabelStatement); ok {
+            pendingLabel = ls.Label
+            b.buildStatement(stmt)   // still emits the goto-target block
+            continue
+        }
+        b.pendingForLabel = pendingLabel
+        pendingLabel = ""
+        b.buildStatement(stmt)
+        b.pendingForLabel = ""
+    }
+}
+```
+
+**5. IR Builder for-loop cases** — at the point where `endBlk`/`headerBlk` are created, check `b.pendingForLabel`:
+```go
+if b.pendingForLabel != "" {
+    b.labelBreakBlocks[b.pendingForLabel]    = endBlk
+    b.labelContinueBlocks[b.pendingForLabel] = headerBlk
+}
+```
+
+And in `BreakStatement`/`ContinueStatement` handling, if `s.Label != ""`, look up the map instead of the stack.
+
+---
+
+### Verdict: **Not hard** — about 50 lines across 3 files
+
+The infrastructure is all there: we already have the label blocks from the `goto` work, the SSA builder already separates loop header/body/end blocks cleanly, and `LabelStatement` already exists as a standalone marker (which is exactly what's needed here — the "label owns the following `for`" logic lives in `buildBlock`'s peek-ahead, not in `LabelStatement` itself).
+
+The only subtlety is that the `LabelStatement`'s goto-target block and the label's for-loop break/continue blocks are *different* things — a label before a `for` creates both. `goto outerLoop` would jump to the label's block (right before the for), while `break outerLoop` jumps to the for's `endBlk`. That's perfectly fine and we handle both with separate maps.
+
+**Should I implement it now?**
+[thinking] %!s(int=116)%!(EXTRA string=The user is asking how hard it would be to add labeled `break` and `continue` in MiniGolf. Let me think through what's needed.
+
+In Go (which MiniGolf is a subset of), `break Label` and `continue Label` allow you to break/continue an outer loop from within an inner loop. The label must be on a `for` statement.
+
+Go syntax:
+```go
+outerLoop:
+    for i := range 10 {
+        for j := range 10 {
+            if someCondition {
+                continue outerLoop  // continue the outer loop
+            }
+            if otherCondition {
+                break outerLoop     // break the outer loop
+            }
+        }
+    }
+```
+
+Now I'm assessing what needs to change in MiniGolf's implementation. The token layer already has `BREAK`, `CONTINUE`, and `GOTO` tokens. The AST layer has `BreakStatement` and `ContinueStatement` but they lack a Label field, and while `LabelStatement` exists, it doesn't connect to the following for loop. The parser doesn't currently look for labels after break/continue statements. The IR builder uses stacks to track break and continue targets for nested loops, which I'd need to adapt to handle labeled jumps.
+
+For the AST, I need to add an optional Label field to both break and continue statements, and figure out how to link `LabelStatement` to its associated loop. In the parser, after consuming a break or continue token, I should check if the next token is an identifier and treat it as the label. The trickier part is making sure that label gets associated with the following for loop. In the IR builder, instead of just using anonymous stacks, I'll need a map to look up break and continue targets by label name.
+
+The core challenge is that `LabelStatement` currently stands alone, but for labeled break/continue to work, I need to know which for loop it belongs to. I'm considering two approaches: either peek ahead in the statement block when processing a label to see if a for loop follows, or restructure `LabelStatement` to optionally contain the for statement itself.
+
+I think the cleanest solution is to introduce a "pending label" concept in the IR builder—as I iterate through statements in a block, if I encounter a label, I hold onto it and apply it to the immediately following for loop before building that loop's IR. Completing the label break and continue block registration, then handling labeled break and continue statements by looking up the appropriate target blocks instead of using the stack. I'm also adding optional Label fields to BreakStatement and ContinueStatement in the AST to track which label they're targeting.
+
+Writing parser logic...)
+
+[USER_INPUT] #117
+<USER_REQUEST>
+Yes, please! 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T22:22:29-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/golflib/prelude.golf (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/c-tests/struct_basic.c (LANGUAGE_C)
+- /home/strick/antig/c-tests/echo_char.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/tests/not_a_byteptr.error.golf (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/tests/test_cond.golf (LANGUAGE_UNSPECIFIED)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #118
+Let me find the exact line numbers for the for-loop builders before I code the changes:
+[thinking] %!s(int=118)%!(EXTRA string=Let me implement labeled break/continue. I'll work through all the changes:
+
+1. AST: add Label field to BreakStatement and ContinueStatement
+2. Parser: peek for IDENT after break/continue
+3. IR Builder struct: add labelBreakBlocks and labelContinueBlocks maps
+4. IR Builder buildBlock: add pendingForLabel peek-ahead logic
+5. IR Builder for-loop cases: register label→block mappings
+6. IR Builder BreakStatement/ContinueStatement: check label first
+
+Let me also think about whether we need a test. We should write a simple test golf file to verify this works.
+
+Let me also think about the semantic.go - do I need to add anything there? The existing BreakStatement and ContinueStatement cases just check if inside a defer block. 
+
+For now, I'll skip label validation and let the IR builder panic if a label isn't found—that's acceptable for this implementation. Let me start by examining the current structure of BreakStatement and ContinueStatement...
+
+Now I need to think through the `buildBlock` change more carefully. The current implementation just iterates through statements, but I'll need to add a `pendingForLabel` field to the Builder to track which label we're currently processing...
+
+When `buildBlock` encounters a `LabelStatement`, it sets `pendingForLabel` to that label's name, then calls `buildStatement` to handle the label's goto-target block. The tricky part is understanding the timing—when we process the label statement itself, we're already setting up the pending label before the next statement in the loop gets built, so I need to make sure the label is properly connected to whatever statement follows it. Handling nested labels...
+
+The key insight is that `b.pendingForLabel` gets cleared after each statement is built, so even though it's a shared field on the Builder, the inner block's `buildBlock` call manages its own lifecycle correctly—setting and clearing the label before returning to the outer context. calls `buildStatement(ls)`, then encounters the inner `ForStatement` and registers its break and con
+<truncated 860 bytes>
+e for loops and `postBlk` for the other variants, which matches what's already in the `continueStack`. I'm thinking through a test case to verify this works correctly. I'm thinking through how to actually test this with the existing test infrastructure—I need to create a `.golf` file and corresponding `.want` file that `system_test.go` can run, rather than trying to manually trace the output.
+
+Now I'm ready to implement the changes across the codebase: updating the AST to add label fields to break and continue statements, modifying the parser to recognize optional labels, and then updating the IR builder to track labeled break and continue targets. Looking at the for loop patterns in builder.go, I can see that ForStatement, For3Statement, and ForRangeStatement all follow a similar structure where they create blocks for the header, body, and end, then push those blocks onto the break and continue stacks.
+
+Now I need to identify the exact line numbers where I should insert the label registration. The break and continue stack operations happen right after the block creation, so that's where I'll add the label handling for each loop type.
+
+For the test file, I'm sketching out a test case that demonstrates labeled break and continue working correctly with nested loops. I'm working through the expected outputs for each test case. For the labeled continue test, when j equals 1, it skips to the next iteration of the outer loop, so only the j=0 case prints for each i value. For the labeled break test, it prints all combinations until reaching i=1 and j=1, where it breaks out of both loops entirely. I'll split these into separate test cases to keep them clear.
+
+I also need to verify how println formats the word type values—it uses `%llu` format, so `println(word(1), word(2))` outputs `1 2\n`. Now I'm planning the registration logic for the pending for labels, making sure to use the correct continue target for each statement type: `headerBlk` for ForStatement and `postBlk` for the other two.
+
+Registering label blocks...)
+
+[USER_INPUT] #127
+<USER_REQUEST>
+I think for CBE, a labeled loop can have `continueLabel: continue` inserted at the end of a loop block, in C99. 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T22:24:24-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/golflib/prelude.golf (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/c-tests/struct_basic.c (LANGUAGE_C)
+- /home/strick/antig/c-tests/echo_char.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/tests/not_a_byteptr.error.golf (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/tests/test_cond.golf (LANGUAGE_UNSPECIFIED)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #128
+Good point — you're right that the CBE's `goto bN;` block graph automatically handles it correctly, since `postBlk_outer` is a valid C label. The "trick" is that our IR already naturally emits a `goto` to the right block. Let me implement the whole thing now:
+[thinking] %!s(int=128)%!(EXTRA string=The user is making an interesting observation. Let me think about this.
+
+In the CBE (C Backend), loops are represented as basic blocks with `goto bN;` jumps. The CBE emits raw C code using gotos to jump between basic blocks. 
+
+For `continue label` in MiniGolf IR, when the IR builder processes a labeled continue, it emits a `Jump` to the `postBlk` (for For3/ForRange) or `headerBlk` (for ForStatement). This is the same as a regular `continue` - just to a different loop's block.
+
+The issue the user is pointing out is: **in the CBE's C output**, when we emit `goto bN;` for this jump, the target block `bN:` represents the post/header of the *outer* loop. 
+
+In C99, you can actually use labeled continue statements, so instead of a raw goto, we could place a label at the end of the outer loop's body and use `continue outerLabel;` to jump there. The user seems to be suggesting we could leverage this feature to make the generated C code cleaner and more idiomatic.
+
+But actually, thinking about this more carefully—the CBE already handles labeled continues correctly if the IR builder generates the right jump targets. The backend just emits gotos between basic blocks, so if the IR correctly identifies which block to jump to for a labeled continue, the CBE doesn't need special changes at all. The user might be proposing something different though. Continuing with the C99 example...
+
+The key insight is placing an `outer_continue:` label right at the end of the outer loop's body, so when we `goto outer_continue;` from inside the inner loop, control jumps there and the outer loop naturally continues to its next iteration. This is a specific code generation strategy the CBE would need to implement—the label placement matters for the semantics to work correctly. The simpler approach is to let the IR builder emit a Jump to the correct block (postBlk or headerBlk for the outer loop), and the CBE will naturally emit the right goto statement—no special C99 labeled-continue handling needed. I'm second-guessing whether the IR block
+<truncated 1043 bytes>
+in the C output, but since we're already using the IR-level approach with block jumps, that optimization isn't necessary—our current strategy is equally valid and more general.
+
+Now I need to implement the labeled loops feature by modifying the AST to add a label field, updating the parser to handle optional labels, adjusting the IR builder to manage the labeled blocks, and creating test cases to verify the functionality.
+
+Implementing the changes... Writing test cases... I need to verify how the `&&` operator works in MiniGolf's IR builder to understand if it's truly short-circuiting or if both sides always evaluate. For the test case with `i == word(1) && j == word(1)`, using AND on two comparison results (which are 0 or 1) would technically work, but it wouldn't provide short-circuit evaluation. I'll simplify by using nested if statements instead to avoid any ambiguity with how `&&` is handled in the IR. I should also verify what `println` outputs for word types—it uses `%llu` formatting, so `i=0, j=0` would print as `0 0\n`. Let me check some existing tests to see how they handle similar cases.
+
+Actually, I'll keep things straightforward and test one feature at a time. I'm writing a test for labeled continue that iterates through a 3x3 loop, skipping to the outer loop whenever the inner counter reaches 1, which should print only the first column. Then I'll write a similar test for labeled break that exits both loops when the outer counter hits 1. Now I'm thinking through the type system - `word(3)` is a type cast that converts the integer 3 to word type, which is what I need for setting the loop variable. I should implement this in order: first the AST changes, then the parser, then the IR builder to handle struct fields and the various break/continue cases, and finally update the test files. The semantic checker doesn't need label validation since the IR builder will naturally handle it or fail if a label isn't found. I should also check if the printer needs updates for the break and continue statements.)
+
+[USER_INPUT] #130
+<USER_REQUEST>
+Since C99 already has labaled break and continue, you can ignore my suggestion. 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-26T22:25:49-04:00.
+
+The user's current state is as follows:
+Other open documents:
+- /home/strick/antig/c-tests/count_up.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/cc_v5/cmd/cc_to_golf/status_report.md (LANGUAGE_MARKDOWN)
+- /home/strick/antig/doc/minigolf_lang.md (LANGUAGE_MARKDOWN)
+- /home/strick/antig/c-tests/global_var.want (LANGUAGE_UNSPECIFIED)
+- /home/strick/antig/c-tests/if_else_chain.c (LANGUAGE_C)
+</ADDITIONAL_METADATA>
+
+[PLANNER_RESPONSE] #131
+Understood — proceed with the pure IR approach. The CBE already emits `goto bN;` for all block transitions, so `continue outer` becomes a `Jump` to `postBlk_outer`, which the CBE emits as `goto b7;` (or whatever block ID it is). No CBE changes needed.
+
+Let me implement everything now:
+[thinking] %!s(int=131)%!(EXTRA string=The user is saying that since C99 already supports labeled break/continue natively, I can use those directly in the CBE output instead of the `goto bN;` approach. This simplifies things - when the CBE encounters a labeled continue/break, it can emit `continue outerLabel;` or `break outerLabel;` directly in C99.
+
+Wait, but C99 does NOT have labeled break/continue! C99 only has `goto`. Go has labeled break/continue, but C99 does not.
+
+Actually, let me reconsider. The user said "C99 already has labeled break and continue" - but that's not correct. C99 does not have labeled break/continue. Only goto in C.
+I think the user might be confused about C's capabilities or thinking of another language. C99 definitely doesn't support labeled break/continue - it only has `goto` for jumping. But the user is telling me to ignore their suggestion anyway, so they want me to stick with the IR-level approach where labeled break/continue gets translated to jumps to the appropriate block, which the CBE then expresses as `goto` statements. So I'll skip the CBE modifications and just implement the labeled break/continue handling directly in the IR builder—the goto statements will naturally compile to the right code without any special handling needed.)
+
+[PLANNER_RESPONSE] #139
+The continue parser didn't get the label peek logic. Let me fix it:
+
+[PLANNER_RESPONSE] #141
+Now the IR builder — all four changes in one call:
+
+[PLANNER_RESPONSE] #143
+Chunk 5 (the ForRange registration) wasn't applied. Let me check the current state and fix it:
+
+[PLANNER_RESPONSE] #149
+Now build to verify, then write the tests:
+
+[PLANNER_RESPONSE] #151
+Clean. Now write the two test files — one for `continue Label`, one for `break Label`. Let me first check the output format for `println` on word values:
+
+[PLANNER_RESPONSE] #155
+Good — I can see that `println(i)` where `i` is a loop counter from `for i := 0; i < 10; i++` prints it as a word-type integer. Let me write the labeled break/continue tests using the same style:
+
+[PLANNER_RESPONSE] #157
+Now let me run it through CBE first to see the actual output before writing the `.want` file:
+
+[PLANNER_RESPONSE] #172
+Good — it found the test but needs the `.want` file. Let me build the binary and run it to capture the actual output:
+
+[PLANNER_RESPONSE] #174
+The output is exactly right. `continue outer` skips `j==1` (and also `j==2` since we continue the outer loop), and `break outer2` correctly exits the outer loop when `i==1, j==1`. Now write the `.want` file:
+
+[PLANNER_RESPONSE] #178
+All three backends pass. Full regression:
+
+[PLANNER_RESPONSE] #184
+The test is running in the background — I'll stop polling and wait for the result notification.
+
+---
+
+Here's a summary of what was implemented for labeled `break`/`continue`:
+
+## Changes made (3 files, ~70 lines)
+
+### [ast.go](file:///home/strick/antig/ast/ast.go)
+- Added `Label string` field to both `BreakStatement` and `ContinueStatement`
+
+### [parser/parser.go](file:///home/strick/antig/parser/parser.go)
+- `parseBreakStatement` and `parseContinueStatement` now peek for an `IDENT` token after the keyword and consume it as the label name
+
+### [ir/builder.go](file:///home/strick/antig/ir/builder.go)
+- **3 new fields** on `Builder`: `labelBreakBlocks`, `labelContinueBlocks` (maps), `pendingForLabel` (string)
+- **`buildBlock`** rewired to track a `pendingLabel` local; before building each statement, it sets `b.pendingForLabel = pendingLabel`. `LabelStatement` nodes set `pendingLabel` without consuming it (via `continue`)
+- **All 3 for-loop cases** (`ForStatement`, `For3Statement`, `ForRangeStatement`) register `endBlk` and `headerBlk`/`postBlk` into the label maps when `pendingForLabel != ""`
+- **`BreakStatement`/`ContinueStatement` handling** checks `s.Label` first and looks up the label maps; unlabeled break/continue use the existing stacks as before
+
+### [tests/test_labeled_loops.golf](file:///home/strick/antig/tests/test_labeled_loops.golf) + `.want`
+- Tests both `continue outer` (skips remainder of inner loop, resumes outer) and `break outer2` (exits outer loop from inner) — all three backends: **CBE ✓, x86_64 ✓, m6809 ✓**
+
+[PLANNER_RESPONSE thinking] #186
+
+[thinking] %!s(int=186)%!(EXTRA string=The timer fired. Let me check the status of the regression test task.)
+
+[PLANNER_RESPONSE] #189
+Full regression: **all `ok`**, zero failures. Everything is clean.
+
+---
+
+Complete tally for this session — all three control-flow features implemented and passing on all three backends (CBE, x86_64, m6809):
+
+| Feature | Files changed | Test |
+|---|---|---|
+| `goto label` / `label:` | `token`, `ast`, `parser`, `semantic`, `ir/builder`, `ctranslator`, `doc` | `c-tests/match` ✓ |
+| `break Label` / `continue Label` | `ast`, `parser`, `ir/builder` | `tests/test_labeled_loops` ✓ |
+| `-I c-tests` default include path | `c_test.go` | enables `ctlib/` tests |
+

@@ -217,7 +217,14 @@ func (c *CBE) Generate(program *ir.Program) string {
 		gName := strings.ReplaceAll(g.Name, ".", "_")
 		if g.IsInit {
 			if g.InitVal != nil {
-				c.buf.WriteString(fmt.Sprintf("%s v_%s = %s;\n", c.mapType(g.Typ.Name), gName, c.formatVal(g.InitVal)))
+				initStr := c.formatVal(g.InitVal)
+				// If the init value is a ConstArray, the CBE represents arrays as
+				// struct { T data[N]; }, so the initializer needs an extra layer
+				// of braces: { { elem, ... } } — outer for the struct, inner for .data.
+				if _, isArr := g.InitVal.(*ir.ConstArray); isArr {
+					initStr = "{ " + initStr + " }"
+				}
+				c.buf.WriteString(fmt.Sprintf("%s v_%s = %s;\n", c.mapType(g.Typ.Name), gName, initStr))
 			} else {
 				var byteStrs []string
 				for i := 0; i < len(g.InitString); i++ {

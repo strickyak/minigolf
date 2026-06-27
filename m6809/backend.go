@@ -1657,17 +1657,17 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 		leftType := i.Left.Type()
 		rightType := i.Right.Type()
+		leftSize := b.getTypeSizeUsingIrt(&leftType)
+		rightSize := b.getTypeSizeUsingIrt(&rightType)
 		sizeOne := false
-		if b.getTypeSizeUsingIrt(&leftType) == 1 {
-			b.buf.WriteString(fmt.Sprintf("\t\t*CMP* Left %q is size 1\n", i.Left.String()))
+		if leftSize == 1 && rightSize == 1 {
 			sizeOne = true
+		} else if leftSize != rightSize {
+			// Size mismatch (e.g., bool vs int): promote to the larger size (2-byte compare).
+			// The loadVal for the 1-byte side will load into B; we zero-extend to D below.
+			sizeOne = false
 		}
-		if b.getTypeSizeUsingIrt(&rightType) == 1 {
-			b.buf.WriteString(fmt.Sprintf("\t\t*CMP* Right %q is size 1\n", i.Right.String()))
-			Assert(sizeOne)
-		} else {
-			Assert(!sizeOne)
-		}
+		// else both are 2: sizeOne stays false
 
 		if sizeOne {
 
@@ -1681,9 +1681,17 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		} else {
 
 			b.loadVal(i.Right)
+			if rightSize == 1 {
+				// Zero-extend byte to word for comparison.
+				b.buf.WriteString("\tclra\t; zero-extend byte to word for Compare\n")
+			}
 			b.buf.WriteString(fmt.Sprintf("\tstd ,--s\t; starting ir.Compare(%v,%v,%v) 2-byte\n", i.Left, i.Op, i.Right))
 			b.pushBytes(2)
 			b.loadVal(i.Left)
+			if leftSize == 1 {
+				// Zero-extend byte to word for comparison.
+				b.buf.WriteString("\tclra\t; zero-extend byte to word for Compare\n")
+			}
 			b.buf.WriteString("\tcmpd ,s++\n")
 			b.popBytes(2)
 		}

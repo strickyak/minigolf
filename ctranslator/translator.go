@@ -1416,7 +1416,6 @@ func (t *translator) xExpr(n cc.Expression) string {
 		}
 		return lhs + " " + op + " " + rhs
 
-
 	case *cc.AssignmentExpression:
 		lhs := t.xExpr(x.Lhs)
 		rhs := t.xExpr(x.Rhs)
