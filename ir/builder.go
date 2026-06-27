@@ -3409,6 +3409,19 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		g := &Global{Name: item.QName, Typ: typ}
 		b.globals[g.Name] = g
 		b.Program.Globals = append(b.Program.Globals, g)
+		// Special case: var arr [N]byte = "string" with explicit array type.
+		// Treat the string as raw bytes (like C `const char arr[] = "..."`).
+		// Emit directly as InitString so the data ends up in the data section
+		// without any runtime copying.
+		if strLit, ok := s.Value.(*ast.StringLiteral); ok && s.ValueType != nil && typ.IsAnArray() && typ.ArrayElementType().Equals(TypeByte) {
+			arrayLen := typ.ArrayLength()
+			valWithNull := strLit.Value + "\x00"
+			initBytes := make([]byte, arrayLen)
+			copy(initBytes, []byte(valWithNull))
+			g.InitString = string(initBytes)
+			g.IsInit = true
+			return nil // do NOT add to varInitStatements
+		}
 		if s.Value != nil {
 			b.varInitStatements = append(b.varInitStatements, item)
 		}
@@ -3560,6 +3573,23 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 		}
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: uint64(e.Value)}
 	case *ast.StringLiteral:
+		// When the target type is [N]byte, treat the string literal as raw bytes
+		// (like a C string initializer) — expand into a ConstArray of ConstByte.
+		// This keeps the data in the read-only section without a runtime copy.
+		if targetTyp.IsAnArray() && targetTyp.ArrayElementType().Equals(TypeByte) {
+			arrayLen := targetTyp.ArrayLength()
+			valWithNull := e.Value + "\x00"
+			elements := make([]Value, arrayLen)
+			for i := 0; i < arrayLen; i++ {
+				var bval byte
+				if i < len(valWithNull) {
+					bval = valWithNull[i]
+				}
+				elements[i] = &ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: bval}
+			}
+			return &ConstArray{BaseInstruction: BaseInstruction{Typ: targetTyp}, Elements: elements}
+		}
+		// Default: slice[byte] struct with pointer + length + capacity.
 		g := b.addStringConstant(e.Value)
 		length := int64(len(e.Value))
 		lenVal := &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(length)}

@@ -91,15 +91,6 @@ type staticVar struct {
 	golfType string
 }
 
-// arrStrInit records a C global char array initialised from a string literal.
-// We can't emit `var name [N]byte = "..."` in Golf (type mismatch: [N]byte vs
-// slice[byte]), so we defer the bytes to a generated func init().
-type arrStrInit struct {
-	varName string
-	nBytes  int    // total bytes to copy (array length, includes NUL)
-	strLit  string // the Golf string literal, e.g. `"0123456789ABCDEF"`
-}
-
 type translator struct {
 	out   strings.Builder
 	depth int
@@ -137,9 +128,6 @@ type translator struct {
 	// keepGoing controls error handling for unsupported C constructs.
 	// When true, emit /* UNSUPPORTED: ... */ comments; when false, emit panic().
 	keepGoing bool
-
-	// Deferred string-to-array initializations emitted into func init().
-	arrStrInits []arrStrInit
 }
 
 func newTranslator(keepGoing bool) *translator {
@@ -354,22 +342,6 @@ func (t *translator) translateProgram(ast *cc.AST) {
 		}
 	}
 	t.flushStaticVars()
-	// Emit a func init() for any global arrays that were initialized from
-	// C string literals (which can't be expressed as var [N]byte = "...").
-	if len(t.arrStrInits) > 0 {
-		t.raw("\nfunc init() {\n")
-		for i, asi := range t.arrStrInits {
-			srcVar := fmt.Sprintf("_asinit_src%d", i)
-			dstVar := fmt.Sprintf("_asinit_dst%d", i)
-			nVar := fmt.Sprintf("_asinit_n%d", i)
-			t.raw(fmt.Sprintf("    %s := (*byte)(%s)\n", srcVar, asi.strLit))
-			t.raw(fmt.Sprintf("    %s := (*byte)(%s)\n", dstVar, asi.varName))
-			t.raw(fmt.Sprintf("    for %s := word(0); %s < word(%d); %s++ {\n", nVar, nVar, asi.nBytes, nVar))
-			t.raw(fmt.Sprintf("        %s[%s] = %s[%s]\n", dstVar, nVar, srcVar, nVar))
-			t.raw("    }\n")
-		}
-		t.raw("}\n")
-	}
 	// Note: the caller (TranslateFile) returns t.out.String().
 }
 
@@ -493,25 +465,7 @@ func (t *translator) translateTopLevelDecl(cd *cc.CommonDeclaration) {
 		golfType := t.cTypeToGolf(typ)
 		if id.Initializer != nil {
 			initStr := t.xExpr(id.Initializer.Expression)
-			// Detect [N]byte = "string" — type mismatch in Golf ([N]byte vs
-			// slice[byte]). Emit a bare var and defer copy to func init().
-			if strings.HasPrefix(golfType, "[") && strings.HasSuffix(golfType, "byte") &&
-				len(initStr) >= 2 && initStr[0] == '"' {
-				// Parse array length from golfType "[N]byte".
-				close := strings.Index(golfType, "]")
-				nBytes := 0
-				if close > 1 {
-					fmt.Sscanf(golfType[1:close], "%d", &nBytes)
-				}
-				t.raw(fmt.Sprintf("\nvar %s %s\n", name, golfType))
-				t.arrStrInits = append(t.arrStrInits, arrStrInit{
-					varName: name,
-					nBytes:  nBytes,
-					strLit:  initStr,
-				})
-			} else {
-				t.raw(fmt.Sprintf("\nvar %s %s = %s\n", name, golfType, initStr))
-			}
+			t.raw(fmt.Sprintf("\nvar %s %s = %s\n", name, golfType, initStr))
 		} else {
 			t.raw(fmt.Sprintf("\nvar %s %s\n", name, golfType))
 		}
