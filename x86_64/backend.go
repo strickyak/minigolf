@@ -1185,6 +1185,10 @@ func (b *Backend) emitData(val ir.Value) {
 		if structSize > byteOffset {
 			b.dataBuf.WriteString(fmt.Sprintf("\t.zero %d\n", structSize-byteOffset))
 		}
+	case *ir.ConstArray:
+		for _, el := range v.Elements {
+			b.emitData(el)
+		}
 	default:
 		log.Panicf("unsupported init value type %T", val)
 	}

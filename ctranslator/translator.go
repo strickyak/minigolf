@@ -207,6 +207,10 @@ func (t *translator) cTypeToGolf(typ cc.Type) string {
 		if elem.Kind() == cc.Void {
 			return "*byte"
 		}
+		// Pointer-to-function: represent as word (an address).
+		if elem.Kind() == cc.Function {
+			return "word"
+		}
 		return "*" + t.cTypeToGolf(elem)
 	case cc.Array:
 		at, ok := typ.(*cc.ArrayType)
@@ -229,7 +233,9 @@ func (t *translator) cTypeToGolf(typ cc.Type) string {
 	case cc.Union:
 		return t.unsupported("union type")
 	case cc.Function:
-		return t.unsupported("function type in field/var")
+		// A bare function type (not pointer-to-function) used as a value
+		// — treat as word (address).
+		return "word"
 	default:
 		return fmt.Sprintf("/* %s */", typ.String())
 	}
@@ -464,8 +470,12 @@ func (t *translator) translateTopLevelDecl(cd *cc.CommonDeclaration) {
 		t.emittedGlobals[name] = true
 		golfType := t.cTypeToGolf(typ)
 		if id.Initializer != nil {
-			initStr := t.xExpr(id.Initializer.Expression)
-			t.raw(fmt.Sprintf("\nvar %s %s = %s\n", name, golfType, initStr))
+			initStr := t.xInitializer(id.Initializer, golfType)
+			if initStr != "" {
+				t.raw(fmt.Sprintf("\nvar %s %s = %s\n", name, golfType, initStr))
+			} else {
+				t.raw(fmt.Sprintf("\nvar %s %s\n", name, golfType))
+			}
 		} else {
 			t.raw(fmt.Sprintf("\nvar %s %s\n", name, golfType))
 		}
@@ -742,20 +752,26 @@ func (t *translator) translateLocalDecl(cd *cc.CommonDeclaration) {
 			// Inside the body, note the mapping.
 			t.line("// static %s → global %s", name, gname)
 			if id.Initializer != nil {
-				init := t.xExpr(id.Initializer.Expression)
-				t.line("%s = %s(%s)", gname, golfType, init)
+				init := t.xInitializer(id.Initializer, golfType)
+				if init != "" {
+					t.line("%s = %s(%s)", gname, golfType, init)
+				}
 			}
 			continue
 		}
 
 		if id.Initializer != nil {
-			init := t.xExpr(id.Initializer.Expression)
+			init := t.xInitializer(id.Initializer, golfType)
 			// Use := (short declaration) to work in all contexts including
 			// switch-case bodies. Append a unique suffix to avoid redeclaration
 			// if the same C name appears in multiple case blocks.
 			uniq := fmt.Sprintf("%s_%d", name, t.tempCount)
 			t.tempCount++
-			t.line("%s := %s // %s", uniq, castInit(golfType, init), name)
+			if init != "" {
+				t.line("%s := %s // %s", uniq, castInit(golfType, init), name)
+			} else {
+				t.line("var %s %s // %s (zero-init)", uniq, golfType, name)
+			}
 			// Register the unique name so references in this scope resolve correctly.
 			t.staticNameMap[name] = uniq
 		} else {
@@ -912,17 +928,26 @@ func (t *translator) forInitDecl(decl cc.Declaration) string {
 		id := x.InitDeclarators[0]
 		name := id.Declarator.Name()
 		golfType := t.cTypeToGolf(id.Declarator.Type())
+		// Clear any stale uniquified mapping from a previous scope/switch-case so
+		// the for-condition and post-expression see the plain name we declare here.
+		delete(t.staticNameMap, name)
 		if id.Initializer != nil {
-			init := t.xExpr(id.Initializer.Expression)
-			return fmt.Sprintf("%s := %s", name, castInit(golfType, init))
+			init := t.xInitializer(id.Initializer, golfType)
+			if init != "" {
+				return fmt.Sprintf("%s := %s", name, castInit(golfType, init))
+			}
 		}
 		return fmt.Sprintf("var %s %s", name, golfType)
 	case *cc.AutoDeclaration:
 		name := x.Declarator.Name()
 		golfType := t.cTypeToGolf(x.Declarator.Type())
+		// Clear any stale uniquified mapping from a previous scope/switch-case.
+		delete(t.staticNameMap, name)
 		if x.Initializer != nil {
-			init := t.xExpr(x.Initializer.Expression)
-			return fmt.Sprintf("%s := %s", name, castInit(golfType, init))
+			init := t.xInitializer(x.Initializer, golfType)
+			if init != "" {
+				return fmt.Sprintf("%s := %s", name, castInit(golfType, init))
+			}
 		}
 		return fmt.Sprintf("var %s %s", name, golfType)
 	default:
@@ -1110,7 +1135,79 @@ func isBreakOnly(stmt cc.Statement) bool {
 // Expression translation
 // ─────────────────────────────────────────────────────────────────────────────
 
+// xInitializer translates a C Initializer node to a MiniGolf expression string.
+// golfType is the declared Golf type of the variable being initialised (e.g.
+// "[9]*byte" or "[26]*int"), needed so brace-lists can be emitted as composite
+// literals like  [9]*byte{e0, e1, ...}.
+// Returns "" when the initialiser is all-zero / all-NULL, meaning the caller
+// should rely on Golf's default zero-initialisation and omit the '= ...' part.
+func (t *translator) xInitializer(init *cc.Initializer, golfType string) string {
+	if init == nil {
+		return ""
+	}
+	switch init.Case {
+	case cc.InitializerExpr:
+		// Simple scalar initialiser: int x = 5;  or  char *p = NULL;
+		return t.xExpr(init.Expression)
+	case cc.InitializerInitList:
+		// Brace initialiser: T arr[] = {a, b, c};  or  T *p[] = {NULL};
+		var elems []string
+		allZero := true
+		for il := init.InitializerList; il != nil; il = il.InitializerList {
+			if il.Initializer == nil {
+				continue
+			}
+			// Each element may itself be an expr or a nested brace-list.
+			// Determine the element Golf type by stripping one array dimension.
+			eltType := golfType
+			if len(golfType) > 0 && golfType[0] == '[' {
+				if idx := strings.Index(golfType, "]"); idx >= 0 {
+					eltType = golfType[idx+1:]
+				}
+			}
+			s := t.xInitializer(il.Initializer, eltType)
+			if s == "" {
+				s = "0" // zero element placeholder
+			} else {
+				if s != "0" && s != "((*byte)(0))" && s != "((*int)(0))" && s != "((*word)(0))" {
+					allZero = false
+				}
+			}
+			elems = append(elems, s)
+		}
+		// All-zero / all-NULL initialiser — let Golf zero-init handle it.
+		if allZero {
+			return ""
+		}
+		// Emit a composite literal: [N]T{e0, e1, ...}
+		return golfType + "{" + strings.Join(elems, ", ") + "}"
+	}
+	return ""
+}
+
 // xExpr recursively translates a C expression to MiniGolf syntax.
+// xExprNoDecay is like xExpr but suppresses the automatic array-to-pointer decay
+// for primary array identifier expressions. Golf [N]T arrays can be indexed
+// directly without decay, so arr[i] works without emitting (*T)(arr)[i].
+func (t *translator) xExprNoDecay(n cc.Expression) string {
+	if pe, ok := n.(*cc.PrimaryExpression); ok && pe.Case == cc.PrimaryExpressionIdent {
+		name := pe.Token.SrcStr()
+		if gname, ok := t.staticNameMap[name]; ok {
+			// static-local: return name without the (*T)(...) decay
+			return gname
+		}
+		if resolved := pe.ResolvedTo(); resolved != nil {
+			type typer interface{ Type() cc.Type }
+			if typerNode, ok := resolved.(typer); ok {
+				if dt := typerNode.Type(); dt != nil && dt.Kind() == cc.Array {
+					return name // skip decay
+				}
+			}
+		}
+	}
+	return t.xExpr(n)
+}
+
 func (t *translator) xExpr(n cc.Expression) string {
 	if n == nil {
 		return ""
@@ -1166,20 +1263,58 @@ func (t *translator) xExpr(n cc.Expression) string {
 		return result
 
 	case *cc.IndexExpr:
-		return t.xExpr(x.Expr) + "[" + t.xExpr(x.Index) + "]"
+		// For array indexing, avoid emitting the array-to-pointer decay on the base.
+		// In Golf, [N]T arrays can be indexed directly with [i] without decay.
+		// Emitting (*T)(arr)[i] creates a PointerType-cast that causes CBE errors.
+		base := t.xExprNoDecay(x.Expr)
+		return base + "[" + t.xExpr(x.Index) + "]"
 
 	case *cc.CallExpr:
 		return t.xCall(x)
 
+	case *cc.SizeOfExpr:
+		// sizeof(expr) — use the pre-computed value from cc/v5.
+		// cc/v5 evaluates sizeof at parse time, correctly handling arrays
+		// without decay, alignment, etc.
+		if v := x.Value(); v != nil {
+			switch vv := v.(type) {
+			case cc.UInt64Value:
+				return fmt.Sprintf("word(%d)", uint64(vv))
+			case cc.Int64Value:
+				return fmt.Sprintf("word(%d)", int64(vv))
+			}
+		}
+		// Fallback: use Type().Size() (may be wrong for arrays due to decay).
+		sz := x.Expr.Type().Size()
+		return fmt.Sprintf("word(%d) /* sizeof fallback */", sz)
+
+	case *cc.SizeOfTypeExpr:
+		// sizeof(type) — use the pre-computed value from cc/v5.
+		if v := x.Value(); v != nil {
+			switch vv := v.(type) {
+			case cc.UInt64Value:
+				return fmt.Sprintf("word(%d)", uint64(vv))
+			case cc.Int64Value:
+				return fmt.Sprintf("word(%d)", int64(vv))
+			}
+		}
+		// Fallback.
+		sz := x.TypeName.Type().Size()
+		return fmt.Sprintf("word(%d) /* sizeof fallback */", sz)
+
 	case *cc.PostfixExpr:
 		base := t.xExpr(x.Expr)
-		// Pointer types: only valid at statement level (handled by translateExprStmtOne
-		// and ptrPostExprStmts). If reached here in expression context, emit a comment.
+		// Pointer postfix++/-- in expression context: use the prelude post_increment
+		// / post_decrement helpers. These return the old pointer value and then
+		// advance the pointer — exactly what C's p++ returns.
+		// Wrapped in parens so that *post_increment[T](&p) is not misread by the
+		// MiniGolf parser as a type-cast (*post_increment[T])(&p).
 		if x.Expr.Type().Kind() == cc.Ptr {
+			golfType := t.cTypeToGolf(x.Expr.Type())
 			if x.Dec {
-				return t.unsupported("ptr postfix-- in expr: " + base)
+				return fmt.Sprintf("(post_decrement[%s](&%s))", golfType, base)
 			}
-			return t.unsupported("ptr postfix++ in expr: " + base)
+			return fmt.Sprintf("(post_increment[%s](&%s))", golfType, base)
 		}
 		// Non-pointer: use prelude helper that returns old value then mutates.
 		golfType := t.cTypeToGolf(x.Expr.Type())
@@ -1191,12 +1326,14 @@ func (t *translator) xExpr(n cc.Expression) string {
 	case *cc.PrefixExpr:
 		base := t.xExpr(x.Expr)
 		if x.Expr.Type().Kind() == cc.Ptr {
-			// Pointer prefix increment/decrement in expression context.
-			// These are rare; if reached, we cannot inline the side-effect cleanly.
+			// Pointer prefix increment/decrement: use prelude helpers that mutate
+			// and return the new pointer value. Wrapped in parens for the same
+			// reason as postfix: avoid *pre_increment[T](&p) being parsed as a cast.
+			golfType := t.cTypeToGolf(x.Expr.Type())
 			if x.Dec {
-				return t.unsupported("ptr prefix-- in expr: " + base)
+				return fmt.Sprintf("(pre_decrement[%s](&%s))", golfType, base)
 			}
-			return t.unsupported("ptr prefix++ in expr: " + base)
+			return fmt.Sprintf("(pre_increment[%s](&%s))", golfType, base)
 		}
 		// Non-pointer: use prelude helper that mutates and returns new value.
 		golfType := t.cTypeToGolf(x.Expr.Type())
@@ -1272,7 +1409,13 @@ func (t *translator) xExpr(n cc.Expression) string {
 		}
 		// Always resolve any remaining int/word or byte/word mismatches.
 		lhs, rhs = t.promoteForBinop(x.Lhs.Type(), lhs, x.Rhs.Type(), rhs)
+		// Pointer comparison with mismatched pointer types: cast RHS to LHS type.
+		// This handles e.g. (*int)(p) != (*byte)(0) (the NULL comparison pattern).
+		if (op == "==" || op == "!=") && strings.HasPrefix(lGolf, "*") && strings.HasPrefix(rGolf, "*") && lGolf != rGolf {
+			rhs = "(" + lGolf + ")(" + rhs + ")"
+		}
 		return lhs + " " + op + " " + rhs
+
 
 	case *cc.AssignmentExpression:
 		lhs := t.xExpr(x.Lhs)
@@ -1450,6 +1593,24 @@ func (t *translator) xCall(x *cc.CallExpr) string {
 				at := argExprTyp.(*cc.ArrayType)
 				eltGolf := t.cTypeToGolf(at.Elem())
 				arg = "(*" + eltGolf + ")(" + arg + ")"
+			} else if argExprTyp.Kind() == cc.Ptr {
+				// cc/v5 may have already decayed an array-of-arrays index result.
+				// e.g., stringVariables[i] on byte[26][64] → cc/v5 says char*,
+				// but Golf expression is still a [64]byte value.
+				// Detect IndexExpr on a multi-dimensional array.
+				if idx, ok := ael.Expression.(*cc.IndexExpr); ok {
+					baseType := idx.Expr.Type()
+					if baseType.Kind() == cc.Ptr {
+						if pt, ok2 := baseType.(*cc.PointerType); ok2 {
+							if pt.Elem().Kind() == cc.Array {
+								// Multi-dim array access; result is an array that needs decay.
+								innerElt := pt.Elem().(*cc.ArrayType).Elem()
+								eltGolf := t.cTypeToGolf(innerElt)
+								arg = "(*" + eltGolf + ")(" + arg + ")"
+							}
+						}
+					}
+				}
 			}
 		}
 		args = append(args, arg)

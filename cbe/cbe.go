@@ -463,6 +463,12 @@ func (c *CBE) formatVal(v ir.Value) string {
 		return fmt.Sprintf("{ %s }", strings.Join(elems, ", "))
 	case *ir.AddressOfGlobal:
 		gName := strings.ReplaceAll(val.Global.Name, ".", "_")
+		// When the global is an array (e.g. [N]byte for string constants)
+		// but the instruction type is a simple pointer (e.g. *byte),
+		// emit &v_name.data[0] to get a pointer to the first element.
+		if val.Global.Typ.IsAnArray() && val.Type().IsAPointer() && !val.Type().PointedType().IsAnArray() {
+			return fmt.Sprintf("(&v_%s.data[0])", gName)
+		}
 		return fmt.Sprintf("(&v_%s)", gName)
 	case *ir.AddressOfFunc:
 		return fmt.Sprintf("((word)(&%s))", val.Func.EmitName())
@@ -569,7 +575,12 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 				expectedTyp := i.Func.Parameters[idx].Typ.Name
 				argTyp := arg.Type().Name
 				if strings.HasPrefix(expectedTyp, "*") && !strings.HasPrefix(argTyp, "*") {
-					argStr = fmt.Sprintf("(%s)(%s)", c.mapType(expectedTyp), argStr)
+					// Array-to-pointer: C can't cast an aggregate to a pointer.
+					if arg.Type().IsAnArray() {
+						argStr = fmt.Sprintf("(%s)(&(%s).data[0])", c.mapType(expectedTyp), argStr)
+					} else {
+						argStr = fmt.Sprintf("(%s)(%s)", c.mapType(expectedTyp), argStr)
+					}
 				}
 			}
 			args = append(args, argStr)
@@ -605,7 +616,17 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		case "zero_ext":
 			return fmt.Sprintf("(word)(%s)", c.formatVal(i.Operand))
 		case "word_to_ptr":
-			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), c.formatVal(i.Operand))
+			operandStr := c.formatVal(i.Operand)
+			operandTyp := i.Operand.Type()
+			// If the operand is an array value (e.g. a loaded [N]T global),
+			// C cannot cast an aggregate to a pointer. Use &data[0] instead.
+			if operandTyp.IsAPointer() && operandTyp.PointedType().IsAnArray() {
+				return fmt.Sprintf("(%s)(&(%s)->data[0])", c.mapType(i.Typ.Name), operandStr)
+			}
+			if operandTyp.IsAnArray() {
+				return fmt.Sprintf("(%s)(&(%s).data[0])", c.mapType(i.Typ.Name), operandStr)
+			}
+			return fmt.Sprintf("(%s)(%s)", c.mapType(i.Typ.Name), operandStr)
 		case "ptr_to_word":
 			operandStr := c.formatVal(i.Operand)
 			// If the operand is a pointer to an array struct (e.g. *[N]byte →

@@ -65,16 +65,19 @@ type Builder struct {
 	worklist          []*GlobalItem
 	currentPackage    string
 
-	breakStack        []*BasicBlock
-	continueStack     []*BasicBlock
-	labelBlocks       map[string]*BasicBlock // for goto/label support
-	resolveCallback   func(node ast.Node, defPkg string) ast.Node
-	varInitStatements []*GlobalItem
-	WordSize          int
-	CheckBounds       bool
-	CheckNil          bool
-	addressTakenVars  map[string]bool
-	variableInitVal   map[string]Value
+	breakStack          []*BasicBlock
+	continueStack       []*BasicBlock
+	labelBlocks         map[string]*BasicBlock // goto/label targets
+	labelBreakBlocks    map[string]*BasicBlock // labeled break targets (loop end)
+	labelContinueBlocks map[string]*BasicBlock // labeled continue targets (loop post/header)
+	pendingForLabel     string                 // label immediately preceding current for stmt
+	resolveCallback     func(node ast.Node, defPkg string) ast.Node
+	varInitStatements   []*GlobalItem
+	WordSize            int
+	CheckBounds         bool
+	CheckNil            bool
+	addressTakenVars    map[string]bool
+	variableInitVal     map[string]Value
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -770,6 +773,9 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.addressTakenVars = make(map[string]bool)
 	b.variableInitVal = make(map[string]Value)
 	b.labelBlocks = make(map[string]*BasicBlock)
+	b.labelBreakBlocks = make(map[string]*BasicBlock)
+	b.labelContinueBlocks = make(map[string]*BasicBlock)
+	b.pendingForLabel = ""
 	b.findEscapingVars(s.Body)
 
 	entry := b.newBlock()
@@ -1208,8 +1214,20 @@ func (b *Builder) getLabelBlock(name string) *BasicBlock {
 }
 
 func (b *Builder) buildBlock(blockAst *ast.BlockStatement) {
+	pendingLabel := ""
 	for _, stmt := range blockAst.Statements {
+		if ls, ok := stmt.(*ast.LabelStatement); ok {
+			// Remember the label name; the very next statement (if a for loop)
+			// will register it in labelBreakBlocks / labelContinueBlocks.
+			pendingLabel = ls.Label
+			b.buildStatement(stmt) // creates/seals the goto-target BasicBlock
+			continue
+		}
+		// Expose any pending label to the for-loop builders via pendingForLabel.
+		b.pendingForLabel = pendingLabel
+		pendingLabel = ""
 		b.buildStatement(stmt)
+		b.pendingForLabel = "" // clear in case the statement wasn't a for loop
 	}
 }
 
@@ -1497,6 +1515,13 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(bodyBlk)
 
 		b.currentBlock = bodyBlk
+		// Register label→block mappings before building the body, so that
+		// labeled break/continue inside the body can find the right targets.
+		if b.pendingForLabel != "" {
+			b.labelBreakBlocks[b.pendingForLabel] = endBlk
+			b.labelContinueBlocks[b.pendingForLabel] = headerBlk
+			b.pendingForLabel = ""
+		}
 		b.breakStack = append(b.breakStack, endBlk)
 		b.continueStack = append(b.continueStack, headerBlk)
 		b.buildBlock(s.Body)
@@ -1542,6 +1567,12 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(bodyBlk)
 
 		b.currentBlock = bodyBlk
+		// Register label→block mappings (continue → postBlk for For3).
+		if b.pendingForLabel != "" {
+			b.labelBreakBlocks[b.pendingForLabel] = endBlk
+			b.labelContinueBlocks[b.pendingForLabel] = postBlk
+			b.pendingForLabel = ""
+		}
 		b.breakStack = append(b.breakStack, endBlk)
 		b.continueStack = append(b.continueStack, postBlk)
 		b.buildBlock(s.Body)
@@ -1643,6 +1674,12 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			}
 		}
 		b.breakStack = append(b.breakStack, endBlk)
+		// Register label→block mappings (continue → postBlk for ForRange).
+		if b.pendingForLabel != "" {
+			b.labelBreakBlocks[b.pendingForLabel] = endBlk
+			b.labelContinueBlocks[b.pendingForLabel] = postBlk
+			b.pendingForLabel = ""
+		}
 		b.continueStack = append(b.continueStack, postBlk)
 		b.buildBlock(s.Body)
 		b.breakStack = b.breakStack[:len(b.breakStack)-1]
@@ -1742,27 +1779,46 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 	case *ast.BreakStatement:
 		b.addInstr(&SourceMarker{
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
-			Comment:         fmt.Sprintf("Line %d: break", s.Token.Line),
+			Comment:         fmt.Sprintf("Line %d: break %s", s.Token.Line, s.Label),
 		}, s)
-		if len(b.breakStack) == 0 {
-			log.Panicf("break statement outside of a loop at line %d", s.Token.Line)
+		var targetBlk *BasicBlock
+		if s.Label != "" {
+			blk, ok := b.labelBreakBlocks[s.Label]
+			if !ok {
+				log.Panicf("break %s: label not found (not a labeled for loop) at line %d", s.Label, s.Token.Line)
+			}
+			targetBlk = blk
+		} else {
+			if len(b.breakStack) == 0 {
+				log.Panicf("break statement outside of a loop at line %d", s.Token.Line)
+			}
+			targetBlk = b.breakStack[len(b.breakStack)-1]
 		}
-		targetBlk := b.breakStack[len(b.breakStack)-1]
 		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: targetBlk}, s)
 		b.addEdge(b.currentBlock, targetBlk)
-		b.currentBlock = b.newBlock() // Unreachable block
+		b.currentBlock = b.newBlock() // unreachable continuation
+
 	case *ast.ContinueStatement:
 		b.addInstr(&SourceMarker{
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
-			Comment:         fmt.Sprintf("Line %d: continue", s.Token.Line),
+			Comment:         fmt.Sprintf("Line %d: continue %s", s.Token.Line, s.Label),
 		}, s)
-		if len(b.continueStack) == 0 {
-			log.Panicf("continue statement outside of a loop at line %d", s.Token.Line)
+		var targetBlk *BasicBlock
+		if s.Label != "" {
+			blk, ok := b.labelContinueBlocks[s.Label]
+			if !ok {
+				log.Panicf("continue %s: label not found (not a labeled for loop) at line %d", s.Label, s.Token.Line)
+			}
+			targetBlk = blk
+		} else {
+			if len(b.continueStack) == 0 {
+				log.Panicf("continue statement outside of a loop at line %d", s.Token.Line)
+			}
+			targetBlk = b.continueStack[len(b.continueStack)-1]
 		}
-		targetBlk := b.continueStack[len(b.continueStack)-1]
 		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: targetBlk}, s)
 		b.addEdge(b.currentBlock, targetBlk)
-		b.currentBlock = b.newBlock() // Unreachable block
+		b.currentBlock = b.newBlock() // unreachable continuation
 
 	case *ast.GotoStatement:
 		b.addInstr(&SourceMarker{
@@ -2285,10 +2341,9 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			if b.CheckNil {
 				b.emitNilCheck(funcVal, e)
 			}
-			var args []Value
-			for _, arg := range e.Arguments {
-				args = append(args, b.buildExpr(arg))
-			}
+			// Reuse args already built above (line 2314-2316) to avoid
+			// double-evaluating expressions with side effects (e.g.
+			// post_increment calls).
 			retTyp := TypeWord
 			if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
 				retTyp = b.getFuncReturnType(ft.ReturnParameters)
@@ -3571,6 +3626,19 @@ func (b *Builder) isConstantExpr(expr ast.Expression) bool {
 			return true
 		}
 		return false
+	case *ast.ArrayType:
+		// [N]T{...} — delegate to the inner element.
+		// The parser represents [N]*T{...} as ArrayType{Elt: PointerType{Elt: CompositeLit}}.
+		if e.Elt != nil {
+			return b.isConstantExpr(e.Elt)
+		}
+		return false
+	case *ast.PointerType:
+		// *T{...} — the parser wraps the composite literal in a PointerType.
+		if e.Elt != nil {
+			return b.isConstantExpr(e.Elt)
+		}
+		return false
 	}
 	return false
 }
@@ -3630,6 +3698,12 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 			}
 			return &ConstArray{BaseInstruction: BaseInstruction{Typ: targetTyp}, Elements: elements}
 		}
+		// When the target type is a pointer (e.g. *byte), return the address
+		// of the string constant directly — not a slice struct.
+		if targetTyp.IsAPointer() {
+			g := b.addStringConstant(e.Value)
+			return &AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: targetTyp}, Global: g}
+		}
 		// Default: slice[byte] struct with pointer + length + capacity.
 		g := b.addStringConstant(e.Value)
 		length := int64(len(e.Value))
@@ -3665,16 +3739,25 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 			}
 		}
 	case *ast.ArrayType:
-		if comp, ok := e.Elt.(*ast.CompositeLit); ok {
+		// [N]T{...} — find the CompositeLit body. The parser may represent
+		// [N]*T{...} as ArrayType{Elt: PointerType{Elt: CompositeLit{...}}}.
+		inner := e.Elt
+		// Unwrap PointerType layers to find the CompositeLit.
+		for {
+			if pt, ok := inner.(*ast.PointerType); ok {
+				inner = pt.Elt
+			} else {
+				break
+			}
+		}
+		if comp, ok := inner.(*ast.CompositeLit); ok {
 			return b.evalConstantExpr(comp, targetTyp)
 		}
 	case *ast.CompositeLit:
 		if strings.HasPrefix(targetTyp.Name, "[") {
 			// Array literal
-			var arrayLen int
-			var eltTypStr string
-			fmt.Sscanf(targetTyp.Name, "[%d]%s", &arrayLen, &eltTypStr)
-			eltTyp := b.astToIRType(&ast.Identifier{Value: eltTypStr})
+			arrayLen := targetTyp.ArrayLength()
+			eltTyp := targetTyp.ArrayElementType()
 
 			elements := make([]Value, arrayLen)
 			for i, el := range e.Elements {
@@ -4036,6 +4119,10 @@ func (b *Builder) findEscapingVars(node ast.Node) {
 	case *ast.KeyValueExpr:
 		b.findEscapingVars(n.Key)
 		b.findEscapingVars(n.Value)
+	case *ast.PointerType:
+		// *(expr) is parsed as PointerType{Elt: expr}; recurse so that
+		// &-escapes inside expr are properly detected (e.g. *(post_increment[T](&x))).
+		b.findEscapingVars(n.Elt)
 	}
 }
 

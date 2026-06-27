@@ -246,6 +246,7 @@ func (s *ReturnStatement) GetToken() *token.Token { return &s.Token }
 
 type BreakStatement struct {
 	Token token.Token // The 'break' token
+	Label string      // Optional: label of the enclosing loop to break (labeled break)
 }
 
 func (s *BreakStatement) statementNode()         {}
@@ -254,6 +255,7 @@ func (s *BreakStatement) GetToken() *token.Token { return &s.Token }
 
 type ContinueStatement struct {
 	Token token.Token // The 'continue' token
+	Label string      // Optional: label of the enclosing loop to continue (labeled continue)
 }
 
 func (s *ContinueStatement) statementNode()         {}

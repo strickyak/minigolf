@@ -2275,6 +2275,10 @@ func (b *Backend) emitData(val ir.Value) {
 		for _, f := range v.Fields {
 			b.emitData(f)
 		}
+	case *ir.ConstArray:
+		for _, el := range v.Elements {
+			b.emitData(el)
+		}
 	default:
 		log.Panicf("unsupported init value type %T", val)
 	}

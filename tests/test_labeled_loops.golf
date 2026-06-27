@@ -1,0 +1,29 @@
+package main
+
+func main() {
+	println("labeled continue: skip inner when j==1, only j==0 and j==2 print")
+outer:
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			if j == 1 {
+				continue outer
+			}
+			println(i, j)
+		}
+	}
+
+	println("labeled break: break outer when i==1 and j==1")
+outer2:
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			if i == 1 {
+				if j == 1 {
+					break outer2
+				}
+			}
+			println(i, j)
+		}
+	}
+
+	println("done")
+}

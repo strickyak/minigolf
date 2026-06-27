@@ -1,0 +1,10 @@
+labeled continue: skip inner when j==1, only j==0 and j==2 print
+0 0
+1 0
+2 0
+labeled break: break outer when i==1 and j==1
+0 0
+0 1
+0 2
+1 0
+done

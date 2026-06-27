@@ -779,6 +779,11 @@ func (p *Parser) parseDeferStatement() *ast.DeferStatement {
 
 func (p *Parser) parseBreakStatement() *ast.BreakStatement {
 	stmt := &ast.BreakStatement{Token: p.curToken}
+	// Optional label: `break outerLoop`
+	if p.peekTokenIs(token.IDENT) {
+		p.nextToken()
+		stmt.Label = p.curToken.Literal
+	}
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()
 	}
@@ -787,6 +792,11 @@ func (p *Parser) parseBreakStatement() *ast.BreakStatement {
 
 func (p *Parser) parseContinueStatement() *ast.ContinueStatement {
 	stmt := &ast.ContinueStatement{Token: p.curToken}
+	// Optional label: `continue outerLoop`
+	if p.peekTokenIs(token.IDENT) {
+		p.nextToken()
+		stmt.Label = p.curToken.Literal
+	}
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()
 	}
