@@ -423,25 +423,32 @@ func g() {
 
 ### 7.2 Destructors
 
-If a struct type has a method `destructor()` (taking no arguments and returning no result)
-then that method is guaranteed to be called on instances of the struct
-that are local to a function or a method (that is, they are on the call stack)
-when the function or method ends and the struct goes out of scope ( unless the object has a zero value, in which case
-the destructor may or may not be called;
-it is implementation-dependent).
+If a struct type has a method `destructor()` (taking no arguments
+and returning no result) then that method is guaranteed to be called
+on instances of the struct that are local to a function or a method
+(that is, they are on the call stack) when the function or method
+ends and the struct goes out of scope ( unless the object has a zero
+value, in which case the destructor may or may not be called; it is
+implementation-dependent).
 
-This guarantee holds regardless of whether the flow of control hit an explicit
-return function, "falls off the the bottom" of the function, or exits due
-to a `panic()`.
+This guarantee holds regardless of whether the flow of control hit an
+explicit return function, "falls off the the bottom" of the function,
+or exits due to a `panic()`.
 
-(Notice we do not have "lexical scoping lifetimes" of variables declared in
-nested blocks; those variables actually have a lifetime of the function or method,
-even if they are not visible outside the nested block.)
+(Notice we do not have "lexical scoping lifetimes" of variables declared
+in nested blocks; those variables actually have a lifetime of the function
+or method, even if they are not visible outside the nested block.)
 
-The idea is to declare your destructable object with a zero value,
-then only use appropriate methods to change it, which always leave your
-object in a destructable state, and finally expect destructor() to be called
-once (or optionally called, if you called no methods).
+The idea is to declare your destructable object with a zero value, then
+only use appropriate methods to change it, which always leave your object
+in a destructable state, and finally expect destructor() to be called once
+(or optionally called, if you called no methods).
+
+We FORBID COPYING destructable objects.  You may not assign them, pass
+them by value, or return them from functions.  That would violate the idea
+stated above: destructable objects should be created first with a zero
+value, and then use methods to change it, so that proper destructability
+is a preserved condition.
 
 ```go
 func g() {
