@@ -835,28 +835,32 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	}
 
 	b.currentBlock = b.currentDestructBlock
-	// Post-build check: if the conservative pre-scan set up setjmp blocks
-	// but no deferred actions or destructors were actually registered, the
-	// function is "clean" — strip the setjmp machinery.
-	if funcNormalBlk != nil && len(b.deferredActions) == 0 {
-		// Convert the entry block: replace SetJmp+Compare+Branch with a
-		// simple Jump to the normal block.  Discard the panic block.
-		entry.Instructions = nil
-		entry.Terminator = nil
-		b.currentBlock = entry
-		b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: funcNormalBlk}, s)
-		b.addEdge(entry, funcNormalBlk)
-		b.currentBlock = b.currentDestructBlock
-		// No unlink needed since we never linked into the jmp chain.
-		// Give the dead panic block a terminator so backends don't crash
-		// iterating over blocks with nil terminators.
-		oldBlock := b.currentBlock
-		b.currentBlock = funcPanicBlk
-		b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, s)
-		b.currentBlock = oldBlock
-		funcPanicBlk = nil
-		funcNormalBlk = nil
-	}
+
+	//		if false { // NOT NEEDED, was a defense-in-depth.
+	//			// Post-build check: if the conservative pre-scan set up setjmp blocks
+	//			// but no deferred actions or destructors were actually registered, the
+	//			// function is "clean" — strip the setjmp machinery.
+	//			if funcNormalBlk != nil && len(b.deferredActions) == 0 {
+	//				// Convert the entry block: replace SetJmp+Compare+Branch with a
+	//				// simple Jump to the normal block.  Discard the panic block.
+	//				entry.Instructions = nil
+	//				entry.Terminator = nil
+	//				b.currentBlock = entry
+	//				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: funcNormalBlk}, s)
+	//				b.addEdge(entry, funcNormalBlk)
+	//				b.currentBlock = b.currentDestructBlock
+	//				// No unlink needed since we never linked into the jmp chain.
+	//				// Give the dead panic block a terminator so backends don't crash
+	//				// iterating over blocks with nil terminators.
+	//				oldBlock := b.currentBlock
+	//				b.currentBlock = funcPanicBlk
+	//				b.addInstr(&Return{BaseInstruction: BaseInstruction{Typ: TypeVoid}}, s)
+	//				b.currentBlock = oldBlock
+	//				funcPanicBlk = nil
+	//				funcNormalBlk = nil
+	//			}
+	//		}
+
 	if funcNormalBlk != nil {
 		b.addInstr(&BuiltinCall{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Name: "_unlink_jmp_"}, nil)
 	}
