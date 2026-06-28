@@ -1,0 +1,797 @@
+package main
+
+// ===== External I/O =====
+
+// minigolf:linkage("getchar")
+func getchar() int
+
+// ===== Constants =====
+
+const REPL = 0 // Set to 1 for interactive mode: -D=main.REPL=1
+
+// Token types
+const TokNum = 1
+const TokVar = 2
+const TokFunc = 3
+const TokArrow = 4
+
+// Function IDs
+const FnIota = 1
+const FnRho = 2
+const FnAdd = 3
+const FnSub = 4
+const FnMul = 5
+const FnDiv = 6
+const FnMod = 7
+const FnNeg = 8
+
+// ===== I/O Utilities (putchar/getchar only) =====
+
+func PutInt(n int) {
+	if n < 0 {
+		putchar('-')
+		n = 0 - n
+	}
+	if n >= 10 {
+		PutInt(n / 10)
+	}
+	putchar(byte(n%10) + '0')
+}
+
+func IntWidth(n int) word {
+	w := word(1)
+	if n < 0 {
+		w++
+		n = 0 - n
+	}
+	for n >= 10 {
+		n = n / 10
+		w++
+	}
+	return w
+}
+
+func PutIntPadded(n int, width word) {
+	w := IntWidth(n)
+	for w < width {
+		putchar(' ')
+		w++
+	}
+	PutInt(n)
+}
+
+func PutStr(s *byte) {
+	for *s != 0 {
+		putchar(*s)
+		s = (*byte)(word(s) + 1)
+	}
+}
+
+// ===== Line Buffer =====
+
+var LineBuf [256]byte
+var LineLen word
+
+func ReadLine() byte {
+	LineLen = 0
+	for {
+		c := getchar()
+		if c < 0 {
+			if LineLen > 0 {
+				return 1
+			}
+			return 0
+		}
+		if c == '\n' {
+			return 1
+		}
+		if c == '\r' {
+			continue
+		}
+		if LineLen < 255 {
+			LineBuf[LineLen] = byte(c)
+			LineLen++
+		}
+	}
+	return 0
+}
+
+// ===== Thing: APL Value =====
+//
+// An APL value is a multi-dimensional array of ints.
+// Scalar: Dimensions is empty, Values has 1 element.
+// Vector: Dimensions=[n], Values has n elements.
+// Matrix: Dimensions=[r,c], Values has r*c elements (row-major).
+//
+// Int values are stored by casting: int -> word -> *Thing.
+
+type Thing struct {
+	Values     slice[*Thing]
+	Dimensions slice[word]
+}
+
+func (t *Thing) destructor() {
+	free((*byte)(t.Values.Base))
+	free((*byte)(t.Dimensions.Base))
+}
+
+func NewThing() *Thing {
+	return (*Thing)(zalloc(sizeof[Thing]()))
+}
+
+func FreeThing(t *Thing) {
+	if word(t) != 0 {
+		free((*byte)(t.Values.Base))
+		free((*byte)(t.Dimensions.Base))
+		free((*byte)(word(t)))
+	}
+}
+
+// Store an int inside a *Thing pointer slot
+func IntToPtr(n int) *Thing {
+	return (*Thing)(word(n))
+}
+
+// Retrieve the int from a *Thing pointer slot
+func PtrToInt(p *Thing) int {
+	return int(word(p))
+}
+
+func MakeScalar(n int) *Thing {
+	t := NewThing()
+	t.Values.Append(IntToPtr(n))
+	return t
+}
+
+// ===== Variables (Global Scope) =====
+
+const MaxVars = 52
+
+var VarNames [832]byte // MaxVars * 16, flattened
+var VarNameLens [52]word
+var VarValues [52]*Thing
+var NumVars word
+
+func VarNameAt(v word, i word) byte {
+	return VarNames[v*16+i]
+}
+
+func SetVarNameAt(v word, i word, c byte) {
+	VarNames[v*16+i] = c
+}
+
+func InternVar(start word, length word) word {
+	for vi := range NumVars {
+		if VarNameLens[vi] == length {
+			same := byte(1)
+			for ci := range length {
+				if VarNameAt(vi, ci) != LineBuf[start+ci] {
+					same = 0
+					break
+				}
+			}
+			if same != 0 {
+				return vi
+			}
+		}
+	}
+	// Add new variable
+	idx := NumVars
+	VarNameLens[idx] = length
+	for ci := range length {
+		SetVarNameAt(idx, ci, LineBuf[start+ci])
+	}
+	NumVars++
+	return idx
+}
+
+func PutVarName(vi word) {
+	for ci := range VarNameLens[vi] {
+		putchar(VarNameAt(vi, ci))
+	}
+}
+
+// ===== Tokenizer =====
+
+var TokKinds [100]byte
+var TokVals [100]int
+var NumTokens word
+
+func MatchWord(start word, length word, s *byte) byte {
+	i := word(0)
+	for i < length {
+		if *s == 0 {
+			return 0
+		}
+		if LineBuf[start+i] != *s {
+			return 0
+		}
+		i++
+		s = (*byte)(word(s) + 1)
+	}
+	if *s != 0 {
+		return 0
+	}
+	return 1
+}
+
+func IdentifyFunc(start word, length word) int {
+	if MatchWord(start, length, "iota") != 0 {
+		return FnIota
+	}
+	if MatchWord(start, length, "rho") != 0 {
+		return FnRho
+	}
+	if MatchWord(start, length, "add") != 0 {
+		return FnAdd
+	}
+	if MatchWord(start, length, "sub") != 0 {
+		return FnSub
+	}
+	if MatchWord(start, length, "mul") != 0 {
+		return FnMul
+	}
+	if MatchWord(start, length, "div") != 0 {
+		return FnDiv
+	}
+	if MatchWord(start, length, "mod") != 0 {
+		return FnMod
+	}
+	if MatchWord(start, length, "neg") != 0 {
+		return FnNeg
+	}
+	return 0
+}
+
+func Tokenize() {
+	NumTokens = 0
+	pos := word(0)
+	for pos < LineLen {
+		// Skip whitespace
+		for pos < LineLen {
+			ch := LineBuf[pos]
+			if ch != ' ' && ch != '\t' {
+				break
+			}
+			pos++
+		}
+		if pos >= LineLen {
+			break
+		}
+
+		c := LineBuf[pos]
+
+		// Assignment arrow '<-'
+		if c == '<' && pos+1 < LineLen && LineBuf[pos+1] == '-' {
+			TokKinds[NumTokens] = TokArrow
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos = pos + 2
+			continue
+		}
+
+		// Number (possibly negative: '-' followed by digit)
+		isNum := byte(0)
+		if c >= '0' && c <= '9' {
+			isNum = 1
+		}
+		if c == '-' && pos+1 < LineLen && LineBuf[pos+1] >= '0' && LineBuf[pos+1] <= '9' {
+			isNum = 1
+		}
+		if isNum != 0 {
+			sign := int(1)
+			if c == '-' {
+				sign = 0 - 1
+				pos++
+			}
+			n := int(0)
+			for pos < LineLen && LineBuf[pos] >= '0' && LineBuf[pos] <= '9' {
+				n = n*10 + int(word(LineBuf[pos])) - int(word('0'))
+				pos++
+			}
+			TokKinds[NumTokens] = TokNum
+			TokVals[NumTokens] = n * sign
+			NumTokens++
+			continue
+		}
+
+		// Uppercase name (variable)
+		if c >= 'A' && c <= 'Z' {
+			start := pos
+			for pos < LineLen {
+				ch := LineBuf[pos]
+				ok := byte(0)
+				if ch >= 'A' && ch <= 'Z' {
+					ok = 1
+				}
+				if ch >= 'a' && ch <= 'z' {
+					ok = 1
+				}
+				if ch >= '0' && ch <= '9' {
+					ok = 1
+				}
+				if ch == '_' {
+					ok = 1
+				}
+				if ok == 0 {
+					break
+				}
+				pos++
+			}
+			length := pos - start
+			idx := InternVar(start, length)
+			TokKinds[NumTokens] = TokVar
+			TokVals[NumTokens] = int(idx)
+			NumTokens++
+			continue
+		}
+
+		// Lowercase name (function/operator)
+		if c >= 'a' && c <= 'z' {
+			start := pos
+			for pos < LineLen {
+				ch := LineBuf[pos]
+				ok := byte(0)
+				if ch >= 'a' && ch <= 'z' {
+					ok = 1
+				}
+				if ch >= '0' && ch <= '9' {
+					ok = 1
+				}
+				if ch == '_' {
+					ok = 1
+				}
+				if ok == 0 {
+					break
+				}
+				pos++
+			}
+			length := pos - start
+			fnId := IdentifyFunc(start, length)
+			if fnId == 0 {
+				PutStr("Unknown function: ")
+				for ei := start; ei < pos; ei++ {
+					putchar(LineBuf[ei])
+				}
+				putchar('\n')
+			} else {
+				TokKinds[NumTokens] = TokFunc
+				TokVals[NumTokens] = fnId
+				NumTokens++
+			}
+			continue
+		}
+
+		// Unknown character, skip
+		pos++
+	}
+}
+
+// ===== Evaluator =====
+//
+// APL evaluates right-to-left. We scan left-to-right but recurse
+// for right arguments, which gives right-to-left semantics:
+//   3 3 rho iota 9
+// => strand [3,3], then dyadic rho, then recurse:
+//     => monadic iota, then recurse:
+//         => strand [9] => scalar 9
+//     => iota(9) => [0..8]
+// => [3,3] rho [0..8] => 3x3 matrix
+
+var EvalPos word
+var WasAssign byte
+
+func Eval() *Thing {
+	if EvalPos >= NumTokens {
+		PutStr("Error: unexpected end of expression\n")
+		return (*Thing)(0)
+	}
+
+	kind := TokKinds[EvalPos]
+
+	// Monadic function application
+	if kind == TokFunc {
+		fnId := TokVals[EvalPos]
+		EvalPos++
+		right := Eval()
+		return ApplyMonadic(fnId, right)
+	}
+
+	// Primary value: number strand or variable
+	var val *Thing
+
+	if kind == TokNum {
+		val = ParseStrand()
+	} else if kind == TokVar {
+		varIdx := word(TokVals[EvalPos])
+		EvalPos++
+
+		// Assignment: Name <- expr
+		if EvalPos < NumTokens && TokKinds[EvalPos] == TokArrow {
+			EvalPos++ // skip '<-'
+			right := Eval()
+			VarValues[varIdx] = right
+			WasAssign = 1
+			return right
+		}
+
+		// Variable lookup
+		val = VarValues[varIdx]
+		if word(val) == 0 {
+			PutStr("Error: undefined variable ")
+			PutVarName(varIdx)
+			putchar('\n')
+			return (*Thing)(0)
+		}
+	} else {
+		PutStr("Error: unexpected token\n")
+		EvalPos++
+		return (*Thing)(0)
+	}
+
+	// Dyadic function: val func expr
+	if EvalPos < NumTokens && TokKinds[EvalPos] == TokFunc {
+		fnId := TokVals[EvalPos]
+		EvalPos++
+		right := Eval()
+		return ApplyDyadic(fnId, val, right)
+	}
+
+	return val
+}
+
+func ParseStrand() *Thing {
+	// Collect consecutive number tokens into a vector (or scalar if just one)
+	var nums [100]int
+	count := word(0)
+	for EvalPos < NumTokens && TokKinds[EvalPos] == TokNum {
+		nums[count] = TokVals[EvalPos]
+		count++
+		EvalPos++
+	}
+	if count == 1 {
+		return MakeScalar(nums[0])
+	}
+	t := NewThing()
+	t.Dimensions.Append(count)
+	for i := range count {
+		t.Values.Append(IntToPtr(nums[i]))
+	}
+	return t
+}
+
+// ===== APL Operations =====
+
+func ApplyMonadic(fnId int, right *Thing) *Thing {
+	if word(right) == 0 {
+		return (*Thing)(0)
+	}
+	if fnId == FnIota {
+		return DoIota(right)
+	}
+	if fnId == FnRho {
+		return DoRhoMonadic(right)
+	}
+	if fnId == FnNeg {
+		return DoNeg(right)
+	}
+	PutStr("Error: function cannot be used monadically\n")
+	return right
+}
+
+func ApplyDyadic(fnId int, left *Thing, right *Thing) *Thing {
+	if word(left) == 0 || word(right) == 0 {
+		return (*Thing)(0)
+	}
+	if fnId == FnRho {
+		return DoRhoDyadic(left, right)
+	}
+	if fnId == FnAdd || fnId == FnSub || fnId == FnMul ||
+		fnId == FnDiv || fnId == FnMod {
+		return DoArithDyadic(fnId, left, right)
+	}
+	PutStr("Error: function cannot be used dyadically\n")
+	return left
+}
+
+// iota N => vector [0, 1, ..., N-1]  (0-based)
+func DoIota(arg *Thing) *Thing {
+	n := PtrToInt(arg.Values.Get(0))
+	t := NewThing()
+	t.Dimensions.Append(word(n))
+	for i := range word(n) {
+		t.Values.Append(IntToPtr(int(i)))
+	}
+	return t
+}
+
+// Monadic rho: return shape as a vector
+func DoRhoMonadic(arg *Thing) *Thing {
+	t := NewThing()
+	nd := arg.Dimensions.Len
+	if nd == 0 {
+		// Scalar has empty shape
+		t.Dimensions.Append(0)
+		return t
+	}
+	t.Dimensions.Append(nd)
+	for i := range nd {
+		t.Values.Append(IntToPtr(int(arg.Dimensions.Get(i))))
+	}
+	return t
+}
+
+// Dyadic rho: reshape  (left=new shape, right=data, cycling as needed)
+func DoRhoDyadic(left *Thing, right *Thing) *Thing {
+	t := NewThing()
+	totalElems := word(1)
+
+	if left.Dimensions.Len == 0 {
+		// Scalar left => 1-D reshape
+		d := word(PtrToInt(left.Values.Get(0)))
+		t.Dimensions.Append(d)
+		totalElems = d
+	} else {
+		// Vector left => multi-D reshape
+		for i := range left.Values.Len {
+			d := word(PtrToInt(left.Values.Get(i)))
+			t.Dimensions.Append(d)
+			totalElems = totalElems * d
+		}
+	}
+
+	rightLen := right.Values.Len
+	if rightLen == 0 {
+		rightLen = 1 // guard against modulo-by-zero
+	}
+	for i := range totalElems {
+		idx := i % rightLen
+		t.Values.Append(right.Values.Get(idx))
+	}
+	return t
+}
+
+// Monadic neg: negate all elements
+func DoNeg(arg *Thing) *Thing {
+	t := NewThing()
+	for i := range arg.Dimensions.Len {
+		t.Dimensions.Append(arg.Dimensions.Get(i))
+	}
+	for i := range arg.Values.Len {
+		v := PtrToInt(arg.Values.Get(i))
+		t.Values.Append(IntToPtr(0 - v))
+	}
+	return t
+}
+
+func DoArithOp(fnId int, a int, b int) int {
+	if fnId == FnAdd {
+		return a + b
+	}
+	if fnId == FnSub {
+		return a - b
+	}
+	if fnId == FnMul {
+		return a * b
+	}
+	if fnId == FnDiv {
+		if b == 0 {
+			PutStr("Error: division by zero\n")
+			return 0
+		}
+		return a / b
+	}
+	// FnMod
+	if b == 0 {
+		PutStr("Error: modulo by zero\n")
+		return 0
+	}
+	return a % b
+}
+
+// Dyadic arithmetic with scalar extension
+func DoArithDyadic(fnId int, left *Thing, right *Thing) *Thing {
+	t := NewThing()
+	leftLen := left.Values.Len
+	rightLen := right.Values.Len
+
+	// Both scalar
+	if left.Dimensions.Len == 0 && right.Dimensions.Len == 0 {
+		a := PtrToInt(left.Values.Get(0))
+		b := PtrToInt(right.Values.Get(0))
+		t.Values.Append(IntToPtr(DoArithOp(fnId, a, b)))
+		return t
+	}
+
+	// Copy shape from the array argument
+	if left.Dimensions.Len > 0 {
+		for i := range left.Dimensions.Len {
+			t.Dimensions.Append(left.Dimensions.Get(i))
+		}
+	} else {
+		for i := range right.Dimensions.Len {
+			t.Dimensions.Append(right.Dimensions.Get(i))
+		}
+	}
+
+	resultLen := leftLen
+	if rightLen > resultLen {
+		resultLen = rightLen
+	}
+
+	for i := range resultLen {
+		li := i
+		ri := i
+		if leftLen == 1 {
+			li = 0
+		}
+		if rightLen == 1 {
+			ri = 0
+		}
+		a := PtrToInt(left.Values.Get(li))
+		b := PtrToInt(right.Values.Get(ri))
+		t.Values.Append(IntToPtr(DoArithOp(fnId, a, b)))
+	}
+	return t
+}
+
+// ===== Pretty Printer =====
+
+func PrintThing(t *Thing) {
+	if word(t) == 0 {
+		PutStr("nil\n")
+		return
+	}
+
+	if t.Dimensions.Len == 0 {
+		// Scalar
+		PutInt(PtrToInt(t.Values.Get(0)))
+		putchar('\n')
+		return
+	}
+
+	// Compute max width for column alignment
+	maxW := word(1)
+	for i := range t.Values.Len {
+		w := IntWidth(PtrToInt(t.Values.Get(i)))
+		if w > maxW {
+			maxW = w
+		}
+	}
+
+	if t.Dimensions.Len == 1 {
+		// Vector
+		for i := range t.Values.Len {
+			if i > 0 {
+				putchar(' ')
+			}
+			PutIntPadded(PtrToInt(t.Values.Get(i)), maxW)
+		}
+		putchar('\n')
+		return
+	}
+
+	if t.Dimensions.Len == 2 {
+		// Matrix: rows x cols
+		rows := t.Dimensions.Get(0)
+		cols := t.Dimensions.Get(1)
+		for r := range rows {
+			for c := range cols {
+				if c > 0 {
+					putchar(' ')
+				}
+				PutIntPadded(PtrToInt(t.Values.Get(r*cols+c)), maxW)
+			}
+			putchar('\n')
+		}
+		return
+	}
+
+	// Higher rank: print flat with rank annotation
+	PutStr("[rank ")
+	PutInt(int(t.Dimensions.Len))
+	PutStr("] ")
+	for i := range t.Values.Len {
+		if i > 0 {
+			putchar(' ')
+		}
+		PutInt(PtrToInt(t.Values.Get(i)))
+	}
+	putchar('\n')
+}
+
+// ===== Test Helper =====
+
+func TestEval(input *byte) *Thing {
+	// Copy null-terminated input into LineBuf for the tokenizer
+	LineLen = 0
+	s := input
+	for *s != 0 {
+		LineBuf[LineLen] = *s
+		LineLen++
+		s = (*byte)(word(s) + 1)
+	}
+	Tokenize()
+	EvalPos = 0
+	WasAssign = 0
+	if NumTokens == 0 {
+		return (*Thing)(0)
+	}
+	return Eval()
+}
+
+// ===== Tests =====
+
+func RunTests() {
+	PutStr("=== APL Tests ===\n")
+
+	PutStr("iota 5 => ")
+	PrintThing(TestEval("iota 5"))
+
+	PutStr("3 3 rho iota 9 =>\n")
+	PrintThing(TestEval("3 3 rho iota 9"))
+
+	PutStr("2 3 rho 1 2 3 =>\n")
+	PrintThing(TestEval("2 3 rho 1 2 3"))
+
+	TestEval("Vec <- iota 4")
+	PutStr("Vec <- iota 4\n")
+	PutStr("Vec => ")
+	PrintThing(TestEval("Vec"))
+
+	PutStr("rho Vec => ")
+	PrintThing(TestEval("rho Vec"))
+
+	TestEval("A <- iota 3")
+	PutStr("A <- iota 3\n")
+	PutStr("A add A => ")
+	PrintThing(TestEval("A add A"))
+
+	PutStr("2 add 3 => ")
+	PrintThing(TestEval("2 add 3"))
+
+	PutStr("neg iota 4 => ")
+	PrintThing(TestEval("neg iota 4"))
+
+	PutStr("2 3 rho iota 6 =>\n")
+	PrintThing(TestEval("2 3 rho iota 6"))
+
+	TestEval("M <- 2 3 rho iota 6")
+	PutStr("M <- 2 3 rho iota 6\n")
+	PutStr("rho M => ")
+	PrintThing(TestEval("rho M"))
+
+	PutStr("10 mul iota 5 => ")
+	PrintThing(TestEval("10 mul iota 5"))
+
+	PutStr("=== Tests Done ===\n")
+}
+
+// ===== Main =====
+
+func main() {
+	RunTests()
+	if REPL != 0 {
+		for {
+			PutStr("      ")
+			ok := ReadLine()
+			if ok == 0 {
+				break
+			}
+			if LineLen == 0 {
+				continue
+			}
+			Tokenize()
+			if NumTokens == 0 {
+				continue
+			}
+			EvalPos = 0
+			WasAssign = 0
+			result := Eval()
+			if word(result) != 0 && WasAssign == 0 {
+				PrintThing(result)
+			}
+		}
+		putchar('\n')
+	}
+}
