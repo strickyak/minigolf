@@ -266,11 +266,11 @@ func (b *Backend) flushRegisters() {
 		id := b.activeRegs[reg]
 		switch reg {
 		case "X":
-			b.buf.WriteString("\ttfr x,d\n")
+			b.buf.WriteString(fmt.Sprintf("\ttfr x,d ;;flushRegisters id=%d\n", id))
 		case "Y":
-			b.buf.WriteString("\ttfr y,d\n")
+			b.buf.WriteString(fmt.Sprintf("\ttfr y,d ;;flushRegisters id=%d\n", id))
 		case "U":
-			b.buf.WriteString("\ttfr u,d\n")
+			b.buf.WriteString(fmt.Sprintf("\ttfr u,d ;;flushRegisters id=%d\n", id))
 		case "B":
 			// already in B
 		case "D":
@@ -319,29 +319,31 @@ func (b *Backend) allocateReg(id int) string {
 	spilledId = b.activeRegs[regToSpill]
 
 	b.buf.WriteString(fmt.Sprintf("\t; spilling %s (val %d) to stack\n", regToSpill, spilledId))
-	b.buf.WriteString("\tpshs d\n")
+	b.buf.WriteString("\tpshs d ;; MAYBE NOT?\n")
 	b.pushBytes(2)
-	if regToSpill == "X" {
-		b.buf.WriteString("\ttfr x,d\n")
-	}
-	if regToSpill == "Y" {
-		b.buf.WriteString("\ttfr y,d\n")
-	}
-	if regToSpill == "U" {
-		b.buf.WriteString("\ttfr u,d\n")
-	}
+
 	offset, ok := b.getSlotOffset(spilledId)
 	if !ok {
 		panic("Cannot spill register holding unallocated ID")
 	}
+	if regToSpill == "X" {
+		b.buf.WriteString(fmt.Sprintf("\ttfr x,d ;;regToSpill/allocateReg offset=%d id=%d new_id=%d\n", offset, spilledId, id))
+	}
+	if regToSpill == "Y" {
+		b.buf.WriteString(fmt.Sprintf("\ttfr y,d ;;regToSpill/allocateReg offset=%d id=%d new_id=%d\n", offset, spilledId, id))
+	}
+	if regToSpill == "U" {
+		b.buf.WriteString(fmt.Sprintf("\ttfr u,d ;;regToSpill/allocateReg offset=%d id=%d new_id=%d\n", offset, spilledId, id))
+	}
+
 	if owner, hasOwner := b.slotOwner[offset]; hasOwner && owner != spilledId {
 		b.buf.WriteString(fmt.Sprintf("\t\t\t; skipped spill for id=%v reg=%v because slot is owned by id=%v\n", spilledId, regToSpill, owner))
 	} else if b.slotSizes[spilledId] == 1 {
-		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.memAccess(offset)))
+		b.buf.WriteString(fmt.Sprintf("\tstb %s ;;\n", b.memAccess(offset)))
 	} else {
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s ;;\n", b.memAccess(offset)))
 	}
-	b.buf.WriteString("\tpuls d\n")
+	b.buf.WriteString("\tpuls d ;; MAYBE NOT?\n")
 	b.popBytes(2)
 
 	delete(b.valInReg, spilledId)
@@ -354,11 +356,11 @@ func (b *Backend) storeResult(id int) {
 	reg := b.allocateReg(id)
 	switch reg {
 	case "X":
-		b.buf.WriteString("\ttfr d,x\n")
+		b.buf.WriteString(fmt.Sprintf("\ttfr d,x ;; storeResult id=%d\n", id))
 	case "Y":
-		b.buf.WriteString("\ttfr d,y\n")
+		b.buf.WriteString(fmt.Sprintf("\ttfr d,y ;; storeResult id=%d\n", id))
 	case "U":
-		b.buf.WriteString("\ttfr d,u\n")
+		b.buf.WriteString(fmt.Sprintf("\ttfr d,u ;; storeResult id=%d\n", id))
 	default:
 		log.Panicf("bad case in storeResult: %v", reg)
 	}
@@ -580,11 +582,11 @@ func (b *Backend) Generate(program *ir.Program) string {
 			b.buf.WriteString("\tstd 2,x\n")
 		}
 
-		b.buf.WriteString("\ttfr s,d\n")
+		b.buf.WriteString("\ttfr s,d ;; jm\n")
 		b.buf.WriteString("\tstd 4,x\n")
-		b.buf.WriteString("\ttfr u,d\n")
+		b.buf.WriteString("\ttfr u,d ;; jm\n")
 		b.buf.WriteString("\tstd 6,x\n")
-		b.buf.WriteString("\ttfr y,d\n")
+		b.buf.WriteString("\ttfr y,d ;; jm\n")
 		b.buf.WriteString("\tstd 8,x\n")
 		b.buf.WriteString("\tclra\n")
 		b.buf.WriteString("\tclrb\n")
@@ -740,7 +742,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.buf.WriteString(fmt.Sprintf("%s:\n", f.EmitName()))
 	if b.useFramePointer {
 		b.buf.WriteString("\tpshs u\n")
-		b.buf.WriteString("\ttfr s,u\n")
+		b.buf.WriteString("\ttfr s,u ;; for frame pointer\n")
 	}
 	if b.stackSize > 0 {
 		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", b.stackSize))
@@ -871,7 +873,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 				if retSize <= 2 {
 					b.loadVal(term.Val)
 					if retSize == 2 {
-						b.buf.WriteString("\ttfr d,x\n")
+						b.buf.WriteString("\ttfr d,x ;; return in X\n")
 					}
 				} else {
 					if b.retSlot > 0 {
@@ -905,11 +907,11 @@ func (b *Backend) loadVal(val ir.Value) {
 		pseudoID := b.paramPseudoIDs[v.Name]
 		if reg, ok := b.valInReg[pseudoID]; ok {
 			if reg == "X" {
-				b.buf.WriteString("\ttfr x,d\n")
+				b.buf.WriteString("\ttfr x,d ;; loadVal:Parameter\n")
 			} else if reg == "Y" {
-				b.buf.WriteString("\ttfr y,d\n")
+				b.buf.WriteString("\ttfr y,d ;; loadVal:Parameter\n")
 			} else if reg == "U" {
-				b.buf.WriteString("\ttfr u,d\n")
+				b.buf.WriteString("\ttfr u,d ;; loadVal:Parameter\n")
 			} else if reg == "B" {
 				//dont_clra// b.buf.WriteString("\tclra\n")
 			} else if reg == "D" {
@@ -934,11 +936,11 @@ func (b *Backend) loadVal(val ir.Value) {
 		if reg, ok := b.valInReg[v.GetID()]; ok {
 			// fmt.Printf("DEBUG: reg is %q\n", reg)
 			if reg == "X" {
-				b.buf.WriteString("\ttfr x,d\n")
+				b.buf.WriteString("\ttfr x,d ;; loadVal:Instruction\n")
 			} else if reg == "Y" {
-				b.buf.WriteString("\ttfr y,d\n")
+				b.buf.WriteString("\ttfr y,d ;; loadVal:Instruction\n")
 			} else if reg == "U" {
-				b.buf.WriteString("\ttfr u,d\n")
+				b.buf.WriteString("\ttfr u,d ;; loadVal:Instruction\n")
 			} else if reg == "B" {
 				//dont_clra// b.buf.WriteString("\tclra\n")
 			} else if reg == "D" {
@@ -947,12 +949,12 @@ func (b *Backend) loadVal(val ir.Value) {
 		} else {
 			if b.slotSizes[v.GetID()] == 1 {
 				if needs_clra {
-					b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tclra\n", b.memAccess(b.slots[v.GetID()])))
+					b.buf.WriteString(fmt.Sprintf("\tldb %s ;; loadVal:Instruction (byte)\n\tclra\n", b.memAccess(b.slots[v.GetID()])))
 				} else {
-					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", b.memAccess(b.slots[v.GetID()])))
+					b.buf.WriteString(fmt.Sprintf("\tldb %s ;; loadVal:Instruction (byte)\n", b.memAccess(b.slots[v.GetID()])))
 				}
 			} else {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", b.memAccess(b.slots[v.GetID()])))
+				b.buf.WriteString(fmt.Sprintf("\tldd %s ;; loadVal:Instruction (word)\n", b.memAccess(b.slots[v.GetID()])))
 			}
 		}
 	default:
@@ -1022,6 +1024,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	}
 	id := instr.GetID()
 	offset := b.slots[id]
+	b.buf.WriteString(fmt.Sprintf("\t;---------- Instruction: %d@%d (%T) %q\n", id, offset, instr, ir.PrintInstruction(instr)))
 
 	switch i := instr.(type) {
 	case *ir.SourceMarker:
@@ -1403,7 +1406,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			localOffset = b.slots[localInstr.GetID()]
 		}
 		b.emitLoadAddr("x", b.memAccess(localOffset))
-		b.buf.WriteString("\ttfr x,d\n")
+		b.buf.WriteString("\ttfr x,d ;; emitInstr:AddressOfLocal\n")
 		if isParam {
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\t; ir.AddressOfLocal(param, locOff=%d)\n", b.memAccess(offset), localOffset))
 		} else {
@@ -1426,17 +1429,17 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
 			byteOffset := int(cIdx.Val) * eltSize
 			if byteOffset > 0 {
-				b.buf.WriteString(fmt.Sprintf("\taddd #%d\n", byteOffset))
+				b.buf.WriteString(fmt.Sprintf("\taddd #%d ;; emitInstr:AddressOfElement\n", byteOffset))
 			}
 		} else {
-			b.buf.WriteString("\ttfr d,y\n")
+			b.buf.WriteString("\ttfr d,y ;; emitInstr:AddressOfElement\n")
 			b.loadVal(i.Index)
 			if eltSize > 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n", eltSize))
 				b.emitMul16()
 			}
 			b.buf.WriteString("\tleay d,y\n")
-			b.buf.WriteString("\ttfr y,d\n")
+			b.buf.WriteString("\ttfr y,d ;;\n")
 		}
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.memAccess(offset)))
 	case *ir.ExtractFieldPtr:
@@ -1941,11 +1944,11 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		// jumper.prev = _jmp_chain_
 		b.emitLoadAddr("x", b.memAccess(jmpSlot))
 		if b.picMode {
-			b.buf.WriteString("\tldd v_prelude._jmp_chain_,pcr\n")
+			b.buf.WriteString("\tldd v_prelude._jmp_chain_,pcr ;; setJmp\n")
 		} else {
-			b.buf.WriteString("\tldd v_prelude._jmp_chain_\n")
+			b.buf.WriteString("\tldd v_prelude._jmp_chain_ ;; setJmp\n")
 		}
-		b.buf.WriteString("\tstd 0,x\n")
+		b.buf.WriteString("\tstd 0,x ;; setJmp\n")
 
 		// _jmp_chain_ = &jumper
 		if b.picMode {
@@ -1964,14 +1967,17 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString("\tstd 2,x\n") // PC
 		}
 
-		b.buf.WriteString("\ttfr s,d\n")
-		b.buf.WriteString("\tstd 4,x\n") // S
+		//b.buf.WriteString("\ttfr s,d\n")
+		//b.buf.WriteString("\tstd 4,x\n") // S
+		b.buf.WriteString("\tsts 4,x\n") // S
 
-		b.buf.WriteString("\ttfr u,d\n")
-		b.buf.WriteString("\tstd 6,x\n") // U
+		//b.buf.WriteString("\ttfr u,d\n")
+		//b.buf.WriteString("\tstd 6,x\n") // U
+		b.buf.WriteString("\tstu 6,x\n") // U
 
-		b.buf.WriteString("\ttfr y,d\n")
-		b.buf.WriteString("\tstd 8,x\n") // Y
+		//b.buf.WriteString("\ttfr y,d\n")
+		//b.buf.WriteString("\tstd 8,x\n") // Y
+		b.buf.WriteString("\tsty 8,x\n") // Y
 
 		b.buf.WriteString("\tclra\n")
 		b.buf.WriteString("\tclrb\n")
