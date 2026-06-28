@@ -92,7 +92,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string, expectCo
 		exec.Command("go", "build", "-o", compiler, "main.go").Run()
 	}
 
-	args := []string{"-m=" + backend, "-o", midFile, "-I=golflib"}
+	args := []string{"-m=" + backend, "-o", midFile, "-I=tests", "-I=c-tests", "-I=demos", "-I=golflib"}
 	args = append(args, sourceFile)
 
 	cmd := exec.Command(compiler, args...)
