@@ -398,6 +398,16 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			initFunc := b.funcs["init__main"]
 			callInstr := &Call{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Func: initFunc}
 
+			// Find the position after all existing package init calls
+			// so that prelude.init (heap setup) runs before var initializers
+			// that may allocate memory.
+			insertPos := 0
+			for i, instr := range mainFunc.Blocks[0].Instructions {
+				if call, ok := instr.(*Call); ok && strings.Contains(call.Func.Name, ".init_") {
+					insertPos = i + 1
+				}
+			}
+
 			// We need a unique ID for callInstr
 			maxID := 0
 			for _, instr := range mainFunc.Blocks[0].Instructions {
@@ -407,7 +417,13 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			}
 			callInstr.SetID(maxID + 1000)
 
-			mainFunc.Blocks[0].Instructions = append([]Instruction{callInstr}, mainFunc.Blocks[0].Instructions...)
+			// Insert after init calls
+			instrs := mainFunc.Blocks[0].Instructions
+			newInstrs := make([]Instruction, 0, len(instrs)+1)
+			newInstrs = append(newInstrs, instrs[:insertPos]...)
+			newInstrs = append(newInstrs, callInstr)
+			newInstrs = append(newInstrs, instrs[insertPos:]...)
+			mainFunc.Blocks[0].Instructions = newInstrs
 		}
 	}
 

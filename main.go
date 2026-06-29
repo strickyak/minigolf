@@ -64,12 +64,69 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 	return nil, fmt.Errorf("Cannot find filename %q in path %v", base, path)
 }
 
+// topoSortModules returns modules in topological order based on import edges:
+// if A imports B, then B appears before A. Only modules that have init
+// functions are included. Ties are broken alphabetically for determinism.
+func topoSortModules(importEdges map[string][]string, initFuncsByModule map[string][]string) []string {
+	// Collect only modules that have init functions.
+	hasInit := make(map[string]bool)
+	for mod := range initFuncsByModule {
+		hasInit[mod] = true
+	}
+
+	// Build in-degree counts for modules with init functions.
+	inDegree := make(map[string]int)
+	// Filtered edges: only count edges between modules that have inits.
+	deps := make(map[string][]string) // deps[A] = modules that depend on A (A must init before them)
+	for mod := range hasInit {
+		inDegree[mod] = 0
+	}
+	for mod := range hasInit {
+		for _, dep := range importEdges[mod] {
+			if hasInit[dep] {
+				inDegree[mod]++
+				deps[dep] = append(deps[dep], mod)
+			}
+		}
+	}
+
+	// Kahn's algorithm with alphabetical tie-breaking.
+	var queue []string
+	for mod := range hasInit {
+		if inDegree[mod] == 0 {
+			queue = append(queue, mod)
+		}
+	}
+	sort.Strings(queue)
+
+	var result []string
+	for len(queue) > 0 {
+		// Pop the alphabetically first module.
+		mod := queue[0]
+		queue = queue[1:]
+		result = append(result, mod)
+
+		for _, dependent := range deps[mod] {
+			inDegree[dependent]--
+			if inDegree[dependent] == 0 {
+				queue = append(queue, dependent)
+				sort.Strings(queue)
+			}
+		}
+	}
+
+	return result
+}
+
 func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Program {
 	var program *ast.Program
 	imported := make(map[string]bool)
 
 	var initFuncsByModule = make(map[string][]string)
 	var initCounter int
+
+	// importEdges[A] = list of modules that A imports.
+	importEdges := make(map[string][]string)
 
 	// Build new path with initial directory on the front.
 	mainDirname := filepath.Dir(mainSourceFile)
@@ -114,6 +171,7 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Pr
 				if _, ok := imported[s]; !ok {
 					imported[s] = false
 				}
+				importEdges[overridePackage] = append(importEdges[overridePackage], s)
 			}
 			if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
 				if funcStmt.Name.Value == "init" {
@@ -149,11 +207,25 @@ MORE:
 		}
 	}
 
-	var moduleNames []string
-	for mod := range initFuncsByModule {
-		moduleNames = append(moduleNames, mod)
+	// Every non-prelude module implicitly imports prelude.
+	for mod := range imported {
+		if mod != "prelude" {
+			hasPrelude := false
+			for _, dep := range importEdges[mod] {
+				if dep == "prelude" {
+					hasPrelude = true
+					break
+				}
+			}
+			if !hasPrelude {
+				importEdges[mod] = append(importEdges[mod], "prelude")
+			}
+		}
 	}
-	sort.Strings(moduleNames)
+
+	// Topological sort: imported modules before importers.
+	// This ensures prelude (imported by all) is first, and main (imports everything) is last.
+	moduleNames := topoSortModules(importEdges, initFuncsByModule)
 
 	var allInitCalls []ast.Statement
 	for _, mod := range moduleNames {
