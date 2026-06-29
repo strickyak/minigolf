@@ -19,6 +19,9 @@ const TokArrow = 4
 const TokLParen = 5
 const TokRParen = 6
 const TokSemi = 7
+const TokDel = 8
+const TokLBrace = 9
+const TokRBrace = 10
 
 // ===== Function Type Aliases =====
 
@@ -151,6 +154,16 @@ var Vars smap.Imap[*Thing]
 var MonadicOps smap.Imap[word]
 var DyadicOps smap.Imap[word]
 
+type UserMonadic struct {
+	ArgName   string
+	NumTokens word
+	TokKinds  slice[byte]
+	TokVals   slice[int]
+	TokNames  slice[string]
+}
+
+var UserMonadicOps smap.Imap[*UserMonadic]
+
 // ===== Helper: build string from LineBuf range =====
 
 func BufStr(start word, length word) string {
@@ -201,6 +214,15 @@ func Tokenize() {
 		}
 
 		c := LineBuf[pos]
+
+		// TokDel '<>'
+		if c == '<' && pos+1 < LineLen && LineBuf[pos+1] == '>' {
+			TokKinds[NumTokens] = TokDel
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos = pos + 2
+			continue
+		}
 
 		// Assignment arrow '<-' or standalone '='
 		if c == '<' && pos+1 < LineLen && LineBuf[pos+1] == '-' {
@@ -303,12 +325,6 @@ func Tokenize() {
 			}
 			length := pos - start
 			name := Strings.Intern(BufStr(start, length))
-			// Verify it's a known function
-			mw, mok := MonadicOps.Lookup(name)
-			dw, dok := DyadicOps.Lookup(name)
-			if mok == 0 && dok == 0 {
-				panic("unknown function")
-			}
 			TokKinds[NumTokens] = TokFunc
 			TokNames[NumTokens] = name
 			NumTokens++
@@ -325,6 +341,20 @@ func Tokenize() {
 		}
 		if c == ')' {
 			TokKinds[NumTokens] = TokRParen
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
+		if c == '{' {
+			TokKinds[NumTokens] = TokLBrace
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
+		if c == '}' {
+			TokKinds[NumTokens] = TokRBrace
 			TokVals[NumTokens] = 0
 			NumTokens++
 			pos++
@@ -385,6 +415,51 @@ func Eval() *Thing {
 
 	kind := TokKinds[EvalPos]
 
+	// Function Definition
+	if kind == TokDel {
+		EvalPos++
+		if EvalPos >= NumTokens {
+			panic("expected function name")
+		}
+		if TokKinds[EvalPos] != TokFunc && TokKinds[EvalPos] != TokVar {
+			panic("expected function name")
+		}
+		name := TokNames[EvalPos]
+		EvalPos++
+
+		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokVar {
+			panic("expected argument name")
+		}
+		argName := TokNames[EvalPos]
+		EvalPos++
+
+		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokLBrace {
+			panic("expected {")
+		}
+		EvalPos++
+
+		u := (*UserMonadic)(zalloc(sizeof[UserMonadic]()))
+		u.ArgName = argName
+		u.NumTokens = 0
+
+		// Copy tokens until TokRBrace
+		for EvalPos < NumTokens && TokKinds[EvalPos] != TokRBrace {
+			u.TokKinds.Append(TokKinds[EvalPos])
+			u.TokVals.Append(TokVals[EvalPos])
+			u.TokNames.Append(TokNames[EvalPos])
+			u.NumTokens++
+			EvalPos++
+		}
+		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokRBrace {
+			panic("missing }")
+		}
+		EvalPos++ // skip }
+
+		UserMonadicOps.Insert(name, u)
+		WasAssign = 1 // to prevent printing
+		return (*Thing)(0)
+	}
+
 	// Monadic function application
 	if kind == TokFunc {
 		name := TokNames[EvalPos]
@@ -393,9 +468,15 @@ func Eval() *Thing {
 		if word(right) == 0 {
 			panic("nil argument to monadic")
 		}
+
+		u, uok := UserMonadicOps.Lookup(name)
+		if uok != 0 {
+			return EvalUserMonadic(u, right)
+		}
+
 		fw, ok := MonadicOps.Lookup(name)
 		if ok == 0 {
-			panic("not monadic")
+			panic("unknown monadic function")
 		}
 		fn := MonadicFn(fw)
 		return fn(right)
@@ -535,6 +616,60 @@ func DoRhoDyadic(left *Thing, right *Thing) *Thing {
 		t.Values.Append(right.Values.Get(idx))
 	}
 	return t
+}
+
+func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
+	// Save context
+	oldNumTokens := NumTokens
+	oldEvalPos := EvalPos
+	var oldKinds [100]byte
+	var oldVals [100]int
+	var oldNames [100]string
+	for i := word(0); i < NumTokens; i++ {
+		oldKinds[i] = TokKinds[i]
+		oldVals[i] = TokVals[i]
+		oldNames[i] = TokNames[i]
+	}
+	oldArg, argOk := Vars.Lookup(u.ArgName)
+
+	// Setup context
+	NumTokens = u.NumTokens
+	EvalPos = 0
+	for i := word(0); i < NumTokens; i++ {
+		TokKinds[i] = u.TokKinds.Get(i)
+		TokVals[i] = u.TokVals.Get(i)
+		TokNames[i] = u.TokNames.Get(i)
+	}
+	Vars.Insert(u.ArgName, right)
+
+	defer func() {
+		// Restore context
+		NumTokens = oldNumTokens
+		EvalPos = oldEvalPos
+		for i := word(0); i < NumTokens; i++ {
+			TokKinds[i] = oldKinds[i]
+			TokVals[i] = oldVals[i]
+			TokNames[i] = oldNames[i]
+		}
+		if argOk != 0 {
+			Vars.Insert(u.ArgName, oldArg)
+		} else {
+			Vars.Insert(u.ArgName, (*Thing)(0))
+		}
+	}()
+
+	var res *Thing
+	for EvalPos < NumTokens {
+		res = Eval()
+		if EvalPos < NumTokens {
+			if TokKinds[EvalPos] == TokSemi {
+				EvalPos++
+			} else {
+				panic("unexpected token after expression in user func")
+			}
+		}
+	}
+	return res
 }
 
 // Monadic neg: negate all elements
@@ -883,6 +1018,9 @@ func RunTests() {
 
 	PutStr("A <- 10 ; A add 5 => ")
 	PrintThing(TestEval("A <- 10 ; A add 5"))
+
+	PutStr("<> double X { X - X ; X + X } ; double 10 => ")
+	PrintThing(TestEval("<> double X { X - X ; X + X } ; double 10"))
 
 	PutStr("=== Tests Done ===\n")
 }
