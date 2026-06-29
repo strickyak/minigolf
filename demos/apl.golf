@@ -546,6 +546,43 @@ func ModOp(a int, b int) int {
 	return a % b
 }
 
+func EqOp(a int, b int) int {
+	if a == b {
+		return 1
+	}
+	return 0
+}
+func NeqOp(a int, b int) int {
+	if a != b {
+		return 1
+	}
+	return 0
+}
+func LtOp(a int, b int) int {
+	if a < b {
+		return 1
+	}
+	return 0
+}
+func GtOp(a int, b int) int {
+	if a > b {
+		return 1
+	}
+	return 0
+}
+func LeOp(a int, b int) int {
+	if a <= b {
+		return 1
+	}
+	return 0
+}
+func GeOp(a int, b int) int {
+	if a >= b {
+		return 1
+	}
+	return 0
+}
+
 // ===== Dyadic Arithmetic with Scalar Extension =====
 
 func DoArithDyadic(left *Thing, right *Thing, op ArithOp) *Thing {
@@ -599,6 +636,12 @@ func DoSub(left *Thing, right *Thing) *Thing   { return DoArithDyadic(left, righ
 func DoMulDy(left *Thing, right *Thing) *Thing { return DoArithDyadic(left, right, MulOp) }
 func DoDivDy(left *Thing, right *Thing) *Thing { return DoArithDyadic(left, right, DivOp) }
 func DoModDy(left *Thing, right *Thing) *Thing { return DoArithDyadic(left, right, ModOp) }
+func DoEq(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, EqOp) }
+func DoNeq(left *Thing, right *Thing) *Thing   { return DoArithDyadic(left, right, NeqOp) }
+func DoLt(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, LtOp) }
+func DoGt(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, GtOp) }
+func DoLe(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, LeOp) }
+func DoGe(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, GeOp) }
 
 // ===== Initialization =====
 
@@ -619,6 +662,12 @@ func init() {
 	DyadicOps.Insert(Strings.Intern("+"), word(DoAdd))
 	DyadicOps.Insert(Strings.Intern("-"), word(DoSub))
 	DyadicOps.Insert(Strings.Intern("*"), word(DoMulDy))
+	DyadicOps.Insert(Strings.Intern("=="), word(DoEq))
+	DyadicOps.Insert(Strings.Intern("!="), word(DoNeq))
+	DyadicOps.Insert(Strings.Intern("<"), word(DoLt))
+	DyadicOps.Insert(Strings.Intern(">"), word(DoGt))
+	DyadicOps.Insert(Strings.Intern("<="), word(DoLe))
+	DyadicOps.Insert(Strings.Intern(">="), word(DoGe))
 }
 
 // ===== Pretty Printer =====
@@ -772,6 +821,24 @@ func RunTests() {
 
 	PutStr("(2 + 3) * 4 => ")
 	PrintThing(TestEval("(2 + 3) * 4"))
+
+	PutStr("5 == 5 => ")
+	PrintThing(TestEval("5 == 5"))
+
+	PutStr("5 != 4 => ")
+	PrintThing(TestEval("5 != 4"))
+
+	PutStr("3 < 4 => ")
+	PrintThing(TestEval("3 < 4"))
+
+	PutStr("5 > 4 => ")
+	PrintThing(TestEval("5 > 4"))
+
+	PutStr("3 <= 3 => ")
+	PrintThing(TestEval("3 <= 3"))
+
+	PutStr("4 >= 5 => ")
+	PrintThing(TestEval("4 >= 5"))
 
 	PutStr("=== Tests Done ===\n")
 }
