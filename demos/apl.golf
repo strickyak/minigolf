@@ -169,6 +169,18 @@ type UserMonadic struct {
 
 var UserMonadicOps smap.Imap[*UserMonadic]
 
+type UserDyadic struct {
+	LhsName   string
+	RhsName   string
+	Locals    slice[string]
+	NumTokens word
+	TokKinds  slice[byte]
+	TokVals   slice[int]
+	TokNames  slice[string]
+}
+
+var UserDyadicOps smap.Imap[*UserDyadic]
+
 // ===== Helper: build string from LineBuf range =====
 
 func BufStr(start word, length word) string {
@@ -509,9 +521,18 @@ func Eval() *Thing {
 	if kind == TokDel {
 		EvalPos++
 		if EvalPos >= NumTokens {
-			panic("expected function name")
+			panic("expected function or variable name")
 		}
-		if TokKinds[EvalPos] != TokFunc && TokKinds[EvalPos] != TokVar {
+
+		isDyadic := byte(0)
+		var lhsName string
+		if TokKinds[EvalPos] == TokVar {
+			isDyadic = 1
+			lhsName = TokNames[EvalPos]
+			EvalPos++
+		}
+
+		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokFunc {
 			panic("expected function name")
 		}
 		name := TokNames[EvalPos]
@@ -520,12 +541,10 @@ func Eval() *Thing {
 		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokVar {
 			panic("expected argument name")
 		}
-		argName := TokNames[EvalPos]
+		rhsName := TokNames[EvalPos]
 		EvalPos++
 
-		u := (*UserMonadic)(zalloc(sizeof[UserMonadic]()))
-		u.ArgName = argName
-		u.NumTokens = 0
+		var locals slice[string]
 
 		// Parse optional locals: ; localName
 		for EvalPos < NumTokens && TokKinds[EvalPos] == TokSemi {
@@ -533,10 +552,10 @@ func Eval() *Thing {
 			if EvalPos >= NumTokens || TokKinds[EvalPos] != TokVar {
 				panic("expected local variable name after ;")
 			}
-			if u.Locals.Len >= 20 {
+			if locals.Len >= 20 {
 				panic("maximum 20 local variables exceeded")
 			}
-			u.Locals.Append(TokNames[EvalPos])
+			locals.Append(TokNames[EvalPos])
 			EvalPos++
 		}
 
@@ -545,12 +564,17 @@ func Eval() *Thing {
 		}
 		EvalPos++
 
+		var tKinds slice[byte]
+		var tVals slice[int]
+		var tNames slice[string]
+		numT := word(0)
+
 		// Copy tokens until TokRBrace
 		for EvalPos < NumTokens && TokKinds[EvalPos] != TokRBrace {
-			u.TokKinds.Append(TokKinds[EvalPos])
-			u.TokVals.Append(TokVals[EvalPos])
-			u.TokNames.Append(TokNames[EvalPos])
-			u.NumTokens++
+			tKinds.Append(TokKinds[EvalPos])
+			tVals.Append(TokVals[EvalPos])
+			tNames.Append(TokNames[EvalPos])
+			numT++
 			EvalPos++
 		}
 		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokRBrace {
@@ -558,7 +582,26 @@ func Eval() *Thing {
 		}
 		EvalPos++ // skip }
 
-		UserMonadicOps.Insert(name, u)
+		if isDyadic != 0 {
+			u := (*UserDyadic)(zalloc(sizeof[UserDyadic]()))
+			u.LhsName = lhsName
+			u.RhsName = rhsName
+			u.Locals = locals
+			u.NumTokens = numT
+			u.TokKinds = tKinds
+			u.TokVals = tVals
+			u.TokNames = tNames
+			UserDyadicOps.Insert(name, u)
+		} else {
+			u := (*UserMonadic)(zalloc(sizeof[UserMonadic]()))
+			u.ArgName = rhsName
+			u.Locals = locals
+			u.NumTokens = numT
+			u.TokKinds = tKinds
+			u.TokVals = tVals
+			u.TokNames = tNames
+			UserMonadicOps.Insert(name, u)
+		}
 		WasAssign = 1 // to prevent printing
 		return (*Thing)(0)
 	}
@@ -659,6 +702,11 @@ func Eval() *Thing {
 		if word(right) == 0 {
 			panic("nil argument to dyadic")
 		}
+		u, uok := UserDyadicOps.Lookup(name)
+		if uok != 0 {
+			return EvalUserDyadic(u, val, right)
+		}
+
 		fw, ok := DyadicOps.Lookup(name)
 		if ok == 0 {
 			panic("not dyadic")
@@ -798,6 +846,78 @@ func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
 			Vars.Insert(u.ArgName, oldArg)
 		} else {
 			Vars.Insert(u.ArgName, (*Thing)(0))
+		}
+		for i := word(0); i < numLocals; i++ {
+			locName := u.Locals.Get(i)
+			if localOks[i] != 0 {
+				Vars.Insert(locName, oldLocals[i])
+			} else {
+				Vars.Insert(locName, (*Thing)(0))
+			}
+		}
+	}()
+
+	var res *Thing
+	res = EvalStatementsUntil(0, 0)
+	return res
+}
+
+func EvalUserDyadic(u *UserDyadic, left *Thing, right *Thing) *Thing {
+	// Save context
+	oldNumTokens := NumTokens
+	oldEvalPos := EvalPos
+	var oldKinds [100]byte
+	var oldVals [100]int
+	var oldNames [100]string
+	for i := word(0); i < NumTokens; i++ {
+		oldKinds[i] = TokKinds[i]
+		oldVals[i] = TokVals[i]
+		oldNames[i] = TokNames[i]
+	}
+	oldLhs, lhsOk := Vars.Lookup(u.LhsName)
+	oldRhs, rhsOk := Vars.Lookup(u.RhsName)
+
+	var oldLocals [20]*Thing
+	var localOks [20]byte
+	numLocals := u.Locals.Len
+	for i := word(0); i < numLocals; i++ {
+		locName := u.Locals.Get(i)
+		oldLocals[i], localOks[i] = Vars.Lookup(locName)
+	}
+
+	// Setup context
+	NumTokens = u.NumTokens
+	EvalPos = 0
+	for i := word(0); i < NumTokens; i++ {
+		TokKinds[i] = u.TokKinds.Get(i)
+		TokVals[i] = u.TokVals.Get(i)
+		TokNames[i] = u.TokNames.Get(i)
+	}
+	Vars.Insert(u.LhsName, left)
+	Vars.Insert(u.RhsName, right)
+	for i := word(0); i < numLocals; i++ {
+		locName := u.Locals.Get(i)
+		Vars.Insert(locName, (*Thing)(0))
+	}
+
+	defer func() {
+		// Restore context
+		NumTokens = oldNumTokens
+		EvalPos = oldEvalPos
+		for i := word(0); i < NumTokens; i++ {
+			TokKinds[i] = oldKinds[i]
+			TokVals[i] = oldVals[i]
+			TokNames[i] = oldNames[i]
+		}
+		if lhsOk != 0 {
+			Vars.Insert(u.LhsName, oldLhs)
+		} else {
+			Vars.Insert(u.LhsName, (*Thing)(0))
+		}
+		if rhsOk != 0 {
+			Vars.Insert(u.RhsName, oldRhs)
+		} else {
+			Vars.Insert(u.RhsName, (*Thing)(0))
 		}
 		for i := word(0); i < numLocals; i++ {
 			locName := u.Locals.Get(i)
@@ -1167,6 +1287,11 @@ func RunTests() {
 
 	PutStr("( 1 ? 5 ; 10 : 15 ; 20 ) => ")
 	PrintThing(TestEval("( 1 ? 5 ; 10 : 15 ; 20 )"))
+
+	TestEval("<> A plus B ; M { M = A add B ; M }")
+	PutStr("<> A plus B ; M { M = A add B ; M }\n")
+	PutStr("10 plus 20 => ")
+	PrintThing(TestEval("10 plus 20"))
 
 	PutStr("=== Tests Done ===\n")
 }
