@@ -533,11 +533,11 @@ func DoArithDyadic(left *Thing, right *Thing, op ArithOp) *Thing {
 }
 
 // Dyadic function wrappers matching DyadicFn signature
-func DoAdd(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, AddOp) }
-func DoSub(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, SubOp) }
-func DoMulDy(left *Thing, right *Thing) *Thing  { return DoArithDyadic(left, right, MulOp) }
-func DoDivDy(left *Thing, right *Thing) *Thing  { return DoArithDyadic(left, right, DivOp) }
-func DoModDy(left *Thing, right *Thing) *Thing  { return DoArithDyadic(left, right, ModOp) }
+func DoAdd(left *Thing, right *Thing) *Thing   { return DoArithDyadic(left, right, AddOp) }
+func DoSub(left *Thing, right *Thing) *Thing   { return DoArithDyadic(left, right, SubOp) }
+func DoMulDy(left *Thing, right *Thing) *Thing { return DoArithDyadic(left, right, MulOp) }
+func DoDivDy(left *Thing, right *Thing) *Thing { return DoArithDyadic(left, right, DivOp) }
+func DoModDy(left *Thing, right *Thing) *Thing { return DoArithDyadic(left, right, ModOp) }
 
 // ===== Initialization =====
 

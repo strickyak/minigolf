@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
-	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/parser"
 	"github.com/strickyak/minigolf/token"
 )
@@ -36,6 +35,7 @@ type GlobalItem struct {
 
 type Builder struct {
 	Program *Program
+	tm      *TypeManager
 
 	currentFunc          *Function
 	currentASTFunc       *ast.FuncStatement
@@ -49,21 +49,16 @@ type Builder struct {
 	sealedBlocks   map[*BasicBlock]bool
 	incompletePhis map[*BasicBlock]map[string]*Phi
 
-	globals           map[string]*Global
-	funcs             map[string]*Function
-	consts            map[string]Value
-	constExprs        map[string]ast.Expression
-	evaluatingConst   map[string]bool
-	evaluatingType    map[string]bool
-	varTypes          map[string]Type
-	typeDefsAST       map[string]*ast.StructType
-	typeAliases       map[string]ast.Expression
-	genericTemplates  map[string]*GenericTemplate
-	instantiatedTypes map[string]InstantiatedTypeInfo
-	stringConstants   map[string]*Global
-	globalItems       map[string]*GlobalItem
-	worklist          []*GlobalItem
-	currentPackage    string
+	globals         map[string]*Global
+	funcs           map[string]*Function
+	consts          map[string]Value
+	constExprs      map[string]ast.Expression
+	evaluatingConst map[string]bool
+	varTypes        map[string]Type
+	stringConstants map[string]*Global
+	globalItems     map[string]*GlobalItem
+	worklist        []*GlobalItem
+	currentPackage  string
 
 	breakStack          []*BasicBlock
 	continueStack       []*BasicBlock
@@ -96,190 +91,34 @@ type GenericTemplate struct {
 
 func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node, wordSize int) *Builder {
 	b := &Builder{
-		Program:           &Program{TypeDefs: make(map[string]Type)},
-		currentDef:        make(map[*BasicBlock]map[string]Value),
-		sealedBlocks:      make(map[*BasicBlock]bool),
-		incompletePhis:    make(map[*BasicBlock]map[string]*Phi),
-		globals:           make(map[string]*Global),
-		funcs:             make(map[string]*Function),
-		consts:            make(map[string]Value),
-		constExprs:        make(map[string]ast.Expression),
-		evaluatingConst:   make(map[string]bool),
-		evaluatingType:    make(map[string]bool),
-		varTypes:          make(map[string]Type),
-		typeDefsAST:       make(map[string]*ast.StructType),
-		typeAliases:       make(map[string]ast.Expression),
-		genericTemplates:  make(map[string]*GenericTemplate),
-		instantiatedTypes: make(map[string]InstantiatedTypeInfo),
-		stringConstants:   make(map[string]*Global),
-		globalItems:       make(map[string]*GlobalItem),
-		worklist:          make([]*GlobalItem, 0),
-		resolveCallback:   resolveCallback,
-		WordSize:          wordSize,
+		Program:         &Program{TypeDefs: make(map[string]Type)},
+		currentDef:      make(map[*BasicBlock]map[string]Value),
+		sealedBlocks:    make(map[*BasicBlock]bool),
+		incompletePhis:  make(map[*BasicBlock]map[string]*Phi),
+		globals:         make(map[string]*Global),
+		funcs:           make(map[string]*Function),
+		consts:          make(map[string]Value),
+		constExprs:      make(map[string]ast.Expression),
+		evaluatingConst: make(map[string]bool),
+		varTypes:        make(map[string]Type),
+		stringConstants: make(map[string]*Global),
+		globalItems:     make(map[string]*GlobalItem),
+		worklist:        make([]*GlobalItem, 0),
+		resolveCallback: resolveCallback,
+		WordSize:        wordSize,
 	}
+	b.tm = newTypeManager(b)
 	b.consts["true"] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: 1}
 	b.consts["false"] = &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeConstInteger}, Val: 0}
 	return b
 }
 
-func (b *Builder) astToIRType(expr ast.Expression) Type {
-	if se, ok := expr.(*ast.SelectorExpression); ok {
-		_ = se
-		//fmt.Printf("DEBUG ASTTOIRTYPE SELECTOR: %#v\n", se)
-	}
-	if expr == nil {
-		log.Panicf("TODO: when is expr nil?")
-	}
-	switch e := expr.(type) {
-	case *ast.Identifier:
-		switch e.Value {
-		case "bool":
-			TypeBool.Builder = b
-			return TypeBool
-		case "byte":
-			TypeByte.Builder = b
-			return TypeByte
-		case "word", "uint", "noreturn":
-			TypeWord.Builder = b
-			return TypeWord
-		case "int":
-			TypeInt.Builder = b
-			return TypeInt
-		case "string":
-			return b.astToIRType(&ast.IndexExpression{
-				Left:    &ast.Identifier{Value: "slice"},
-				Indices: []ast.Expression{&ast.Identifier{Value: "byte"}},
-			})
-		case "const_integer":
-			TypeConstInteger.Builder = b
-			return TypeConstInteger
-		default:
-			var qname string
-			fullName := e.FullName()
-			if strings.Contains(fullName, ".") {
-				qname = fullName
-			} else {
-				qname = b.currentPackage + "." + fullName
-			}
-			if _, ok := b.typeDefsAST[qname]; !ok {
-				if _, okAlias := b.typeAliases[qname]; !okAlias {
-					if _, ok := b.typeDefsAST["prelude."+fullName]; ok {
-						qname = "prelude." + fullName
-					} else if _, okAlias := b.typeAliases["prelude."+fullName]; okAlias {
-						qname = "prelude." + fullName
-					} else if _, ok := b.typeAliases[fullName]; ok {
-						qname = fullName
-					}
-				}
-			}
+// FORWARDING
+func (b *Builder) astToIRType(expr ast.Expression) Type { return b.tm.astToIRType(expr) }
 
-			if aliasExpr, ok := b.typeAliases[qname]; ok {
-				if strings.HasPrefix(qname, "func_ptr_") {
-					return Type{Expr: aliasExpr, Name: qname, Builder: b}
-				}
-				return b.astToIRType(aliasExpr)
-			}
-
-			if _, ok := b.typeDefsAST[qname]; ok {
-				return Type{Expr: expr, Name: qname, Builder: b}
-			}
-			panic("unresolved:" + qname)
-		}
-	case *ast.SelectorExpression:
-		// We shouldn't hit package lookups here anymore since ResolveNames collapsed them!
-		// If we hit it, it's a field lookup type? MiniGolf doesn't support nested structs by selector yet.
-		return TypeWord
-	case *ast.IndexExpression:
-		var rawGenericName string
-		if ident, ok := e.Left.(*ast.Identifier); ok {
-			rawGenericName = ident.FullName()
-		}
-
-		if rawGenericName != "" {
-			var instTypStr string
-			for _, idx := range e.Indices {
-				instTypStr += "_" + b.astToIRType(idx).Name
-			}
-			instName := fmt.Sprintf("%s%s", rawGenericName, instTypStr)
-
-			if _, ok := b.typeDefsAST[instName]; !ok {
-				if tmpl, ok := b.genericTemplates[rawGenericName]; ok {
-					b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl, e.GetToken())
-				} else if ident, ok := e.Left.(*ast.Identifier); ok {
-					builtinRawGenericName := "prelude." + ident.Value
-					if tmpl, ok := b.genericTemplates[builtinRawGenericName]; ok {
-						rawGenericName = builtinRawGenericName
-						instName = fmt.Sprintf("%s%s", rawGenericName, instTypStr)
-						if _, ok := b.typeDefsAST[instName]; !ok {
-							b.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl, e.GetToken())
-						}
-					} else {
-						panic("unresolved:" + rawGenericName)
-					}
-				} else {
-					panic("unresolved:" + rawGenericName)
-				}
-			} else {
-				// Type was already instantiated by semantic phase, but we must populate instantiatedTypes
-				var argTyps []Type
-				for _, argNode := range e.Indices {
-					argTyps = append(argTyps, b.astToIRType(argNode))
-				}
-				b.instantiatedTypes[instName] = InstantiatedTypeInfo{
-					RawGenericName: rawGenericName,
-					ArgTyps:        argTyps,
-				}
-			}
-			return Type{Expr: expr, Name: instName, Builder: b}
-		}
-		return TypeWord
-	case *ast.ArrayType:
-		// nando-GOOD
-		lenVal := b.EvalConst(e.Length)
-		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, b.astToIRType(e.Elt).Name), Builder: b}
-	case *ast.PointerType:
-		//zach//fmt.Printf("EVALUATING POINTER_TYPE, CheckNil=%v\n", b.CheckNil)
-		return Type{Expr: expr, Name: "*" + b.astToIRType(e.Elt).Name, Builder: b}
-	case *ast.StructType:
-		name := "struct{"
-		for _, f := range e.Fields {
-			name += b.astToIRType(f.Type).Name + ";"
-		}
-		name += "}"
-		return Type{Expr: expr, Name: name, Builder: b}
-
-	case *ast.CompositeLit:
-		return b.astToIRType(e.Type)
-	case *ast.FuncType:
-		return Type{Expr: expr, Name: b.SyntheticFuncName(e), Builder: b}
-	}
-	log.Panicf("astToIRType NO CASE: %#v", expr)
-	panic(0)
-}
-
+// FORWARDING
 func (b *Builder) SyntheticFuncName(e *ast.FuncType) string {
-	name := "func_ptr_"
-	for i, param := range e.Parameters {
-		if i > 0 {
-			name += "_"
-		}
-		name += b.astToIRType(param.Type).Name
-	}
-	name += "__"
-	for i, rt := range e.ReturnParameters {
-		if i > 0 {
-			name += "_"
-		}
-		name += b.astToIRType(rt.Type).Name
-	}
-	// Sanitize by replacing any non-alphanumeric with underscores just in case
-	name = strings.ReplaceAll(name, ".", "_")
-	name = strings.ReplaceAll(name, "[", "_")
-	name = strings.ReplaceAll(name, "]", "_")
-	name = strings.ReplaceAll(name, "*", "ptr_")
-
-	b.typeAliases[name] = e
-	return name
+	return b.tm.SyntheticFuncName(e)
 }
 
 func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
@@ -349,121 +188,14 @@ func (b *Builder) coerceCallArgs(f *Function, args []Value, expr ast.Node) {
 	}
 }
 
+// FORWARDING
 func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token, instName string) []token.Token {
-	var argTokensList [][]token.Token
-	for _, argTyp := range argTyps {
-
-		// Use TypeName for type in expansion
-		argTokens := lexer.Lex(argTyp.TypeName(), "generic_inst")
-
-		// Trim EOF
-		if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.EOF {
-			argTokens = argTokens[:len(argTokens)-1]
-		}
-		// Trim SEMICOLON
-		if len(argTokens) > 0 && argTokens[len(argTokens)-1].Type == token.SEMICOLON {
-			argTokens = argTokens[:len(argTokens)-1]
-		}
-
-		// Wrap multi-token type arguments in parentheses when the first token
-		// is a pointer star, to prevent parser ambiguity (e.g., *byte must not
-		// merge with adjacent * tokens). Don't wrap other multi-token types
-		// like qualified names (prelude.slice_byte) since parens break var decls.
-		if len(argTokens) > 1 && argTokens[0].Type == token.ASTERISK {
-			wrapped := []token.Token{{Type: token.LPAREN, Literal: "("}}
-			wrapped = append(wrapped, argTokens...)
-			wrapped = append(wrapped, token.Token{Type: token.RPAREN, Literal: ")"})
-			argTokens = wrapped
-		}
-
-		// and add it to the list
-		for i := range argTokens {
-			if instantiateToken != nil {
-				argTokens[i].ExpandedFrom = fmt.Sprintf("expanded %s at %s:%d", instName, instantiateToken.Filename, instantiateToken.Line)
-			}
-		}
-		argTokensList = append(argTokensList, argTokens)
-	}
-
-	var newTokens []token.Token
-	for _, tok := range tmpl.Tokens {
-		replaced := false
-		if tok.Type == token.IDENT {
-			for i, tp := range tmpl.TypeParams {
-				if tok.Literal == tp {
-					if i < len(argTokensList) {
-						newTokens = append(newTokens, argTokensList[i]...)
-						replaced = true
-						break
-					}
-				}
-			}
-		}
-		if !replaced {
-			tokCopy := tok
-			if instantiateToken != nil {
-				tokCopy.ExpandedFrom = fmt.Sprintf("expanded %s at %s:%d", instName, instantiateToken.Filename, instantiateToken.Line)
-			}
-			newTokens = append(newTokens, tokCopy)
-		}
-	}
-	newTokens = append(newTokens, token.Token{Type: token.EOF, Literal: ""})
-	return newTokens
+	return b.tm.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
 }
 
+// FORWARDING
 func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []ast.Expression, tmpl *GenericTemplate, instantiateToken *token.Token) {
-	var argTyps []Type
-	for _, argNode := range argNodes {
-		argTyps = append(argTyps, b.astToIRType(argNode))
-	}
-
-	b.instantiatedTypes[instName] = InstantiatedTypeInfo{
-		RawGenericName: genericName,
-		ArgTyps:        argTyps,
-	}
-
-	newTokens := b.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
-
-	p := parser.New(newTokens)
-	stmt := p.ParseStatementForGeneric()
-
-	if len(p.Errors()) > 0 {
-		fmt.Printf("Parser errors during generic instantiation of %s:\n", instName)
-		for _, msg := range p.Errors() {
-			fmt.Println("\t", msg)
-		}
-	}
-
-	parts := strings.SplitN(genericName, ".", 2)
-	defPkg := parts[0]
-	if b.resolveCallback != nil {
-		stmt = b.resolveCallback(stmt, defPkg).(ast.Statement)
-	}
-
-	ts, ok := stmt.(*ast.TypeStatement)
-	if !ok {
-		panic("Generic instantiation did not produce a TypeStatement: " + instName)
-	}
-	baseTypeAST := ts.BaseType
-
-	if st, ok := baseTypeAST.(*ast.StructType); ok {
-		b.typeDefsAST[instName] = st
-		b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, instName)
-
-		var fields []*ast.Field
-		for i, f := range st.Fields {
-			fields = append(fields, &ast.Field{
-				Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-				Type: f.Type,
-			})
-		}
-		structType := b.astToIRType(&ast.StructType{
-			Fields: fields,
-		})
-		b.Program.TypeDefs[instName] = structType
-	} else {
-		panic("Generic instantiation did not produce a struct: " + instName)
-	}
+	b.tm.instantiateGeneric(instName, genericName, argNodes, tmpl, instantiateToken)
 }
 
 func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token) {
@@ -1104,7 +836,7 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 		}
 		isStruct := val.Type().IsAStruct() || val.Type().IsAnArray() || strings.HasPrefix(val.Type().Name, "prelude.slice_") || strings.HasPrefix(val.Type().Name, "slice_")
 		if !isStruct {
-			if _, ok := b.typeDefsAST[val.Type().Name]; ok {
+			if _, ok := b.tm.typeDefsAST[val.Type().Name]; ok {
 				isStruct = true
 			}
 		}
@@ -2111,7 +1843,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			}
 			funcName = fmt.Sprintf("%s%s", rawFuncName, instTypStr)
 			if _, ok := b.funcs[funcName]; !ok {
-				if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+				if tmpl, ok := b.tm.genericTemplates[rawFuncName]; ok {
 					b.instantiateGenericFunc(funcName, rawFuncName, argTyps, tmpl, e.GetToken())
 				}
 			}
@@ -2120,7 +1852,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	} else if ident, ok := e.Function.(*ast.Identifier); ok {
 		rawFuncName = ident.FullName()
 		if _, ok := b.funcs[rawFuncName]; !ok {
-			if tmpl, ok := b.genericTemplates[rawFuncName]; ok {
+			if tmpl, ok := b.tm.genericTemplates[rawFuncName]; ok {
 				p := parser.New(tmpl.Tokens)
 				stmt := p.ParseStatementForGeneric()
 				if funcStmt, ok := stmt.(*ast.FuncStatement); ok {
@@ -2186,10 +1918,10 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 		funcName := MangleName(baseType) + "_" + sel.Right.Value
 
 		if _, exists := b.funcs[funcName]; !exists {
-			if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+			if instInfo, ok := b.tm.instantiatedTypes[baseType]; ok {
 				//fmt.Printf("DEBUG buildExpr call method: funcName=%s baseType=%s instInfo.ArgTyps=%v\n", funcName, baseType, instInfo.ArgTyps)
 				rawGenericFuncName := instInfo.RawGenericName + "_" + sel.Right.Value
-				if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+				if tmpl, ok := b.tm.genericTemplates[rawGenericFuncName]; ok {
 					b.instantiateGenericFunc(b.currentPackage+"."+sel.Right.Value, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
 				}
 			}
@@ -2352,24 +2084,24 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 		f := b.funcs[funcName]
 		if f == nil {
 			qname := b.currentPackage + "." + ident.Value
-			if _, ok := b.typeDefsAST[qname]; ok {
+			if _, ok := b.tm.typeDefsAST[qname]; ok {
 				arg := b.buildExpr(e.Arguments[0])
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}, Op: "bitcast", Operand: arg}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}
 			}
-			if _, ok := b.typeDefsAST["prelude."+ident.Value]; ok {
+			if _, ok := b.tm.typeDefsAST["prelude."+ident.Value]; ok {
 				arg := b.buildExpr(e.Arguments[0])
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}, Op: "bitcast", Operand: arg}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}
 			}
 			// Also check typeAliases for named function types (e.g., type MonadicFn func(...) ...)
-			if aliasExpr, ok := b.typeAliases[qname]; ok {
+			if aliasExpr, ok := b.tm.typeAliases[qname]; ok {
 				arg := b.buildExpr(e.Arguments[0])
 				typ := b.astToIRType(aliasExpr)
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: typ}, Op: "bitcast", Operand: arg}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: typ}
 			}
-			if aliasExpr, ok := b.typeAliases["prelude."+ident.Value]; ok {
+			if aliasExpr, ok := b.tm.typeAliases["prelude."+ident.Value]; ok {
 				arg := b.buildExpr(e.Arguments[0])
 				typ := b.astToIRType(aliasExpr)
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: typ}, Op: "bitcast", Operand: arg}, e)
@@ -2488,9 +2220,9 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			funcName := MangleName(baseType) + "_" + methodName
 
 			if _, exists := b.funcs[funcName]; !exists {
-				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+				if instInfo, ok := b.tm.instantiatedTypes[baseType]; ok {
 					rawGenericFuncName := instInfo.RawGenericName + "_" + methodName
-					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+					if tmpl, ok := b.tm.genericTemplates[rawGenericFuncName]; ok {
 						parts := strings.SplitN(baseType, ".", 2)
 						b.instantiateGenericFunc(parts[0]+"."+methodName, rawGenericFuncName, instInfo.ArgTyps, tmpl, e.GetToken())
 					}
@@ -2619,7 +2351,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			structName = base.Typ.Name
 		}
 
-		st, ok := b.typeDefsAST[structName]
+		st, ok := b.tm.typeDefsAST[structName]
 		if !ok {
 			panic("Selector on unknown struct type: " + structName)
 		}
@@ -2962,7 +2694,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 		val = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
 
-		st, ok := b.typeDefsAST[typ.Name]
+		st, ok := b.tm.typeDefsAST[typ.Name]
 		if !ok {
 			panic("Composite literal on unknown struct type: " + typ.Name)
 		}
@@ -3137,9 +2869,9 @@ func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 			funcName := MangleName(baseType) + "_Address"
 
 			if _, exists := b.funcs[funcName]; !exists {
-				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+				if instInfo, ok := b.tm.instantiatedTypes[baseType]; ok {
 					rawGenericFuncName := instInfo.RawGenericName + "_Address"
-					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+					if tmpl, ok := b.tm.genericTemplates[rawGenericFuncName]; ok {
 						parts := strings.SplitN(baseType, ".", 2)
 						b.instantiateGenericFunc(parts[0]+".Address", rawGenericFuncName, instInfo.ArgTyps, tmpl, expr.GetToken())
 					}
@@ -3170,7 +2902,7 @@ func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 
 			// Determine element type
 			eltType := TypeByte
-			instInfo, ok := b.instantiatedTypes[baseType]
+			instInfo, ok := b.tm.instantiatedTypes[baseType]
 			log.Printf("DEBUG buildAddressOf baseType=%q ok=%v len=%d", baseType, ok, len(instInfo.ArgTyps))
 			if ok && len(instInfo.ArgTyps) > 0 {
 				eltType = instInfo.ArgTyps[0]
@@ -3188,74 +2920,11 @@ func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 	return res.Address, res.Typ
 }
 
-func (b *Builder) getTypeString(qname string) Type {
-	// NANDO-recent.
-	if res, ok := b.Program.TypeDefs[qname]; ok {
-		return res
-	}
-	if b.evaluatingType[qname] {
-		panic("circular dependency in type definition: " + qname)
-	}
-	st, ok := b.typeDefsAST[qname]
-	if !ok {
-		panic("unknown type: " + qname)
-	}
-	b.evaluatingType[qname] = true
-	defer func() { b.evaluatingType[qname] = false }()
+// FORWARDING
+func (b *Builder) getTypeString(qname string) Type { return b.tm.getTypeString(qname) }
 
-	var fields []*ast.Field
-	for i, f := range st.Fields {
-		fields = append(fields, &ast.Field{
-			Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-			Type: f.Type,
-		})
-	}
-	structType := b.astToIRType(&ast.StructType{
-		Fields: fields,
-	})
-	b.Program.TypeDefs[qname] = structType
-	return structType
-}
-
-func (b *Builder) getTypeSize(typ Type) int {
-	// NANDO-recent.
-	if typ.Equals(TypeVoid) || typ.Equals(TypeByte) || typ.Equals(TypeBool) {
-		return 1
-	}
-	if typ.Equals(TypeWord) || typ.Equals(TypeInt) {
-		return b.WordSize
-	}
-	if typ.IsAPointer() {
-		return b.WordSize
-	}
-	if typ.IsAnArray() {
-		idx := strings.Index(typ.Name, "]")
-		if idx != -1 {
-			length, _ := strconv.Atoi(typ.Name[1:idx])
-			eltSize := b.getTypeSize(typ.ArrayElementType())
-			return length * eltSize
-		}
-	}
-	if !typ.IsAStruct() {
-		if _, ok := b.typeDefsAST[typ.Name]; ok {
-			typ = b.getTypeString(typ.Name)
-		} else if def, ok := b.Program.TypeDefs[typ.Name]; ok {
-			typ = def
-		} else {
-			return 2
-		}
-	}
-	if typ.IsAStruct() {
-		size := 0
-		st := typ.Expr.(*ast.StructType)
-		for _, f := range st.Fields {
-			size += b.getTypeSize(b.astToIRType(f.Type))
-		}
-		return size
-	}
-	log.Panicf("getTypesize bad %v", typ)
-    panic(0)
-}
+// FORWARDING
+func (b *Builder) getTypeSize(typ Type) int { return b.tm.getTypeSize(typ) }
 
 func (b *Builder) EvalConst(expr ast.Expression) int64 {
 	// nando-recent
@@ -3376,9 +3045,9 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 			funcName := MangleName(baseType) + "_Put"
 
 			if _, exists := b.funcs[funcName]; !exists {
-				if instInfo, ok := b.instantiatedTypes[baseType]; ok {
+				if instInfo, ok := b.tm.instantiatedTypes[baseType]; ok {
 					rawGenericFuncName := instInfo.RawGenericName + "_Put"
-					if tmpl, ok := b.genericTemplates[rawGenericFuncName]; ok {
+					if tmpl, ok := b.tm.genericTemplates[rawGenericFuncName]; ok {
 						parts := strings.SplitN(baseType, ".", 2)
 						b.instantiateGenericFunc(parts[0]+".Put", rawGenericFuncName, instInfo.ArgTyps, tmpl, lhs.GetToken())
 					}
@@ -3418,32 +3087,9 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 	b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: res.Address, Val: val}, lhs)
 }
 
+// FORWARDING
 func (b *Builder) extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[string]Type, typeParams []string) {
-	if ident, ok := paramType.(*ast.Identifier); ok {
-		for _, tp := range typeParams {
-			if tp == ident.Value {
-				typeMap[tp] = argTyp
-				return
-			}
-		}
-	} else if prefix, ok := paramType.(*ast.PrefixExpression); ok && prefix.Operator == "*" {
-		if argTyp.IsAPointer() {
-			b.extractTypeParamsIR(prefix.Right, argTyp.PointedType(), typeMap, typeParams)
-		}
-	} else if ptr, ok := paramType.(*ast.PointerType); ok {
-		if argTyp.IsAPointer() {
-			b.extractTypeParamsIR(ptr.Elt, argTyp.PointedType(), typeMap, typeParams)
-		}
-	} else if idx, ok := paramType.(*ast.IndexExpression); ok {
-		// nando-BAD.  Spliting on _ cannot work.
-		parts := strings.Split(argTyp.Name, "_")
-		numIdx := len(idx.Indices)
-		if len(parts) >= numIdx {
-			for i, innerIdx := range idx.Indices {
-				b.extractTypeParamsIR(innerIdx, Type{Expr: &ast.Identifier{Value: parts[len(parts)-numIdx+i]}, Name: parts[len(parts)-numIdx+i], Builder: b}, typeMap, typeParams)
-			}
-		}
-	}
+	b.tm.extractTypeParamsIR(paramType, argTyp, typeMap, typeParams)
 }
 
 func (b *Builder) tryResolve(item *GlobalItem) (err error) {
@@ -3473,13 +3119,13 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		for _, tp := range s.TypeParameters {
 			typeParams = append(typeParams, tp.Value)
 		}
-		b.genericTemplates[item.QName] = &GenericTemplate{
+		b.tm.genericTemplates[item.QName] = &GenericTemplate{
 			TypeParams: typeParams,
 			Tokens:     s.Tokens,
 		}
 	case ItemAlias:
 		s := item.ASTNode.(*ast.TypeStatement)
-		b.typeAliases[item.QName] = s.BaseType
+		b.tm.typeAliases[item.QName] = s.BaseType
 		// try to resolve the base type to make sure it's valid
 		b.astToIRType(s.BaseType)
 	case ItemUnknown:
@@ -3488,7 +3134,7 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 	case ItemType:
 		s := item.ASTNode.(*ast.TypeStatement)
 		if st, ok := s.BaseType.(*ast.StructType); ok {
-			b.typeDefsAST[item.QName] = st
+			b.tm.typeDefsAST[item.QName] = st
 		}
 
 		// Ensure TypeDefOrder only contains resolved ones in order
@@ -3507,7 +3153,7 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		} else if _, ok := s.BaseType.(*ast.FuncType); ok {
 			b.Program.TypeDefs[item.QName] = TypeWord
 			// Also register as a type alias so astToIRType can resolve the name.
-			b.typeAliases[item.QName] = s.BaseType
+			b.tm.typeAliases[item.QName] = s.BaseType
 		}
 	case ItemConst:
 		s := item.ASTNode.(*ast.ConstStatement)
@@ -3569,7 +3215,7 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		for _, tp := range s.TypeParameters {
 			typeParams = append(typeParams, tp.Value)
 		}
-		b.genericTemplates[item.QName] = &GenericTemplate{
+		b.tm.genericTemplates[item.QName] = &GenericTemplate{
 			TypeParams: typeParams,
 			Tokens:     s.Tokens,
 		}
@@ -3615,27 +3261,9 @@ func (t Type) ArrayLength() int {
 	return 0
 }
 
+// FORWARDING
 func (b *Builder) getFuncReturnType(returnParams []*ast.Parameter) Type {
-	if len(returnParams) == 1 {
-		return b.astToIRType(returnParams[0].Type)
-	} else if len(returnParams) > 1 {
-		var fields []*ast.Field
-		for i, rt := range returnParams {
-			fields = append(fields, &ast.Field{
-				Name: &ast.Identifier{Value: fmt.Sprintf("f%d", i)},
-				Type: rt.Type,
-			})
-		}
-		structTyp := &ast.StructType{Fields: fields}
-		name := "struct{"
-		for _, rt := range returnParams {
-			name += b.astToIRType(rt.Type).Name + ";"
-		}
-		name += "}"
-		return Type{Expr: structTyp, Name: name, Builder: b}
-	} else {
-		return TypeVoid
-	}
+	return b.tm.getFuncReturnType(returnParams)
 }
 
 func (b *Builder) isConstantExpr(expr ast.Expression) bool {
@@ -3693,7 +3321,7 @@ func (b *Builder) zeroConstant(typ Type) Value {
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
 	}
 	if typ.IsAStruct() {
-		st, ok := b.typeDefsAST[typ.Name]
+		st, ok := b.tm.typeDefsAST[typ.Name]
 		if !ok {
 			panic("unknown struct type for zeroing: " + typ.Name)
 		}
@@ -3816,7 +3444,7 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 			return &ConstArray{BaseInstruction: BaseInstruction{Typ: targetTyp}, Elements: elements}
 		}
 
-		st, ok := b.typeDefsAST[targetTyp.Name]
+		st, ok := b.tm.typeDefsAST[targetTyp.Name]
 		if !ok {
 			panic("constant struct of unknown type " + targetTyp.Name)
 		}
@@ -3917,7 +3545,7 @@ func (b *Builder) isDestructable(t Type) bool {
 			}
 		}
 	}
-	if st, ok := b.typeDefsAST[t.Name]; ok {
+	if st, ok := b.tm.typeDefsAST[t.Name]; ok {
 		for _, field := range st.Fields {
 			fieldTyp := b.astToIRType(field.Type)
 			if b.isDestructable(fieldTyp) {
@@ -3956,7 +3584,7 @@ func (b *Builder) emitDestruction(typ Type, ptrVal Value, tokenNode ast.Node) {
 				}
 			}
 		}
-	} else if st, ok := b.typeDefsAST[typ.Name]; ok {
+	} else if st, ok := b.tm.typeDefsAST[typ.Name]; ok {
 		for i, field := range st.Fields {
 			fieldTyp := b.astToIRType(field.Type)
 			if b.isDestructable(fieldTyp) {
