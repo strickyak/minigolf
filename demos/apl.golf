@@ -22,6 +22,10 @@ const TokSemi = 7
 const TokDel = 8
 const TokLBrace = 9
 const TokRBrace = 10
+const TokQuestion = 11
+const TokColon = 12
+const TokLBracket = 13
+const TokRBracket = 14
 
 // ===== Function Type Aliases =====
 
@@ -188,8 +192,8 @@ func IsSymbolChar(c byte) byte {
 	if c >= '!' && c <= '/' {
 		return 1 // !"#$%&'*+,-./ (but grouping filtered above)
 	}
-	if c >= ':' && c <= '@' && c != ';' {
-		return 1 // :<=>?@
+	if c >= ':' && c <= '@' && c != ';' && c != '?' && c != ':' {
+		return 1 // <=@
 	}
 	if c == '\\' || c == '^' || c == '`' || c == '|' || c == '~' {
 		return 1
@@ -360,6 +364,34 @@ func Tokenize() {
 			pos++
 			continue
 		}
+		if c == '[' {
+			TokKinds[NumTokens] = TokLBracket
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
+		if c == ']' {
+			TokKinds[NumTokens] = TokRBracket
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
+		if c == '?' {
+			TokKinds[NumTokens] = TokQuestion
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
+		if c == ':' {
+			TokKinds[NumTokens] = TokColon
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
 
 		// Symbol operator (one or more special characters, not grouping)
 		if IsSymbolChar(c) != 0 {
@@ -392,6 +424,63 @@ func Tokenize() {
 		// Unknown non-whitespace character
 		panic("unexpected character in input")
 	}
+}
+
+// ===== Execution & Skipping Helpers =====
+
+func EvalStatementsUntil(stop1 byte, stop2 byte) *Thing {
+	var result *Thing
+	for EvalPos < NumTokens {
+		WasAssign = 0
+		k := TokKinds[EvalPos]
+		if k == stop1 || k == stop2 {
+			break
+		}
+		result = Eval()
+		if EvalPos < NumTokens {
+			k2 := TokKinds[EvalPos]
+			if k2 == stop1 || k2 == stop2 {
+				break
+			}
+			if k2 == TokSemi {
+				EvalPos++
+			} else {
+				panic("unexpected token after expression")
+			}
+		}
+	}
+	return result
+}
+
+func SkipTokensUntil(stop1 byte, stop2 byte) byte {
+	var stack [100]byte
+	sp := word(0)
+
+	for EvalPos < NumTokens {
+		k := TokKinds[EvalPos]
+		if k == TokLParen || k == TokLBracket || k == TokLBrace {
+			stack[sp] = k
+			sp++
+		} else if k == TokRParen || k == TokRBracket || k == TokRBrace {
+			if sp == 0 {
+				if stop1 == k || stop2 == k {
+					return k
+				}
+				panic("unmatched closing parenthesis/bracket/brace")
+			}
+			sp--
+			top := stack[sp]
+			if (k == TokRParen && top != TokLParen) ||
+				(k == TokRBracket && top != TokLBracket) ||
+				(k == TokRBrace && top != TokLBrace) {
+				panic("mismatched closing grouping symbol")
+			}
+		} else if sp == 0 && (k == stop1 || k == stop2) {
+			return k
+		}
+		EvalPos++
+	}
+	panic("unexpected end of input while skipping")
 }
 
 // ===== Evaluator =====
@@ -511,11 +600,39 @@ func Eval() *Thing {
 		}
 	} else if kind == TokLParen {
 		EvalPos++ // skip '('
-		val = Eval()
-		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokRParen {
-			panic("missing closing parenthesis")
+		val = EvalStatementsUntil(TokRParen, TokQuestion)
+		if EvalPos >= NumTokens {
+			panic("missing closing parenthesis or colon")
 		}
-		EvalPos++ // skip ')'
+		if TokKinds[EvalPos] == TokRParen {
+			EvalPos++ // skip ')'
+		} else if TokKinds[EvalPos] == TokQuestion {
+			EvalPos++ // skip '?'
+			if val.Dimensions.Len != 0 || val.Values.Len != 1 {
+				panic("COND condition must be scalar int")
+			}
+			condVal := PtrToInt(val.Values.Get(0))
+			if condVal != 0 {
+				val = EvalStatementsUntil(TokColon, TokColon)
+				if EvalPos >= NumTokens || TokKinds[EvalPos] != TokColon {
+					panic("expected : after yes statements")
+				}
+				EvalPos++ // skip ':'
+				SkipTokensUntil(TokRParen, TokRParen)
+				EvalPos++ // skip ')'
+			} else {
+				SkipTokensUntil(TokColon, TokColon)
+				if EvalPos >= NumTokens || TokKinds[EvalPos] != TokColon {
+					panic("expected : after yes statements")
+				}
+				EvalPos++ // skip ':'
+				val = EvalStatementsUntil(TokRParen, TokRParen)
+				if EvalPos >= NumTokens || TokKinds[EvalPos] != TokRParen {
+					panic("expected ) after no statements")
+				}
+				EvalPos++ // skip ')'
+			}
+		}
 	} else {
 		panic("unexpected token")
 	}
@@ -659,16 +776,7 @@ func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
 	}()
 
 	var res *Thing
-	for EvalPos < NumTokens {
-		res = Eval()
-		if EvalPos < NumTokens {
-			if TokKinds[EvalPos] == TokSemi {
-				EvalPos++
-			} else {
-				panic("unexpected token after expression in user func")
-			}
-		}
-	}
+	res = EvalStatementsUntil(0, 0)
 	return res
 }
 
@@ -912,17 +1020,7 @@ func TestEval(input *byte) *Thing {
 		return (*Thing)(0)
 	}
 	var result *Thing
-	for EvalPos < NumTokens {
-		WasAssign = 0
-		result = Eval()
-		if EvalPos < NumTokens {
-			if TokKinds[EvalPos] == TokSemi {
-				EvalPos++
-			} else {
-				panic("unexpected token after expression")
-			}
-		}
-	}
+	result = EvalStatementsUntil(0, 0)
 	return result
 }
 
@@ -1019,8 +1117,22 @@ func RunTests() {
 	PutStr("A <- 10 ; A add 5 => ")
 	PrintThing(TestEval("A <- 10 ; A add 5"))
 
-	PutStr("<> double X { X - X ; X + X } ; double 10 => ")
-	PrintThing(TestEval("<> double X { X - X ; X + X } ; double 10"))
+	TestEval("<> double X { X - X ; X + X }")
+	PutStr("<> double X { X - X ; X + X }\n")
+	PutStr("double 10 => ")
+	PrintThing(TestEval("double 10"))
+
+	PutStr("( 1 ? 10 : 20 ) => ")
+	PrintThing(TestEval("( 1 ? 10 : 20 )"))
+
+	PutStr("( 0 ? 10 : 20 ) => ")
+	PrintThing(TestEval("( 0 ? 10 : 20 )"))
+
+	PutStr("A <- 0 ; ( 1 ? A <- 1 : A <- 2 ) ; A => ")
+	PrintThing(TestEval("A <- 0 ; ( 1 ? A <- 1 : A <- 2 ) ; A"))
+
+	PutStr("( 1 ? 5 ; 10 : 15 ; 20 ) => ")
+	PrintThing(TestEval("( 1 ? 5 ; 10 : 15 ; 20 )"))
 
 	PutStr("=== Tests Done ===\n")
 }
@@ -1043,17 +1155,7 @@ func EvalLine() {
 	}
 	EvalPos = 0
 	var result *Thing
-	for EvalPos < NumTokens {
-		WasAssign = 0
-		result = Eval()
-		if EvalPos < NumTokens {
-			if TokKinds[EvalPos] == TokSemi {
-				EvalPos++
-			} else {
-				panic("unexpected token after expression")
-			}
-		}
-	}
+	result = EvalStatementsUntil(0, 0)
 	if word(result) != 0 && WasAssign == 0 {
 		PrintThing(result)
 		Vars.Insert("_", result)
