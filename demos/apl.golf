@@ -16,6 +16,8 @@ const TokNum = 1
 const TokVar = 2
 const TokFunc = 3
 const TokArrow = 4
+const TokLParen = 5
+const TokRParen = 6
 
 // ===== Function Type Aliases =====
 
@@ -282,8 +284,24 @@ func Tokenize() {
 			continue
 		}
 
-		// Unknown character, skip
-		pos++
+		// Parentheses
+		if c == '(' {
+			TokKinds[NumTokens] = TokLParen
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
+		if c == ')' {
+			TokKinds[NumTokens] = TokRParen
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
+			continue
+		}
+
+		// Unknown non-whitespace character
+		panic("unexpected character in input")
 	}
 }
 
@@ -351,6 +369,13 @@ func Eval() *Thing {
 		if word(val) == 0 {
 			panic("undefined variable")
 		}
+	} else if kind == TokLParen {
+		EvalPos++ // skip '('
+		val = Eval()
+		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokRParen {
+			panic("missing closing parenthesis")
+		}
+		EvalPos++ // skip ')'
 	} else {
 		panic("unexpected token")
 	}
@@ -684,10 +709,40 @@ func RunTests() {
 	PutStr("10 mul iota 5 => ")
 	PrintThing(TestEval("10 mul iota 5"))
 
+	// Parenthesized subexpressions
+	PutStr("(2 add 3) mul 4 => ")
+	PrintThing(TestEval("(2 add 3) mul 4"))
+
+	PutStr("(iota 3) add (iota 3) => ")
+	PrintThing(TestEval("(iota 3) add (iota 3)"))
+
 	PutStr("=== Tests Done ===\n")
 }
 
 // ===== Main =====
+
+func EvalLine() {
+	defer func() {
+		r := recover()
+		if r != nil {
+			PutStr("ERROR: ")
+			PutStr(r)
+			putchar('\n')
+		}
+	}()
+
+	Tokenize()
+	if NumTokens == 0 {
+		return
+	}
+	EvalPos = 0
+	WasAssign = 0
+	result := Eval()
+	if word(result) != 0 && WasAssign == 0 {
+		PrintThing(result)
+		Vars.Insert("_", result)
+	}
+}
 
 func main() {
 	for {
@@ -699,16 +754,7 @@ func main() {
 		if LineLen == 0 {
 			continue
 		}
-		Tokenize()
-		if NumTokens == 0 {
-			continue
-		}
-		EvalPos = 0
-		WasAssign = 0
-		result := Eval()
-		if word(result) != 0 && WasAssign == 0 {
-			PrintThing(result)
-		}
+		EvalLine()
 	}
 	putchar('\n')
 }
