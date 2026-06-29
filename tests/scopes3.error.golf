@@ -1,0 +1,10 @@
+package main
+
+func main() {
+	var x word
+	x = 1
+	if x > 0 {
+		var x word
+		x = 2
+	}
+}

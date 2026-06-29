@@ -974,7 +974,19 @@ func (a *Analyzer) defineLocalSymbol(nameExpr *ast.Identifier, typ ast.Expressio
 	}
 
 	if _, exists := a.currentScope.symbols[nameExpr.Value]; exists {
-		a.reportError(stmt, "Variable %q already declared in this scope", nameExpr.Value)
+		if nameExpr.Value != "_" {
+			a.reportError(stmt, "Variable %q already declared in this scope", nameExpr.Value)
+		}
+	} else if nameExpr.Value != "_" {
+		// No-shadowing rule: check if this name exists in any enclosing
+		// (parent) scope within this function.  We stop before the global
+		// scope so that shadowing a global or built-in is still allowed.
+		for s := a.currentScope.parent; s != nil && s != a.globalScope; s = s.parent {
+			if _, exists := s.symbols[nameExpr.Value]; exists {
+				a.reportError(stmt, "Variable %q shadows variable in enclosing scope (no shadowing allowed)", nameExpr.Value)
+				break
+			}
+		}
 	}
 
 	uniqueName := nameExpr.Value
