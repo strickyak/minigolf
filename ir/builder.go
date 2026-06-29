@@ -124,8 +124,8 @@ func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
 	var typeChar string
 	if typName == "byte" || typName == "word" {
 		typeChar = typName
-	} else if strings.HasPrefix(typName, "prelude.slice_") || strings.HasPrefix(typName, "slice_") {
-		typeChar = "slice[" + strings.TrimPrefix(strings.TrimPrefix(typName, "prelude.slice_"), "slice_") + "]"
+	} else if val.Type().IsASlice() {
+		typeChar = "slice[" + val.Type().SliceElementType().Name + "]"
 	} else {
 		typeChar = typName
 	}
@@ -171,7 +171,7 @@ func (b *Builder) coerceCallArgs(f *Function, args []Value, expr ast.Node) {
 	for i, argVal := range args {
 		if i < len(f.Parameters) {
 			paramTyp := f.Parameters[i].Typ
-			if paramTyp.Name == "prelude.any" || paramTyp.Name == "any" {
+			if paramTyp.IsAny() {
 				args[i] = b.packageAsAny(argVal, expr)
 			} else {
 				args[i] = b.coerceType(argVal, paramTyp)
@@ -816,7 +816,7 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 				return b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeBool}, Val: bval}, val)
 			}
 		}
-		isStruct := val.Type().IsAStruct() || val.Type().IsAnArray() || strings.HasPrefix(val.Type().Name, "prelude.slice_") || strings.HasPrefix(val.Type().Name, "slice_")
+		isStruct := val.Type().IsAStruct() || val.Type().IsAnArray() || val.Type().IsASlice()
 		if !isStruct {
 			if _, ok := b.tm.typeDefsAST[val.Type().Name]; ok {
 				isStruct = true
@@ -837,7 +837,7 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 	}
 
 	if val.Type().Equals(TypeNil) {
-		if targetType.IsAPointer() || targetType.Name == "func" || strings.HasPrefix(targetType.Name, "func_ptr_") || targetType.Name == "word" || targetType.Name == "any" || strings.HasPrefix(targetType.Name, "prelude.slice_") || strings.HasPrefix(targetType.Name, "slice_") {
+		if targetType.IsAPointer() || targetType.Name == "func" || targetType.IsAFuncPtr() || targetType.IsWord() || targetType.IsAny() || targetType.IsASlice() {
 			return b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: targetType}}, val)
 		}
 		log.Panicf("cannot use nil as type %s", targetType.Name)
@@ -1344,8 +1344,8 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 
 		limitVal := b.buildExpr(s.RangeValue)
 		typ := limitVal.Type()
-		isSlice := strings.HasPrefix(typ.Name, "prelude.slice_") || strings.HasPrefix(typ.Name, "slice_")
-		isArray := strings.HasPrefix(typ.Name, "[")
+		isSlice := typ.IsASlice()
+		isArray := typ.IsAnArray()
 
 		if isSlice {
 			limitVal = b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: limitVal, FieldIndex: 2}, s) // Len
@@ -1792,8 +1792,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 		// Disallow casting any other struct or non-string slice to (*byte): only
 		// slice[byte] (a.k.a. string) and [N]byte arrays have a defined base-pointer layout.
 		srcIsStruct := val.Type().IsAStruct() || val.Type().IsAnArray() ||
-			strings.HasPrefix(srcName, "prelude.slice_") ||
-			strings.HasPrefix(srcName, "slice_")
+			val.Type().IsASlice()
 		if targetTyp.Name == "*byte" && srcIsStruct {
 			panic(fmt.Sprintf("cannot cast %s to *byte: only slice[byte] (string) or [N]byte arrays may be cast to *byte", srcName))
 		}
@@ -2187,7 +2186,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		base := b.eval(e.Left)
 		idx := b.buildExpr(e.Indices[0])
 
-		if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
+		if base.Typ.IsASlice() {
 			isPtr := base.Typ.IsAPointer()
 			var baseType string
 			if isPtr {
@@ -2615,7 +2614,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		var val Value
 
 		isSliceSugar := false
-		if strings.HasPrefix(typ.Name, "prelude.slice_") {
+		if typ.IsASlice() {
 			hasKeys := false
 			for _, el := range e.Elements {
 				if _, ok := el.(*ast.KeyValueExpr); ok {
@@ -2629,8 +2628,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		}
 
 		if isSliceSugar {
-			eltTypeName := strings.TrimPrefix(typ.Name, "prelude.slice_")
-			eltTyp := Type{Expr: &ast.Identifier{Value: eltTypeName}, Name: eltTypeName, Builder: b}
+			eltTyp := typ.SliceElementType()
 			eltSize := b.tm.getTypeSize(eltTyp)
 
 			sliceVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
@@ -2653,10 +2651,13 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			arrTyp := Type{
 				Expr: &ast.ArrayType{
 					Length: &ast.IntegerLiteral{Value: int64(len(e.Elements))},
-					Elt:    &ast.Identifier{Value: eltTypeName},
+					Elt:    &ast.Identifier{Value: eltTyp.Name},
 				},
-				Name:    "[" + strconv.Itoa(len(e.Elements)) + "]" + eltTypeName,
-				Builder: b,
+				Name:        "[" + strconv.Itoa(len(e.Elements)) + "]" + eltTyp.Name,
+				Bits:        TypeBitArray,
+				ElementType: &eltTyp,
+				ArrayLen:    len(e.Elements),
+				Builder:     b,
 			}
 			arrPtrTyp := arrTyp.PointerTo()
 			arrPtrVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: arrPtrTyp}, Op: "word_to_ptr", Operand: baseWordVal}, e)
@@ -2785,17 +2786,11 @@ func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.N
 	varIdx := len(f.Parameters) - 1
 	varTyp := f.Parameters[varIdx].Typ
 
-	// Assume slice_ prefix
-	eltTypName := varTyp.Name
-	if strings.HasPrefix(eltTypName, "prelude.slice_") {
-		eltTypName = strings.TrimPrefix(eltTypName, "prelude.slice_")
-	} else if strings.HasPrefix(eltTypName, "slice_") {
-		eltTypName = strings.TrimPrefix(eltTypName, "slice_")
-	} else {
+	// Assume slice type
+	if !varTyp.IsASlice() {
 		panic("Variadic parameter type must be a slice, got: " + varTyp.Name)
 	}
-
-	eltTyp := Type{Expr: &ast.Identifier{Value: eltTypName}, Name: eltTypName, Builder: b}
+	eltTyp := varTyp.SliceElementType()
 	numVarArgs := len(rawArgs) - varIdx
 	if numVarArgs < 0 {
 		numVarArgs = 0
@@ -2814,7 +2809,7 @@ func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.N
 	for i := 0; i < numVarArgs; i++ {
 		idxVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(i)}, tokenNode)
 		var eltVal Value
-		if eltTyp.Name == "prelude.any" || eltTyp.Name == "any" {
+		if eltTyp.IsAny() {
 			eltVal = b.packageAsAny(rawArgs[varIdx+i], tokenNode)
 		} else {
 			eltVal = b.coerceType(rawArgs[varIdx+i], eltTyp)
@@ -2839,7 +2834,7 @@ func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.N
 func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 	if idxExpr, ok := expr.(*ast.IndexExpression); ok {
 		base := b.eval(idxExpr.Left)
-		if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
+		if base.Typ.IsASlice() {
 			idx := b.buildExpr(idxExpr.Indices[0])
 			isPtr := base.Typ.IsAPointer()
 			var baseType string
@@ -3009,7 +3004,7 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 
 	if idxExpr, ok := lhs.(*ast.IndexExpression); ok {
 		base := b.eval(idxExpr.Left)
-		if strings.HasPrefix(base.Typ.Name, "prelude.slice_") || strings.HasPrefix(base.Typ.Name, "slice_") {
+		if base.Typ.IsASlice() {
 			idx := b.buildExpr(idxExpr.Indices[0])
 			isPtr := base.Typ.IsAPointer()
 			var baseType string
@@ -3224,6 +3219,9 @@ func (b *Builder) addStringConstant(val string) *Global {
 }
 
 func (t Type) ArrayLength() int {
+	if t.ArrayLen > 0 {
+		return t.ArrayLen
+	}
 	idx := strings.Index(t.Name, "]")
 	if idx != -1 && strings.HasPrefix(t.Name, "[") {
 		length, _ := strconv.Atoi(t.Name[1:idx])
@@ -3390,7 +3388,7 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 			return b.evalConstantExpr(comp, targetTyp)
 		}
 	case *ast.CompositeLit:
-		if strings.HasPrefix(targetTyp.Name, "[") {
+		if targetTyp.IsAnArray() {
 			// Array literal
 			arrayLen := targetTyp.ArrayLength()
 			eltTyp := targetTyp.ArrayElementType()

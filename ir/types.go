@@ -90,13 +90,17 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 
 			if aliasExpr, ok := tm.typeAliases[qname]; ok {
 				if strings.HasPrefix(qname, "func_ptr_") {
-					return Type{Expr: aliasExpr, Name: qname, Builder: b}
+					return Type{Expr: aliasExpr, Name: qname, Bits: TypeBitFuncPtr, Builder: b}
 				}
 				return tm.astToIRType(aliasExpr)
 			}
 
 			if _, ok := tm.typeDefsAST[qname]; ok {
-				return Type{Expr: expr, Name: qname, Builder: b}
+				bits := uint(0)
+				if qname == "prelude.any" || qname == "any" {
+					bits = TypeBitAny
+				}
+				return Type{Expr: expr, Name: qname, Bits: bits, Builder: b}
 			}
 			panic("unresolved:" + qname)
 		}
@@ -145,28 +149,64 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 					ArgTyps:        argTyps,
 				}
 			}
-			return Type{Expr: expr, Name: instName, Builder: b}
+			resTyp := Type{Expr: expr, Name: instName, Builder: b}
+			// Detect slices and set Bits + ElementType
+			baseName := rawGenericName
+			if strings.HasSuffix(baseName, ".slice") || baseName == "slice" || baseName == "prelude.slice" {
+				resTyp.Bits |= TypeBitSlice
+				if info, ok := tm.instantiatedTypes[instName]; ok && len(info.ArgTyps) > 0 {
+					elt := info.ArgTyps[0]
+					resTyp.ElementType = &elt
+				}
+			}
+			return resTyp
 		}
 		return TypeWord
 	case *ast.ArrayType:
 		// nando-GOOD
 		lenVal := b.EvalConst(e.Length)
-		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, tm.astToIRType(e.Elt).Name), Builder: b}
+		eltType := tm.astToIRType(e.Elt)
+		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, eltType.Name), Bits: TypeBitArray, ElementType: &eltType, ArrayLen: int(lenVal), Builder: b}
 	case *ast.PointerType:
 		//zach//fmt.Printf("EVALUATING POINTER_TYPE, CheckNil=%v\n", b.CheckNil)
-		return Type{Expr: expr, Name: "*" + tm.astToIRType(e.Elt).Name, Builder: b}
+		eltType := tm.astToIRType(e.Elt)
+		return Type{Expr: expr, Name: "*" + eltType.Name, Bits: TypeBitPointer, PointsToType: &eltType, Builder: b}
 	case *ast.StructType:
 		name := "struct{"
-		for _, f := range e.Fields {
-			name += tm.astToIRType(f.Type).Name + ";"
+		var fields []NameAndType
+		for i, f := range e.Fields {
+			fTyp := tm.astToIRType(f.Type)
+			name += fTyp.Name + ";"
+			fieldName := ""
+			if f.Name != nil {
+				fieldName = f.Name.ShortName
+			}
+			fields = append(fields, NameAndType{Name: fieldName, Type: fTyp, FieldIndex: i})
 		}
 		name += "}"
-		return Type{Expr: expr, Name: name, Builder: b}
+		return Type{Expr: expr, Name: name, Bits: TypeBitStruct, FieldNamesAndTypes: fields, Builder: b}
 
 	case *ast.CompositeLit:
 		return tm.astToIRType(e.Type)
 	case *ast.FuncType:
-		return Type{Expr: expr, Name: tm.SyntheticFuncName(e), Builder: b}
+		synName := tm.SyntheticFuncName(e)
+		var params []NameAndType
+		for i, p := range e.Parameters {
+			pName := ""
+			if p.Name != nil {
+				pName = p.Name.Value
+			}
+			params = append(params, NameAndType{Name: pName, Type: tm.astToIRType(p.Type), FieldIndex: i})
+		}
+		var rets []NameAndType
+		for i, r := range e.ReturnParameters {
+			rName := ""
+			if r.Name != nil {
+				rName = r.Name.Value
+			}
+			rets = append(rets, NameAndType{Name: rName, Type: tm.astToIRType(r.Type), FieldIndex: i})
+		}
+		return Type{Expr: expr, Name: synName, Bits: TypeBitFuncPtr, ParameterNamesAndTypes: params, ReturnNamesAndTypes: rets, Builder: b}
 	}
 	log.Panicf("astToIRType NO CASE: %#v", expr)
 	panic(0)

@@ -15,8 +15,35 @@ var _ = log.Panicf
 type Type struct {
 	Expr    ast.Expression
 	Name    string
+	Bits    uint
 	Builder *Builder
+
+	// Structural fields — set at construction time
+	PointsToType           *Type         // for pointers: the pointed-to type
+	ElementType            *Type         // for slices and arrays: the element type
+	ArrayLen               int           // for arrays: the length (0 means not an array)
+	FieldNamesAndTypes     []NameAndType // for structs: field name/type/index
+	ParameterNamesAndTypes []NameAndType // for func types: parameter name/type
+	ReturnNamesAndTypes    []NameAndType // for func types: return name/type
 }
+
+// Bit flags for Type.Bits.
+const (
+	TypeBitPointer  uint = 1 << iota // *T
+	TypeBitArray                     // [N]T
+	TypeBitStruct                    // struct{...}
+	TypeBitSlice                     // slice[T] / prelude.slice_T
+	TypeBitFuncPtr                   // func_ptr_*
+	TypeBitByte                      // byte
+	TypeBitWord                      // word
+	TypeBitInt                       // int
+	TypeBitBool                      // bool
+	TypeBitVoid                      // void
+	TypeBitNil                       // nil
+	TypeBitConstInt                  // const_integer
+	TypeBitNoReturn                  // noreturn
+	TypeBitAny                       // any / prelude.any
+)
 
 func (t Type) TypeName() string {
 	return t.Name
@@ -31,19 +58,58 @@ func (t Type) Equals(other Type) bool {
 }
 
 var (
-	TypeUnknown = Type{Name: "", Expr: nil}
-	TypeByte    = Type{Name: "byte", Expr: &ast.Identifier{Value: "byte"}}
-	TypeBool    = Type{Name: "bool", Expr: &ast.Identifier{Value: "bool"}}
-	TypeWord    = Type{Name: "word", Expr: &ast.Identifier{Value: "word"}}
-	TypeNil     = Type{Name: "nil", Expr: &ast.Identifier{Value: "nil"}}
-	TypeInt     = Type{Name: "int", Expr: &ast.Identifier{Value: "int"}}
-	// TypeUint         = Type{Name: "uint", Expr: &ast.Identifier{Value: "uint"}}
-	TypeConstInteger = Type{Name: "const_integer", Expr: &ast.Identifier{Value: "const_integer"}}
-	TypeVoid         = Type{Name: "void", Expr: &ast.Identifier{Value: "void"}}
-	TypeNoReturn     = Type{Name: "noreturn", Expr: &ast.Identifier{Value: "noreturn"}}
+	TypeUnknown      = Type{Name: "", Expr: nil}
+	TypeByte         = Type{Name: "byte", Bits: TypeBitByte, Expr: &ast.Identifier{Value: "byte"}}
+	TypeBool         = Type{Name: "bool", Bits: TypeBitBool, Expr: &ast.Identifier{Value: "bool"}}
+	TypeWord         = Type{Name: "word", Bits: TypeBitWord, Expr: &ast.Identifier{Value: "word"}}
+	TypeNil          = Type{Name: "nil", Bits: TypeBitNil, Expr: &ast.Identifier{Value: "nil"}}
+	TypeInt          = Type{Name: "int", Bits: TypeBitInt, Expr: &ast.Identifier{Value: "int"}}
+	TypeConstInteger = Type{Name: "const_integer", Bits: TypeBitConstInt, Expr: &ast.Identifier{Value: "const_integer"}}
+	TypeVoid         = Type{Name: "void", Bits: TypeBitVoid, Expr: &ast.Identifier{Value: "void"}}
+	TypeNoReturn     = Type{Name: "noreturn", Bits: TypeBitNoReturn, Expr: &ast.Identifier{Value: "noreturn"}}
 )
 
+// --- Query methods using Bits ---
+
+func (t Type) IsASlice() bool {
+	if t.Bits&TypeBitSlice != 0 {
+		return true
+	}
+	return strings.HasPrefix(t.Name, "prelude.slice_") || strings.HasPrefix(t.Name, "slice_")
+}
+func (t Type) IsAFuncPtr() bool {
+	if t.Bits&TypeBitFuncPtr != 0 {
+		return true
+	}
+	return strings.HasPrefix(t.Name, "func_ptr_")
+}
+func (t Type) IsByte() bool { return t.Bits&TypeBitByte != 0 }
+func (t Type) IsWord() bool { return t.Bits&TypeBitWord != 0 }
+func (t Type) IsInt() bool  { return t.Bits&TypeBitInt != 0 }
+func (t Type) IsBool() bool { return t.Bits&TypeBitBool != 0 }
+func (t Type) IsAny() bool {
+	if t.Bits&TypeBitAny != 0 {
+		return true
+	}
+	return t.Name == "prelude.any" || t.Name == "any"
+}
+func (t Type) IsVoid() bool     { return t.Bits&TypeBitVoid != 0 }
+func (t Type) IsNil() bool      { return t.Bits&TypeBitNil != 0 }
+func (t Type) IsConstInt() bool { return t.Bits&TypeBitConstInt != 0 }
+func (t Type) IsNoReturn() bool { return t.Bits&TypeBitNoReturn != 0 }
+
+// IsUntyped returns true for const_integer, nil, and noreturn — types
+// that can be coerced to a concrete type.
+func (t Type) IsUntyped() bool {
+	return t.Bits&(TypeBitConstInt|TypeBitNil|TypeBitNoReturn) != 0
+}
+
+// --- Upgraded existing methods ---
+
 func (t Type) IsAPointer() bool {
+	if t.Bits&TypeBitPointer != 0 {
+		return true
+	}
 	if _, ok := t.Expr.(*ast.PointerType); ok {
 		return true
 	}
@@ -51,6 +117,9 @@ func (t Type) IsAPointer() bool {
 }
 
 func (t Type) PointedType() Type {
+	if t.PointsToType != nil {
+		return *t.PointsToType
+	}
 	if !t.IsAPointer() {
 		panic("PointedType called on non-pointer type: " + t.Name)
 	}
@@ -67,11 +136,17 @@ func (t Type) PointerTo() Type {
 		Expr: &ast.PointerType{
 			Elt: t.Expr,
 		},
-		Name: "*" + t.Name, Builder: t.Builder,
+		Name:         "*" + t.Name,
+		Bits:         TypeBitPointer,
+		PointsToType: &t,
+		Builder:      t.Builder,
 	}
 }
 
 func (t Type) IsAnArray() bool {
+	if t.Bits&TypeBitArray != 0 {
+		return true
+	}
 	if _, ok := t.Expr.(*ast.ArrayType); ok {
 		return true
 	}
@@ -83,21 +158,41 @@ func (t Type) IsAnArray() bool {
 }
 
 func (t Type) ArrayElementType() Type {
+	if t.ElementType != nil {
+		return *t.ElementType
+	}
 	if !t.IsAnArray() {
 		panic("ArrayElementType called on non-array type: " + t.Name)
 	}
-
 	var typeExpr ast.Expression
 	switch x := t.Expr.(type) {
 	case *ast.ArrayType:
 		typeExpr = x.Elt
 	}
-
 	idx := strings.Index(t.Name, "]")
 	return Type{Name: t.Name[idx+1:], Expr: typeExpr, Builder: t.Builder}
 }
 
+func (t Type) SliceElementType() Type {
+	if t.ElementType != nil {
+		return *t.ElementType
+	}
+	// String-based fallback for types constructed without ElementType
+	eltName := t.Name
+	if strings.HasPrefix(eltName, "prelude.slice_") {
+		eltName = strings.TrimPrefix(eltName, "prelude.slice_")
+	} else if strings.HasPrefix(eltName, "slice_") {
+		eltName = strings.TrimPrefix(eltName, "slice_")
+	} else {
+		panic("SliceElementType called on non-slice type: " + t.Name)
+	}
+	return Type{Expr: &ast.Identifier{Value: eltName}, Name: eltName, Builder: t.Builder}
+}
+
 func (t Type) IsAStruct() bool {
+	if t.Bits&TypeBitStruct != 0 {
+		return true
+	}
 	if _, ok := t.Expr.(*ast.StructType); ok {
 		return true
 	}
@@ -115,6 +210,9 @@ type NameAndType struct {
 }
 
 func (t Type) FieldsOfStruct() (result []NameAndType) {
+	if len(t.FieldNamesAndTypes) > 0 {
+		return t.FieldNamesAndTypes
+	}
 	if st, ok := t.Expr.(*ast.StructType); ok {
 		for i, field := range st.Fields {
 			result = append(result, NameAndType{
