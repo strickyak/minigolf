@@ -404,11 +404,6 @@ func Tokenize() {
 			}
 			length := pos - start
 			name := Strings.Intern(BufStr(start, length))
-			mw, mok := MonadicOps.Lookup(name)
-			dw, dok := DyadicOps.Lookup(name)
-			if mok == 0 && dok == 0 {
-				panic("unknown operator")
-			}
 			TokKinds[NumTokens] = TokFunc
 			TokNames[NumTokens] = name
 			NumTokens++
@@ -1220,6 +1215,11 @@ func RunTests() {
 	PutStr("<> A plus B ; M { M = A add B ; M }\n")
 	PutStr("10 plus 20 => ")
 	PrintThing(TestEval("10 plus 20"))
+
+	TestEval("<> |^| N { N < 0 }")
+	PutStr("<> |^| N { N < 0 }\n")
+	PutStr("|^| 5 - iota 10 => ")
+	PrintThing(TestEval("|^| 5 - iota 10"))
 
 	PutStr("=== Tests Done ===\n")
 }
