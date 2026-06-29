@@ -201,13 +201,27 @@ func Tokenize() {
 
 		c := LineBuf[pos]
 
-		// Assignment arrow '<-'
+		// Assignment arrow '<-' or standalone '='
 		if c == '<' && pos+1 < LineLen && LineBuf[pos+1] == '-' {
 			TokKinds[NumTokens] = TokArrow
 			TokVals[NumTokens] = 0
 			NumTokens++
 			pos = pos + 2
 			continue
+		}
+		if c == '=' {
+			// Ensure it's not followed by another symbol character
+			isStandalone := byte(1)
+			if pos+1 < LineLen && IsSymbolChar(LineBuf[pos+1]) != 0 {
+				isStandalone = 0
+			}
+			if isStandalone != 0 {
+				TokKinds[NumTokens] = TokArrow
+				TokVals[NumTokens] = 0
+				NumTokens++
+				pos++
+				continue
+			}
 		}
 
 		// Number (possibly negative: '-' followed by digit)
@@ -839,6 +853,11 @@ func RunTests() {
 
 	PutStr("4 >= 5 => ")
 	PrintThing(TestEval("4 >= 5"))
+
+	TestEval("B = 7")
+	PutStr("B = 7\n")
+	PutStr("B => ")
+	PrintThing(TestEval("B"))
 
 	PutStr("=== Tests Done ===\n")
 }
