@@ -158,18 +158,7 @@ var Vars smap.Imap[*Thing]
 var MonadicOps smap.Imap[word]
 var DyadicOps smap.Imap[word]
 
-type UserMonadic struct {
-	ArgName   string
-	Locals    slice[string]
-	NumTokens word
-	TokKinds  slice[byte]
-	TokVals   slice[int]
-	TokNames  slice[string]
-}
-
-var UserMonadicOps smap.Imap[*UserMonadic]
-
-type UserDyadic struct {
+type UserFunction struct {
 	LhsName   string
 	RhsName   string
 	Locals    slice[string]
@@ -179,7 +168,8 @@ type UserDyadic struct {
 	TokNames  slice[string]
 }
 
-var UserDyadicOps smap.Imap[*UserDyadic]
+var UserMonadicOps smap.Imap[*UserFunction]
+var UserDyadicOps smap.Imap[*UserFunction]
 
 // ===== Helper: build string from LineBuf range =====
 
@@ -582,24 +572,18 @@ func Eval() *Thing {
 		}
 		EvalPos++ // skip }
 
+		u := (*UserFunction)(zalloc(sizeof[UserFunction]()))
+		u.LhsName = lhsName
+		u.RhsName = rhsName
+		u.Locals = locals
+		u.NumTokens = numT
+		u.TokKinds = tKinds
+		u.TokVals = tVals
+		u.TokNames = tNames
+
 		if isDyadic != 0 {
-			u := (*UserDyadic)(zalloc(sizeof[UserDyadic]()))
-			u.LhsName = lhsName
-			u.RhsName = rhsName
-			u.Locals = locals
-			u.NumTokens = numT
-			u.TokKinds = tKinds
-			u.TokVals = tVals
-			u.TokNames = tNames
 			UserDyadicOps.Insert(name, u)
 		} else {
-			u := (*UserMonadic)(zalloc(sizeof[UserMonadic]()))
-			u.ArgName = rhsName
-			u.Locals = locals
-			u.NumTokens = numT
-			u.TokKinds = tKinds
-			u.TokVals = tVals
-			u.TokNames = tNames
 			UserMonadicOps.Insert(name, u)
 		}
 		WasAssign = 1 // to prevent printing
@@ -617,7 +601,7 @@ func Eval() *Thing {
 
 		u, uok := UserMonadicOps.Lookup(name)
 		if uok != 0 {
-			return EvalUserMonadic(u, right)
+			return EvalUser(u, (*Thing)(0), right)
 		}
 
 		fw, ok := MonadicOps.Lookup(name)
@@ -704,7 +688,7 @@ func Eval() *Thing {
 		}
 		u, uok := UserDyadicOps.Lookup(name)
 		if uok != 0 {
-			return EvalUserDyadic(u, val, right)
+			return EvalUser(u, val, right)
 		}
 
 		fw, ok := DyadicOps.Lookup(name)
@@ -797,7 +781,7 @@ func DoRhoDyadic(left *Thing, right *Thing) *Thing {
 	return t
 }
 
-func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
+func EvalUser(u *UserFunction, left *Thing, right *Thing) *Thing {
 	// Save context
 	oldNumTokens := NumTokens
 	oldEvalPos := EvalPos
@@ -809,74 +793,14 @@ func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
 		oldVals[i] = TokVals[i]
 		oldNames[i] = TokNames[i]
 	}
-	oldArg, argOk := Vars.Lookup(u.ArgName)
-
-	var oldLocals [20]*Thing
-	var localOks [20]byte
-	numLocals := u.Locals.Len
-	for i := word(0); i < numLocals; i++ {
-		locName := u.Locals.Get(i)
-		oldLocals[i], localOks[i] = Vars.Lookup(locName)
-	}
-
-	// Setup context
-	NumTokens = u.NumTokens
-	EvalPos = 0
-	for i := word(0); i < NumTokens; i++ {
-		TokKinds[i] = u.TokKinds.Get(i)
-		TokVals[i] = u.TokVals.Get(i)
-		TokNames[i] = u.TokNames.Get(i)
-	}
-	Vars.Insert(u.ArgName, right)
-	for i := word(0); i < numLocals; i++ {
-		locName := u.Locals.Get(i)
-		Vars.Insert(locName, (*Thing)(0))
-	}
-
-	defer func() {
-		// Restore context
-		NumTokens = oldNumTokens
-		EvalPos = oldEvalPos
-		for i := word(0); i < NumTokens; i++ {
-			TokKinds[i] = oldKinds[i]
-			TokVals[i] = oldVals[i]
-			TokNames[i] = oldNames[i]
-		}
-		if argOk != 0 {
-			Vars.Insert(u.ArgName, oldArg)
-		} else {
-			Vars.Insert(u.ArgName, (*Thing)(0))
-		}
-		for i := word(0); i < numLocals; i++ {
-			locName := u.Locals.Get(i)
-			if localOks[i] != 0 {
-				Vars.Insert(locName, oldLocals[i])
-			} else {
-				Vars.Insert(locName, (*Thing)(0))
-			}
-		}
-	}()
-
-	var res *Thing
-	res = EvalStatementsUntil(0, 0)
-	return res
-}
-
-func EvalUserDyadic(u *UserDyadic, left *Thing, right *Thing) *Thing {
-	// Save context
-	oldNumTokens := NumTokens
-	oldEvalPos := EvalPos
-	var oldKinds [100]byte
-	var oldVals [100]int
-	var oldNames [100]string
-	for i := word(0); i < NumTokens; i++ {
-		oldKinds[i] = TokKinds[i]
-		oldVals[i] = TokVals[i]
-		oldNames[i] = TokNames[i]
-	}
-	oldLhs, lhsOk := Vars.Lookup(u.LhsName)
 	oldRhs, rhsOk := Vars.Lookup(u.RhsName)
 
+	var oldLhs *Thing
+	var lhsOk byte
+	if len(u.LhsName) > 0 {
+		oldLhs, lhsOk = Vars.Lookup(u.LhsName)
+	}
+
 	var oldLocals [20]*Thing
 	var localOks [20]byte
 	numLocals := u.Locals.Len
@@ -893,8 +817,10 @@ func EvalUserDyadic(u *UserDyadic, left *Thing, right *Thing) *Thing {
 		TokVals[i] = u.TokVals.Get(i)
 		TokNames[i] = u.TokNames.Get(i)
 	}
-	Vars.Insert(u.LhsName, left)
 	Vars.Insert(u.RhsName, right)
+	if len(u.LhsName) > 0 {
+		Vars.Insert(u.LhsName, left)
+	}
 	for i := word(0); i < numLocals; i++ {
 		locName := u.Locals.Get(i)
 		Vars.Insert(locName, (*Thing)(0))
@@ -908,16 +834,18 @@ func EvalUserDyadic(u *UserDyadic, left *Thing, right *Thing) *Thing {
 			TokKinds[i] = oldKinds[i]
 			TokVals[i] = oldVals[i]
 			TokNames[i] = oldNames[i]
-		}
-		if lhsOk != 0 {
-			Vars.Insert(u.LhsName, oldLhs)
-		} else {
-			Vars.Insert(u.LhsName, (*Thing)(0))
 		}
 		if rhsOk != 0 {
 			Vars.Insert(u.RhsName, oldRhs)
 		} else {
 			Vars.Insert(u.RhsName, (*Thing)(0))
+		}
+		if len(u.LhsName) > 0 {
+			if lhsOk != 0 {
+				Vars.Insert(u.LhsName, oldLhs)
+			} else {
+				Vars.Insert(u.LhsName, (*Thing)(0))
+			}
 		}
 		for i := word(0); i < numLocals; i++ {
 			locName := u.Locals.Get(i)
