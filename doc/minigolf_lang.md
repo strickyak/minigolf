@@ -15,8 +15,11 @@ often available in C99 standard libraries.
 
 ## 1.02 Compiler Modes
 
-The compiler is designed for "Whole Program Compilation" in which the source code
-to all needed libraries is available to the compiler at once.
+The compiler is designed for "Whole Program Compilation" in which the
+source code to all needed libraries is available to the compiler at once.
+Instead of adding libraries as required in a link stage, we parse everything
+that gets imported, and we use Dead Code Eliminination (Dead Function &
+Dead Branch) to eliminate unwanted things.
 
 Working with precompiled libraries may be supported in the future.
 

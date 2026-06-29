@@ -1,5 +1,7 @@
 package main
 
+import "smap"
+
 // ===== External I/O =====
 
 // minigolf:linkage("getchar")
@@ -15,15 +17,11 @@ const TokVar = 2
 const TokFunc = 3
 const TokArrow = 4
 
-// Function IDs
-const FnIota = 1
-const FnRho = 2
-const FnAdd = 3
-const FnSub = 4
-const FnMul = 5
-const FnDiv = 6
-const FnMod = 7
-const FnNeg = 8
+// ===== Function Type Aliases =====
+
+type MonadicFn func(*Thing) *Thing
+type DyadicFn func(*Thing, *Thing) *Thing
+type ArithOp func(int, int) int
 
 // ===== I/O Utilities (putchar/getchar only) =====
 
@@ -143,105 +141,29 @@ func MakeScalar(n int) *Thing {
 	return t
 }
 
-// ===== Variables (Global Scope) =====
+// ===== Global smap-based storage =====
 
-const MaxVars = 52
+var Strings smap.InternTable
+var Vars smap.Imap[*Thing]
+var MonadicOps smap.Imap[word]
+var DyadicOps smap.Imap[word]
 
-var VarNames [832]byte // MaxVars * 16, flattened
-var VarNameLens [52]word
-var VarValues [52]*Thing
-var NumVars word
+// ===== Helper: build string from LineBuf range =====
 
-func VarNameAt(v word, i word) byte {
-	return VarNames[v*16+i]
-}
-
-func SetVarNameAt(v word, i word, c byte) {
-	VarNames[v*16+i] = c
-}
-
-func InternVar(start word, length word) word {
-	for vi := range NumVars {
-		if VarNameLens[vi] == length {
-			same := byte(1)
-			for ci := range length {
-				if VarNameAt(vi, ci) != LineBuf[start+ci] {
-					same = 0
-					break
-				}
-			}
-			if same != 0 {
-				return vi
-			}
-		}
-	}
-	// Add new variable
-	idx := NumVars
-	VarNameLens[idx] = length
-	for ci := range length {
-		SetVarNameAt(idx, ci, LineBuf[start+ci])
-	}
-	NumVars++
-	return idx
-}
-
-func PutVarName(vi word) {
-	for ci := range VarNameLens[vi] {
-		putchar(VarNameAt(vi, ci))
-	}
+func BufStr(start word, length word) string {
+	var s string
+	s.Base = word(&LineBuf[start])
+	s.Len = length
+	s.Cap = length
+	return s
 }
 
 // ===== Tokenizer =====
 
 var TokKinds [100]byte
 var TokVals [100]int
+var TokNames [100]string
 var NumTokens word
-
-func MatchWord(start word, length word, s *byte) byte {
-	i := word(0)
-	for i < length {
-		if *s == 0 {
-			return 0
-		}
-		if LineBuf[start+i] != *s {
-			return 0
-		}
-		i++
-		s = (*byte)(word(s) + 1)
-	}
-	if *s != 0 {
-		return 0
-	}
-	return 1
-}
-
-func IdentifyFunc(start word, length word) int {
-	if MatchWord(start, length, "iota") != 0 {
-		return FnIota
-	}
-	if MatchWord(start, length, "rho") != 0 {
-		return FnRho
-	}
-	if MatchWord(start, length, "add") != 0 {
-		return FnAdd
-	}
-	if MatchWord(start, length, "sub") != 0 {
-		return FnSub
-	}
-	if MatchWord(start, length, "mul") != 0 {
-		return FnMul
-	}
-	if MatchWord(start, length, "div") != 0 {
-		return FnDiv
-	}
-	if MatchWord(start, length, "mod") != 0 {
-		return FnMod
-	}
-	if MatchWord(start, length, "neg") != 0 {
-		return FnNeg
-	}
-	return 0
-}
 
 func Tokenize() {
 	NumTokens = 0
@@ -319,9 +241,9 @@ func Tokenize() {
 				pos++
 			}
 			length := pos - start
-			idx := InternVar(start, length)
+			name := Strings.Intern(BufStr(start, length))
 			TokKinds[NumTokens] = TokVar
-			TokVals[NumTokens] = int(idx)
+			TokNames[NumTokens] = name
 			NumTokens++
 			continue
 		}
@@ -347,18 +269,16 @@ func Tokenize() {
 				pos++
 			}
 			length := pos - start
-			fnId := IdentifyFunc(start, length)
-			if fnId == 0 {
-				PutStr("Unknown function: ")
-				for ei := start; ei < pos; ei++ {
-					putchar(LineBuf[ei])
-				}
-				putchar('\n')
-			} else {
-				TokKinds[NumTokens] = TokFunc
-				TokVals[NumTokens] = fnId
-				NumTokens++
+			name := Strings.Intern(BufStr(start, length))
+			// Verify it's a known function
+			mw, mok := MonadicOps.Lookup(name)
+			dw, dok := DyadicOps.Lookup(name)
+			if mok == 0 && dok == 0 {
+				panic("unknown function")
 			}
+			TokKinds[NumTokens] = TokFunc
+			TokNames[NumTokens] = name
+			NumTokens++
 			continue
 		}
 
@@ -383,18 +303,25 @@ var WasAssign byte
 
 func Eval() *Thing {
 	if EvalPos >= NumTokens {
-		PutStr("Error: unexpected end of expression\n")
-		return (*Thing)(0)
+		panic("unexpected end of expression")
 	}
 
 	kind := TokKinds[EvalPos]
 
 	// Monadic function application
 	if kind == TokFunc {
-		fnId := TokVals[EvalPos]
+		name := TokNames[EvalPos]
 		EvalPos++
 		right := Eval()
-		return ApplyMonadic(fnId, right)
+		if word(right) == 0 {
+			panic("nil argument to monadic")
+		}
+		fw, ok := MonadicOps.Lookup(name)
+		if ok == 0 {
+			panic("not monadic")
+		}
+		fn := MonadicFn(fw)
+		return fn(right)
 	}
 
 	// Primary value: number strand or variable
@@ -403,38 +330,44 @@ func Eval() *Thing {
 	if kind == TokNum {
 		val = ParseStrand()
 	} else if kind == TokVar {
-		varIdx := word(TokVals[EvalPos])
+		name := TokNames[EvalPos]
 		EvalPos++
 
 		// Assignment: Name <- expr
 		if EvalPos < NumTokens && TokKinds[EvalPos] == TokArrow {
 			EvalPos++ // skip '<-'
 			right := Eval()
-			VarValues[varIdx] = right
+			Vars.Insert(name, right)
 			WasAssign = 1
 			return right
 		}
 
 		// Variable lookup
-		val = VarValues[varIdx]
+		val, ok := Vars.Lookup(name)
+		if ok == 0 {
+			panic("undefined variable")
+		}
 		if word(val) == 0 {
-			PutStr("Error: undefined variable ")
-			PutVarName(varIdx)
-			putchar('\n')
-			return (*Thing)(0)
+			panic("undefined variable")
 		}
 	} else {
-		PutStr("Error: unexpected token\n")
-		EvalPos++
-		return (*Thing)(0)
+		panic("unexpected token")
 	}
 
 	// Dyadic function: val func expr
 	if EvalPos < NumTokens && TokKinds[EvalPos] == TokFunc {
-		fnId := TokVals[EvalPos]
+		name := TokNames[EvalPos]
 		EvalPos++
 		right := Eval()
-		return ApplyDyadic(fnId, val, right)
+		if word(right) == 0 {
+			panic("nil argument to dyadic")
+		}
+		fw, ok := DyadicOps.Lookup(name)
+		if ok == 0 {
+			panic("not dyadic")
+		}
+		fn := DyadicFn(fw)
+		return fn(val, right)
 	}
 
 	return val
@@ -461,38 +394,6 @@ func ParseStrand() *Thing {
 }
 
 // ===== APL Operations =====
-
-func ApplyMonadic(fnId int, right *Thing) *Thing {
-	if word(right) == 0 {
-		return (*Thing)(0)
-	}
-	if fnId == FnIota {
-		return DoIota(right)
-	}
-	if fnId == FnRho {
-		return DoRhoMonadic(right)
-	}
-	if fnId == FnNeg {
-		return DoNeg(right)
-	}
-	PutStr("Error: function cannot be used monadically\n")
-	return right
-}
-
-func ApplyDyadic(fnId int, left *Thing, right *Thing) *Thing {
-	if word(left) == 0 || word(right) == 0 {
-		return (*Thing)(0)
-	}
-	if fnId == FnRho {
-		return DoRhoDyadic(left, right)
-	}
-	if fnId == FnAdd || fnId == FnSub || fnId == FnMul ||
-		fnId == FnDiv || fnId == FnMod {
-		return DoArithDyadic(fnId, left, right)
-	}
-	PutStr("Error: function cannot be used dyadically\n")
-	return left
-}
 
 // iota N => vector [0, 1, ..., N-1]  (0-based)
 func DoIota(arg *Thing) *Thing {
@@ -564,33 +465,29 @@ func DoNeg(arg *Thing) *Thing {
 	return t
 }
 
-func DoArithOp(fnId int, a int, b int) int {
-	if fnId == FnAdd {
-		return a + b
-	}
-	if fnId == FnSub {
-		return a - b
-	}
-	if fnId == FnMul {
-		return a * b
-	}
-	if fnId == FnDiv {
-		if b == 0 {
-			PutStr("Error: division by zero\n")
-			return 0
-		}
-		return a / b
-	}
-	// FnMod
+// ===== Element-wise Arithmetic Operations =====
+
+func AddOp(a int, b int) int { return a + b }
+func SubOp(a int, b int) int { return a - b }
+func MulOp(a int, b int) int { return a * b }
+
+func DivOp(a int, b int) int {
 	if b == 0 {
-		PutStr("Error: modulo by zero\n")
-		return 0
+		panic("division by zero")
+	}
+	return a / b
+}
+
+func ModOp(a int, b int) int {
+	if b == 0 {
+		panic("modulo by zero")
 	}
 	return a % b
 }
 
-// Dyadic arithmetic with scalar extension
-func DoArithDyadic(fnId int, left *Thing, right *Thing) *Thing {
+// ===== Dyadic Arithmetic with Scalar Extension =====
+
+func DoArithDyadic(left *Thing, right *Thing, op ArithOp) *Thing {
 	t := NewThing()
 	leftLen := left.Values.Len
 	rightLen := right.Values.Len
@@ -599,7 +496,7 @@ func DoArithDyadic(fnId int, left *Thing, right *Thing) *Thing {
 	if left.Dimensions.Len == 0 && right.Dimensions.Len == 0 {
 		a := PtrToInt(left.Values.Get(0))
 		b := PtrToInt(right.Values.Get(0))
-		t.Values.Append(IntToPtr(DoArithOp(fnId, a, b)))
+		t.Values.Append(IntToPtr(op(a, b)))
 		return t
 	}
 
@@ -630,9 +527,31 @@ func DoArithDyadic(fnId int, left *Thing, right *Thing) *Thing {
 		}
 		a := PtrToInt(left.Values.Get(li))
 		b := PtrToInt(right.Values.Get(ri))
-		t.Values.Append(IntToPtr(DoArithOp(fnId, a, b)))
+		t.Values.Append(IntToPtr(op(a, b)))
 	}
 	return t
+}
+
+// Dyadic function wrappers matching DyadicFn signature
+func DoAdd(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, AddOp) }
+func DoSub(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, SubOp) }
+func DoMulDy(left *Thing, right *Thing) *Thing  { return DoArithDyadic(left, right, MulOp) }
+func DoDivDy(left *Thing, right *Thing) *Thing  { return DoArithDyadic(left, right, DivOp) }
+func DoModDy(left *Thing, right *Thing) *Thing  { return DoArithDyadic(left, right, ModOp) }
+
+// ===== Initialization =====
+
+func init() {
+	MonadicOps.Insert(Strings.Intern("iota"), word(DoIota))
+	MonadicOps.Insert(Strings.Intern("rho"), word(DoRhoMonadic))
+	MonadicOps.Insert(Strings.Intern("neg"), word(DoNeg))
+
+	DyadicOps.Insert(Strings.Intern("rho"), word(DoRhoDyadic))
+	DyadicOps.Insert(Strings.Intern("add"), word(DoAdd))
+	DyadicOps.Insert(Strings.Intern("sub"), word(DoSub))
+	DyadicOps.Insert(Strings.Intern("mul"), word(DoMulDy))
+	DyadicOps.Insert(Strings.Intern("div"), word(DoDivDy))
+	DyadicOps.Insert(Strings.Intern("mod"), word(DoModDy))
 }
 
 // ===== Pretty Printer =====

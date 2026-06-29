@@ -23,14 +23,14 @@ type Imap[T any] struct {
 	values slice[T]
 }
 
-func (o *Imap[T]) Lookup(key /* interned */ string) (*T, bool) {
+func (o *Imap[T]) Lookup(key /* interned */ string) (T, bool) {
 	for i, e := range o.keys {
 		if e.Base == key.Base { // base comparison, fast.
-			return &o.values[i], true
+			return o.values[i], true
 		}
 	}
-	var zeroT T
-	return zeroT, false
+	var zero word
+	return peek[T](word(&zero)), false
 }
 
 // Insert returns true if the key is fresh, false if value is replaced at old key slot.

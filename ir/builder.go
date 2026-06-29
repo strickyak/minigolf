@@ -2362,6 +2362,19 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}, Op: "bitcast", Operand: arg}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}
 			}
+			// Also check typeAliases for named function types (e.g., type MonadicFn func(...) ...)
+			if aliasExpr, ok := b.typeAliases[qname]; ok {
+				arg := b.buildExpr(e.Arguments[0])
+				typ := b.astToIRType(aliasExpr)
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: typ}, Op: "bitcast", Operand: arg}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: typ}
+			}
+			if aliasExpr, ok := b.typeAliases["prelude."+ident.Value]; ok {
+				arg := b.buildExpr(e.Arguments[0])
+				typ := b.astToIRType(aliasExpr)
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: typ}, Op: "bitcast", Operand: arg}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: typ}
+			}
 			// It's not a typedef, treat as an indirect call from a variable holding a function!
 			funcVal := b.buildExpr(e.Function)
 			if b.CheckNil {
@@ -3240,7 +3253,8 @@ func (b *Builder) getTypeSize(typ Type) int {
 		}
 		return size
 	}
-	panic("why return 2")
+	log.Panicf("getTypesize bad %v", typ)
+    panic(0)
 }
 
 func (b *Builder) EvalConst(expr ast.Expression) int64 {
@@ -3492,6 +3506,8 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 			b.getTypeString(item.QName) // resolves sizes
 		} else if _, ok := s.BaseType.(*ast.FuncType); ok {
 			b.Program.TypeDefs[item.QName] = TypeWord
+			// Also register as a type alias so astToIRType can resolve the name.
+			b.typeAliases[item.QName] = s.BaseType
 		}
 	case ItemConst:
 		s := item.ASTNode.(*ast.ConstStatement)
