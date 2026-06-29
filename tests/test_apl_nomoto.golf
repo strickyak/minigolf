@@ -1,0 +1,7 @@
+package _
+
+import "apl"
+
+func main() {
+	apl.RunTests()
+}

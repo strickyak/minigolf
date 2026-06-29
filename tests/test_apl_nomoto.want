@@ -1,0 +1,23 @@
+=== APL Tests ===
+iota 5 => 0 1 2 3 4
+3 3 rho iota 9 =>
+0 1 2
+3 4 5
+6 7 8
+2 3 rho 1 2 3 =>
+1 2 3
+1 2 3
+Vec <- iota 4
+Vec => 0 1 2 3
+rho Vec => 4
+A <- iota 3
+A add A => 0 2 4
+2 add 3 => 5
+neg iota 4 =>  0 -1 -2 -3
+2 3 rho iota 6 =>
+0 1 2
+3 4 5
+M <- 2 3 rho iota 6
+rho M => 2 3
+10 mul iota 5 =>  0 10 20 30 40
+=== Tests Done ===

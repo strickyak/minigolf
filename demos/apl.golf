@@ -343,7 +343,8 @@ func Eval() *Thing {
 		}
 
 		// Variable lookup
-		val, ok := Vars.Lookup(name)
+		var ok byte
+		val, ok = Vars.Lookup(name)
 		if ok == 0 {
 			panic("undefined variable")
 		}
@@ -689,28 +690,25 @@ func RunTests() {
 // ===== Main =====
 
 func main() {
-	RunTests()
-	if REPL != 0 {
-		for {
-			PutStr("      ")
-			ok := ReadLine()
-			if ok == 0 {
-				break
-			}
-			if LineLen == 0 {
-				continue
-			}
-			Tokenize()
-			if NumTokens == 0 {
-				continue
-			}
-			EvalPos = 0
-			WasAssign = 0
-			result := Eval()
-			if word(result) != 0 && WasAssign == 0 {
-				PrintThing(result)
-			}
+	for {
+		PutStr("      ")
+		ok := ReadLine()
+		if ok == 0 {
+			break
 		}
-		putchar('\n')
+		if LineLen == 0 {
+			continue
+		}
+		Tokenize()
+		if NumTokens == 0 {
+			continue
+		}
+		EvalPos = 0
+		WasAssign = 0
+		result := Eval()
+		if word(result) != 0 && WasAssign == 0 {
+			PrintThing(result)
+		}
 	}
+	putchar('\n')
 }
