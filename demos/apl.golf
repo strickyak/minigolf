@@ -160,6 +160,7 @@ var DyadicOps smap.Imap[word]
 
 type UserMonadic struct {
 	ArgName   string
+	Locals    slice[string]
 	NumTokens word
 	TokKinds  slice[byte]
 	TokVals   slice[int]
@@ -522,14 +523,27 @@ func Eval() *Thing {
 		argName := TokNames[EvalPos]
 		EvalPos++
 
+		u := (*UserMonadic)(zalloc(sizeof[UserMonadic]()))
+		u.ArgName = argName
+		u.NumTokens = 0
+
+		// Parse optional locals: ; localName
+		for EvalPos < NumTokens && TokKinds[EvalPos] == TokSemi {
+			EvalPos++ // skip ;
+			if EvalPos >= NumTokens || TokKinds[EvalPos] != TokVar {
+				panic("expected local variable name after ;")
+			}
+			if u.Locals.Len >= 20 {
+				panic("maximum 20 local variables exceeded")
+			}
+			u.Locals.Append(TokNames[EvalPos])
+			EvalPos++
+		}
+
 		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokLBrace {
 			panic("expected {")
 		}
 		EvalPos++
-
-		u := (*UserMonadic)(zalloc(sizeof[UserMonadic]()))
-		u.ArgName = argName
-		u.NumTokens = 0
 
 		// Copy tokens until TokRBrace
 		for EvalPos < NumTokens && TokKinds[EvalPos] != TokRBrace {
@@ -749,6 +763,14 @@ func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
 	}
 	oldArg, argOk := Vars.Lookup(u.ArgName)
 
+	var oldLocals [20]*Thing
+	var localOks [20]byte
+	numLocals := u.Locals.Len
+	for i := word(0); i < numLocals; i++ {
+		locName := u.Locals.Get(i)
+		oldLocals[i], localOks[i] = Vars.Lookup(locName)
+	}
+
 	// Setup context
 	NumTokens = u.NumTokens
 	EvalPos = 0
@@ -758,6 +780,10 @@ func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
 		TokNames[i] = u.TokNames.Get(i)
 	}
 	Vars.Insert(u.ArgName, right)
+	for i := word(0); i < numLocals; i++ {
+		locName := u.Locals.Get(i)
+		Vars.Insert(locName, (*Thing)(0))
+	}
 
 	defer func() {
 		// Restore context
@@ -772,6 +798,14 @@ func EvalUserMonadic(u *UserMonadic, right *Thing) *Thing {
 			Vars.Insert(u.ArgName, oldArg)
 		} else {
 			Vars.Insert(u.ArgName, (*Thing)(0))
+		}
+		for i := word(0); i < numLocals; i++ {
+			locName := u.Locals.Get(i)
+			if localOks[i] != 0 {
+				Vars.Insert(locName, oldLocals[i])
+			} else {
+				Vars.Insert(locName, (*Thing)(0))
+			}
 		}
 	}()
 
