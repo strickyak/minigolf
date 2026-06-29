@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ir"
@@ -35,11 +34,7 @@ func (b *Backend) getTypeSizeUsingIrt9(irt *ir.Type) int {
 	}
 	if irt.IsAnArray() {
 		et := irt.ArrayElementType()
-		length := 0
-		idx := strings.Index(irt.Name, "]")
-		if idx != -1 {
-			length, _ = strconv.Atoi(irt.Name[1:idx])
-		}
+		length := irt.ArrayLength()
 		return length * b.getTypeSizeByType(et)
 	}
 	if irt.IsAStruct() {
@@ -80,7 +75,7 @@ func (b *Backend) getTypeSizeUsingIrt9(irt *ir.Type) int {
 	case "word", "int", "const_integer", "uint", "noreturn":
 		return 2
 	}
-	if strings.HasPrefix(irt.Name, "func") {
+	if irt.IsAFuncPtr() || irt.Name == "func" {
 		return 2
 	}
 	if b.program != nil {
@@ -154,39 +149,27 @@ func (b *Backend) getFieldOffsetAndSizeUsingIrt(irt ir.Type, fieldIndex int) (in
 	panic(0)
 }
 
-func (b *Backend) getFieldOffsetAndSize(structName string, fieldIndex int) (int, int) {
-	content := ""
-	if def, ok := b.program.TypeDefs[structName]; ok {
-		content = def.Name[7 : len(def.Name)-1]
-	} else if strings.HasPrefix(structName, "struct{") || strings.HasPrefix(structName, "tuple_") {
-		content = structName[7 : len(structName)-1]
-	} else {
-		log.Panicf("getFieldOffsetAndSize: not a struct: %q", structName)
+func (b *Backend) getFieldOffsetAndSize(structTyp ir.Type, fieldIndex int) (int, int) {
+	fields := structTyp.FieldsOfStruct()
+	if len(fields) == 0 {
+		if def, ok := b.program.TypeDefs[structTyp.Name]; ok {
+			fields = def.FieldsOfStruct()
+		}
+	}
+	if len(fields) == 0 {
+		log.Panicf("getFieldOffsetAndSize: not a struct or no fields: %q", structTyp.Name)
 	}
 
 	byteOffset := 0
-	depth := 0
-	start := 0
-	fIdx := 0
-	for idx := 0; idx < len(content); idx++ {
-		if content[idx] == '{' {
-			depth++
-		} else if content[idx] == '}' {
-			depth--
-		} else if content[idx] == ';' && depth == 0 {
-			fTyp := content[start:idx]
-			sz := b.getTypeSize(fTyp, nil)
-			if fIdx < fieldIndex {
-				byteOffset += sz
-			} else if fIdx == fieldIndex {
-				// log.Printf("NAN getFieldOffsetAndSize: struct=%q field=%d off=%d sz=%d", structName, fieldIndex, byteOffset, sz)
-				return byteOffset, sz
-			}
-			fIdx++
-			start = idx + 1
+	for i, f := range fields {
+		sz := b.getTypeSizeByType(f.Type)
+		if i < fieldIndex {
+			byteOffset += sz
+		} else if i == fieldIndex {
+			return byteOffset, sz
 		}
 	}
-	log.Panicf("getFieldOffsetAndSize: field not found: %q . %d", structName, fieldIndex)
+	log.Panicf("getFieldOffsetAndSize: field not found: %q . %d", structTyp.Name, fieldIndex)
 	panic(0)
 }
 
