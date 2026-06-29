@@ -1746,8 +1746,71 @@ func (b *Builder) buildAddress(expr ast.Expression) Value {
 	return res.Address
 }
 
+// isTypeName checks whether the given name refers to a type (struct def
+// or type alias) rather than a variable or function.  This is used to
+// disambiguate (*X)(args): if X is a type name it is a pointer-cast,
+// otherwise it is a dereference-and-call.
+func (b *Builder) isTypeName(name string) bool {
+	// Check with current package prefix
+	qname := b.currentPackage + "." + name
+	if _, ok := b.tm.typeDefsAST[qname]; ok {
+		return true
+	}
+	if _, ok := b.tm.typeAliases[qname]; ok {
+		return true
+	}
+	// Check with prelude prefix
+	if _, ok := b.tm.typeDefsAST["prelude."+name]; ok {
+		return true
+	}
+	if _, ok := b.tm.typeAliases["prelude."+name]; ok {
+		return true
+	}
+	// Check bare name and primitives
+	switch name {
+	case "byte", "word", "int", "uint", "bool":
+		return true
+	}
+	if _, ok := b.tm.typeDefsAST[name]; ok {
+		return true
+	}
+	if _, ok := b.tm.typeAliases[name]; ok {
+		return true
+	}
+	return false
+}
+
 func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	if ptrType, ok := e.Function.(*ast.PointerType); ok {
+		// Disambiguate: (*T)(x) is a pointer cast if T is a type name,
+		// but (*fn)(x) is a deref + indirect call if fn is a variable.
+		if ident, ok := ptrType.Elt.(*ast.Identifier); ok {
+			name := ident.FullName()
+			if !b.isTypeName(name) {
+				// (*variable)(args) — dereference the pointer and call indirectly
+				ptrVal := b.buildExpr(ptrType.Elt)
+				if b.CheckNil {
+					b.emitNilCheck(ptrVal, e)
+				}
+				// Dereference: the value at *ptrVal is the function pointer
+				funcVal := b.addInstr(&LoadPtr{BaseInstruction: BaseInstruction{Typ: ptrVal.Type().PointedType()}, Ptr: ptrVal}, e)
+				var args []Value
+				for _, arg := range e.Arguments {
+					args = append(args, b.buildExpr(arg))
+				}
+				retTyp := TypeWord
+				if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
+					retTyp = b.tm.getFuncReturnType(ft.ReturnParameters)
+				}
+				if isDefer {
+					b.deferredActions = append(b.deferredActions, DeferredAction{FuncPtr: funcVal, Args: args, Token: e})
+					return ExprResult{}
+				}
+				val := b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: funcVal, Args: args}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: retTyp}
+			}
+		}
+		// It's a pointer type cast: (*TypeName)(expr)
 		targetTyp := b.tm.astToIRType(ptrType)
 		val := b.buildExpr(e.Arguments[0])
 		// Special case: (*byte)(sliceExpr) where sliceExpr is a slice[byte] / string.
