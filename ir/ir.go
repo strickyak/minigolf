@@ -119,7 +119,7 @@ func (t Type) FieldsOfStruct() (result []NameAndType) {
 		for i, field := range st.Fields {
 			result = append(result, NameAndType{
 				Name:       field.Name.ShortName,
-				Type:       t.Builder.astToIRType(field.Type),
+				Type:       t.Builder.tm.astToIRType(field.Type),
 				FieldIndex: i,
 			})
 		}

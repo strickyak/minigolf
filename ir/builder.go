@@ -113,14 +113,6 @@ func NewBuilder(resolveCallback func(node ast.Node, defPkg string) ast.Node, wor
 	return b
 }
 
-// FORWARDING
-func (b *Builder) astToIRType(expr ast.Expression) Type { return b.tm.astToIRType(expr) }
-
-// FORWARDING
-func (b *Builder) SyntheticFuncName(e *ast.FuncType) string {
-	return b.tm.SyntheticFuncName(e)
-}
-
 func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
 	tmpName := fmt.Sprintf(".anytmp_%d", b.nextValueID)
 	b.varTypes[tmpName] = val.Type()
@@ -188,19 +180,9 @@ func (b *Builder) coerceCallArgs(f *Function, args []Value, expr ast.Node) {
 	}
 }
 
-// FORWARDING
-func (b *Builder) substituteGenericTokens(argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token, instName string) []token.Token {
-	return b.tm.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
-}
-
-// FORWARDING
-func (b *Builder) instantiateGeneric(instName, genericName string, argNodes []ast.Expression, tmpl *GenericTemplate, instantiateToken *token.Token) {
-	b.tm.instantiateGeneric(instName, genericName, argNodes, tmpl, instantiateToken)
-}
-
 func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps []Type, tmpl *GenericTemplate, instantiateToken *token.Token) {
 	//fmt.Printf("DEBUG instantiateGenericFunc ENTER: instName=%s genericName=%s argTyps=%v\n", instName, genericName, argTyps)
-	newTokens := b.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
+	newTokens := b.tm.substituteGenericTokens(argTyps, tmpl, instantiateToken, instName)
 
 	p := parser.New(newTokens)
 	stmt := p.ParseStatementForGeneric()
@@ -437,7 +419,7 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 	funcName := s.Name.Value
 	var receiverTyp Type
 	if s.Receiver != nil {
-		receiverTyp = b.astToIRType(s.Receiver.Type)
+		receiverTyp = b.tm.astToIRType(s.Receiver.Type)
 		baseType := receiverTyp
 		if baseType.IsAPointer() {
 			baseType = baseType.PointedType()
@@ -447,14 +429,14 @@ func (b *Builder) registerFunc(s *ast.FuncStatement) {
 		funcName = b.currentPackage + "." + funcName
 	}
 	f := &Function{Name: funcName, Linkage: s.Linkage}
-	f.ReturnType = b.getFuncReturnType(s.ReturnParameters)
+	f.ReturnType = b.tm.getFuncReturnType(s.ReturnParameters)
 	paramIdx := 0
 	if s.Receiver != nil {
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: s.Receiver.Name.Value, Typ: receiverTyp})
 		paramIdx++
 	}
 	for _, p := range s.Parameters {
-		typ := b.astToIRType(p.Type)
+		typ := b.tm.astToIRType(p.Type)
 		f.Parameters = append(f.Parameters, &Parameter{ID: paramIdx, Name: p.Name.Value, Typ: typ})
 		paramIdx++
 	}
@@ -482,7 +464,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 
 	funcName := s.Name.Value
 	if s.Receiver != nil {
-		receiverTyp := b.astToIRType(s.Receiver.Type)
+		receiverTyp := b.tm.astToIRType(s.Receiver.Type)
 		baseType := receiverTyp
 
 		// If baseType is a pointer, use its pointed type.
@@ -542,7 +524,7 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	// Map named return variables
 	for _, rp := range s.ReturnParameters {
 		if rp.Name != nil {
-			typ := b.astToIRType(rp.Type)
+			typ := b.tm.astToIRType(rp.Type)
 			b.varTypes[rp.Name.Value] = typ
 			b.writeVariable(rp.Name.Value, b.currentBlock, b.zeroConstant(typ))
 		}
@@ -619,9 +601,9 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 				} else if action.FuncPtr != nil {
 					retTyp := TypeWord
 					if ptrType, ok := action.FuncPtr.Type().PointedType().Expr.(*ast.FuncType); ok {
-						retTyp = b.getFuncReturnType(ptrType.ReturnParameters)
+						retTyp = b.tm.getFuncReturnType(ptrType.ReturnParameters)
 					} else if ft, ok := action.FuncPtr.Type().Expr.(*ast.FuncType); ok {
-						retTyp = b.getFuncReturnType(ft.ReturnParameters)
+						retTyp = b.tm.getFuncReturnType(ft.ReturnParameters)
 					}
 					b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: action.FuncPtr, Args: action.Args}, action.Token)
 				}
@@ -1012,7 +994,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		var val Value
 
 		if s.ValueType != nil {
-			typ = b.astToIRType(s.ValueType)
+			typ = b.tm.astToIRType(s.ValueType)
 			if s.Value != nil {
 				val = b.buildExpr(s.Value)
 				val = b.coerceType(val, typ)
@@ -1061,7 +1043,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 						BaseInstruction: BaseInstruction{Typ: TypeVoid},
 						Comment:         fmt.Sprintf("Line %d: Assignment Tuple Unpack LHS: %v", s.Token.Line, f),
 					}, s)
-					ext := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: b.astToIRType(fieldTyp)}, Struct: tupleVal, FieldIndex: i}, s)
+					ext := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: b.tm.astToIRType(fieldTyp)}, Struct: tupleVal, FieldIndex: i}, s)
 					b.assignToExpr(s.Names[i], ext)
 				}
 			}
@@ -1493,7 +1475,7 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 					if rp.Name != nil {
 						fieldVal = b.readVariable(rp.Name.Value, b.currentBlock)
 					} else {
-						fieldVal = b.zeroConstant(b.astToIRType(rp.Type))
+						fieldVal = b.zeroConstant(b.tm.astToIRType(rp.Type))
 					}
 					val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: structTyp}, Struct: val, FieldIndex: i, Val: fieldVal}, s)
 				}
@@ -1766,7 +1748,7 @@ func (b *Builder) buildAddress(expr ast.Expression) Value {
 
 func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	if ptrType, ok := e.Function.(*ast.PointerType); ok {
-		targetTyp := b.astToIRType(ptrType)
+		targetTyp := b.tm.astToIRType(ptrType)
 		val := b.buildExpr(e.Arguments[0])
 		// Special case: (*byte)(sliceExpr) where sliceExpr is a slice[byte] / string.
 		// Extract the base pointer from field 0 of the slice struct rather than
@@ -1827,7 +1809,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 	if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 		if ident, ok := idxExpr.Left.(*ast.Identifier); ok {
 			if ident.Value == "sizeof" {
-				targetTyp := b.astToIRType(idxExpr.Indices[0])
+				targetTyp := b.tm.astToIRType(idxExpr.Indices[0])
 				val := b.addInstr(&Sizeof{BaseInstruction: BaseInstruction{Typ: TypeWord}, TargetTyp: targetTyp}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
 			}
@@ -1837,7 +1819,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			var instTypStr string
 			var argTyps []Type
 			for _, idx := range idxExpr.Indices {
-				argTyp := b.astToIRType(idx)
+				argTyp := b.tm.astToIRType(idx)
 				argTyps = append(argTyps, argTyp)
 				instTypStr += "_" + strings.ReplaceAll(argTyp.Name, "*", "P__")
 			}
@@ -1862,7 +1844,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 					}
 					for i, param := range funcStmt.Parameters {
 						if i < len(args) {
-							b.extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
+							b.tm.extractTypeParamsIR(param.Type, args[i].Type(), typeMap, tmpl.TypeParams)
 						}
 					}
 
@@ -2097,13 +2079,13 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			// Also check typeAliases for named function types (e.g., type MonadicFn func(...) ...)
 			if aliasExpr, ok := b.tm.typeAliases[qname]; ok {
 				arg := b.buildExpr(e.Arguments[0])
-				typ := b.astToIRType(aliasExpr)
+				typ := b.tm.astToIRType(aliasExpr)
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: typ}, Op: "bitcast", Operand: arg}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: typ}
 			}
 			if aliasExpr, ok := b.tm.typeAliases["prelude."+ident.Value]; ok {
 				arg := b.buildExpr(e.Arguments[0])
-				typ := b.astToIRType(aliasExpr)
+				typ := b.tm.astToIRType(aliasExpr)
 				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: typ}, Op: "bitcast", Operand: arg}, e)
 				return ExprResult{IsLValue: false, Value: val, Typ: typ}
 			}
@@ -2117,7 +2099,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			// post_increment calls).
 			retTyp := TypeWord
 			if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
-				retTyp = b.getFuncReturnType(ft.ReturnParameters)
+				retTyp = b.tm.getFuncReturnType(ft.ReturnParameters)
 			}
 
 			if isDefer {
@@ -2150,7 +2132,7 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 
 		retTyp := TypeWord
 		if ft, ok := funcVal.Type().Expr.(*ast.FuncType); ok {
-			retTyp = b.getFuncReturnType(ft.ReturnParameters)
+			retTyp = b.tm.getFuncReturnType(ft.ReturnParameters)
 		}
 		if isDefer {
 			b.deferredActions = append(b.deferredActions, DeferredAction{FuncPtr: funcVal, Args: args, Token: e})
@@ -2318,7 +2300,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			}
 			// Compute byte offset = i * sizeof(eltType).
 			idxWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "bitcast", Operand: idx}, e)
-			eltSize := b.getTypeSize(eltTyp)
+			eltSize := b.tm.getTypeSize(eltTyp)
 			var byteOffset Value
 			if eltSize == 1 {
 				byteOffset = idxWord
@@ -2361,7 +2343,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		for i, f := range st.Fields {
 			if f.Name.Value == e.Right.Value {
 				fieldIdx = i
-				fieldType = b.astToIRType(f.Type)
+				fieldType = b.tm.astToIRType(f.Type)
 				break
 			}
 		}
@@ -2629,7 +2611,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		return ExprResult{IsLValue: false, Value: val, Typ: typ}
 
 	case *ast.CompositeLit:
-		typ := b.astToIRType(e.Type)
+		typ := b.tm.astToIRType(e.Type)
 		var val Value
 
 		isSliceSugar := false
@@ -2649,7 +2631,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		if isSliceSugar {
 			eltTypeName := strings.TrimPrefix(typ.Name, "prelude.slice_")
 			eltTyp := Type{Expr: &ast.Identifier{Value: eltTypeName}, Name: eltTypeName, Builder: b}
-			eltSize := b.getTypeSize(eltTyp)
+			eltSize := b.tm.getTypeSize(eltTyp)
 
 			sliceVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
 
@@ -2721,20 +2703,20 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			}
 
 			fieldVal := b.buildExpr(valExpr)
-			fTyp := b.astToIRType(st.Fields[fieldIdx].Type)
+			fTyp := b.tm.astToIRType(st.Fields[fieldIdx].Type)
 			fieldVal = b.coerceType(fieldVal, fTyp)
 			val = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: val, FieldIndex: fieldIdx, Val: fieldVal}, e)
 		}
 		return ExprResult{IsLValue: false, Value: val, Typ: typ}
 
 	case *ast.ArrayType:
-		typ := b.astToIRType(e)
+		typ := b.tm.astToIRType(e)
 		var val Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
 		if comp, ok := e.Elt.(*ast.CompositeLit); ok {
 			var arrayLen int
 			var eltTypStr string
 			fmt.Sscanf(typ.Name, "[%d]%s", &arrayLen, &eltTypStr)
-			eltTyp := b.astToIRType(&ast.Identifier{Value: eltTypStr})
+			eltTyp := b.tm.astToIRType(&ast.Identifier{Value: eltTypStr})
 
 			for i, el := range comp.Elements {
 				if i >= arrayLen {
@@ -2920,12 +2902,6 @@ func (b *Builder) buildAddressOf(expr ast.Expression) (Value, Type) {
 	return res.Address, res.Typ
 }
 
-// FORWARDING
-func (b *Builder) getTypeString(qname string) Type { return b.tm.getTypeString(qname) }
-
-// FORWARDING
-func (b *Builder) getTypeSize(typ Type) int { return b.tm.getTypeSize(typ) }
-
 func (b *Builder) EvalConst(expr ast.Expression) int64 {
 	// nando-recent
 	// Keep this one.   Does ast.Identifier include qualified names?
@@ -2992,8 +2968,8 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 	case *ast.CallExpression:
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
 			if ident, ok := idxExpr.Left.(*ast.Identifier); ok && ident.Value == "sizeof" {
-				typ := b.astToIRType(idxExpr.Indices[0])
-				size := b.getTypeSize(typ)
+				typ := b.tm.astToIRType(idxExpr.Indices[0])
+				size := b.tm.getTypeSize(typ)
 				return int64(size)
 			}
 		}
@@ -3087,11 +3063,6 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 	b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: res.Address, Val: val}, lhs)
 }
 
-// FORWARDING
-func (b *Builder) extractTypeParamsIR(paramType ast.Expression, argTyp Type, typeMap map[string]Type, typeParams []string) {
-	b.tm.extractTypeParamsIR(paramType, argTyp, typeMap, typeParams)
-}
-
 func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 	log.Printf("# tryResolve (%T)%v", item, item)
 
@@ -3127,7 +3098,7 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		s := item.ASTNode.(*ast.TypeStatement)
 		b.tm.typeAliases[item.QName] = s.BaseType
 		// try to resolve the base type to make sure it's valid
-		b.astToIRType(s.BaseType)
+		b.tm.astToIRType(s.BaseType)
 	case ItemUnknown:
 		// Fallback for types that are not struct, not alias, etc.
 		// Historically ignored in pass 0.
@@ -3149,7 +3120,7 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 			b.Program.TypeDefOrder = append(b.Program.TypeDefOrder, item.QName)
 		}
 		if _, ok := s.BaseType.(*ast.StructType); ok {
-			b.getTypeString(item.QName) // resolves sizes
+			b.tm.getTypeString(item.QName) // resolves sizes
 		} else if _, ok := s.BaseType.(*ast.FuncType); ok {
 			b.Program.TypeDefs[item.QName] = TypeWord
 			// Also register as a type alias so astToIRType can resolve the name.
@@ -3166,12 +3137,12 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 		s := item.ASTNode.(*ast.VarStatement)
 		var typ Type
 		if s.ValueType != nil {
-			typ = b.astToIRType(s.ValueType)
+			typ = b.tm.astToIRType(s.ValueType)
 		} else if s.Value != nil {
 			if lit, ok := s.Value.(*ast.CompositeLit); ok {
-				typ = b.astToIRType(lit.Type)
+				typ = b.tm.astToIRType(lit.Type)
 			} else if arrLit, ok := s.Value.(*ast.ArrayType); ok {
-				typ = b.astToIRType(arrLit)
+				typ = b.tm.astToIRType(arrLit)
 			} else if _, ok := s.Value.(*ast.IntegerLiteral); ok {
 				typ = TypeWord
 			} else if _, ok := s.Value.(*ast.StringLiteral); ok {
@@ -3261,11 +3232,6 @@ func (t Type) ArrayLength() int {
 	return 0
 }
 
-// FORWARDING
-func (b *Builder) getFuncReturnType(returnParams []*ast.Parameter) Type {
-	return b.tm.getFuncReturnType(returnParams)
-}
-
 func (b *Builder) isConstantExpr(expr ast.Expression) bool {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteral:
@@ -3327,7 +3293,7 @@ func (b *Builder) zeroConstant(typ Type) Value {
 		}
 		var fields []Value
 		for _, f := range st.Fields {
-			fTyp := b.astToIRType(f.Type)
+			fTyp := b.tm.astToIRType(f.Type)
 			fields = append(fields, b.zeroConstant(fTyp))
 		}
 		return &ConstStruct{BaseInstruction: BaseInstruction{Typ: typ}, Fields: fields}
@@ -3464,12 +3430,12 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 			} else {
 				valExpr = el
 			}
-			fTyp := b.astToIRType(st.Fields[fieldIdx].Type)
+			fTyp := b.tm.astToIRType(st.Fields[fieldIdx].Type)
 			fields[fieldIdx] = b.evalConstantExpr(valExpr, fTyp)
 		}
 		for i, f := range fields {
 			if f == nil {
-				fTyp := b.astToIRType(st.Fields[i].Type)
+				fTyp := b.tm.astToIRType(st.Fields[i].Type)
 				fields[i] = b.zeroConstant(fTyp)
 			}
 		}
@@ -3538,7 +3504,7 @@ func (b *Builder) isDestructable(t Type) bool {
 	if t.IsAStruct() && t.Expr != nil {
 		if st, ok := t.Expr.(*ast.StructType); ok {
 			for _, field := range st.Fields {
-				fieldTyp := b.astToIRType(field.Type)
+				fieldTyp := b.tm.astToIRType(field.Type)
 				if b.isDestructable(fieldTyp) {
 					return true
 				}
@@ -3547,7 +3513,7 @@ func (b *Builder) isDestructable(t Type) bool {
 	}
 	if st, ok := b.tm.typeDefsAST[t.Name]; ok {
 		for _, field := range st.Fields {
-			fieldTyp := b.astToIRType(field.Type)
+			fieldTyp := b.tm.astToIRType(field.Type)
 			if b.isDestructable(fieldTyp) {
 				return true
 			}
@@ -3555,7 +3521,7 @@ func (b *Builder) isDestructable(t Type) bool {
 	}
 	if t.IsAnArray() && t.Expr != nil {
 		if arr, ok := t.Expr.(*ast.ArrayType); ok {
-			elemTyp := b.astToIRType(arr.Elt)
+			elemTyp := b.tm.astToIRType(arr.Elt)
 			if b.isDestructable(elemTyp) {
 				return true
 			}
@@ -3577,7 +3543,7 @@ func (b *Builder) emitDestruction(typ Type, ptrVal Value, tokenNode ast.Node) {
 	if typ.IsAStruct() && typ.Expr != nil {
 		if st, ok := typ.Expr.(*ast.StructType); ok {
 			for i, field := range st.Fields {
-				fieldTyp := b.astToIRType(field.Type)
+				fieldTyp := b.tm.astToIRType(field.Type)
 				if b.isDestructable(fieldTyp) {
 					fieldPtr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: fieldTyp.PointerTo()}, Ptr: ptrVal, FieldIndex: i}, tokenNode)
 					b.emitDestruction(fieldTyp, fieldPtr, tokenNode)
@@ -3586,7 +3552,7 @@ func (b *Builder) emitDestruction(typ Type, ptrVal Value, tokenNode ast.Node) {
 		}
 	} else if st, ok := b.tm.typeDefsAST[typ.Name]; ok {
 		for i, field := range st.Fields {
-			fieldTyp := b.astToIRType(field.Type)
+			fieldTyp := b.tm.astToIRType(field.Type)
 			if b.isDestructable(fieldTyp) {
 				fieldPtr := b.addInstr(&AddressOfField{BaseInstruction: BaseInstruction{Typ: fieldTyp.PointerTo()}, Ptr: ptrVal, FieldIndex: i}, tokenNode)
 				b.emitDestruction(fieldTyp, fieldPtr, tokenNode)
@@ -3596,7 +3562,7 @@ func (b *Builder) emitDestruction(typ Type, ptrVal Value, tokenNode ast.Node) {
 	// Array elements
 	if typ.IsAnArray() && typ.Expr != nil {
 		if arr, ok := typ.Expr.(*ast.ArrayType); ok {
-			elemTyp := b.astToIRType(arr.Elt)
+			elemTyp := b.tm.astToIRType(arr.Elt)
 			if b.isDestructable(elemTyp) {
 				lenVal := b.EvalConst(arr.Length)
 				for i := int64(0); i < lenVal; i++ {
@@ -3874,7 +3840,7 @@ func (b *Builder) hasDestructiblesOrDefers(node ast.Node) bool {
 		// `:=` and `var name = expr` (inferred type) require copying,
 		// which the no-copy rule forbids for destructibles.
 		if n.ValueType != nil {
-			typ := b.astToIRType(n.ValueType)
+			typ := b.tm.astToIRType(n.ValueType)
 			if b.isDestructable(typ) {
 				return true
 			}
@@ -3927,9 +3893,9 @@ func (b *Builder) buildPanicDestructBlock(actions []DeferredAction, tokenNode as
 			} else if action.FuncPtr != nil {
 				retTyp := TypeWord
 				if ptrType, ok := action.FuncPtr.Type().PointedType().Expr.(*ast.FuncType); ok {
-					retTyp = b.getFuncReturnType(ptrType.ReturnParameters)
+					retTyp = b.tm.getFuncReturnType(ptrType.ReturnParameters)
 				} else if ft, ok := action.FuncPtr.Type().Expr.(*ast.FuncType); ok {
-					retTyp = b.getFuncReturnType(ft.ReturnParameters)
+					retTyp = b.tm.getFuncReturnType(ft.ReturnParameters)
 				}
 				b.addInstr(&IndirectCall{BaseInstruction: BaseInstruction{Typ: retTyp}, FuncPtr: action.FuncPtr, Args: action.Args}, action.Token)
 			}
