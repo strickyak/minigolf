@@ -16,8 +16,9 @@ description: Guidelines for using Git version control, including branch policies
    ```bash
    git switch work
    ```
-2. Stage and commit your changes as needed.
-3. Never merge into or push to `main`.
+2. Be sure you only add **source code files** that you created or changed.  Never add `_tmp` files, binaries, logs, or other test output.
+3. Stage and commit your changes as needed.
+4. Never merge into or push to `main`.
 
 ## RCS
 
