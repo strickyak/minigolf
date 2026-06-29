@@ -18,6 +18,7 @@ const TokFunc = 3
 const TokArrow = 4
 const TokLParen = 5
 const TokRParen = 6
+const TokSemi = 7
 
 // ===== Function Type Aliases =====
 
@@ -174,8 +175,8 @@ func IsSymbolChar(c byte) byte {
 	if c >= '!' && c <= '/' {
 		return 1 // !"#$%&'*+,-./ (but grouping filtered above)
 	}
-	if c >= ':' && c <= '@' {
-		return 1 // :;<=>?@
+	if c >= ':' && c <= '@' && c != ';' {
+		return 1 // :<=>?@
 	}
 	if c == '\\' || c == '^' || c == '`' || c == '|' || c == '~' {
 		return 1
@@ -346,6 +347,15 @@ func Tokenize() {
 			TokKinds[NumTokens] = TokFunc
 			TokNames[NumTokens] = name
 			NumTokens++
+			continue
+		}
+
+		// Semicolon (statement separator)
+		if c == ';' {
+			TokKinds[NumTokens] = TokSemi
+			TokVals[NumTokens] = 0
+			NumTokens++
+			pos++
 			continue
 		}
 
@@ -762,11 +772,23 @@ func TestEval(input *byte) *Thing {
 	}
 	Tokenize()
 	EvalPos = 0
-	WasAssign = 0
 	if NumTokens == 0 {
+		WasAssign = 0
 		return (*Thing)(0)
 	}
-	return Eval()
+	var result *Thing
+	for EvalPos < NumTokens {
+		WasAssign = 0
+		result = Eval()
+		if EvalPos < NumTokens {
+			if TokKinds[EvalPos] == TokSemi {
+				EvalPos++
+			} else {
+				panic("unexpected token after expression")
+			}
+		}
+	}
+	return result
 }
 
 // ===== Tests =====
@@ -859,6 +881,9 @@ func RunTests() {
 	PutStr("B => ")
 	PrintThing(TestEval("B"))
 
+	PutStr("A <- 10 ; A add 5 => ")
+	PrintThing(TestEval("A <- 10 ; A add 5"))
+
 	PutStr("=== Tests Done ===\n")
 }
 
@@ -879,8 +904,18 @@ func EvalLine() {
 		return
 	}
 	EvalPos = 0
-	WasAssign = 0
-	result := Eval()
+	var result *Thing
+	for EvalPos < NumTokens {
+		WasAssign = 0
+		result = Eval()
+		if EvalPos < NumTokens {
+			if TokKinds[EvalPos] == TokSemi {
+				EvalPos++
+			} else {
+				panic("unexpected token after expression")
+			}
+		}
+	}
 	if word(result) != 0 && WasAssign == 0 {
 		PrintThing(result)
 		Vars.Insert("_", result)
