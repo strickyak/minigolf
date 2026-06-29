@@ -18,6 +18,10 @@ import (
 type TypeManager struct {
 	builder *Builder
 
+	// NamedType is the canonical registry of all known types.
+	// Every type name maps to exactly one *Type with all fields populated.
+	NamedType map[string]*Type
+
 	typeDefsAST       map[string]*ast.StructType
 	typeAliases       map[string]ast.Expression
 	genericTemplates  map[string]*GenericTemplate
@@ -26,14 +30,66 @@ type TypeManager struct {
 }
 
 func newTypeManager(builder *Builder) *TypeManager {
-	return &TypeManager{
+	tm := &TypeManager{
 		builder:           builder,
+		NamedType:         make(map[string]*Type),
 		typeDefsAST:       make(map[string]*ast.StructType),
 		typeAliases:       make(map[string]ast.Expression),
 		genericTemplates:  make(map[string]*GenericTemplate),
 		instantiatedTypes: make(map[string]InstantiatedTypeInfo),
 		evaluatingType:    make(map[string]bool),
 	}
+	// Seed primordial types
+	for _, p := range []*Type{&TypeUnknown, &TypeByte, &TypeBool, &TypeWord, &TypeNil, &TypeInt, &TypeConstInteger, &TypeVoid, &TypeNoReturn} {
+		if p.Name != "" {
+			tm.NamedType[p.Name] = p
+		}
+	}
+	return tm
+}
+
+// Intern ensures the given Type is registered in the NamedType registry.
+// If a type with the same Name already exists, the existing canonical copy is returned.
+// Otherwise, the type is stored and returned.
+// This guarantees every type flowing through the system has Bits and structural fields set.
+func (tm *TypeManager) Intern(typ Type) Type {
+	if typ.Name == "" {
+		return typ // don't intern unnamed types
+	}
+	if existing, ok := tm.NamedType[typ.Name]; ok {
+		// Update Bits/structural fields if the existing entry is incomplete
+		if existing.Bits == 0 && typ.Bits != 0 {
+			existing.Bits = typ.Bits
+		}
+		if existing.PointsToType == nil && typ.PointsToType != nil {
+			existing.PointsToType = typ.PointsToType
+		}
+		if existing.ElementType == nil && typ.ElementType != nil {
+			existing.ElementType = typ.ElementType
+		}
+		if existing.ArrayLen == 0 && typ.ArrayLen != 0 {
+			existing.ArrayLen = typ.ArrayLen
+		}
+		if len(existing.FieldNamesAndTypes) == 0 && len(typ.FieldNamesAndTypes) > 0 {
+			existing.FieldNamesAndTypes = typ.FieldNamesAndTypes
+		}
+		if len(existing.ParameterNamesAndTypes) == 0 && len(typ.ParameterNamesAndTypes) > 0 {
+			existing.ParameterNamesAndTypes = typ.ParameterNamesAndTypes
+		}
+		if len(existing.ReturnNamesAndTypes) == 0 && len(typ.ReturnNamesAndTypes) > 0 {
+			existing.ReturnNamesAndTypes = typ.ReturnNamesAndTypes
+		}
+		if existing.Expr == nil && typ.Expr != nil {
+			existing.Expr = typ.Expr
+		}
+		if existing.Builder == nil && typ.Builder != nil {
+			existing.Builder = typ.Builder
+		}
+		return *existing
+	}
+	stored := typ // copy
+	tm.NamedType[typ.Name] = &stored
+	return stored
 }
 
 func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
@@ -90,7 +146,7 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 
 			if aliasExpr, ok := tm.typeAliases[qname]; ok {
 				if strings.HasPrefix(qname, "func_ptr_") {
-					return Type{Expr: aliasExpr, Name: qname, Bits: TypeBitFuncPtr, Builder: b}
+					return tm.Intern(Type{Expr: aliasExpr, Name: qname, Bits: TypeBitFuncPtr, Builder: b})
 				}
 				return tm.astToIRType(aliasExpr)
 			}
@@ -100,7 +156,7 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 				if qname == "prelude.any" || qname == "any" {
 					bits = TypeBitAny
 				}
-				return Type{Expr: expr, Name: qname, Bits: bits, Builder: b}
+				return tm.Intern(Type{Expr: expr, Name: qname, Bits: bits, Builder: b})
 			}
 			panic("unresolved:" + qname)
 		}
@@ -159,18 +215,18 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 					resTyp.ElementType = &elt
 				}
 			}
-			return resTyp
+			return tm.Intern(resTyp)
 		}
 		return TypeWord
 	case *ast.ArrayType:
 		// nando-GOOD
 		lenVal := b.EvalConst(e.Length)
 		eltType := tm.astToIRType(e.Elt)
-		return Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, eltType.Name), Bits: TypeBitArray, ElementType: &eltType, ArrayLen: int(lenVal), Builder: b}
+		return tm.Intern(Type{Expr: expr, Name: fmt.Sprintf("[%d]%s", lenVal, eltType.Name), Bits: TypeBitArray, ElementType: &eltType, ArrayLen: int(lenVal), Builder: b})
 	case *ast.PointerType:
 		//zach//fmt.Printf("EVALUATING POINTER_TYPE, CheckNil=%v\n", b.CheckNil)
 		eltType := tm.astToIRType(e.Elt)
-		return Type{Expr: expr, Name: "*" + eltType.Name, Bits: TypeBitPointer, PointsToType: &eltType, Builder: b}
+		return tm.Intern(Type{Expr: expr, Name: "*" + eltType.Name, Bits: TypeBitPointer, PointsToType: &eltType, Builder: b})
 	case *ast.StructType:
 		name := "struct{"
 		var fields []NameAndType
@@ -184,7 +240,7 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 			fields = append(fields, NameAndType{Name: fieldName, Type: fTyp, FieldIndex: i})
 		}
 		name += "}"
-		return Type{Expr: expr, Name: name, Bits: TypeBitStruct, FieldNamesAndTypes: fields, Builder: b}
+		return tm.Intern(Type{Expr: expr, Name: name, Bits: TypeBitStruct, FieldNamesAndTypes: fields, Builder: b})
 
 	case *ast.CompositeLit:
 		return tm.astToIRType(e.Type)
@@ -206,7 +262,7 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 			}
 			rets = append(rets, NameAndType{Name: rName, Type: tm.astToIRType(r.Type), FieldIndex: i})
 		}
-		return Type{Expr: expr, Name: synName, Bits: TypeBitFuncPtr, ParameterNamesAndTypes: params, ReturnNamesAndTypes: rets, Builder: b}
+		return tm.Intern(Type{Expr: expr, Name: synName, Bits: TypeBitFuncPtr, ParameterNamesAndTypes: params, ReturnNamesAndTypes: rets, Builder: b})
 	}
 	log.Panicf("astToIRType NO CASE: %#v", expr)
 	panic(0)

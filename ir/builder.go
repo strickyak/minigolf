@@ -141,7 +141,7 @@ func (b *Builder) packageAsAny(val Value, expr ast.Node) Value {
 		anyTyp = def
 		anyTyp.Name = "any"
 	} else {
-		anyTyp = Type{Expr: &ast.Identifier{Value: "prelude.any"}, Name: "prelude.any", Builder: b}
+		anyTyp = b.tm.Intern(Type{Expr: &ast.Identifier{Value: "prelude.any"}, Name: "prelude.any", Bits: TypeBitAny, Builder: b})
 	}
 
 	structVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: anyTyp}}, expr)
@@ -2067,13 +2067,13 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			qname := b.currentPackage + "." + ident.Value
 			if _, ok := b.tm.typeDefsAST[qname]; ok {
 				arg := b.buildExpr(e.Arguments[0])
-				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}, Op: "bitcast", Operand: arg}, e)
-				return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b}}
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: b.tm.Intern(Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b})}, Op: "bitcast", Operand: arg}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: b.tm.Intern(Type{Expr: &ast.Identifier{Value: qname}, Name: qname, Builder: b})}
 			}
 			if _, ok := b.tm.typeDefsAST["prelude."+ident.Value]; ok {
 				arg := b.buildExpr(e.Arguments[0])
-				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}, Op: "bitcast", Operand: arg}, e)
-				return ExprResult{IsLValue: false, Value: val, Typ: Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b}}
+				val := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: b.tm.Intern(Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b})}, Op: "bitcast", Operand: arg}, e)
+				return ExprResult{IsLValue: false, Value: val, Typ: b.tm.Intern(Type{Expr: &ast.Identifier{Value: "prelude." + ident.Value}, Name: "prelude." + ident.Value, Builder: b})}
 			}
 			// Also check typeAliases for named function types (e.g., type MonadicFn func(...) ...)
 			if aliasExpr, ok := b.tm.typeAliases[qname]; ok {
@@ -2387,7 +2387,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			typ = def
 			typ.Name = "slice_byte"
 		} else {
-			typ = Type{Expr: &ast.Identifier{Value: "slice_byte"}, Name: "slice_byte", Builder: b}
+			typ = b.tm.Intern(Type{Expr: &ast.Identifier{Value: "slice_byte"}, Name: "slice_byte", Builder: b})
 		}
 
 		var structVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
@@ -2648,7 +2648,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: capVal}, e)
 			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
 
-			arrTyp := Type{
+			arrTyp := b.tm.Intern(Type{
 				Expr: &ast.ArrayType{
 					Length: &ast.IntegerLiteral{Value: int64(len(e.Elements))},
 					Elt:    &ast.Identifier{Value: eltTyp.Name},
@@ -2658,7 +2658,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				ElementType: &eltTyp,
 				ArrayLen:    len(e.Elements),
 				Builder:     b,
-			}
+			})
 			arrPtrTyp := arrTyp.PointerTo()
 			arrPtrVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: arrPtrTyp}, Op: "word_to_ptr", Operand: baseWordVal}, e)
 
@@ -2796,14 +2796,17 @@ func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.N
 		numVarArgs = 0
 	}
 
-	arrTyp := Type{
+	arrTyp := b.tm.Intern(Type{
 		Expr: &ast.ArrayType{
 			Length: &ast.IntegerLiteral{Value: int64(numVarArgs)},
 			Elt:    &ast.Identifier{Value: eltTyp.Name},
 		},
-		Name:    fmt.Sprintf("[%d]%s", numVarArgs, eltTyp.Name),
-		Builder: b,
-	}
+		Name:        fmt.Sprintf("[%d]%s", numVarArgs, eltTyp.Name),
+		Bits:        TypeBitArray,
+		ElementType: &eltTyp,
+		ArrayLen:    numVarArgs,
+		Builder:     b,
+	})
 	var arrVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: arrTyp}}, tokenNode)
 
 	for i := 0; i < numVarArgs; i++ {
@@ -3148,7 +3151,7 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 					typ = def
 					typ.Name = "slice_byte"
 				} else {
-					typ = Type{Expr: &ast.Identifier{Value: "slice_byte"}, Name: "slice_byte", Builder: b}
+					typ = b.tm.Intern(Type{Expr: &ast.Identifier{Value: "slice_byte"}, Name: "slice_byte", Builder: b})
 				}
 			} else {
 				panic("Cannot infer type for global variable: " + item.QName)
@@ -3202,14 +3205,17 @@ func (b *Builder) addStringConstant(val string) *Global {
 	valWithNull := val + "\x00"
 	g := &Global{
 		Name: name,
-		Typ: Type{
+		Typ: b.tm.Intern(Type{
 			Expr: &ast.ArrayType{
 				Length: &ast.IntegerLiteral{Value: int64(len(valWithNull))},
 				Elt:    &ast.Identifier{Value: "byte"},
 			},
-			Name:    fmt.Sprintf("[%d]byte", len(valWithNull)),
-			Builder: b,
-		},
+			Name:        fmt.Sprintf("[%d]byte", len(valWithNull)),
+			Bits:        TypeBitArray,
+			ElementType: &TypeByte,
+			ArrayLen:    len(valWithNull),
+			Builder:     b,
+		}),
 		InitString: valWithNull,
 		IsInit:     true,
 	}

@@ -128,11 +128,15 @@ func (t Type) PointedType() Type {
 	case *ast.PointerType:
 		typeExpr = x.Elt
 	}
-	return Type{Name: t.Name[1:], Expr: typeExpr, Builder: t.Builder}
+	result := Type{Name: t.Name[1:], Expr: typeExpr, Builder: t.Builder}
+	if t.Builder != nil && t.Builder.tm != nil {
+		result = t.Builder.tm.Intern(result)
+	}
+	return result
 }
 
 func (t Type) PointerTo() Type {
-	return Type{
+	result := Type{
 		Expr: &ast.PointerType{
 			Elt: t.Expr,
 		},
@@ -141,6 +145,10 @@ func (t Type) PointerTo() Type {
 		PointsToType: &t,
 		Builder:      t.Builder,
 	}
+	if t.Builder != nil && t.Builder.tm != nil {
+		result = t.Builder.tm.Intern(result)
+	}
+	return result
 }
 
 func (t Type) IsAnArray() bool {
@@ -170,7 +178,11 @@ func (t Type) ArrayElementType() Type {
 		typeExpr = x.Elt
 	}
 	idx := strings.Index(t.Name, "]")
-	return Type{Name: t.Name[idx+1:], Expr: typeExpr, Builder: t.Builder}
+	result := Type{Name: t.Name[idx+1:], Expr: typeExpr, Builder: t.Builder}
+	if t.Builder != nil && t.Builder.tm != nil {
+		result = t.Builder.tm.Intern(result)
+	}
+	return result
 }
 
 func (t Type) SliceElementType() Type {
@@ -186,7 +198,11 @@ func (t Type) SliceElementType() Type {
 	} else {
 		panic("SliceElementType called on non-slice type: " + t.Name)
 	}
-	return Type{Expr: &ast.Identifier{Value: eltName}, Name: eltName, Builder: t.Builder}
+	result := Type{Expr: &ast.Identifier{Value: eltName}, Name: eltName, Builder: t.Builder}
+	if t.Builder != nil && t.Builder.tm != nil {
+		result = t.Builder.tm.Intern(result)
+	}
+	return result
 }
 
 func (t Type) IsAStruct() bool {
