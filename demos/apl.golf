@@ -167,6 +167,22 @@ var TokVals [100]int
 var TokNames [100]string
 var NumTokens word
 
+func IsSymbolChar(c byte) byte {
+	if c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' {
+		return 0
+	}
+	if c >= '!' && c <= '/' {
+		return 1 // !"#$%&'*+,-./ (but grouping filtered above)
+	}
+	if c >= ':' && c <= '@' {
+		return 1 // :;<=>?@
+	}
+	if c == '\\' || c == '^' || c == '`' || c == '|' || c == '~' {
+		return 1
+	}
+	return 0
+}
+
 func Tokenize() {
 	NumTokens = 0
 	pos := word(0)
@@ -297,6 +313,25 @@ func Tokenize() {
 			TokVals[NumTokens] = 0
 			NumTokens++
 			pos++
+			continue
+		}
+
+		// Symbol operator (one or more special characters, not grouping)
+		if IsSymbolChar(c) != 0 {
+			start := pos
+			for pos < LineLen && IsSymbolChar(LineBuf[pos]) != 0 {
+				pos++
+			}
+			length := pos - start
+			name := Strings.Intern(BufStr(start, length))
+			mw, mok := MonadicOps.Lookup(name)
+			dw, dok := DyadicOps.Lookup(name)
+			if mok == 0 && dok == 0 {
+				panic("unknown operator")
+			}
+			TokKinds[NumTokens] = TokFunc
+			TokNames[NumTokens] = name
+			NumTokens++
 			continue
 		}
 
@@ -578,6 +613,12 @@ func init() {
 	DyadicOps.Insert(Strings.Intern("mul"), word(DoMulDy))
 	DyadicOps.Insert(Strings.Intern("div"), word(DoDivDy))
 	DyadicOps.Insert(Strings.Intern("mod"), word(DoModDy))
+
+	// Symbol aliases
+	MonadicOps.Insert(Strings.Intern("-"), word(DoNeg))
+	DyadicOps.Insert(Strings.Intern("+"), word(DoAdd))
+	DyadicOps.Insert(Strings.Intern("-"), word(DoSub))
+	DyadicOps.Insert(Strings.Intern("*"), word(DoMulDy))
 }
 
 // ===== Pretty Printer =====
@@ -715,6 +756,22 @@ func RunTests() {
 
 	PutStr("(iota 3) add (iota 3) => ")
 	PrintThing(TestEval("(iota 3) add (iota 3)"))
+
+	// Symbol operators
+	PutStr("2 + 3 => ")
+	PrintThing(TestEval("2 + 3"))
+
+	PutStr("10 - 3 => ")
+	PrintThing(TestEval("10 - 3"))
+
+	PutStr("4 * 5 => ")
+	PrintThing(TestEval("4 * 5"))
+
+	PutStr("- iota 4 => ")
+	PrintThing(TestEval("- iota 4"))
+
+	PutStr("(2 + 3) * 4 => ")
+	PrintThing(TestEval("(2 + 3) * 4"))
 
 	PutStr("=== Tests Done ===\n")
 }
