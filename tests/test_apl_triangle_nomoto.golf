@@ -1,0 +1,11 @@
+package _
+
+import "apl"
+
+func main() {
+	apl.PrintThing(apl.TestEval(
+		"<> triangle N { ( N < 2 ? N : N + triangle N - 1 ) } ; triangle 10"))
+
+	apl.PrintThing(apl.TestEval(
+		"<> fib N { ( N < 2 ? N : (fib N - 2) + fib N - 1 ) } ; fib 5"))
+}
