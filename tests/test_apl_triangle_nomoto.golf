@@ -11,4 +11,7 @@ func main() {
 
 	apl.PrintThing(apl.TestEval(
 		"<> triangle N ; M { M = N - 1 ; ( N < 2 ? N : N + triangle M ) } ; triangle 10"))
+
+	apl.PrintThing(apl.TestEval(
+		"<> A <<< B { A < B - 5 } ; ( iota 10 ) <<< 10 "))
 }
