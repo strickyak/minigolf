@@ -1033,6 +1033,77 @@ func DoGt(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, righ
 func DoLe(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, LeOp) }
 func DoGe(left *Thing, right *Thing) *Thing    { return DoArithDyadic(left, right, GeOp) }
 
+func DyadicReduce(left *Thing, right *Thing) *Thing {
+	if left.Values.Len == 0 {
+		panic("reduce: empty function name")
+	}
+
+	var buf [64]byte
+	n := left.Values.Len
+	if n > 63 {
+		n = 63
+	}
+	for i := word(0); i < n; i++ {
+		buf[i] = byte(PtrToInt(left.Values.Get(i)))
+	}
+	var s string
+	s.Base = word(&buf[0])
+	s.Len = n
+	s.Cap = n
+	name := Strings.Intern(s)
+
+	var builtinFn DyadicFn
+	var userFn *UserFunction
+
+	fw, ok := DyadicOps.Lookup(name)
+	if ok != 0 {
+		builtinFn = DyadicFn(fw)
+	} else {
+		u, uok := UserDyadicOps.Lookup(name)
+		if uok != 0 {
+			userFn = u
+		} else {
+			panic("reduce: unknown dyadic function")
+		}
+	}
+
+	if right.Dimensions.Len == 0 {
+		return right
+	}
+
+	lastDimIdx := right.Dimensions.Len - 1
+	innerLen := right.Dimensions.Get(lastDimIdx)
+	if innerLen == 0 {
+		panic("reduce: cannot reduce empty dimension")
+	}
+
+	outerLen := word(1)
+	for i := word(0); i < lastDimIdx; i++ {
+		outerLen = outerLen * right.Dimensions.Get(i)
+	}
+
+	result := NewThing()
+	for i := word(0); i < lastDimIdx; i++ {
+		result.Dimensions.Append(right.Dimensions.Get(i))
+	}
+
+	for o := word(0); o < outerLen; o++ {
+		offset := o * innerLen
+		acc := MakeScalar(PtrToInt(right.Values.Get(offset + innerLen - 1)))
+		for i := innerLen - 1; i > 0; i-- {
+			idx := i - 1
+			item := MakeScalar(PtrToInt(right.Values.Get(offset + idx)))
+			if ok != 0 {
+				acc = builtinFn(item, acc)
+			} else {
+				acc = EvalUser(userFn, item, acc)
+			}
+		}
+		result.Values.Append(acc.Values.Get(0))
+	}
+	return result
+}
+
 // ===== Initialization =====
 
 func init() {
@@ -1046,6 +1117,7 @@ func init() {
 	DyadicOps.Insert(Strings.Intern("mul"), word(DoMulDy))
 	DyadicOps.Insert(Strings.Intern("div"), word(DoDivDy))
 	DyadicOps.Insert(Strings.Intern("mod"), word(DoModDy))
+	DyadicOps.Insert(Strings.Intern("reduce"), word(DyadicReduce))
 
 	// Symbol aliases
 	MonadicOps.Insert(Strings.Intern("-"), word(DoNeg))
@@ -1266,6 +1338,21 @@ func RunTests() {
 	PutStr("<> |^| N { N < 0 }\n")
 	PutStr("|^| 5 - iota 10 => ")
 	PrintThing(TestEval("|^| 5 - iota 10"))
+
+	PutStr("\"add\" reduce iota 10 => ")
+	PrintThing(TestEval("\"add\" reduce iota 10"))
+
+	TestEval("M <- 2 3 rho iota 6")
+	PutStr("M <- 2 3 rho iota 6\n")
+	PutStr("\"add\" reduce M =>\n")
+	PrintThing(TestEval("\"add\" reduce M"))
+
+	PutStr("\"sub\" reduce 1 2 3 => ")
+	PrintThing(TestEval("\"sub\" reduce 1 2 3"))
+
+	TestEval("<> X custom Y { X mul Y }")
+	PutStr("\"custom\" reduce 1 2 3 4 => ")
+	PrintThing(TestEval("\"custom\" reduce 1 2 3 4"))
 
 	PrintThing(TestEval(" \"Hello\" "))
 

@@ -46,5 +46,11 @@ A <- 0 ; ( 1 ? A <- 1 : A <- 2 ) ; A => 1
 10 plus 20 => 30
 <> |^| N { N < 0 }
 |^| 5 - iota 10 => 0 0 0 0 0 0 1 1 1 1
+"add" reduce iota 10 => 45
+M <- 2 3 rho iota 6
+"add" reduce M =>
+ 3 12
+"sub" reduce 1 2 3 => 2
+"custom" reduce 1 2 3 4 => 24
  72 101 108 108 111
 === Tests Done ===
