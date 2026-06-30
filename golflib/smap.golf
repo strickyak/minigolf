@@ -46,7 +46,7 @@ func (o *Imap[T]) Insert(key /* interned */ string, value T) bool {
 	return true
 }
 
-func (o *Imap[T]) Keys() slice[word] { return o.keys }
+func (o *Imap[T]) Keys() slice[string] { return o.keys }
 
 ///////////////////////////////////////////////
 

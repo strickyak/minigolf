@@ -1294,8 +1294,42 @@ func main() {
 			break
 		}
 		if LineLen == 0 {
-			PutStr(" [BYE]")
+			PutStr(" [BYE]\n")
 			break // continue
+		}
+		if LineBuf[0] == ')' {
+			cmd := byte(' ')
+			if LineLen > 1 {
+				cmd = LineBuf[1]
+			}
+			if cmd == 'v' {
+				PutStr("Variables:\n")
+				keys := Vars.Keys()
+				for i := range keys.Len {
+					PutStr("  ")
+					PutStr(keys.Get(i))
+					putchar('\n')
+				}
+			} else if cmd == 'm' {
+				PutStr("Monadic Functions:\n")
+				keys := UserMonadicOps.Keys()
+				for i := range keys.Len {
+					PutStr("  ")
+					PutStr(keys.Get(i))
+					putchar('\n')
+				}
+			} else if cmd == 'd' {
+				PutStr("Dyadic Functions:\n")
+				keys := UserDyadicOps.Keys()
+				for i := range keys.Len {
+					PutStr("  ")
+					PutStr(keys.Get(i))
+					putchar('\n')
+				}
+			} else {
+				PutStr("Commands:\n  )h  help\n  )v  variables\n  )m  monadic functions\n  )d  dyadic functions\n")
+			}
+			continue
 		}
 		EvalLine()
 	}
