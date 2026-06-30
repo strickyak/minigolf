@@ -26,6 +26,7 @@ const TokQuestion = 11
 const TokColon = 12
 const TokLBracket = 13
 const TokRBracket = 14
+const TokStrLit = 15 // double-quoted. Becomes vector of ints.
 
 // ===== Function Type Aliases =====
 
@@ -164,7 +165,7 @@ type UserFunction struct {
 	Locals    slice[string]
 	NumTokens word
 	TokKinds  slice[byte]
-	TokVals   slice[int]
+	TokVals   slice[word]
 	TokNames  slice[string]
 }
 
@@ -184,16 +185,16 @@ func BufStr(start word, length word) string {
 // ===== Tokenizer =====
 
 var TokKinds [100]byte
-var TokVals [100]int
+var TokVals [100]word
 var TokNames [100]string
 var NumTokens word
 
 func IsSymbolChar(c byte) byte {
-	if c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' {
+	if c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '"' {
 		return 0
 	}
 	if c >= '!' && c <= '/' {
-		return 1 // !"#$%&'*+,-./ (but grouping filtered above)
+		return 1 // !#$%&'*+,-./ (but grouping filtered above)
 	}
 	if c >= ':' && c <= '@' && c != ';' && c != '?' && c != ':' {
 		return 1 // <=@
@@ -221,6 +222,23 @@ func Tokenize() {
 		}
 
 		c := LineBuf[pos]
+
+		// String literal (e.g. "Hello") becomes vector of ASCII values (e.g. 72 101 108 108 111)
+		if c == '"' {
+			pos++ // consume the opening "
+			// yak
+			var s string
+			for pos < LineLen && LineBuf[pos] != '"' {
+				s.Append(LineBuf[pos])
+				pos++
+			}
+			s.Append(0)
+			pos++ // consume the closing "
+			TokKinds[NumTokens] = TokStrLit
+			TokVals[NumTokens] = word(s.Base) // Take guts from string
+			NumTokens++
+			continue
+		}
 
 		// TokDel '<>'
 		if c == '<' && pos+1 < LineLen && LineBuf[pos+1] == '>' {
@@ -274,7 +292,7 @@ func Tokenize() {
 				pos++
 			}
 			TokKinds[NumTokens] = TokNum
-			TokVals[NumTokens] = n * sign
+			TokVals[NumTokens] = word(n * sign)
 			NumTokens++
 			continue
 		}
@@ -610,7 +628,11 @@ func Eval() *Thing {
 	// Primary value: number strand or variable
 	var val *Thing
 
-	if kind == TokNum {
+	if kind == TokStrLit {
+		// yak
+		val = StrLitToThing()
+		EvalPos++
+	} else if kind == TokNum {
 		val = ParseStrand()
 	} else if kind == TokVar {
 		name := TokNames[EvalPos]
@@ -697,6 +719,18 @@ func Eval() *Thing {
 	return val
 }
 
+func StrLitToThing() *Thing {
+	// yak
+	t := NewThing()
+	p := (*byte)(TokVals[EvalPos])
+	for *p {
+		t.Values.Append(IntToPtr(int(*p)))
+		p = (*byte)(word(p) + 1)
+	}
+	t.Dimensions.Append(t.Values.Len)
+	return t
+}
+
 func ParseStrand() *Thing {
 	// Collect consecutive number tokens into a vector (or scalar if just one)
 	var nums [100]int
@@ -781,7 +815,7 @@ func EvalUser(u *UserFunction, left *Thing, right *Thing) *Thing {
 	oldNumTokens := NumTokens
 	oldEvalPos := EvalPos
 	var oldKinds [100]byte
-	var oldVals [100]int
+	var oldVals [100]word
 	var oldNames [100]string
 	for i := word(0); i < NumTokens; i++ {
 		oldKinds[i] = TokKinds[i]
@@ -1221,6 +1255,8 @@ func RunTests() {
 	PutStr("|^| 5 - iota 10 => ")
 	PrintThing(TestEval("|^| 5 - iota 10"))
 
+	PrintThing(TestEval(" \"Hello\" "))
+
 	PutStr("=== Tests Done ===\n")
 }
 
@@ -1254,10 +1290,12 @@ func main() {
 		PutStr("      ")
 		ok := ReadLine()
 		if ok == 0 {
+			PutStr(" [EOF]")
 			break
 		}
 		if LineLen == 0 {
-			continue
+			PutStr(" [BYE]")
+			break // continue
 		}
 		EvalLine()
 	}
