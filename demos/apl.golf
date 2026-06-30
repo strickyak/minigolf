@@ -1104,6 +1104,64 @@ func DyadicReduce(left *Thing, right *Thing) *Thing {
 	return result
 }
 
+func DyadicTable(left *Thing, right *Thing) *Thing {
+	if left.Values.Len == 0 {
+		panic("table: empty function name")
+	}
+
+	var buf [64]byte
+	n := left.Values.Len
+	if n > 63 {
+		n = 63
+	}
+	for i := word(0); i < n; i++ {
+		buf[i] = byte(PtrToInt(left.Values.Get(i)))
+	}
+	var s string
+	s.Base = word(&buf[0])
+	s.Len = n
+	s.Cap = n
+	name := Strings.Intern(s)
+
+	var builtinFn DyadicFn
+	var userFn *UserFunction
+
+	fw, ok := DyadicOps.Lookup(name)
+	if ok != 0 {
+		builtinFn = DyadicFn(fw)
+	} else {
+		u, uok := UserDyadicOps.Lookup(name)
+		if uok != 0 {
+			userFn = u
+		} else {
+			panic("table: unknown dyadic function")
+		}
+	}
+
+	result := NewThing()
+	for i := word(0); i < right.Dimensions.Len; i++ {
+		result.Dimensions.Append(right.Dimensions.Get(i))
+	}
+	for i := word(0); i < right.Dimensions.Len; i++ {
+		result.Dimensions.Append(right.Dimensions.Get(i))
+	}
+
+	for i := word(0); i < right.Values.Len; i++ {
+		itemA := MakeScalar(PtrToInt(right.Values.Get(i)))
+		for j := word(0); j < right.Values.Len; j++ {
+			itemB := MakeScalar(PtrToInt(right.Values.Get(j)))
+			var res *Thing
+			if ok != 0 {
+				res = builtinFn(itemA, itemB)
+			} else {
+				res = EvalUser(userFn, itemA, itemB)
+			}
+			result.Values.Append(res.Values.Get(0))
+		}
+	}
+	return result
+}
+
 // ===== Initialization =====
 
 func init() {
@@ -1118,6 +1176,7 @@ func init() {
 	DyadicOps.Insert(Strings.Intern("div"), word(DoDivDy))
 	DyadicOps.Insert(Strings.Intern("mod"), word(DoModDy))
 	DyadicOps.Insert(Strings.Intern("reduce"), word(DyadicReduce))
+	DyadicOps.Insert(Strings.Intern("table"), word(DyadicTable))
 
 	// Symbol aliases
 	MonadicOps.Insert(Strings.Intern("-"), word(DoNeg))
@@ -1353,6 +1412,9 @@ func RunTests() {
 	TestEval("<> X custom Y { X mul Y }")
 	PutStr("\"custom\" reduce 1 2 3 4 => ")
 	PrintThing(TestEval("\"custom\" reduce 1 2 3 4"))
+
+	PutStr("\"mul\" table 1 2 3 =>\n")
+	PrintThing(TestEval("\"mul\" table 1 2 3"))
 
 	PrintThing(TestEval(" \"Hello\" "))
 

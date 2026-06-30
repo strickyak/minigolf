@@ -52,5 +52,9 @@ M <- 2 3 rho iota 6
  3 12
 "sub" reduce 1 2 3 => 2
 "custom" reduce 1 2 3 4 => 24
+"mul" table 1 2 3 =>
+1 2 3
+2 4 6
+3 6 9
  72 101 108 108 111
 === Tests Done ===
