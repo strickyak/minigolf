@@ -568,7 +568,7 @@ func Eval() *Thing {
 		EvalPos++
 
 		var tKinds slice[byte]
-		var tVals slice[int]
+		var tVals slice[word]
 		var tNames slice[string]
 		numT := word(0)
 
@@ -733,7 +733,7 @@ func StrLitToThing() *Thing {
 
 func ParseStrand() *Thing {
 	// Collect consecutive number tokens into a vector (or scalar if just one)
-	var nums [100]int
+	var nums [100]word
 	count := word(0)
 	for EvalPos < NumTokens && TokKinds[EvalPos] == TokNum {
 		nums[count] = TokVals[EvalPos]
@@ -741,12 +741,12 @@ func ParseStrand() *Thing {
 		EvalPos++
 	}
 	if count == 1 {
-		return MakeScalar(nums[0])
+		return MakeScalar(int(nums[0]))
 	}
 	t := NewThing()
 	t.Dimensions.Append(count)
 	for i := range count {
-		t.Values.Append(IntToPtr(nums[i]))
+		t.Values.Append(IntToPtr(int(nums[i])))
 	}
 	return t
 }
