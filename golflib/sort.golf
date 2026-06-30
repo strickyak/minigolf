@@ -3,7 +3,9 @@ package sort
 // QuickSort sorts vec in-place using the given comparator function.
 // cmp(a, b) should return negative if *a < *b, zero if equal, positive if *a > *b.
 func QuickSort[T any](vec slice[T], cmp func(a *T, b *T) int) {
-	quickSortRange[T](vec, 0, vec.Len-1, cmp)
+	if vec.Len > 0 {
+		quickSortRange[T](vec, 0, vec.Len-1, cmp)
+	}
 }
 
 func quickSortRange[T any](vec slice[T], lo word, hi word, cmp func(a *T, b *T) int) {

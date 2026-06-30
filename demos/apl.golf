@@ -1,6 +1,7 @@
 package main
 
 import "smap"
+import "sort"
 
 // ===== External I/O =====
 
@@ -13,6 +14,17 @@ const REPL = 0 // Set to 1 for interactive mode: -D=main.REPL=1
 
 // Token types
 const TokNum = 1
+
+func CmpString(a *string, b *string) int {
+	if *a < *b {
+		return -1
+	}
+	if *a > *b {
+		return 1
+	}
+	return 0
+}
+
 const TokVar = 2
 const TokFunc = 3
 const TokArrow = 4
@@ -1303,43 +1315,48 @@ func main() {
 				cmd = LineBuf[1]
 			}
 			if cmd == 'v' {
-				PutStr("Variables:\n")
+				PutStr("Variables:\n  ")
 				keys := Vars.Keys()
+				sort.QuickSort[string](keys, CmpString)
 				for i := range keys.Len {
-					PutStr("  ")
 					PutStr(keys.Get(i))
-					putchar('\n')
+					putchar(' ')
 				}
+				putchar('\n')
 			} else if cmd == 'm' {
-				PutStr("Built-in Monadic Functions:\n")
+				PutStr("Built-in Monadic Functions:\n  ")
 				keys := MonadicOps.Keys()
+				sort.QuickSort[string](keys, CmpString)
 				for i := range keys.Len {
-					PutStr("  ")
 					PutStr(keys.Get(i))
-					putchar('\n')
+					putchar(' ')
 				}
-				PutStr("User Monadic Functions:\n")
+				putchar('\n')
+				PutStr("User Monadic Functions:\n  ")
 				keys = UserMonadicOps.Keys()
+				sort.QuickSort[string](keys, CmpString)
 				for i := range keys.Len {
-					PutStr("  ")
 					PutStr(keys.Get(i))
-					putchar('\n')
+					putchar(' ')
 				}
+				putchar('\n')
 			} else if cmd == 'd' {
-				PutStr("Built-in Dyadic Functions:\n")
+				PutStr("Built-in Dyadic Functions:\n  ")
 				keys := DyadicOps.Keys()
+				sort.QuickSort[string](keys, CmpString)
 				for i := range keys.Len {
-					PutStr("  ")
 					PutStr(keys.Get(i))
-					putchar('\n')
+					putchar(' ')
 				}
-				PutStr("User Dyadic Functions:\n")
+				putchar('\n')
+				PutStr("User Dyadic Functions:\n  ")
 				keys = UserDyadicOps.Keys()
+				sort.QuickSort[string](keys, CmpString)
 				for i := range keys.Len {
-					PutStr("  ")
 					PutStr(keys.Get(i))
-					putchar('\n')
+					putchar(' ')
 				}
+				putchar('\n')
 			} else {
 				PutStr("Commands:\n  )h  help\n  )v  variables\n  )m  monadic functions\n  )d  dyadic functions\n")
 			}
