@@ -1311,16 +1311,30 @@ func main() {
 					putchar('\n')
 				}
 			} else if cmd == 'm' {
-				PutStr("Monadic Functions:\n")
-				keys := UserMonadicOps.Keys()
+				PutStr("Built-in Monadic Functions:\n")
+				keys := MonadicOps.Keys()
+				for i := range keys.Len {
+					PutStr("  ")
+					PutStr(keys.Get(i))
+					putchar('\n')
+				}
+				PutStr("User Monadic Functions:\n")
+				keys = UserMonadicOps.Keys()
 				for i := range keys.Len {
 					PutStr("  ")
 					PutStr(keys.Get(i))
 					putchar('\n')
 				}
 			} else if cmd == 'd' {
-				PutStr("Dyadic Functions:\n")
-				keys := UserDyadicOps.Keys()
+				PutStr("Built-in Dyadic Functions:\n")
+				keys := DyadicOps.Keys()
+				for i := range keys.Len {
+					PutStr("  ")
+					PutStr(keys.Get(i))
+					putchar('\n')
+				}
+				PutStr("User Dyadic Functions:\n")
+				keys = UserDyadicOps.Keys()
 				for i := range keys.Len {
 					PutStr("  ")
 					PutStr(keys.Get(i))
