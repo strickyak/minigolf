@@ -1,4 +1,6 @@
-package main
+package _
+
+// Hint: 2 == "+" reduce 0 == "mod" table 1 + iota 10
 
 import "smap"
 import "sort"
@@ -1162,6 +1164,106 @@ func DyadicTable(left *Thing, right *Thing) *Thing {
 	return result
 }
 
+func DyadicCompress(left *Thing, right *Thing) *Thing {
+	innerLen := word(1)
+	lastDimIdx := word(0)
+	outerLen := word(1)
+
+	if right.Dimensions.Len > 0 {
+		lastDimIdx = right.Dimensions.Len - 1
+		innerLen = right.Dimensions.Get(lastDimIdx)
+		for i := word(0); i < lastDimIdx; i++ {
+			outerLen = outerLen * right.Dimensions.Get(i)
+		}
+	}
+
+	if left.Values.Len != innerLen {
+		panic("compress: length mismatch")
+	}
+
+	keepCount := word(0)
+	for i := word(0); i < innerLen; i++ {
+		if PtrToInt(left.Values.Get(i)) != 0 {
+			keepCount++
+		}
+	}
+
+	result := NewThing()
+	for i := word(0); i < right.Dimensions.Len; i++ {
+		if i == lastDimIdx {
+			result.Dimensions.Append(keepCount)
+		} else {
+			result.Dimensions.Append(right.Dimensions.Get(i))
+		}
+	}
+	if right.Dimensions.Len == 0 {
+		result.Dimensions.Append(keepCount)
+	}
+
+	for o := word(0); o < outerLen; o++ {
+		offset := o * innerLen
+		for i := word(0); i < innerLen; i++ {
+			if PtrToInt(left.Values.Get(i)) != 0 {
+				result.Values.Append(right.Values.Get(offset + i))
+			}
+		}
+	}
+
+	return result
+}
+
+func DyadicExpand(left *Thing, right *Thing) *Thing {
+	innerLen := word(1)
+	lastDimIdx := word(0)
+	outerLen := word(1)
+
+	if right.Dimensions.Len > 0 {
+		lastDimIdx = right.Dimensions.Len - 1
+		innerLen = right.Dimensions.Get(lastDimIdx)
+		for i := word(0); i < lastDimIdx; i++ {
+			outerLen = outerLen * right.Dimensions.Get(i)
+		}
+	}
+
+	keepCount := word(0)
+	for i := word(0); i < left.Values.Len; i++ {
+		if PtrToInt(left.Values.Get(i)) != 0 {
+			keepCount++
+		}
+	}
+
+	if keepCount != innerLen {
+		panic("expand: length mismatch")
+	}
+
+	result := NewThing()
+	for i := word(0); i < right.Dimensions.Len; i++ {
+		if i == lastDimIdx {
+			result.Dimensions.Append(left.Values.Len)
+		} else {
+			result.Dimensions.Append(right.Dimensions.Get(i))
+		}
+	}
+	if right.Dimensions.Len == 0 {
+		result.Dimensions.Append(left.Values.Len)
+	}
+
+	for o := word(0); o < outerLen; o++ {
+		offset := o * innerLen
+		srcIdx := word(0)
+		for i := word(0); i < left.Values.Len; i++ {
+			if PtrToInt(left.Values.Get(i)) != 0 {
+				result.Values.Append(right.Values.Get(offset + srcIdx))
+				srcIdx++
+			} else {
+				result.Values.Append(IntToPtr(0))
+			}
+		}
+	}
+
+	return result
+}
+
 // ===== Initialization =====
 
 func init() {
@@ -1177,6 +1279,8 @@ func init() {
 	DyadicOps.Insert(Strings.Intern("mod"), word(DoModDy))
 	DyadicOps.Insert(Strings.Intern("reduce"), word(DyadicReduce))
 	DyadicOps.Insert(Strings.Intern("table"), word(DyadicTable))
+	DyadicOps.Insert(Strings.Intern("compress"), word(DyadicCompress))
+	DyadicOps.Insert(Strings.Intern("expand"), word(DyadicExpand))
 
 	// Symbol aliases
 	MonadicOps.Insert(Strings.Intern("-"), word(DoNeg))
@@ -1415,6 +1519,12 @@ func RunTests() {
 
 	PutStr("\"mul\" table 1 2 3 =>\n")
 	PrintThing(TestEval("\"mul\" table 1 2 3"))
+
+	PutStr("1 0 1 compress 10 20 30 => ")
+	PrintThing(TestEval("1 0 1 compress 10 20 30"))
+
+	PutStr("1 0 1 expand 10 30 => ")
+	PrintThing(TestEval("1 0 1 expand 10 30"))
 
 	PrintThing(TestEval(" \"Hello\" "))
 
