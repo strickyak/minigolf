@@ -1,0 +1,8 @@
+package _
+
+import "apl"
+
+func main() {
+	apl.PrintThing(apl.TestEval(
+		`N <- 25 ; V <- 1 + iota N ; ( 2 == "+" reduce 0 == "mod" table V ) compress V`))
+}
