@@ -828,6 +828,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if i.Typ.Equals(ir.TypeByte) {
 			b.buf.WriteString("\tmovzx rax, al\n")
 		}
+		if i.Typ.Equals(ir.TypeInt) {
+			b.buf.WriteString("\tmovsxd rax, eax\n")
+		}
 		if !i.Typ.Equals(ir.TypeVoid) {
 			if retSize <= 16 {
 				b.buf.WriteString(fmt.Sprintf("\tmov qword ptr [rbp - %d], rax\n", offset))
@@ -907,6 +910,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 		if i.Typ.Equals(ir.TypeByte) {
 			b.buf.WriteString("\tmovzx rax, al\n")
+		}
+		if i.Typ.Equals(ir.TypeInt) {
+			b.buf.WriteString("\tmovsxd rax, eax\n")
 		}
 		if !i.Typ.Equals(ir.TypeVoid) {
 			if retSize <= 16 {
