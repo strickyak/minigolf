@@ -1319,45 +1319,49 @@ func PrintThing(t *Thing) {
 		}
 	}
 
-	if t.Dimensions.Len == 1 {
-		// Vector
-		for i := range t.Values.Len {
-			if i > 0 {
-				putchar(' ')
-			}
-			PutIntPadded(PtrToInt(t.Values.Get(i)), maxW)
-		}
+	if t.Values.Len == 0 {
 		putchar('\n')
 		return
 	}
 
-	if t.Dimensions.Len == 2 {
-		// Matrix: rows x cols
-		rows := t.Dimensions.Get(0)
-		cols := t.Dimensions.Get(1)
-		for r := range rows {
-			for c := range cols {
-				if c > 0 {
-					putchar(' ')
-				}
-				PutIntPadded(PtrToInt(t.Values.Get(r*cols+c)), maxW)
-			}
-			putchar('\n')
-		}
+	D := t.Dimensions.Len
+	var strides [20]word
+	if D > 20 {
+		PutStr("[rank too high]\n")
 		return
 	}
 
-	// Higher rank: print flat with rank annotation
-	PutStr("[rank ")
-	PutInt(int(t.Dimensions.Len))
-	PutStr("] ")
-	for i := range t.Values.Len {
-		if i > 0 {
-			putchar(' ')
-		}
-		PutInt(PtrToInt(t.Values.Get(i)))
+	s := word(1)
+	// i must be signed or we must be careful with i >= 0 if i is word
+	// Since i is word, i >= 0 is always true. We will count from 1 to D.
+	for j := word(1); j <= D; j++ {
+		i := D - j
+		strides[i] = s
+		s = s * t.Dimensions.Get(i)
 	}
-	putchar('\n')
+
+	for idx := word(0); idx < t.Values.Len; idx++ {
+		PutIntPadded(PtrToInt(t.Values.Get(idx)), maxW)
+		
+		if idx == t.Values.Len - 1 {
+			putchar('\n')
+		} else {
+			newlines := word(0)
+			for k := word(0); k < D-1; k++ {
+				if (idx + 1) % strides[k] == 0 {
+					newlines = D - 1 - k
+					break
+				}
+			}
+			if newlines == 0 {
+				putchar(' ')
+			} else {
+				for n := word(0); n < newlines; n++ {
+					putchar('\n')
+				}
+			}
+		}
+	}
 }
 
 // ===== Test Helper =====
@@ -1525,6 +1529,9 @@ func RunTests() {
 
 	PutStr("1 0 1 expand 10 30 => ")
 	PrintThing(TestEval("1 0 1 expand 10 30"))
+
+	PutStr("2 2 3 rho iota 12 =>\n")
+	PrintThing(TestEval("2 2 3 rho iota 12"))
 
 	PrintThing(TestEval(" \"Hello\" "))
 
