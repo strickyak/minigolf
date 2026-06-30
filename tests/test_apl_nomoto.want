@@ -35,6 +35,7 @@ rho M => 2 3
 4 >= 5 => 0
 B = 7
 B => 7
+_A <- 10 ; _A add 5 => 15
 A <- 10 ; A add 5 => 15
 <> double X { X - X ; X + X }
 double 10 => 20

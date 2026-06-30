@@ -312,7 +312,7 @@ func Tokenize() {
 		}
 
 		// Uppercase name (variable)
-		if c >= 'A' && c <= 'Z' {
+		if c >= 'A' && c <= 'Z' || c == '_' {
 			start := pos
 			for pos < LineLen {
 				ch := LineBuf[pos]
@@ -1342,13 +1342,13 @@ func PrintThing(t *Thing) {
 
 	for idx := word(0); idx < t.Values.Len; idx++ {
 		PutIntPadded(PtrToInt(t.Values.Get(idx)), maxW)
-		
-		if idx == t.Values.Len - 1 {
+
+		if idx == t.Values.Len-1 {
 			putchar('\n')
 		} else {
 			newlines := word(0)
 			for k := word(0); k < D-1; k++ {
-				if (idx + 1) % strides[k] == 0 {
+				if (idx+1)%strides[k] == 0 {
 					newlines = D - 1 - k
 					break
 				}
@@ -1475,6 +1475,9 @@ func RunTests() {
 	PutStr("B = 7\n")
 	PutStr("B => ")
 	PrintThing(TestEval("B"))
+
+	PutStr("_A <- 10 ; _A add 5 => ")
+	PrintThing(TestEval("_A <- 10 ; _A add 5"))
 
 	PutStr("A <- 10 ; A add 5 => ")
 	PrintThing(TestEval("A <- 10 ; A add 5"))
