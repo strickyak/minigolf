@@ -1482,6 +1482,12 @@ func RunTests() {
 	PutStr("A <- 10 ; A add 5 => ")
 	PrintThing(TestEval("A <- 10 ; A add 5"))
 
+	PutStr("5 \n")
+	PrintThing(TestEval("5"))
+	Vars.Insert(Strings.Intern("_"), TestEval("5"))
+	PutStr("_ add 3 => ")
+	PrintThing(TestEval("_ add 3"))
+
 	TestEval("<> double X { X - X ; X + X }")
 	PutStr("<> double X { X - X ; X + X }\n")
 	PutStr("double 10 => ")
@@ -1562,7 +1568,7 @@ func EvalLine() {
 	result = EvalStatementsUntil(0, 0)
 	if word(result) != 0 && WasAssign == 0 {
 		PrintThing(result)
-		Vars.Insert("_", result)
+		Vars.Insert(Strings.Intern("_"), result)
 	}
 }
 
