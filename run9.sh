@@ -59,26 +59,26 @@ __exit:
 stuck:
     bra stuck         ; 3. Infinite Loop
 
-**  getchar:
-**  _getchar:
-**      ; get byte in B or 0
-**      fcb  $12,$21,133
-**      clra
-**      rts
-**  
-**  putchar:
-**  _putchar:
-**      ; first byte arg is already in B
-**      clra
-**      fcb  $12,$21,132  ; Hyper PutChar
-**      rts
+getchar:
+_getchar:
+    ; get byte in B or 0
+    fcb  $12,$21,133
+    clra
+    rts
 
 putchar:
 _putchar:
     ; first byte arg is already in B
     clra
-    fcb  $12,$21,104  ; Hyper ShowChar
+    fcb  $12,$21,132  ; Hyper PutChar
     rts
+
+**  putchar:
+**  _putchar:
+**      ; first byte arg is already in B
+**      clra
+**      fcb  $12,$21,104  ; Hyper ShowChar
+**      rts
 
 _printf:
     leax 2,s
