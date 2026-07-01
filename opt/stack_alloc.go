@@ -35,12 +35,6 @@ func (p *StackAllocPass) Run(f *ir.Function) bool {
 			if aol, ok := inst.(*ir.AddressOfLocal); ok {
 				escapes[aol.Local] = true
 				crossBlock[aol.Local] = true
-				// The AddressOfLocal instruction itself must not be aliased with
-				// another AddressOfLocal that points to a different Local.  Two
-				// address-of instructions share a slot only if they are truly
-				// interchangeable (same Local); the generic liveness pass cannot
-				// verify this, so conservatively mark them as non-aliasable.
-				escapes[aol] = true
 			}
 			if phi, ok := inst.(*ir.Phi); ok {
 				for _, e := range phi.Edges {

@@ -696,10 +696,55 @@ func (t *translator) translateExprStmtOne(e cc.Expression) {
 			return
 		}
 	}
+	// Simple `=` assignment at statement level: emit as plain `lhs = rhs`.
+	if asgn, ok := e.(*cc.AssignmentExpression); ok && asgn.Op == cc.AssignmentOperationAssign {
+		t.line("%s", t.xSimpleAssign(asgn))
+		return
+	}
 	result := t.xExpr(e)
 	if result != "" {
 		t.line("%s", result)
 	}
+}
+
+// xSimpleAssign translates a plain C `=` assignment into a Golf `lhs = rhs`
+// string.  This is used in contexts where the assignment's return value is
+// discarded (statement level, for-init, for-post), so we avoid wrapping it in
+// assignment_expression[T](&lhs, rhs) which would needlessly take &lhs.
+func (t *translator) xSimpleAssign(asgn *cc.AssignmentExpression) string {
+	lhs := t.xExpr(asgn.Lhs)
+	rhs := t.xExpr(asgn.Rhs)
+	lGolf := t.cTypeToGolf(asgn.Lhs.Type())
+	rGolf := t.cTypeToGolf(asgn.Rhs.Type())
+	// C silently narrows when storing a wider int/word result into a byte.
+	if lGolf == "byte" && (rGolf == "int" || rGolf == "word") {
+		rhs = "byte(" + rhs + ")"
+	}
+	// C implicit array-to-pointer decay.
+	if strings.HasPrefix(lGolf, "*") {
+		if asgn.Rhs.Type().Kind() == cc.Array {
+			if strings.HasPrefix(rGolf, "[") {
+				if idx := strings.Index(rGolf, "]"); idx >= 0 {
+					eltGolf := rGolf[idx+1:]
+					if "*"+eltGolf == lGolf {
+						rhs = "(" + lGolf + ")(" + rhs + ")"
+					}
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("%s = %s", lhs, rhs)
+}
+
+// xExprValueDiscarded translates an expression whose return value is discarded
+// (for-init, for-post, etc.).  Simple `=` assignments use xSimpleAssign to
+// avoid wrapping them in assignment_expression; all other expressions fall
+// through to the standard xExpr.
+func (t *translator) xExprValueDiscarded(e cc.Expression) string {
+	if asgn, ok := e.(*cc.AssignmentExpression); ok && asgn.Op == cc.AssignmentOperationAssign {
+		return t.xSimpleAssign(asgn)
+	}
+	return t.xExpr(e)
 }
 
 // ── Local declarations ────────────────────────────────────────────────────────
@@ -818,7 +863,7 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 	case cc.IterationStatementFor:
 		initStr := ""
 		if s.ExpressionList != nil {
-			initStr = t.xExpr(s.ExpressionList)
+			initStr = t.xExprValueDiscarded(s.ExpressionList)
 		}
 		condStr := ""
 		if s.ExpressionList2 != nil {
@@ -832,7 +877,7 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			if stmts := t.ptrPostExprStmts(s.ExpressionList3); len(stmts) > 0 {
 				postPtrStmts = stmts
 			} else {
-				postStr = t.xExpr(s.ExpressionList3)
+				postStr = t.xExprValueDiscarded(s.ExpressionList3)
 			}
 		}
 		if initStr == "" && condStr == "" && postStr == "" && len(postPtrStmts) == 0 {

@@ -71,13 +71,8 @@ type Builder struct {
 	WordSize            int
 	CheckBounds         bool
 	CheckNil            bool
-	addressTakenVars map[string]bool
-	variableInitVal  map[string]Value
-	// variableAddrSlot holds one unique IR instruction per address-taken local
-	// variable. Two variables initialized to the same constant would otherwise
-	// share the same ConstWord node (and therefore the same CBE slot) when used
-	// as the Local field of AddressOfLocal, causing them to alias each other.
-	variableAddrSlot map[string]Value
+	addressTakenVars    map[string]bool
+	variableInitVal     map[string]Value
 }
 
 func (b *Builder) SetCurrentPackage(pkg string) {
@@ -225,7 +220,6 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			oldASTFunc := b.currentASTFunc
 			oldAddressTaken := b.addressTakenVars
 			oldVariableInitVal := b.variableInitVal
-			oldVariableAddrSlot := b.variableAddrSlot
 
 			b.buildFunc(funcStmt)
 
@@ -242,7 +236,6 @@ func (b *Builder) instantiateGenericFunc(instName, genericName string, argTyps [
 			b.deferredActions = oldDestructables
 			b.addressTakenVars = oldAddressTaken
 			b.variableInitVal = oldVariableInitVal
-			b.variableAddrSlot = oldVariableAddrSlot
 		}
 		b.currentPackage = oldPkg
 	} else {
@@ -509,7 +502,6 @@ func (b *Builder) buildFunc(s *ast.FuncStatement) {
 	b.varTypes = make(map[string]Type)
 	b.addressTakenVars = make(map[string]bool)
 	b.variableInitVal = make(map[string]Value)
-	b.variableAddrSlot = make(map[string]Value)
 	b.labelBlocks = make(map[string]*BasicBlock)
 	b.labelBreakBlocks = make(map[string]*BasicBlock)
 	b.labelContinueBlocks = make(map[string]*BasicBlock)
@@ -744,37 +736,6 @@ func (b *Builder) writeVariable(variable string, block *BasicBlock, value Value)
 	if _, exists := b.variableInitVal[variable]; !exists {
 		b.variableInitVal[variable] = value
 	}
-}
-
-// getAddrSlot returns a unique IR instruction to serve as the Local operand of
-// AddressOfLocal for the named address-taken variable. Unlike variableInitVal,
-// which may return a shared constant node (causing two variables to alias the
-// same CBE slot), getAddrSlot emits a fresh BinaryOp instruction the first time
-// it is called for a given variable, guaranteeing a distinct instruction ID.
-func (b *Builder) getAddrSlot(name string, expr ast.Node) Value {
-	if b.variableAddrSlot == nil {
-		b.variableAddrSlot = make(map[string]Value)
-	}
-	if slot, ok := b.variableAddrSlot[name]; ok {
-		return slot
-	}
-	// Emit a unique "add+0" to give this variable its own instruction ID.
-	initVal := b.variableInitVal[name]
-	var zero Value
-	if initVal != nil && initVal.Type().Equals(TypeByte) {
-		zero = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0}, expr)
-		slot := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "add", Left: initVal, Right: zero}, expr)
-		b.variableAddrSlot[name] = slot
-		return slot
-	}
-	typ := TypeWord
-	if initVal != nil {
-		typ = initVal.Type()
-	}
-	zero = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}, expr)
-	slot := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "add", Left: initVal, Right: zero}, expr)
-	b.variableAddrSlot[name] = slot
-	return slot
 }
 
 func (b *Builder) commonTypeOfValues(expr ast.Expression, left Value, op string, right Value) Type {
@@ -2294,7 +2255,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		if typ, ok := b.varTypes[e.Value]; ok {
 			val := b.readVariable(e.Value, b.currentBlock)
 			if b.addressTakenVars[e.Value] {
-				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: b.getAddrSlot(e.Value, e)}, e)
+				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: b.variableInitVal[e.Value]}, e)
 				return ExprResult{IsLValue: true, Address: addr, Typ: typ}
 			}
 			return ExprResult{IsLValue: false, Value: val, Typ: typ}
@@ -3129,11 +3090,7 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 			val = b.coerceType(val, targetType)
 			b.writeVariable(ident.Value, b.currentBlock, val)
 			if b.addressTakenVars[ident.Value] {
-				// Use getAddrSlot rather than variableInitVal to guarantee a unique
-				// IR instruction per variable. Two variables initialized to the same
-				// constant would share the same node in variableInitVal, making both
-				// AddressOfLocal instructions alias the same CBE slot.
-				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: targetType.PointerTo()}, Local: b.getAddrSlot(ident.Value, lhs)}, lhs)
+				addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: targetType.PointerTo()}, Local: b.variableInitVal[ident.Value]}, lhs)
 				b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: addr, Val: val}, lhs)
 			}
 			return
@@ -3503,7 +3460,6 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 		} else if e.Operator == "+" {
 			return b.evalConstantExpr(e.Right, targetTyp)
 		} else if e.Operator == "^" {
-			// Bitwise complement: ^x = x XOR all-ones.
 			val := b.evalConstantExpr(e.Right, targetTyp)
 			if cw, ok := val.(*ConstWord); ok {
 				return &ConstWord{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: cw.Val ^ 0xFFFF}
