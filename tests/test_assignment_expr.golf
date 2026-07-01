@@ -1,0 +1,12 @@
+package _
+
+func main() {
+	var c word
+	a := 10
+	b := assignment_expression(&c, a*a)
+	println(a, b, c)
+
+	for assignment_expression(&b, b+1) < 105 {
+		println(b)
+	}
+}

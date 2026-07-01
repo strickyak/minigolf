@@ -75,6 +75,12 @@ func pre_decrement[T any](p *T) T {
 	return *p
 }
 
+// Used to translate assignment expressions from C front end.
+func assignment_expression[T any](p *T, value T) T {
+	*p = value
+	return value
+}
+
 /////////////////////////////////////////////
 
 func clear[T any](p *T) {
@@ -622,3 +628,6 @@ func init() {
 
 // minigolf:linkage("putchar")
 func putchar(b byte) // External; linkage overrides to C stdlib putchar
+
+// minigolf:linkage("getchar")
+func getchar() int // External; linkage overrides to C stdlib getchar
