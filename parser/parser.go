@@ -83,6 +83,7 @@ func New(tokens []token.Token) *Parser {
 	p.registerPrefix(token.BANG, p.parsePrefixExpression)
 	p.registerPrefix(token.MINUS, p.parsePrefixExpression)
 	p.registerPrefix(token.BIT_AND, p.parsePrefixExpression)
+	p.registerPrefix(token.BIT_XOR, p.parsePrefixExpression)
 	p.registerPrefix(token.ASTERISK, p.parsePointerType)
 	p.registerPrefix(token.LPAREN, p.parseGroupedExpression)
 	p.registerPrefix(token.LBRACKET, p.parseArrayType)

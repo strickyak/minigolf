@@ -1447,6 +1447,23 @@ func (t *translator) xExpr(n cc.Expression) string {
 				// If RHS kind is already Ptr (already-decayed array field),
 				// no explicit cast is needed — it's already the right pointer type.
 			}
+			// Use assignment_expression[T](&lhs, rhs) so the assignment can be
+			// used as an expression value (e.g. (c = f()) != -1, or chained
+			// a = b = c). MiniGolf does not allow assignment as an expression,
+			// so we call the prelude helper that assigns and returns the value.
+			// When the result is discarded at statement level it is a valid call.
+			//
+			// If the LHS is a pointer dereference (*ptr), pass ptr directly as
+			// the address argument to avoid &(*ptr) syntax; otherwise use &lhs.
+			addrArg := "&" + lhs
+			if unary, ok := x.Lhs.(*cc.UnaryExpr); ok && unary.Case == cc.UnaryExpressionDeref {
+				addrArg = t.xExpr(unary.Expr)
+			}
+			typeArg := lGolf
+			if !isSingleIdent(typeArg) {
+				typeArg = "(" + typeArg + ")"
+			}
+			return fmt.Sprintf("assignment_expression[%s](%s, %s)", typeArg, addrArg, rhs)
 		} else if (op == "+=" || op == "-=") && strings.HasPrefix(lGolf, "*") {
 			// Pointer compound assignment: p += n  →  p = prelude.pointer_add[T](p, n)
 			elemType := lGolf[1:]
@@ -1635,7 +1652,9 @@ func (t *translator) xUnary(x *cc.UnaryExpr) string {
 	case cc.UnaryExpressionNot:
 		return "!" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionCpl:
-		return "^" + t.xExpr(x.Expr)
+		// MiniGolf now supports unary ^ (bitwise complement) like Go.
+		// Wrap in parens so the parser sees ^ as a prefix, not infix XOR.
+		return "^(" + t.xExpr(x.Expr) + ")"
 	default:
 		return t.unsupported(fmt.Sprintf("unary %v (%s)", x.Case, t.xExpr(x.Expr)))
 	}

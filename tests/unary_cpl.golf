@@ -1,0 +1,15 @@
+package main
+
+func main() {
+	var b byte = 0xF0
+	var w word = 0x1234
+	var i int = 5
+
+	// Unary ^ is bitwise complement (like Go)
+	println("^byte(0xF0):", ^b)        // expect 15 (0x0F)
+	println("^word(0x1234):", ^w)      // expect 60875 (0xEDCB)
+	println("^int(5):", ^i)            // expect -6 (in 16-bit: 0xFFFA = 65530 as word, -6 as int)
+
+	// Constant folding
+	println("^0:", ^0)                 // expect -1 (0xFFFF as word context)
+}
