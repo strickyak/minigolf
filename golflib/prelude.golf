@@ -627,7 +627,7 @@ func init() {
 ///////////////////////////////
 
 // minigolf:linkage("putchar")
-func putchar(b byte) // External; linkage overrides to C stdlib putchar
+func putchar(b int) // External; linkage overrides to C stdlib putchar
 
 // minigolf:linkage("getchar")
 func getchar() int // External; linkage overrides to C stdlib getchar
