@@ -3064,7 +3064,8 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 			}
 		}
 	}
-	panic(fmt.Sprintf("not a constant expression: %T", expr))
+	tok := expr.GetToken()
+	panic(fmt.Sprintf("not a constant expression: %T at %s:%d:%d", expr, tok.Filename, tok.Line, tok.Column))
 }
 
 func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {

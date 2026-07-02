@@ -219,6 +219,10 @@ func (t *translator) cTypeToGolf(typ cc.Type) string {
 		}
 		n := at.Len()
 		elem := t.cTypeToGolf(at.Elem())
+		if n <= 0 {
+			// Incomplete array type (e.g. extern T foo[]) — treat as pointer.
+			return "*" + elem
+		}
 		return fmt.Sprintf("[%d]%s", n, elem)
 	case cc.Struct:
 		st, ok := typ.(*cc.StructType)
@@ -1513,6 +1517,14 @@ func (t *translator) xExpr(n cc.Expression) string {
 		if (op == "==" || op == "!=") && strings.HasPrefix(lGolf, "*") && strings.HasPrefix(rGolf, "*") && lGolf != rGolf {
 			rhs = "(" + lGolf + ")(" + rhs + ")"
 		}
+		// In C, `0` is the null pointer constant.  When one side is a pointer
+		// and the other is the integer literal 0, replace it with nil.
+		if (op == "==" || op == "!=") && strings.HasPrefix(lGolf, "*") && rhs == "0" {
+			rhs = "nil"
+		}
+		if (op == "==" || op == "!=") && strings.HasPrefix(rGolf, "*") && lhs == "0" {
+			lhs = "nil"
+		}
 		return lhs + " " + op + " " + rhs
 
 	case *cc.AssignmentExpression:
@@ -1736,6 +1748,11 @@ func (t *translator) xCall(x *cc.CallExpr) string {
 func (t *translator) xUnary(x *cc.UnaryExpr) string {
 	switch x.Case {
 	case cc.UnaryExpressionAddrof:
+		// In C99, &func and func are identical — both produce a function pointer.
+		// MiniGolf uses the function name directly, without &.
+		if x.Expr.Type().Kind() == cc.Function {
+			return t.xExpr(x.Expr)
+		}
 		return "&" + t.xExpr(x.Expr)
 	case cc.UnaryExpressionDeref:
 		// Detect: *((*T)(__builtin_va_arg_impl(ap)))
