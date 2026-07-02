@@ -200,6 +200,7 @@ type Backend struct {
 	levelBases      map[int]string
 	levelYOffsets   map[int]int
 	paramPseudoIDs  map[string]int
+	ascizStrings    map[string][]string // internedAscizString -> list of labels
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -221,6 +222,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		levelBases:      make(map[int]string),
 		levelYOffsets:   make(map[int]int),
 		paramPseudoIDs:  make(map[string]int),
+		ascizStrings:    make(map[string][]string),
 	}
 }
 
@@ -581,7 +583,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 		// Uncaught Panic
 		b.fmtCount++
 		lblUncaught := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*** UNCAUGHT_PANIC\\n\"\n", lblUncaught))
+		b.emitAsciz(lblUncaught, `"\n*** UNCAUGHT_PANIC\n"`)
 		if b.picMode {
 			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblUncaught))
 		} else {
@@ -606,7 +608,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 
 		b.fmtCount++
 		lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"*** %%s\\n\"\n", lblPanicMsg))
+		b.emitAsciz(lblPanicMsg, `"*** %s\n"`)
 
 		b.buf.WriteString("\tstd ,--s\n")
 		if b.picMode {
@@ -642,7 +644,25 @@ func (b *Backend) Generate(program *ir.Program) string {
 	b.buf.WriteString("\tldx #0\n")
 	b.buf.WriteString("\trts\n")
 
-	rawCode := b.buf.String() + "\n" + b.rodataBuf.String() + "\n" + b.dataBuf.String()
+	// Emit all interned asciz strings
+	var ascizKeys []string
+	for k := range b.ascizStrings {
+		ascizKeys = append(ascizKeys, k)
+	}
+	sort.Strings(ascizKeys)
+	for _, k := range ascizKeys {
+		labels := b.ascizStrings[k]
+		// Use the first label as the main one, others are just equates to it
+		mainLabel := labels[0]
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n", mainLabel))
+		for i := 1; i < len(labels); i++ {
+			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n", labels[i]))
+		}
+		b.rodataBuf.WriteString(fmt.Sprintf("\t.asciz %s\n", k))
+	}
+
+	// rawCode := b.buf.String() + "\n" + b.rodataBuf.String() + "\n" + b.dataBuf.String()
+	rawCode := "\n* @@ BEGIN CODE\n" + b.buf.String() + "\n* @@ BEGIN RODATA\n" + b.rodataBuf.String() + "\n* @@ BEGIN DATA\n" + b.dataBuf.String() + "\n* @@ END\n"
 	return peepholeOptimize(rawCode)
 }
 
@@ -1991,7 +2011,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				if strLit, ok := i.Args[0].(*ir.StringLiteral); ok {
 					b.fmtCount++
 					lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-					b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
+					b.emitAsciz(lbl, fmt.Sprintf("%q", strLit.Value))
 					if b.picMode {
 						b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lbl))
 						b.buf.WriteString("\tstx v_prelude._panic_,pcr\n")
@@ -2018,7 +2038,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 			b.fmtCount++
 			lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*PANIC* %%s\\n\"\n", lblPanicMsg))
+			b.emitAsciz(lblPanicMsg, `"\n*PANIC* %s\n"`)
 
 			if b.picMode {
 				b.buf.WriteString("\tldd v_prelude._panic_,pcr\n")
@@ -2057,7 +2077,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 			b.fmtCount++
 			lblAbortMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n", lblAbortMsg))
+			b.emitAsciz(lblAbortMsg, `"\n*** ABORT\n\n*** EMPTY_RE_CHAIN\n"`)
 			if b.picMode {
 				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblAbortMsg))
 			} else {
@@ -2119,7 +2139,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 			b.fmtCount++
 			lblAbortMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n", lblAbortMsg))
+			b.emitAsciz(lblAbortMsg, `"\n*** ABORT\n\n*** EMPTY_RE_CHAIN\n"`)
 			if b.picMode {
 				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lblAbortMsg))
 			} else {
@@ -2183,23 +2203,19 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	}
 
 	if b.picMode {
-		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", fmtLabel, format))
+		b.emitAsciz(fmtLabel, fmt.Sprintf("%q", format))
 	} else {
 		if b.dataBuf.Len() == 0 {
 			//no-section// b.dataBuf.WriteString("\tsection data\n")
 		}
-		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", fmtLabel, format))
+		b.emitAsciz(fmtLabel, fmt.Sprintf("%q", format))
 	}
 
 	for i := len(dataArgs) - 1; i >= 0; i-- {
 		if strLit, ok := dataArgs[i].(*ir.StringLiteral); ok {
 			b.fmtCount++
 			lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
-			if b.picMode {
-				b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
-			} else {
-				b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
-			}
+			b.emitAsciz(lbl, fmt.Sprintf("%q", strLit.Value))
 			if b.picMode {
 				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lbl))
 			} else {
@@ -2279,6 +2295,10 @@ func (b *Backend) emitData(val ir.Value) {
 	default:
 		log.Panicf("unsupported init value type %T", val)
 	}
+}
+
+func (b *Backend) emitAsciz(lbl string, str string) {
+	b.ascizStrings[str] = append(b.ascizStrings[str], lbl)
 }
 
 func Assert(pred bool) {

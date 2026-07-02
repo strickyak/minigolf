@@ -13,7 +13,7 @@ type Resolver struct {
 	packages    map[string]bool
 	globals     map[string]bool // fullyQualifiedName -> true
 	currentPkg  string
-	dotImports  []string        // packages whose public names are in the unqualified namespace
+	dotImports  []string // packages whose public names are in the unqualified namespace
 	localScopes []map[string]bool
 	errors      []string
 	defines     map[string]string
