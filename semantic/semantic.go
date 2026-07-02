@@ -292,6 +292,53 @@ func isFuncType(typ ast.Expression) bool {
 	return ok
 }
 
+// markReachableInExpr recursively scans an AST expression for references to
+// known functions and marks them as reachable. This is used to prevent the
+// DCE pass from pruning functions that are only referenced as values (e.g.
+// word(LibPrintf) inside a global array/struct initializer).
+func (a *Analyzer) markReachableInExpr(expr ast.Expression, pkg string) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		// Direct function reference: either fully-qualified or short name.
+		qname := e.FullName()
+		if _, ok := a.funcMap[qname]; ok {
+			a.markReachable(qname)
+			return
+		}
+		if pkg != "" {
+			qualified := pkg + "." + e.Value
+			if _, ok := a.funcMap[qualified]; ok {
+				a.markReachable(qualified)
+			}
+		}
+	case *ast.CallExpression:
+		// word(funcName) — function address cast to word.
+		a.markReachableInExpr(e.Function, pkg)
+		for _, arg := range e.Arguments {
+			a.markReachableInExpr(arg, pkg)
+		}
+	case *ast.CompositeLit:
+		for _, el := range e.Elements {
+			a.markReachableInExpr(el, pkg)
+		}
+	case *ast.KeyValueExpr:
+		a.markReachableInExpr(e.Key, pkg)
+		a.markReachableInExpr(e.Value, pkg)
+	case *ast.ArrayType:
+		a.markReachableInExpr(e.Elt, pkg)
+	case *ast.PointerType:
+		a.markReachableInExpr(e.Elt, pkg)
+	case *ast.PrefixExpression:
+		a.markReachableInExpr(e.Right, pkg)
+	case *ast.InfixExpression:
+		a.markReachableInExpr(e.Left, pkg)
+		a.markReachableInExpr(e.Right, pkg)
+	}
+}
+
 func (a *Analyzer) markReachable(qname string) {
 	if !a.reachableFuncs[qname] {
 		//fmt.Printf("DEBUG: marking reachable %s\n", qname)
@@ -431,6 +478,20 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 	// removes them before the IR builder gets a chance to emit implicit calls.
 	for name := range a.magicFuncs {
 		a.markReachable(name)
+	}
+
+	// Scan all global var initializers for function references.
+	// Functions stored as values in global tables (e.g. word(LibPrintf) inside
+	// a [N]LibraryFunction literal) would otherwise be invisible to the
+	// reachability pass and get pruned as dead code.
+	varPkg := ""
+	for _, stmt := range program.Statements {
+		if ps, ok := stmt.(*ast.PackageStatement); ok {
+			varPkg = ps.Name.Value
+		}
+		if vs, ok := stmt.(*ast.VarStatement); ok && vs.Value != nil {
+			a.markReachableInExpr(vs.Value, varPkg)
+		}
 	}
 
 	// Pre-analyze generic templates to ensure their internal dependencies are discovered

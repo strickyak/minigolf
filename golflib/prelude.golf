@@ -84,16 +84,16 @@ func assignment_expression[T any](p *T, value T) T {
 /////////////////////////////////////////////
 
 func isspace(c word) bool {
-    return (c <= 32)
+	return (c <= 32)
 }
 func isalpha(c word) bool {
-    return ('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z')
+	return ('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z')
 }
 func isdigit(c word) bool {
-    return ('0' <= c && c <= '9')
+	return ('0' <= c && c <= '9')
 }
 func isalnum(c word) bool {
-    return isalpha(c) || isdigit(c)
+	return isalpha(c) || isdigit(c)
 }
 
 func clear[T any](p *T) {
@@ -108,23 +108,23 @@ func strcpy(d *byte, s *byte) {
 	ss := word(s)
 	for peekb(ss) {
 		pokeb(dd, peekb(ss))
-        dd++
-        ss++
+		dd++
+		ss++
 	}
-    pokeb(dd, 0)
+	pokeb(dd, 0)
 }
 func strncpy(d *byte, s *byte, n word) {
 	dd := word(d)
 	ss := word(s)
 	for i := range n {
-        if !peekb(ss) {
-            break
-        }
+		if !peekb(ss) {
+			break
+		}
 		pokeb(dd, peekb(ss))
-        dd++
-        ss++
+		dd++
+		ss++
 	}
-    pokeb(dd, 0)
+	pokeb(dd, 0)
 }
 
 func memset(p *byte, x byte, n word) {
@@ -188,9 +188,9 @@ func strncmp(a string, b string, n word) int {
 	if b.Len < sz {
 		sz = b.Len
 	}
-    if sz > n {
-        sz = n
-    }
+	if sz > n {
+		sz = n
+	}
 	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
 	if c != 0 {
 		return c

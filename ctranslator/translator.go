@@ -879,7 +879,8 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			t.line("for %s {", cond)
 		}
 		t.depth++
-		saved := t.switchBreakStack; t.switchBreakStack = nil
+		saved := t.switchBreakStack
+		t.switchBreakStack = nil
 		t.translateBody(s.Statement)
 		t.switchBreakStack = saved
 		t.depth--
@@ -895,7 +896,8 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			// Real do-while → for { body; if !(cond) { break } }
 			t.line("for {")
 			t.depth++
-			saved := t.switchBreakStack; t.switchBreakStack = nil
+			saved := t.switchBreakStack
+			t.switchBreakStack = nil
 			t.translateBody(s.Statement)
 			t.switchBreakStack = saved
 			cond := t.xExpr(s.ExpressionList)
@@ -937,7 +939,8 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			t.line("for %s; %s; %s {", initStr, condStr, postStr)
 		}
 		t.depth++
-		saved := t.switchBreakStack; t.switchBreakStack = nil
+		saved := t.switchBreakStack
+		t.switchBreakStack = nil
 		t.translateBody(s.Statement)
 		t.switchBreakStack = saved
 		for _, stmt := range postPtrStmts {
@@ -968,7 +971,8 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			t.line("for %s; %s; %s {", initStr, condStr, postStr)
 		}
 		t.depth++
-		saved2 := t.switchBreakStack; t.switchBreakStack = nil
+		saved2 := t.switchBreakStack
+		t.switchBreakStack = nil
 		t.translateBody(s.Statement)
 		t.switchBreakStack = saved2
 		for _, stmt := range postPtrStmts {
@@ -1278,7 +1282,24 @@ func (t *translator) xInitializer(init *cc.Initializer, golfType string) string 
 	switch init.Case {
 	case cc.InitializerExpr:
 		// Simple scalar initialiser: int x = 5;  or  char *p = NULL;
-		return t.xExpr(init.Expression)
+		s := t.xExpr(init.Expression)
+		// A function name used in an initializer decays to a pointer-to-function
+		// (cc.Ptr whose Elem is cc.Function). The struct field it goes into is
+		// typed as word in MiniGolf. Without word(...) the IR looks for the name
+		// as a variable identifier and fails.
+		exprTyp := init.Expression.Type()
+		isFuncPtr := exprTyp.Kind() == cc.Ptr
+		if isFuncPtr {
+			if pt, ok := exprTyp.(*cc.PointerType); ok {
+				isFuncPtr = pt.Elem().Kind() == cc.Function
+			} else {
+				isFuncPtr = false
+			}
+		}
+		if isFuncPtr {
+			return "word(" + s + ")"
+		}
+		return s
 	case cc.InitializerInitList:
 		// Brace initialiser: T arr[] = {a, b, c};  or  T *p[] = {NULL};
 		var elems []string
@@ -1778,6 +1799,12 @@ func (t *translator) xUnary(x *cc.UnaryExpr) string {
 		// In C99, &func and func are identical — both produce a function pointer.
 		// MiniGolf uses the function name directly, without &.
 		if x.Expr.Type().Kind() == cc.Function {
+			return t.xExpr(x.Expr)
+		}
+		// &array in C has the same address value as the array decaying to a
+		// pointer. MiniGolf array identifiers already emit (*EltType)(name),
+		// so prepending & would produce &(*byte)(name) — invalid in MiniGolf.
+		if x.Expr.Type().Kind() == cc.Array {
 			return t.xExpr(x.Expr)
 		}
 		return "&" + t.xExpr(x.Expr)

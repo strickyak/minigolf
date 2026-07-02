@@ -3372,6 +3372,24 @@ func (b *Builder) isConstantExpr(expr ast.Expression) bool {
 			return b.isConstantExpr(e.Elt)
 		}
 		return false
+	case *ast.CallExpression:
+		// word(funcName) is a link-time constant — the address of a function
+		// cast to a word. Recognize it so struct/array literals with function
+		// pointer fields can be placed in the constant data section.
+		if ident, ok := e.Function.(*ast.Identifier); ok && ident.Value == "word" {
+			if len(e.Arguments) == 1 {
+				if argIdent, ok := e.Arguments[0].(*ast.Identifier); ok {
+					fullName := argIdent.FullName()
+					if _, ok := b.funcs[fullName]; ok {
+						return true
+					}
+					if _, ok := b.funcs[b.currentPackage+"."+argIdent.Value]; ok {
+						return true
+					}
+				}
+			}
+		}
+		return false
 	}
 	return false
 }
@@ -3545,6 +3563,21 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 			}
 		}
 		return &ConstStruct{BaseInstruction: BaseInstruction{Typ: targetTyp}, Fields: fields}
+	case *ast.CallExpression:
+		// word(funcName) — function address as a word constant.
+		if ident, ok := e.Function.(*ast.Identifier); ok && ident.Value == "word" {
+			if len(e.Arguments) == 1 {
+				if argIdent, ok := e.Arguments[0].(*ast.Identifier); ok {
+					fullName := argIdent.FullName()
+					if _, ok := b.funcs[fullName]; !ok {
+						fullName = b.currentPackage + "." + argIdent.Value
+					}
+					if f, ok := b.funcs[fullName]; ok {
+						return &AddressOfFunc{BaseInstruction: BaseInstruction{Typ: TypeWord}, Func: f}
+					}
+				}
+			}
+		}
 	}
 	panic(fmt.Sprintf("Not a constant or unsupported constant expr: %T", expr))
 }
@@ -3568,6 +3601,13 @@ func (b *Builder) buildSyntheticInit() {
 	b.sealBlock(entry)
 
 	for _, item := range b.varInitStatements {
+		// Set the current package from this item's qualified name so that
+		// name lookups (e.g. word(FuncName) in isConstantExpr) resolve correctly.
+		parts := strings.SplitN(item.QName, ".", 2)
+		if len(parts) == 2 {
+			b.currentPackage = parts[0]
+		}
+
 		s := item.ASTNode.(*ast.VarStatement)
 		g := b.globals[item.QName]
 
