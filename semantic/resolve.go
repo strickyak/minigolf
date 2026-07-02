@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/strickyak/minigolf/ast"
 )
@@ -12,6 +13,7 @@ type Resolver struct {
 	packages    map[string]bool
 	globals     map[string]bool // fullyQualifiedName -> true
 	currentPkg  string
+	dotImports  []string        // packages whose public names are in the unqualified namespace
 	localScopes []map[string]bool
 	errors      []string
 	defines     map[string]string
@@ -26,6 +28,8 @@ func NewResolver(defines map[string]string) *Resolver {
 		globals:     make(map[string]bool),
 		localScopes: make([]map[string]bool, 0),
 		defines:     defines,
+		// prelude is always a dot-import: its public names are in the unqualified namespace.
+		dotImports: []string{"prelude"},
 	}
 }
 
@@ -37,6 +41,20 @@ func (r *Resolver) ResolveGenericInst(stmt ast.Statement, defPkg string) ast.Sta
 func (r *Resolver) ResolveGenericInstExpr(expr ast.Expression, defPkg string) ast.Expression {
 	r.currentPkg = defPkg
 	return r.resolveExpression(expr)
+}
+
+// Errors returns any errors detected during resolution (e.g. ambiguous dot-imports).
+func (r *Resolver) Errors() []string {
+	return r.errors
+}
+
+func (r *Resolver) reportError(node ast.Node, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if node != nil && node.GetToken() != nil {
+		tok := node.GetToken()
+		msg = fmt.Sprintf("%s (at %s:%d)", msg, tok.Filename, tok.Line)
+	}
+	r.errors = append(r.errors, msg)
 }
 
 func (r *Resolver) pushScope() {
@@ -69,6 +87,21 @@ func (r *Resolver) Resolve(program *ast.Program) {
 		case *ast.PackageStatement:
 			r.currentPkg = s.Name.Value
 			r.packages[r.currentPkg] = true
+		case *ast.ImportStatement:
+			if s.Dot {
+				// Derive the package name from the import path (basename, strip extension).
+				pkgName := s.Path.Value
+				if idx := strings.LastIndexAny(pkgName, "/\\"); idx >= 0 {
+					pkgName = pkgName[idx+1:]
+				}
+				if ext := strings.LastIndex(pkgName, "."); ext >= 0 {
+					pkgName = pkgName[:ext]
+				}
+				// Don't add prelude twice (it's always the first entry).
+				if pkgName != "prelude" {
+					r.dotImports = append(r.dotImports, pkgName)
+				}
+			}
 		case *ast.FuncStatement:
 			r.globals[r.currentPkg+"."+s.Name.Value] = true
 		case *ast.TypeStatement:
@@ -257,14 +290,27 @@ func (r *Resolver) resolveExpression(expr ast.Expression) ast.Expression {
 				e.Package = r.currentPkg
 				e.ShortName = e.Value
 				e.IsResolved = true
-			} else if r.globals["prelude."+e.Value] {
-				e.Package = "prelude"
-				e.ShortName = e.Value
-				e.IsResolved = true
 			} else if r.globals["builtin."+e.Value] {
 				e.Package = "builtin"
 				e.ShortName = e.Value
 				e.IsResolved = true
+			} else if !strings.HasPrefix(e.Value, "_") {
+				// Dot-import resolution: check all dot-imported packages.
+				// Names starting with '_' are package-private and never dot-imported.
+				var matches []string
+				for _, dotPkg := range r.dotImports {
+					if r.globals[dotPkg+"."+e.Value] {
+						matches = append(matches, dotPkg)
+					}
+				}
+				if len(matches) > 1 {
+					r.reportError(e, "ambiguous name %q: defined in multiple dot-imported packages: %v",
+						e.Value, matches)
+				} else if len(matches) == 1 {
+					e.Package = matches[0]
+					e.ShortName = e.Value
+					e.IsResolved = true
+				}
 			}
 		}
 		return e

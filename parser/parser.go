@@ -268,6 +268,12 @@ func (p *Parser) parsePackageStatement(overridePackage string) *ast.PackageState
 func (p *Parser) parseImportStatement() *ast.ImportStatement {
 	stmt := &ast.ImportStatement{Token: p.curToken}
 
+	// Optional dot for dot-import:  import . "pkg"
+	if p.peekTokenIs(token.DOT) {
+		p.nextToken() // consume the '.'
+		stmt.Dot = true
+	}
+
 	if !p.expectPeek(token.STRING) {
 		return nil
 	}

@@ -63,6 +63,7 @@ func (s *PackageStatement) GetToken() *token.Token { return &s.Token }
 type ImportStatement struct {
 	Token token.Token // The 'import' token
 	Path  *StringLiteral
+	Dot   bool // true for:  import . "pkg"
 }
 
 func (s *ImportStatement) statementNode()         {}

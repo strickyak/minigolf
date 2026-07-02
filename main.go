@@ -522,6 +522,13 @@ func main() {
 
 	resolver := semantic.NewResolver(golfDefines)
 	resolver.Resolve(program)
+	if errs := resolver.Errors(); len(errs) > 0 {
+		fmt.Fprintln(os.Stderr, "Name resolution errors:")
+		for _, e := range errs {
+			fmt.Fprintf(os.Stderr, "\t%s\n", e)
+		}
+		os.Exit(1)
+	}
 	resolveCallback := func(node ast.Node, defPkg string) ast.Node {
 		if stmt, ok := node.(ast.Statement); ok {
 			return resolver.ResolveGenericInst(stmt, defPkg)

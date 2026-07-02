@@ -1,0 +1,62 @@
+package clib
+
+// C standard library functions available via dot-import.
+// Intended for use with:  import . "clib"
+// Names starting with '_' are private (not exported via dot-import).
+
+// string.h
+
+// minigolf:linkage("strchr")
+func strchr(s *byte, c int) *byte
+
+// minigolf:linkage("strrchr")
+func strrchr(s *byte, c int) *byte
+
+// minigolf:linkage("strstr")
+func strstr(haystack *byte, needle *byte) *byte
+
+// minigolf:linkage("strtol")
+func strtol(s *byte, endptr **byte, base int) int
+
+// minigolf:linkage("atoi")
+func atoi(s *byte) int
+
+// stdlib.h
+
+// minigolf:linkage("calloc")
+func calloc(nmemb int, size int) *byte
+
+// minigolf:linkage("realloc")
+func realloc(ptr *byte, size int) *byte
+
+// minigolf:linkage("exit")
+func exit(status int)
+
+// minigolf:linkage("abs")
+func abs(n int) int
+
+// stdio.h
+
+// minigolf:linkage("fopen")
+func fopen(path *byte, mode *byte) *byte
+
+// minigolf:linkage("fclose")
+func fclose(fp *byte) int
+
+// minigolf:linkage("fgets")
+func fgets(buf *byte, size int, fp *byte) *byte
+
+// minigolf:linkage("fgetc")
+func fgetc(fp *byte) int
+
+// minigolf:linkage("fputc")
+func fputc(c int, fp *byte) int
+
+// minigolf:linkage("feof")
+func feof(fp *byte) int
+
+// minigolf:linkage("ferror")
+func ferror(fp *byte) int
+
+// minigolf:linkage("fflush")
+func fflush(fp *byte) int
