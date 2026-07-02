@@ -83,16 +83,61 @@ func assignment_expression[T any](p *T, value T) T {
 
 /////////////////////////////////////////////
 
+func isspace(c word) bool {
+    return (c <= 32)
+}
+func isalpha(c word) bool {
+    return ('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z')
+}
+func isdigit(c word) bool {
+    return ('0' <= c && c <= '9')
+}
+func isalnum(c word) bool {
+    return isalpha(c) || isdigit(c)
+}
+
 func clear[T any](p *T) {
 	addr := word(p)
 	for i := range sizeof[T]() {
 		pokeb(addr+i, 0)
 	}
 }
+
+func strcpy(d *byte, s *byte) {
+	dd := word(d)
+	ss := word(s)
+	for peekb(ss) {
+		pokeb(dd, peekb(ss))
+        dd++
+        ss++
+	}
+    pokeb(dd, 0)
+}
+func strncpy(d *byte, s *byte, n word) {
+	dd := word(d)
+	ss := word(s)
+	for i := range n {
+        if !peekb(ss) {
+            break
+        }
+		pokeb(dd, peekb(ss))
+        dd++
+        ss++
+	}
+    pokeb(dd, 0)
+}
+
 func memset(p *byte, x byte, n word) {
 	addr := word(p)
 	for i := range n {
 		pokeb(i+addr, x)
+	}
+}
+func memcpy(d *byte, s *byte, n word) {
+	dd := word(d)
+	ss := word(s)
+	for i := range n {
+		pokeb(dd+i, peekb(ss+i))
 	}
 }
 
@@ -121,11 +166,32 @@ func memeq(a *byte, b *byte, n word) bool {
 	return 1
 }
 func strcmp(a string, b string) int {
-	n := a.Len
-	if b.Len < n {
-		n = b.Len
+	sz := a.Len
+	if b.Len < sz {
+		sz = b.Len
 	}
-	c := memcmp((*byte)(a.Base), (*byte)(b.Base), n)
+	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
+	if c != 0 {
+		return c
+	}
+	if a.Len < b.Len {
+		return -1
+	}
+	if a.Len > b.Len {
+		return 1
+	}
+	return 0
+}
+
+func strncmp(a string, b string, n word) int {
+	sz := a.Len
+	if b.Len < sz {
+		sz = b.Len
+	}
+    if sz > n {
+        sz = n
+    }
+	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
 	if c != 0 {
 		return c
 	}

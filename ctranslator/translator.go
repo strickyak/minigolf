@@ -193,7 +193,7 @@ func (t *translator) cTypeToGolf(typ cc.Type) string {
 	case cc.Char, cc.SChar, cc.UChar:
 		return "byte"
 	case cc.Int, cc.Short, cc.Long, cc.LongLong,
-		cc.Int8, cc.Int16, cc.Int32, cc.Int64:
+		cc.Int8, cc.Int16, cc.Int32, cc.Int64, cc.Enum:
 		return "int"
 	case cc.UInt, cc.UShort, cc.ULong, cc.ULongLong,
 		cc.UInt8, cc.UInt16, cc.UInt32, cc.UInt64:
@@ -326,6 +326,7 @@ func (t *translator) translateProgram(ast *cc.AST) {
 
 	// Emit struct type definitions (in declaration order).
 	t.emitStructDefs(ast)
+	t.emitEnumDefs(ast)
 
 	// Emit static globals collected during function translation.
 	// (They will be filled in during function translation below.)
@@ -438,6 +439,36 @@ func (t *translator) emitStructType(golfName string, st *cc.StructType) {
 		t.raw(fmt.Sprintf("    %s %s\n", f.Name(), golfType))
 	}
 	t.raw("}\n")
+}
+
+// emitEnumDefs emits MiniGolf const definitions for enum members.
+func (t *translator) emitEnumDefs(ast *cc.AST) {
+	emitted := make(map[string]bool)
+	for _, d := range ast.Declarations {
+		cd, ok := d.(*cc.CommonDeclaration)
+		if !ok || isBuiltinDecl(cd) {
+			continue
+		}
+		for _, spec := range cd.DeclarationSpecifiers {
+			if ts, ok := spec.(*cc.TypeSpecEnum); ok {
+				enum := ts.Enum
+				if enum == nil || enum.Case != cc.EnumSpecifierDef {
+					continue
+				}
+				et, ok := enum.Type().(*cc.EnumType)
+				if !ok {
+					continue
+				}
+				for _, en := range et.Enumerators() {
+					name := tokenStr(en.Token)
+					if !emitted[name] {
+						emitted[name] = true
+						t.raw(fmt.Sprintf("\nconst %s = %v\n", name, en.Value()))
+					}
+				}
+			}
+		}
+	}
 }
 
 // ── Top-level declarations ────────────────────────────────────────────────────
@@ -1039,7 +1070,7 @@ func (t *translator) translateSelection(s *cc.SelectionStatement) {
 
 		type caseGroup struct {
 			isDefault bool
-			expr      string
+			exprs     []string
 			items     []cc.BlockItem
 		}
 		var groups []caseGroup
@@ -1061,21 +1092,41 @@ func (t *translator) translateSelection(s *cc.SelectionStatement) {
 					addItem(item)
 					continue
 				}
-				switch ls.Case {
-				case cc.LabeledStatementCaseLabel:
-					groups = append(groups, caseGroup{expr: t.xExpr(ls.Expression)})
-				case cc.LabeledStatementRange:
-					groups = append(groups, caseGroup{expr: t.xExpr(ls.Expression)})
-				case cc.LabeledStatementDefault:
-					groups = append(groups, caseGroup{isDefault: true})
-				default:
+
+				if ls.Case != cc.LabeledStatementCaseLabel &&
+					ls.Case != cc.LabeledStatementRange &&
+					ls.Case != cc.LabeledStatementDefault {
 					addItem(item)
 					continue
 				}
-				// The label's own Statement belongs to the new group.
-				if ls.Statement != nil && !isBreakOnly(ls.Statement) {
-					groups[len(groups)-1].items = append(groups[len(groups)-1].items, ls.Statement)
+
+				cg := caseGroup{}
+				curr := ls
+				for {
+					switch curr.Case {
+					case cc.LabeledStatementCaseLabel:
+						cg.exprs = append(cg.exprs, fmt.Sprintf("%s == %s", swVar, t.xExpr(curr.Expression)))
+					case cc.LabeledStatementRange:
+						cg.exprs = append(cg.exprs, fmt.Sprintf("((%s) >= %s && (%s) <= %s)", swVar, t.xExpr(curr.Expression), swVar, t.xExpr(curr.Expression2)))
+					case cc.LabeledStatementDefault:
+						cg.isDefault = true
+					}
+
+					if curr.Statement == nil || isBreakOnly(curr.Statement) {
+						break
+					}
+
+					nextLs, nextIsLabel := curr.Statement.(*cc.LabeledStatement)
+					if nextIsLabel && (nextLs.Case == cc.LabeledStatementCaseLabel ||
+						nextLs.Case == cc.LabeledStatementRange ||
+						nextLs.Case == cc.LabeledStatementDefault) {
+						curr = nextLs
+					} else {
+						cg.items = append(cg.items, curr.Statement)
+						break
+					}
 				}
+				groups = append(groups, cg)
 			}
 		}
 
@@ -1089,7 +1140,10 @@ func (t *translator) translateSelection(s *cc.SelectionStatement) {
 					header = indent + "} else {\n"
 				}
 			} else {
-				cond := fmt.Sprintf("%s == %s", swVar, g.expr)
+				cond := strings.Join(g.exprs, " || ")
+				if cond == "" {
+					cond = "false"
+				}
 				if i == 0 {
 					header = indent + fmt.Sprintf("if %s {\n", cond)
 				} else {
@@ -1828,7 +1882,7 @@ func sanitizeCharLit(src string) string {
 	}
 	// Single-quote and backslash need escaping but are still valid literals.
 	if val == '\'' {
-		return "'\\'"
+		return `'\''`
 	}
 	if val == '\\' {
 		return "'\\\\'"

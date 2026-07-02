@@ -2,6 +2,10 @@
 
 typedef unsigned int intptr_t;
 
+#define union struct // will this work?
+
+#define HEAP_SIZE (100 << 10)  // 100KB
+
 //# 1 "c-demos/gitlab.com-zsaleeba-picoc/main.c"
 //# 1 "<built-in>"
 //# 1 "<command-line>"
@@ -57,7 +61,7 @@ typedef struct OutputStream IOFILE;
 struct Table;
 struct Picoc_Struct;
 
-typedef struct Picoc_Struct Picoc;
+// typedef struct Picoc_Struct Picoc;
 
 
 enum LexToken
@@ -80,7 +84,9 @@ enum LexToken
                TokenIncrement, TokenDecrement, TokenUnaryNot, TokenUnaryExor, TokenSizeof, TokenCast,
                TokenLeftSquareBracket, TokenRightSquareBracket, TokenDot, TokenArrow,
                TokenOpenBracket, TokenCloseBracket,
-               TokenIdentifier, TokenIntegerConstant, TokenFPConstant, TokenStringConstant, TokenCharacterConstant,
+               TokenIdentifier, TokenIntegerConstant,
+               TokenFPConstant,
+               TokenStringConstant, TokenCharacterConstant,
                TokenSemicolon, TokenEllipsis,
                TokenLeftBrace, TokenRightBrace,
                TokenIntType, TokenCharType, TokenFloatType, TokenDoubleType, TokenVoidType, TokenEnumType,
@@ -114,7 +120,7 @@ enum RunMode
 
 struct ParseState
 {
-    Picoc *pc;
+    struct Picoc_Struct *pc;
     const unsigned char *Pos;
     char *FileName;
     short int Line;
@@ -208,7 +214,7 @@ union AnyValue
     struct FuncDef FuncDef;
     struct MacroDef MacroDef;
 
-    double FP;
+    // double FP;
 
     void *Pointer;
 };
@@ -226,6 +232,26 @@ struct Value
     char OutOfScope;
 };
 
+struct ValueEntry
+{
+    char *Key;
+    struct Value *Val;
+};
+struct BreakpointEntry
+{
+    const char *FileName;
+    short int Line;
+    short int CharacterPos;
+};
+union TableEntryPayload
+{
+        struct ValueEntry v;
+
+        char Key[1];
+
+        struct BreakpointEntry b;
+
+};
 
 struct TableEntry
 {
@@ -234,24 +260,7 @@ struct TableEntry
     unsigned short DeclLine;
     unsigned short DeclColumn;
 
-    union TableEntryPayload
-    {
-        struct ValueEntry
-        {
-            char *Key;
-            struct Value *Val;
-        } v;
-
-        char Key[1];
-
-        struct BreakpointEntry
-        {
-            const char *FileName;
-            short int Line;
-            short int CharacterPos;
-        } b;
-
-    } p;
+    union TableEntryPayload p;
 };
 
 struct Table
@@ -304,13 +313,14 @@ struct LibraryFunction
 };
 
 
-union OutputStreamInfo
-{
-    struct StringOutputStream
+struct StringOutputStream
     {
         struct ParseState *Parser;
         char *WritePos;
-    } Str;
+};
+union OutputStreamInfo
+{
+    struct StringOutputStream Str;
 };
 
 
@@ -347,7 +357,7 @@ struct TokenLine
 struct IncludeLibrary
 {
     char *IncludeName;
-    void (*SetupFunction)(Picoc *pc);
+    void (*SetupFunction)(struct Picoc_Struct *pc);
     struct LibraryFunction *FuncList;
     const char *SetupCSource;
     struct IncludeLibrary *NextLib;
@@ -410,7 +420,7 @@ struct Picoc_Struct
     struct ValueType UnsignedLongType;
     struct ValueType UnsignedCharType;
 
-    struct ValueType FPType;
+    //struct ValueType FPType;
 
     struct ValueType VoidType;
     struct ValueType TypeType;
@@ -443,6 +453,8 @@ struct Picoc_Struct
     struct TableEntry *StringHashTable[97];
     char *StrEmpty;
 };
+
+#define Picoc struct Picoc_Struct
 
 
 void TableInit(Picoc *pc);
@@ -486,7 +498,7 @@ void ExpressionAssign(struct ParseState *Parser, struct Value *DestValue, struct
 long ExpressionCoerceInteger(struct Value *Val);
 unsigned long ExpressionCoerceUnsignedInteger(struct Value *Val);
 
-double ExpressionCoerceFP(struct Value *Val);
+//double ExpressionCoerceFP(struct Value *Val);
 
 
 
@@ -550,7 +562,7 @@ void PrintCh(char OutCh, IOFILE *Stream);
 void PrintSimpleInt(long Num, IOFILE *Stream);
 void PrintInt(long Num, int FieldWidth, int ZeroPad, int LeftJustify, IOFILE *Stream);
 void PrintStr(const char *Str, IOFILE *Stream);
-void PrintFP(double Num, IOFILE *Stream);
+//void PrintFP(double Num, IOFILE *Stream);
 void PrintType(struct ValueType *Typ, IOFILE *Stream);
 void LibPrintf(struct ParseState *Parser, struct Value *ReturnValue, struct Value **Param, int NumArgs);
 //# 589 "c-demos/gitlab.com-zsaleeba-picoc/interpreter.h"
@@ -635,11 +647,32 @@ void PicocIncludeAllSystemHeaders(Picoc *pc);
 //# 5 "c-demos/gitlab.com-zsaleeba-picoc/clibrary.c" 2
 
 
+////////// nando /////////
 
+char PlatformGetLineBuf[302];
+char *PlatformGetLine(char *Buf, int MaxLen, const char *Prompt) {
+    for (int i = 0; i <300; i++) {
+        int c = getchar();
+        if (c < 0) return (char*)0;
+        PlatformGetLineBuf[i] = c;
+        PlatformGetLineBuf[i+1] = 0;
+        if (c == '\n') return PlatformGetLineBuf;
+    }
+}
 
-static const int __ENDIAN_CHECK__ = 1;
-static int BigEndian;
-static int LittleEndian;
+void PlatformExit(Picoc *pc, int ExitVal) {
+    exit(ExitVal);
+}
+
+void PlatformPutc(unsigned char OutCh, union OutputStreamInfo *) {
+    putchar(OutCh);
+}
+
+////////// nando /////////
+
+// static const int __ENDIAN_CHECK__ = 1;
+static int BigEndian = 1;
+static int LittleEndian = 0;
 
 
 
@@ -651,8 +684,8 @@ void LibraryInit(Picoc *pc)
     VariableDefinePlatformVar(pc, 0, "PICOC_VERSION", pc->CharPtrType, (union AnyValue *)&pc->VersionString, 0);
 
 
-    BigEndian = ((*(char*)&__ENDIAN_CHECK__) == 0);
-    LittleEndian = ((*(char*)&__ENDIAN_CHECK__) == 1);
+    // BigEndian = ((*(char*)&__ENDIAN_CHECK__) == 0);
+    // LittleEndian = ((*(char*)&__ENDIAN_CHECK__) == 1);
 
     VariableDefinePlatformVar(pc, 0, "BIG_ENDIAN", &pc->IntType, (union AnyValue *)&BigEndian, 0);
     VariableDefinePlatformVar(pc, 0, "LITTLE_ENDIAN", &pc->IntType, (union AnyValue *)&LittleEndian, 0);
@@ -696,7 +729,7 @@ void PrintType(struct ValueType *Typ, IOFILE *Stream)
         case TypeUnsignedLong: PrintStr("unsigned long", Stream); break;
         case TypeUnsignedChar: PrintStr("unsigned char", Stream); break;
 
-        case TypeFP: PrintStr("double", Stream); break;
+        //case TypeFP: PrintStr("double", Stream); break;
 
         case TypeFunction: PrintStr("function", Stream); break;
         case TypeMacro: PrintStr("macro", Stream); break;
@@ -749,7 +782,7 @@ void PrintStr(const char *Str, struct OutputStream *Stream)
 }
 
 
-void PrintRepeatedChar(Picoc *pc, char ShowChar, int Length, struct OutputStream *Stream)
+void PrintRepeatedChar(char ShowChar, int Length, struct OutputStream *Stream)
 {
     while (Length-- > 0)
         PrintCh(ShowChar, Stream);
@@ -807,7 +840,7 @@ void PrintInt(long Num, int FieldWidth, int ZeroPad, int LeftJustify, struct Out
 }
 
 
-
+#if 0
 void PrintFP(double Num, struct OutputStream *Stream)
 {
     int Exponent = 0;
@@ -842,7 +875,7 @@ void PrintFP(double Num, struct OutputStream *Stream)
         PrintInt(Exponent, 0, 0, 0, Stream);
     }
 }
-
+#endif
 
 
 void GenericPrintf(struct ParseState *Parser, struct Value *ReturnValue, struct Value **Param, int NumArgs, struct OutputStream *Stream)
@@ -886,7 +919,7 @@ void GenericPrintf(struct ParseState *Parser, struct Value *ReturnValue, struct 
                 case 's': FormatType = Parser->pc->CharPtrType; break;
                 case 'd': case 'u': case 'x': case 'b': case 'c': FormatType = &Parser->pc->IntType; break;
 
-                case 'f': FormatType = &Parser->pc->FPType; break;
+                //case 'f': FormatType = &Parser->pc->FPType; break;
 
                 case '%': PrintCh('%', Stream); FormatType = 0; break;
                 case '\0': FPos--; FormatType = 0; break;
@@ -931,7 +964,7 @@ void GenericPrintf(struct ParseState *Parser, struct Value *ReturnValue, struct 
                             case 'b': PrintUnsigned(ExpressionCoerceUnsignedInteger(NextArg), 2, FieldWidth, ZeroPad, LeftJustify, Stream); break;
                             case 'c': PrintCh(ExpressionCoerceUnsignedInteger(NextArg), Stream); break;
 
-                            case 'f': PrintFP(ExpressionCoerceFP(NextArg), Stream); break;
+                            // case 'f': PrintFP(ExpressionCoerceFP(NextArg), Stream); break;
 
                         }
                     }
@@ -987,7 +1020,7 @@ void LibGetc(struct ParseState *Parser, struct Value *ReturnValue, struct Value 
 
 void LibExit(struct ParseState *Parser, struct Value *ReturnValue, struct Value **Param, int NumArgs)
 {
-    PlatformExit(Param[0]->Val->Integer);
+    PlatformExit((Picoc*)0, Param[0]->Val->Integer);
 }
 //# 465 "c-demos/gitlab.com-zsaleeba-picoc/clibrary.c"
 void LibMalloc(struct ParseState *Parser, struct Value *ReturnValue, struct Value **Param, int NumArgs)
@@ -1397,7 +1430,7 @@ long ExpressionCoerceInteger(struct Value *Val)
         case TypeUnsignedChar: return (long)Val->Val->UnsignedCharacter;
         case TypePointer: return (long)Val->Val->Pointer;
 
-        case TypeFP: return (long)Val->Val->FP;
+        // case TypeFP: return (long)Val->Val->FP;
 
         default: return 0;
     }
@@ -1417,13 +1450,14 @@ unsigned long ExpressionCoerceUnsignedInteger(struct Value *Val)
         case TypeUnsignedChar: return (unsigned long)Val->Val->UnsignedCharacter;
         case TypePointer: return (unsigned long)Val->Val->Pointer;
 
-        case TypeFP: return (unsigned long)Val->Val->FP;
+        // case TypeFP: return (unsigned long)Val->Val->FP;
 
         default: return 0;
     }
 }
 
 
+#if 0
 double ExpressionCoerceFP(struct Value *Val)
 {
 
@@ -1440,11 +1474,12 @@ double ExpressionCoerceFP(struct Value *Val)
         case TypeUnsignedShort: UnsignedVal = Val->Val->UnsignedShortInteger; return (double)UnsignedVal;
         case TypeUnsignedLong: UnsignedVal = Val->Val->UnsignedLongInteger; return (double)UnsignedVal;
         case TypeUnsignedChar: UnsignedVal = Val->Val->UnsignedCharacter; return (double)UnsignedVal;
-        case TypeFP: return Val->Val->FP;
+        // case TypeFP: return Val->Val->FP;
         default: return 0.0;
     }
 //# 239 "c-demos/gitlab.com-zsaleeba-picoc/expression.c"
 }
+#endif
 
 
 
@@ -1476,7 +1511,7 @@ long ExpressionAssignInt(struct ParseState *Parser, struct Value *DestValue, lon
 }
 
 
-
+#if 0
 double ExpressionAssignFP(struct ParseState *Parser, struct Value *DestValue, double FromFP)
 {
     if (!DestValue->IsLValue)
@@ -1485,6 +1520,7 @@ double ExpressionAssignFP(struct ParseState *Parser, struct Value *DestValue, do
     DestValue->Val->FP = FromFP;
     return FromFP;
 }
+#endif
 
 
 
@@ -1548,14 +1584,14 @@ void ExpressionPushInt(struct ParseState *Parser, struct ExpressionStack **Stack
     ExpressionStackPushValueNode(Parser, StackTop, ValueLoc);
 }
 
-
+#if 0
 void ExpressionPushFP(struct ParseState *Parser, struct ExpressionStack **StackTop, double FPValue)
 {
     struct Value *ValueLoc = VariableAllocValueFromType(Parser->pc, Parser, &Parser->pc->FPType, 0, 0, 0);
     ValueLoc->Val->FP = FPValue;
     ExpressionStackPushValueNode(Parser, StackTop, ValueLoc);
 }
-
+#endif
 
 
 void ExpressionAssignToPointer(struct ParseState *Parser, struct Value *ToValue, struct Value *FromValue, const char *FuncName, int ParamNo, int AllowPointerCoercion)
@@ -1576,12 +1612,12 @@ void ExpressionAssignToPointer(struct ParseState *Parser, struct Value *ToValue,
 
         ToValue->Val->Pointer = VariableDereferencePointer(Parser, FromValue, 0, 0, 0, 0);
     }
-    else if (((((FromValue)->Typ)->Base >= TypeInt && ((FromValue)->Typ)->Base <= TypeUnsignedLong) || ((FromValue)->Typ->Base == TypeFP)) && ExpressionCoerceInteger(FromValue) == 0)
+    else if (((((FromValue)->Typ)->Base >= TypeInt && ((FromValue)->Typ)->Base <= TypeUnsignedLong) /*|| ((FromValue)->Typ->Base == TypeFP)) && ExpressionCoerceInteger(FromValue) == 0*/))
     {
 
         ToValue->Val->Pointer = 0;
     }
-    else if (AllowPointerCoercion && ((((FromValue)->Typ)->Base >= TypeInt && ((FromValue)->Typ)->Base <= TypeUnsignedLong) || ((FromValue)->Typ->Base == TypeFP)))
+    else if (AllowPointerCoercion && ((((FromValue)->Typ)->Base >= TypeInt && ((FromValue)->Typ)->Base <= TypeUnsignedLong) /*|| ((FromValue)->Typ->Base == TypeFP)*/))
     {
 
         ToValue->Val->Pointer = (void *)(unsigned long)ExpressionCoerceUnsignedInteger(FromValue);
@@ -1615,14 +1651,14 @@ void ExpressionAssign(struct ParseState *Parser, struct Value *DestValue, struct
         case TypeUnsignedLong: DestValue->Val->UnsignedLongInteger = ExpressionCoerceUnsignedInteger(SourceValue); break;
         case TypeUnsignedChar: DestValue->Val->UnsignedCharacter = (unsigned char)ExpressionCoerceUnsignedInteger(SourceValue); break;
 
-
+#if 0
         case TypeFP:
             if (!(((((SourceValue)->Typ)->Base >= TypeInt && ((SourceValue)->Typ)->Base <= TypeUnsignedLong) || ((SourceValue)->Typ->Base == TypeFP)) || ((AllowPointerCoercion) ? ((SourceValue)->Typ->Base == TypePointer) : 0)))
                 AssignFail(Parser, "%t from %t", DestValue->Typ, SourceValue->Typ, 0, 0, FuncName, ParamNo);
 
             DestValue->Val->FP = ExpressionCoerceFP(SourceValue);
             break;
-
+#endif
         case TypePointer:
             ExpressionAssignToPointer(Parser, DestValue, SourceValue, FuncName, ParamNo, AllowPointerCoercion);
             break;
@@ -1754,7 +1790,7 @@ void ExpressionPrefixOperator(struct ParseState *Parser, struct ExpressionStack 
 
         default:
 
-
+#if 0
             if (TopValue->Typ == &Parser->pc->FPType)
             {
 
@@ -1773,7 +1809,7 @@ void ExpressionPrefixOperator(struct ParseState *Parser, struct ExpressionStack 
                 ExpressionPushFP(Parser, StackTop, ResultFP);
             }
             else
-
+#endif
             if (((((TopValue)->Typ)->Base >= TypeInt && ((TopValue)->Typ)->Base <= TypeUnsignedLong) || ((TopValue)->Typ->Base == TypeFP)))
             {
 
@@ -1826,7 +1862,7 @@ void ExpressionPrefixOperator(struct ParseState *Parser, struct ExpressionStack 
 void ExpressionPostfixOperator(struct ParseState *Parser, struct ExpressionStack **StackTop, enum LexToken Op, struct Value *TopValue)
 {
     debugf("ExpressionPostfixOperator()\n");
-
+#if 0
     if (TopValue->Typ == &Parser->pc->FPType)
     {
 
@@ -1842,7 +1878,7 @@ void ExpressionPostfixOperator(struct ParseState *Parser, struct ExpressionStack
         ExpressionPushFP(Parser, StackTop, ResultFP);
     }
     else
-
+#endif
     if (((((TopValue)->Typ)->Base >= TypeInt && ((TopValue)->Typ)->Base <= TypeUnsignedLong) || ((TopValue)->Typ->Base == TypeFP)))
     {
         long ResultInt = 0;
@@ -1923,7 +1959,7 @@ void ExpressionInfixOperator(struct ParseState *Parser, struct ExpressionStack *
     else if (Op == TokenColon)
         ExpressionColonOperator(Parser, StackTop, TopValue, BottomValue);
 
-
+#if 0
     else if ( (TopValue->Typ == &Parser->pc->FPType && BottomValue->Typ == &Parser->pc->FPType) ||
               (TopValue->Typ == &Parser->pc->FPType && ((((BottomValue)->Typ)->Base >= TypeInt && ((BottomValue)->Typ)->Base <= TypeUnsignedLong) || ((BottomValue)->Typ->Base == TypeFP))) ||
               (((((TopValue)->Typ)->Base >= TypeInt && ((TopValue)->Typ)->Base <= TypeUnsignedLong) || ((TopValue)->Typ->Base == TypeFP)) && BottomValue->Typ == &Parser->pc->FPType) )
@@ -1959,7 +1995,7 @@ void ExpressionInfixOperator(struct ParseState *Parser, struct ExpressionStack *
         else
             ExpressionPushFP(Parser, StackTop, ResultFP);
     }
-
+#endif
     else if (((((TopValue)->Typ)->Base >= TypeInt && ((TopValue)->Typ)->Base <= TypeUnsignedLong) || ((TopValue)->Typ->Base == TypeFP)) && ((((BottomValue)->Typ)->Base >= TypeInt && ((BottomValue)->Typ)->Base <= TypeUnsignedLong) || ((BottomValue)->Typ->Base == TypeFP)))
     {
 
@@ -2576,7 +2612,7 @@ void ExpressionParseMacroCall(struct ParseState *Parser, struct ExpressionStack 
     {
 
 
-        ExpressionStackPushValueByType(Parser, StackTop, &Parser->pc->FPType);
+        //ExpressionStackPushValueByType(Parser, StackTop, &Parser->pc->FPType);
 
 
 
@@ -3143,7 +3179,7 @@ enum LexToken LexCheckReservedWord(Picoc *pc, const char *Word)
 }
 
 
-enum LexToken LexGetNumber(Picoc *pc, struct LexState *Lexer, struct Value *Value)
+enum LexToken LexGetNumber(Picoc *pc, struct LexState *Lexer, struct Value *V)
 {
     long Result = 0;
     long Base = 10;
@@ -3188,8 +3224,8 @@ enum LexToken LexGetNumber(Picoc *pc, struct LexState *Lexer, struct Value *Valu
 
     }
 
-    Value->Typ = &pc->LongType;
-    Value->Val->LongInteger = Result;
+    V->Typ = &pc->LongType;
+    V->Val->LongInteger = Result;
 
     ResultToken = TokenIntegerConstant;
 
@@ -3207,7 +3243,8 @@ enum LexToken LexGetNumber(Picoc *pc, struct LexState *Lexer, struct Value *Valu
         return ResultToken;
     }
 
-    Value->Typ = &pc->FPType;
+#if 0
+    V->Typ = &pc->FPType;
     FPResult = (double)Result;
 
     if (*Lexer->Pos == '.')
@@ -3240,19 +3277,20 @@ enum LexToken LexGetNumber(Picoc *pc, struct LexState *Lexer, struct Value *Valu
         FPResult *= pow((double)Base, (double)Result * ExponentSign);
     }
 
-    Value->Val->FP = FPResult;
+    V->Val->FP = FPResult;
 
     if (*Lexer->Pos == 'f' || *Lexer->Pos == 'F')
         ( (Lexer)->Pos++, (Lexer)->CharacterPos++ );
 
+#endif
+    abort();
     return TokenFPConstant;
-
 
 
 }
 
 
-enum LexToken LexGetWord(Picoc *pc, struct LexState *Lexer, struct Value *Value)
+enum LexToken LexGetWord(Picoc *pc, struct LexState *Lexer, struct Value *V)
 {
     const char *StartPos = Lexer->Pos;
     enum LexToken Token;
@@ -3261,10 +3299,10 @@ enum LexToken LexGetWord(Picoc *pc, struct LexState *Lexer, struct Value *Value)
         ( (Lexer)->Pos++, (Lexer)->CharacterPos++ );
     } while (Lexer->Pos != Lexer->End && (isalnum((int)*Lexer->Pos) || ((int)*Lexer->Pos)=='_'));
 
-    Value->Typ = 0;
-    Value->Val->Identifier = TableStrRegister2(pc, StartPos, Lexer->Pos - StartPos);
+    V->Typ = 0;
+    V->Val->Identifier = TableStrRegister2(pc, StartPos, Lexer->Pos - StartPos);
 
-    Token = LexCheckReservedWord(pc, Value->Val->Identifier);
+    Token = LexCheckReservedWord(pc, V->Val->Identifier);
     switch (Token)
     {
         case TokenHashInclude: Lexer->Mode = LexModeHashInclude; break;
@@ -3338,7 +3376,7 @@ unsigned char LexUnEscapeCharacter(const char **From, const char *End)
 }
 
 
-enum LexToken LexGetStringConstant(Picoc *pc, struct LexState *Lexer, struct Value *Value, char EndChar)
+enum LexToken LexGetStringConstant(Picoc *pc, struct LexState *Lexer, struct Value *V, char EndChar)
 {
     int Escape = 0;
     const char *StartPos = Lexer->Pos;
@@ -3394,8 +3432,8 @@ enum LexToken LexGetStringConstant(Picoc *pc, struct LexState *Lexer, struct Val
     }
 
 
-    Value->Typ = pc->CharPtrType;
-    Value->Val->Pointer = RegString;
+    V->Typ = pc->CharPtrType;
+    V->Val->Pointer = RegString;
     if (*Lexer->Pos == EndChar)
         ( (Lexer)->Pos++, (Lexer)->CharacterPos++ );
 
@@ -3403,10 +3441,10 @@ enum LexToken LexGetStringConstant(Picoc *pc, struct LexState *Lexer, struct Val
 }
 
 
-enum LexToken LexGetCharacterConstant(Picoc *pc, struct LexState *Lexer, struct Value *Value)
+enum LexToken LexGetCharacterConstant(Picoc *pc, struct LexState *Lexer, struct Value *V)
 {
-    Value->Typ = &pc->CharType;
-    Value->Val->Character = LexUnEscapeCharacter(&Lexer->Pos, Lexer->End);
+    V->Typ = &pc->CharType;
+    V->Val->Character = LexUnEscapeCharacter(&Lexer->Pos, Lexer->End);
     if (Lexer->Pos != Lexer->End && *Lexer->Pos != '\'')
         LexFail(pc, Lexer, "expected \"'\"");
 
@@ -3442,7 +3480,7 @@ void LexSkipComment(struct LexState *Lexer, char NextChar, enum LexToken *Return
 }
 
 
-enum LexToken LexScanGetToken(Picoc *pc, struct LexState *Lexer, struct Value **Value)
+enum LexToken LexScanGetToken(Picoc *pc, struct LexState *Lexer, struct Value **Val)
 {
     char ThisChar;
     char NextChar;
@@ -3458,7 +3496,7 @@ enum LexToken LexScanGetToken(Picoc *pc, struct LexState *Lexer, struct Value **
 
     do
     {
-        *Value = &pc->LexValue;
+        *Val = &pc->LexValue;
         while (Lexer->Pos != Lexer->End && isspace((int)*Lexer->Pos))
         {
             if (*Lexer->Pos == '\n')
@@ -3483,17 +3521,17 @@ enum LexToken LexScanGetToken(Picoc *pc, struct LexState *Lexer, struct Value **
 
         ThisChar = *Lexer->Pos;
         if ((isalpha((int)ThisChar) || ((int)ThisChar)=='_' || ((int)ThisChar)=='#'))
-            return LexGetWord(pc, Lexer, *Value);
+            return LexGetWord(pc, Lexer, *Val);
 
         if (isdigit((int)ThisChar))
-            return LexGetNumber(pc, Lexer, *Value);
+            return LexGetNumber(pc, Lexer, *Val);
 
         NextChar = (Lexer->Pos+1 != Lexer->End) ? *(Lexer->Pos+1) : 0;
         ( (Lexer)->Pos++, (Lexer)->CharacterPos++ );
         switch (ThisChar)
         {
-            case '"': GotToken = LexGetStringConstant(pc, Lexer, *Value, '"'); break;
-            case '\'': GotToken = LexGetCharacterConstant(pc, Lexer, *Value); break;
+            case '"': GotToken = LexGetStringConstant(pc, Lexer, *Val, '"'); break;
+            case '\'': GotToken = LexGetCharacterConstant(pc, Lexer, *Val); break;
             case '(': if (Lexer->Mode == LexModeHashDefineSpaceIdent) GotToken = TokenOpenMacroBracket; else GotToken = TokenOpenBracket; Lexer->Mode = LexModeNormal; break;
             case ')': GotToken = TokenCloseBracket; break;
             case '=': { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenEqual); } else GotToken = (TokenAssign); }; break;
@@ -3502,7 +3540,7 @@ enum LexToken LexScanGetToken(Picoc *pc, struct LexState *Lexer, struct Value **
             case '*': { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenMultiplyAssign); } else GotToken = (TokenAsterisk); }; break;
             case '/': if (NextChar == '/' || NextChar == '*') { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); LexSkipComment(Lexer, NextChar, &GotToken); } else { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenDivideAssign); } else GotToken = (TokenSlash); }; break;
             case '%': { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenModulusAssign); } else GotToken = (TokenModulus); }; break;
-            case '<': if (Lexer->Mode == LexModeHashInclude) GotToken = LexGetStringConstant(pc, Lexer, *Value, '>'); else { { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenLessEqual); } else if (NextChar == ('<')) { if (Lexer->Pos[1] == ('=')) { ( (Lexer)->Pos+=(2), (Lexer)->CharacterPos+=(2) ); GotToken = (TokenShiftLeftAssign); } else { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenShiftLeft); } } else GotToken = (TokenLessThan); }; } break;
+            case '<': if (Lexer->Mode == LexModeHashInclude) GotToken = LexGetStringConstant(pc, Lexer, *Val, '>'); else { { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenLessEqual); } else if (NextChar == ('<')) { if (Lexer->Pos[1] == ('=')) { ( (Lexer)->Pos+=(2), (Lexer)->CharacterPos+=(2) ); GotToken = (TokenShiftLeftAssign); } else { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenShiftLeft); } } else GotToken = (TokenLessThan); }; } break;
             case '>': { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenGreaterEqual); } else if (NextChar == ('>')) { if (Lexer->Pos[1] == ('=')) { ( (Lexer)->Pos+=(2), (Lexer)->CharacterPos+=(2) ); GotToken = (TokenShiftRightAssign); } else { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenShiftRight); } } else GotToken = (TokenGreaterThan); }; break;
             case ';': GotToken = TokenSemicolon; break;
             case '&': { if (NextChar == ('=')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenArithmeticAndAssign); } else { if (NextChar == ('&')) { ( (Lexer)->Pos++, (Lexer)->CharacterPos++ ); GotToken = (TokenLogicalAnd); } else GotToken = (TokenAmpersand); } }; break;
@@ -3533,7 +3571,7 @@ int LexTokenSize(enum LexToken Token)
         case TokenIdentifier: case TokenStringConstant: return sizeof(char *);
         case TokenIntegerConstant: return sizeof(long);
         case TokenCharacterConstant: return sizeof(unsigned char);
-        case TokenFPConstant: return sizeof(double);
+        //case TokenFPConstant: return sizeof(double);
         default: return 0;
     }
 }
@@ -3631,7 +3669,7 @@ void LexInitParser(struct ParseState *Parser, Picoc *pc, const char *SourceText,
 }
 
 
-enum LexToken LexGetRawToken(struct ParseState *Parser, struct Value **Value, int IncPos)
+enum LexToken LexGetRawToken(struct ParseState *Parser, struct Value **Val, int IncPos)
 {
     enum LexToken Token = TokenNone;
     int ValueSize;
@@ -3720,7 +3758,7 @@ enum LexToken LexGetRawToken(struct ParseState *Parser, struct Value **Value, in
     if (ValueSize > 0)
     {
 
-        if (Value != 0)
+        if (Val != 0)
         {
             switch (Token)
             {
@@ -3729,7 +3767,7 @@ enum LexToken LexGetRawToken(struct ParseState *Parser, struct Value **Value, in
                 case TokenIntegerConstant: pc->LexValue.Typ = &pc->LongType; break;
                 case TokenCharacterConstant: pc->LexValue.Typ = &pc->CharType; break;
 
-                case TokenFPConstant: pc->LexValue.Typ = &pc->FPType; break;
+                //case TokenFPConstant: pc->LexValue.Typ = &pc->FPType; break;
 
                 default: break;
             }
@@ -3739,7 +3777,7 @@ enum LexToken LexGetRawToken(struct ParseState *Parser, struct Value **Value, in
             pc->LexValue.ValOnStack = 0;
             pc->LexValue.IsLValue = 0;
             pc->LexValue.LValueFrom = 0;
-            *Value = &pc->LexValue;
+            *Val = &pc->LexValue;
         }
 
         if (IncPos)
@@ -3850,7 +3888,7 @@ void LexHashEndif(struct ParseState *Parser)
         Parser->HashIfEvaluateToLevel = Parser->HashIfLevel;
 }
 //# 883 "c-demos/gitlab.com-zsaleeba-picoc/lex.c"
-enum LexToken LexGetToken(struct ParseState *Parser, struct Value **Value, int IncPos)
+enum LexToken LexGetToken(struct ParseState *Parser, struct Value **Val, int IncPos)
 {
     enum LexToken Token;
     int TryNextToken;
@@ -3860,7 +3898,7 @@ enum LexToken LexGetToken(struct ParseState *Parser, struct Value **Value, int I
     {
         int WasPreProcToken = 1;
 
-        Token = LexGetRawToken(Parser, Value, IncPos);
+        Token = LexGetRawToken(Parser, Val, IncPos);
         switch (Token)
         {
             case TokenHashIfdef: LexHashIncPos(Parser, IncPos); LexHashIfdef(Parser, 0); break;
@@ -4954,7 +4992,7 @@ void PicocParseInteractiveNoStartPrompt(Picoc *pc, int EnableDebugger)
     enum ParseResult Ok;
 
     LexInitParser(&Parser, pc, 0, 0, pc->StrEmpty, 1, EnableDebugger);
-    PicocPlatformSetExitPoint(pc);
+    //PicocPlatformSetExitPoint(pc);
     LexInteractiveClear(pc, &Parser);
 
     do
@@ -4979,13 +5017,55 @@ void PicocParseInteractive(Picoc *pc)
 }
 //# 8 "c-demos/gitlab.com-zsaleeba-picoc/main.c" 2
 //# 1 "c-demos/gitlab.com-zsaleeba-picoc/picoc.c" 1
+
+Picoc pc_object;
+
+// int picoc(char *SourceStr)
+int main()
+{   
+    char *pos;
+    Picoc *pc = &pc_object;
+
+    PicocInitialise(pc, HEAP_SIZE);
+
+#if 0
+    if (SourceStr)
+    {
+        for (pos = SourceStr; *pos != 0; pos++)
+        {
+            if (*pos == 0x1a)
+            {
+                *pos = 0x20;
+            }
+        }
+    }
+
+    PicocExitBuf[40] = 0;
+    PicocPlatformSetExitPoint();
+    if (PicocExitBuf[40]) {
+        printf("Leaving PicoC\n\r");
+        PicocCleanup();
+        return PicocExitValue;
+    }
+
+    if (SourceStr)   
+        PicocParse("nofile", SourceStr, strlen(SourceStr), TRUE, TRUE, FALSE);
+#endif
+
+    PicocParseInteractive(pc);
+    PicocCleanup(pc);
+    
+    return 0;
+}
+
+
 //# 9 "c-demos/gitlab.com-zsaleeba-picoc/main.c" 2
 //# 1 "c-demos/gitlab.com-zsaleeba-picoc/platform.c" 1
 //# 9 "c-demos/gitlab.com-zsaleeba-picoc/platform.c"
 void PicocInitialise(Picoc *pc, int StackSize)
 {
     memset(pc, '\0', sizeof(*pc));
-    PlatformInit(pc);
+    //PlatformInit(pc);
     BasicIOInit(pc);
     HeapInit(pc, StackSize);
     TableInit(pc);
@@ -5000,7 +5080,7 @@ void PicocInitialise(Picoc *pc, int StackSize)
     LibraryAdd(pc, &pc->GlobalTable, "c library", &CLibrary[0]);
     CLibraryInit(pc);
 
-    PlatformLibraryInit(pc);
+    // PlatformLibraryInit(pc);
     DebugInit(pc);
 }
 
@@ -5017,7 +5097,7 @@ void PicocCleanup(Picoc *pc)
     TypeCleanup(pc);
     TableStrFree(pc);
     HeapCleanup(pc);
-    PlatformCleanup(pc);
+    // PlatformCleanup(pc);
 }
 //# 93 "c-demos/gitlab.com-zsaleeba-picoc/platform.c"
 void PrintSourceTextErrorLine(IOFILE *Stream, const char *FileName, const char *SourceText, int Line, int CharacterPos)
@@ -5144,7 +5224,7 @@ void PlatformVPrintf(IOFILE *Stream, const char *Format, va_list Args)
             case 'c': PrintCh(va_arg(Args, int), Stream); break;
             case 't': PrintType(va_arg(Args, struct ValueType *), Stream); break;
 
-            case 'f': PrintFP(va_arg(Args, double), Stream); break;
+            //case 'f': PrintFP(va_arg(Args, double), Stream); break;
 
             case '%': PrintCh('%', Stream); break;
             case '\0': FPos--; break;
@@ -5501,7 +5581,7 @@ void TypeInit(Picoc *pc)
     TypeAddBaseType(pc, &pc->MacroType, TypeMacro, sizeof(int), IntAlignBytes);
     TypeAddBaseType(pc, &pc->GotoLabelType, TypeGotoLabel, 0, 1);
 
-    TypeAddBaseType(pc, &pc->FPType, TypeFP, sizeof(double), (char *)&da.y - &da.x);
+    //TypeAddBaseType(pc, &pc->FPType, TypeFP, sizeof(double), (char *)&da.y - &da.x);
     TypeAddBaseType(pc, &pc->TypeType, Type_Type, sizeof(double), (char *)&da.y - &da.x);
 
 
@@ -5767,7 +5847,7 @@ int TypeParseFront(struct ParseState *Parser, struct ValueType **Typ, int *IsSta
         case TokenCharType: *Typ = Unsigned ? &pc->UnsignedCharType : &pc->CharType; break;
         case TokenLongType: *Typ = Unsigned ? &pc->UnsignedLongType : &pc->LongType; break;
 
-        case TokenFloatType: case TokenDoubleType: *Typ = &pc->FPType; break;
+        //case TokenFloatType: case TokenDoubleType: *Typ = &pc->FPType; break;
 
         case TokenVoidType: *Typ = &pc->VoidType; break;
 
