@@ -1356,7 +1356,7 @@ struct ExpressionStack
     struct ExpressionStack *Next;
     struct Value *Val;
     enum LexToken Op;
-    short unsigned int Precedence;
+    int Precedence;
     unsigned char Order;
 };
 
@@ -3185,8 +3185,8 @@ enum LexToken LexGetNumber(Picoc *pc, struct LexState *Lexer, struct Value *V)
     long Base = 10;
     enum LexToken ResultToken;
 
-    double FPResult;
-    double FPDiv;
+    // double FPResult;
+    // double FPDiv;
 
 
 
@@ -5552,17 +5552,21 @@ void TypeAddBaseType(Picoc *pc, struct ValueType *TypeNode, enum BaseType Base, 
     pc->UberType.DerivedTypeList = TypeNode;
 }
 
+struct IntAlign { char x; int y; };
+struct ShortAlign { char x; short y; };
+struct CharAlign { char x; char y; };
+struct LongAlign { char x; long y; };
+struct PointerAlign { char x; void *y; };
+
 
 void TypeInit(Picoc *pc)
 {
-    struct IntAlign { char x; int y; } ia;
-    struct ShortAlign { char x; short y; } sa;
-    struct CharAlign { char x; char y; } ca;
-    struct LongAlign { char x; long y; } la;
+    struct IntAlign  ia;
+    struct ShortAlign  sa;
+    struct CharAlign  ca;
+    struct LongAlign  la;
 
-    struct DoubleAlign { char x; double y; } da;
-
-    struct PointerAlign { char x; void *y; } pa;
+    struct PointerAlign  pa;
 
     IntAlignBytes = (char *)&ia.y - &ia.x;
     PointerAlignBytes = (char *)&pa.y - &pa.x;
@@ -5582,7 +5586,7 @@ void TypeInit(Picoc *pc)
     TypeAddBaseType(pc, &pc->GotoLabelType, TypeGotoLabel, 0, 1);
 
     //TypeAddBaseType(pc, &pc->FPType, TypeFP, sizeof(double), (char *)&da.y - &da.x);
-    TypeAddBaseType(pc, &pc->TypeType, Type_Type, sizeof(double), (char *)&da.y - &da.x);
+    // TypeAddBaseType(pc, &pc->TypeType, Type_Type, sizeof(double), (char *)&da.y - &da.x);
 
 
 
@@ -5623,6 +5627,7 @@ void TypeCleanup(Picoc *pc)
     TypeCleanupNode(pc, &pc->UberType);
 }
 
+static char TempNameBuf[7] = "^s0000";
 
 void TypeParseStruct(struct ParseState *Parser, struct ValueType **Typ, int IsStruct)
 {
@@ -5644,7 +5649,6 @@ void TypeParseStruct(struct ParseState *Parser, struct ValueType **Typ, int IsSt
     }
     else
     {
-        static char TempNameBuf[7] = "^s0000";
         StructIdentifier = PlatformMakeTempName(pc, TempNameBuf);
     }
 
@@ -5731,6 +5735,7 @@ struct ValueType *TypeCreateOpaqueStruct(Picoc *pc, struct ParseState *Parser, c
     return Typ;
 }
 
+static char TempNameBuf2[7] = "^e0000";
 
 void TypeParseEnum(struct ParseState *Parser, struct ValueType **Typ)
 {
@@ -5750,8 +5755,7 @@ void TypeParseEnum(struct ParseState *Parser, struct ValueType **Typ)
     }
     else
     {
-        static char TempNameBuf[7] = "^e0000";
-        EnumIdentifier = PlatformMakeTempName(pc, TempNameBuf);
+        EnumIdentifier = PlatformMakeTempName(pc, TempNameBuf2);
     }
 
     TypeGetMatching(pc, Parser, &pc->UberType, TypeEnum, 0, EnumIdentifier, Token != TokenLeftBrace);

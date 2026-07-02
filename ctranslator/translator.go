@@ -128,6 +128,11 @@ type translator struct {
 	// keepGoing controls error handling for unsupported C constructs.
 	// When true, emit /* UNSUPPORTED: ... */ comments; when false, emit panic().
 	keepGoing bool
+
+	// switchBreakStack holds the end-label for each enclosing switch statement.
+	// When a `break` appears inside a switch body (not a loop), we emit
+	// `goto <label>` to jump past the if/else-if chain.
+	switchBreakStack []string
 }
 
 func newTranslator(keepGoing bool) *translator {
@@ -874,7 +879,9 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			t.line("for %s {", cond)
 		}
 		t.depth++
+		saved := t.switchBreakStack; t.switchBreakStack = nil
 		t.translateBody(s.Statement)
+		t.switchBreakStack = saved
 		t.depth--
 		t.line("}")
 
@@ -888,7 +895,9 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			// Real do-while → for { body; if !(cond) { break } }
 			t.line("for {")
 			t.depth++
+			saved := t.switchBreakStack; t.switchBreakStack = nil
 			t.translateBody(s.Statement)
+			t.switchBreakStack = saved
 			cond := t.xExpr(s.ExpressionList)
 			t.line("if !(%s) { break }", cond)
 			t.depth--
@@ -928,7 +937,9 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			t.line("for %s; %s; %s {", initStr, condStr, postStr)
 		}
 		t.depth++
+		saved := t.switchBreakStack; t.switchBreakStack = nil
 		t.translateBody(s.Statement)
+		t.switchBreakStack = saved
 		for _, stmt := range postPtrStmts {
 			t.line("%s", stmt)
 		}
@@ -957,7 +968,9 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			t.line("for %s; %s; %s {", initStr, condStr, postStr)
 		}
 		t.depth++
+		saved2 := t.switchBreakStack; t.switchBreakStack = nil
 		t.translateBody(s.Statement)
+		t.switchBreakStack = saved2
 		for _, stmt := range postPtrStmts {
 			t.line("%s", stmt)
 		}
@@ -1069,8 +1082,12 @@ func (t *translator) translateSelection(s *cc.SelectionStatement) {
 		// Evaluate switch expression once into a temp.
 		swExpr := t.xExpr(s.ExpressionList)
 		swVar := fmt.Sprintf("_sw_%d_", t.tempCount)
+		swEndLabel := fmt.Sprintf("EndOfSwitch_%d_", t.tempCount)
 		t.tempCount++
 		t.line("%s := %s", swVar, swExpr)
+
+		// Push the end-label so break inside the switch body emits goto.
+		t.switchBreakStack = append(t.switchBreakStack, swEndLabel)
 
 		type caseGroup struct {
 			isDefault bool
@@ -1164,6 +1181,10 @@ func (t *translator) translateSelection(s *cc.SelectionStatement) {
 		if len(groups) > 0 {
 			t.line("}")
 		}
+
+		// Pop the switch break label.
+		t.switchBreakStack = t.switchBreakStack[:len(t.switchBreakStack)-1]
+		t.line("%s:", swEndLabel)
 	}
 }
 
@@ -1178,7 +1199,13 @@ func (t *translator) translateJump(s *cc.JumpStatement) {
 			t.line("return")
 		}
 	case cc.JumpStatementBreak:
-		t.line("break")
+		// If we're inside a switch body (not a loop), break must jump to the
+		// end-of-switch label because MiniGolf only allows break inside loops.
+		if len(t.switchBreakStack) > 0 {
+			t.line("goto %s", t.switchBreakStack[len(t.switchBreakStack)-1])
+		} else {
+			t.line("break")
+		}
 	case cc.JumpStatementContinue:
 		t.line("continue")
 	case cc.JumpStatementGoto:
