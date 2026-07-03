@@ -1,0 +1,10 @@
+package _
+
+import . "test_dot3"
+
+func number22() word { return 22 }
+
+func main() {
+	println(number22())
+	println(number33())
+}

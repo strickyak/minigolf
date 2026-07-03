@@ -1,0 +1,7 @@
+package _
+
+func number33() word { return 33 }
+
+func main() {
+	println(number33())
+}

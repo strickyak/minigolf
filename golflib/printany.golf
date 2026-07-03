@@ -1,0 +1,32 @@
+package _
+
+func printany(x any) {
+	tlen := strlen(x.TypeStr)
+	t := string{Base: x.TypeStr, Len: tlen, Cap: tlen}
+
+	if t == "byte" {
+		println("b=", peek[byte](x.BaseAddr))
+	} else if t == "word" {
+		println("w=", peek[word](x.BaseAddr))
+	} else if t == "*byte" {
+		println("*b=", (*byte)(peek[word](x.BaseAddr)))
+	} else if t == "string" {
+		println("s=", peek[string](x.BaseAddr))
+		//} else if t == "slice_byte" {
+		//println("sb=", peek[string](x.BaseAddr))
+	} else if t == "slice[byte]" {
+		println("s[b]=", peek[string](x.BaseAddr))
+		//} else if t == "prelude.slice_byte" {
+		//println("psb=", peek[string](x.BaseAddr))
+	} else {
+		println("?", (*byte)(x.TypeStr), "?")
+		i := 0
+		for peekb(x.TypeStr+i) > 0 {
+			print(" #", peekb(x.TypeStr+i))
+			tmp := string{peekb(x.TypeStr + i)}
+			print("<", tmp, ">  ")
+			i++
+		}
+		println("")
+	}
+}
