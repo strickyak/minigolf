@@ -1,5 +1,7 @@
 package main
 
+// import . "malloc"
+
 var count word = 0
 
 func incCount() word {

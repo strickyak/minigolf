@@ -23,17 +23,17 @@ func checkParserErrors(t *testing.T, p *Parser) {
 }
 
 func TestPackageStatement(t *testing.T) {
-	input := `package main`
+	input := `var x = 1`
 	tokens := lexer.Lex(input, "<test>")
 	p := New(tokens)
-	program := p.ParseProgram("")
+	program := p.ParseProgram("main_test_pkg")
 	checkParserErrors(t, p)
 
 	if program == nil {
 		t.Fatalf("ParseProgram() returned nil")
 	}
-	if len(program.Statements) != 1 {
-		t.Fatalf("program.Statements does not contain 1 statements. got=%d", len(program.Statements))
+	if len(program.Statements) != 2 {
+		t.Fatalf("program.Statements does not contain 2 statements. got=%d", len(program.Statements))
 	}
 
 	stmt, ok := program.Statements[0].(*ast.PackageStatement)
@@ -41,8 +41,8 @@ func TestPackageStatement(t *testing.T) {
 		t.Fatalf("stmt is not ast.PackageStatement. got=%T", program.Statements[0])
 	}
 
-	if stmt.Name.Value != "main" {
-		t.Errorf("stmt.Name.Value not '%s'. got=%s", "main", stmt.Name.Value)
+	if stmt.Name.Value != "main_test_pkg" {
+		t.Errorf("stmt.Name.Value not '%s'. got=%s", "main_test_pkg", stmt.Name.Value)
 	}
 }
 
@@ -57,8 +57,8 @@ func TestVarStatements(t *testing.T) {
 	program := p.ParseProgram("")
 	checkParserErrors(t, p)
 
-	if len(program.Statements) != 3 {
-		t.Fatalf("program.Statements does not contain 3 statements. got=%d", len(program.Statements))
+	if len(program.Statements) != 4 {
+		t.Fatalf("program.Statements does not contain 4 statements. got=%d", len(program.Statements))
 	}
 
 	tests := []struct {
@@ -71,7 +71,7 @@ func TestVarStatements(t *testing.T) {
 	}
 
 	for i, tt := range tests {
-		stmt := program.Statements[i]
+		stmt := program.Statements[i+1]
 		varStmt, ok := stmt.(*ast.VarStatement)
 		if !ok {
 			t.Errorf("stmt not *ast.VarStatement. got=%T", stmt)
@@ -109,11 +109,11 @@ func TestAssignStatement(t *testing.T) {
 	program := p.ParseProgram("")
 	checkParserErrors(t, p)
 
-	if len(program.Statements) != 1 {
-		t.Fatalf("program.Statements does not contain 1 statements. got=%d", len(program.Statements))
+	if len(program.Statements) != 2 {
+		t.Fatalf("program.Statements does not contain 2 statements. got=%d", len(program.Statements))
 	}
 
-	funcStmt, ok := program.Statements[0].(*ast.FuncStatement)
+	funcStmt, ok := program.Statements[1].(*ast.FuncStatement)
 	if !ok {
 		t.Fatalf("stmt is not ast.FuncStatement")
 	}
@@ -245,7 +245,7 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 		program := p.ParseProgram("")
 		checkParserErrors(t, p)
 
-		funcStmt := program.Statements[0].(*ast.FuncStatement)
+		funcStmt := program.Statements[1].(*ast.FuncStatement)
 		stmt := funcStmt.Body.Statements[0].(*ast.ExpressionStatement)
 
 		actual := ASTString(stmt)

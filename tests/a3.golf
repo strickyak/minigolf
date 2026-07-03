@@ -1,5 +1,7 @@
 package main
 
+// import "malloc"
+
 const N = 8
 
 var pointers [N]*byte

@@ -1,15 +1,17 @@
 package main
 
+import "printany"
+
 import "pre2"
 
 func main() {
-	printany(byte(88))
-	printany(word(888))
-	printany("hello")
+	printany.printany(byte(88))
+	printany.printany(word(888))
+	printany.printany("hello")
 
 	worldBase := "world".Base
 	worldBasePtr := (*byte)(worldBase)
-	printany(worldBasePtr) /* bug */
+	printany.printany(worldBasePtr) /* bug */
 
 	s := "one two three"
 	pre2.printany2(s[0])

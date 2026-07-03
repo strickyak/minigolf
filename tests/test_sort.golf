@@ -1,5 +1,7 @@
 package main
 
+// import . "malloc"
+
 import "sort"
 
 func cmpInt(a *int, b *int) int {

@@ -1,5 +1,7 @@
 package smap
 
+// import . "malloc"
+
 type InternTable struct {
 	guts slice[string]
 }

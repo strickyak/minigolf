@@ -1,5 +1,7 @@
 package main
 
+// import . "malloc"
+
 var a slice[byte]
 var b slice[word]
 var c slice[string]

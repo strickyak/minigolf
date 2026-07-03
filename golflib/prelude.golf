@@ -82,183 +82,150 @@ func assignment_expression[T any](p *T, value T) T {
 }
 
 /////////////////////////////////////////////
-
-func isspace(c word) bool {
-	return (c <= 32)
-}
-func isalpha(c word) bool {
-	return ('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z')
-}
-func isdigit(c word) bool {
-	return ('0' <= c && c <= '9')
-}
-func isalnum(c word) bool {
-	return isalpha(c) || isdigit(c)
-}
-
-func clear[T any](p *T) {
-	addr := word(p)
-	for i := range sizeof[T]() {
-		pokeb(addr+i, 0)
-	}
-}
-
-func strcpy(d *byte, s *byte) {
-	dd := word(d)
-	ss := word(s)
-	for peekb(ss) {
-		pokeb(dd, peekb(ss))
-		dd++
-		ss++
-	}
-	pokeb(dd, 0)
-}
-func strncpy(d *byte, s *byte, n word) {
-	dd := word(d)
-	ss := word(s)
-	for i := range n {
-		if !peekb(ss) {
-			break
-		}
-		pokeb(dd, peekb(ss))
-		dd++
-		ss++
-	}
-	pokeb(dd, 0)
-}
-
-func memset(p *byte, x byte, n word) {
-	addr := word(p)
-	for i := range n {
-		pokeb(i+addr, x)
-	}
-}
-func memcpy(d *byte, s *byte, n word) {
-	dd := word(d)
-	ss := word(s)
-	for i := range n {
-		pokeb(dd+i, peekb(ss+i))
-	}
-}
-
-func memcmp(a *byte, b *byte, n word) int {
-	for i := word(0); i < n; i++ {
-		va := peekb(word(a) + i)
-		vb := peekb(word(b) + i)
-		if va < vb {
-			return -1
-		}
-		if va > vb {
-			return 1
-		}
-	}
-	return 0
-}
-
-func memeq(a *byte, b *byte, n word) bool {
-	for i := word(0); i < n; i++ {
-		va := peekb(word(a) + i)
-		vb := peekb(word(b) + i)
-		if va != vb {
-			return 0
-		}
-	}
-	return 1
-}
-func strcmp(a string, b string) int {
-	sz := a.Len
-	if b.Len < sz {
-		sz = b.Len
-	}
-	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
-	if c != 0 {
-		return c
-	}
-	if a.Len < b.Len {
-		return -1
-	}
-	if a.Len > b.Len {
-		return 1
-	}
-	return 0
-}
-
-func strncmp(a string, b string, n word) int {
-	sz := a.Len
-	if b.Len < sz {
-		sz = b.Len
-	}
-	if sz > n {
-		sz = n
-	}
-	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
-	if c != 0 {
-		return c
-	}
-	if a.Len < b.Len {
-		return -1
-	}
-	if a.Len > b.Len {
-		return 1
-	}
-	return 0
-}
-
-func streq(a string, b string) (z bool) {
-	// println("# streq: a.Len=", a.Len, " b.Len=", b.Len, " a=", a, " b=", b)
-	if a.Len == b.Len {
-		z = memeq((*byte)(a.Base), (*byte)(b.Base), a.Len)
-	}
-	// println("# =>", z)
-	return z
-}
-
-func strlen(s *byte) (n word) {
-	for *s != 0 {
-		n++
-		s = (*byte)(word(s) + 1)
-	}
-	return
-}
-
+//..
+//..func isspace(c word) bool {
+//..	return (c <= 32)
+//..}
+//..func isalpha(c word) bool {
+//..	return ('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z')
+//..}
+//..func isdigit(c word) bool {
+//..	return ('0' <= c && c <= '9')
+//..}
+//..func isalnum(c word) bool {
+//..	return isalpha(c) || isdigit(c)
+//..}
+//..
+//..func clear[T any](p *T) {
+//..	addr := word(p)
+//..	for i := range sizeof[T]() {
+//..		pokeb(addr+i, 0)
+//..	}
+//..}
+//..
+//..func strcpy(d *byte, s *byte) {
+//..	dd := word(d)
+//..	ss := word(s)
+//..	for peekb(ss) {
+//..		pokeb(dd, peekb(ss))
+//..		dd++
+//..		ss++
+//..	}
+//..	pokeb(dd, 0)
+//..}
+//..func strncpy(d *byte, s *byte, n word) {
+//..	dd := word(d)
+//..	ss := word(s)
+//..	for i := range n {
+//..		if !peekb(ss) {
+//..			break
+//..		}
+//..		pokeb(dd, peekb(ss))
+//..		dd++
+//..		ss++
+//..	}
+//..	pokeb(dd, 0)
+//..}
+//..
+//..func memset(p *byte, x byte, n word) {
+//..	addr := word(p)
+//..	for i := range n {
+//..		pokeb(i+addr, x)
+//..	}
+//..}
+//..func memcpy(d *byte, s *byte, n word) {
+//..	dd := word(d)
+//..	ss := word(s)
+//..	for i := range n {
+//..		pokeb(dd+i, peekb(ss+i))
+//..	}
+//..}
+//..
+//..func memcmp(a *byte, b *byte, n word) int {
+//..	for i := word(0); i < n; i++ {
+//..		va := peekb(word(a) + i)
+//..		vb := peekb(word(b) + i)
+//..		if va < vb {
+//..			return -1
+//..		}
+//..		if va > vb {
+//..			return 1
+//..		}
+//..	}
+//..	return 0
+//..}
+//..
+//..func memeq(a *byte, b *byte, n word) bool {
+//..	for i := word(0); i < n; i++ {
+//..		va := peekb(word(a) + i)
+//..		vb := peekb(word(b) + i)
+//..		if va != vb {
+//..			return 0
+//..		}
+//..	}
+//..	return 1
+//..}
+//..func strcmp(a string, b string) int {
+//..	sz := a.Len
+//..	if b.Len < sz {
+//..		sz = b.Len
+//..	}
+//..	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
+//..	if c != 0 {
+//..		return c
+//..	}
+//..	if a.Len < b.Len {
+//..		return -1
+//..	}
+//..	if a.Len > b.Len {
+//..		return 1
+//..	}
+//..	return 0
+//..}
+//..
+//..func strncmp(a string, b string, n word) int {
+//..	sz := a.Len
+//..	if b.Len < sz {
+//..		sz = b.Len
+//..	}
+//..	if sz > n {
+//..		sz = n
+//..	}
+//..	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
+//..	if c != 0 {
+//..		return c
+//..	}
+//..	if a.Len < b.Len {
+//..		return -1
+//..	}
+//..	if a.Len > b.Len {
+//..		return 1
+//..	}
+//..	return 0
+//..}
+//..
+//..func streq(a string, b string) (z bool) {
+//..	// println("# streq: a.Len=", a.Len, " b.Len=", b.Len, " a=", a, " b=", b)
+//..	if a.Len == b.Len {
+//..		z = memeq((*byte)(a.Base), (*byte)(b.Base), a.Len)
+//..	}
+//..	// println("# =>", z)
+//..	return z
+//..}
+//..
+//..func strlen(s *byte) (n word) {
+//..	for *s != 0 {
+//..		n++
+//..		s = (*byte)(word(s) + 1)
+//..	}
+//..	return
+//..}
+//..
 /////////////////////////////////////////////
 
 type any struct {
 	BaseAddr word
 	TypeStr  word
-}
-
-func printany(x any) {
-	//var t string = x.TypeStr
-	//t.Len = strlen(x.TypeStr)
-	tlen := strlen(x.TypeStr)
-	t := string{Base: x.TypeStr, Len: tlen, Cap: tlen}
-
-	if t == "byte" {
-		println("b=", peek[byte](x.BaseAddr))
-	} else if t == "word" {
-		println("w=", peek[word](x.BaseAddr))
-	} else if t == "*byte" {
-		println("*b=", (*byte)(peek[word](x.BaseAddr)))
-	} else if t == "string" {
-		println("s=", peek[string](x.BaseAddr))
-		//} else if t == "slice_byte" {
-		//println("sb=", peek[string](x.BaseAddr))
-	} else if t == "slice[byte]" {
-		println("s[b]=", peek[string](x.BaseAddr))
-		//} else if t == "prelude.slice_byte" {
-		//println("psb=", peek[string](x.BaseAddr))
-	} else {
-		println("?", (*byte)(x.TypeStr), "?")
-		i := 0
-		for peekb(x.TypeStr+i) > 0 {
-			print(" #", peekb(x.TypeStr+i))
-			tmp := string{peekb(x.TypeStr + i)}
-			print("<", tmp, ">  ")
-			i++
-		}
-		println("")
-	}
 }
 
 /////////////////////////////////////////////
@@ -267,38 +234,6 @@ type slice[T any] struct {
 	Base word
 	Cap  word
 	Len  word
-}
-
-func (o *slice[T]) Append(x T) {
-	if o.Base == 0 {
-		o.Base = word(zalloc(8 * sizeof[T]()))
-		o.Cap = 8
-		o.Len = 1
-		o.Put(0, x)
-		return
-	}
-	n := o.Len
-	if n+1 < o.Cap {
-		o.Len++
-		o.Put(n, x)
-		return
-	}
-
-	// Must re-alloc
-	var z slice[T]
-	z.Cap = o.Cap + o.Cap
-	if z.Cap < 8 {
-		z.Cap = 8
-	}
-	z.Base = word(zalloc(z.Cap * sizeof[T]()))
-	z.Len = n + 1
-
-	for i := range n {
-		z.Put(i, o.Get(i))
-	}
-	z.Put(n, x)
-	free((*byte)(o.Base))
-	*o = z
 }
 
 func (o *slice[T]) Address(i word) word {
@@ -346,24 +281,6 @@ func (o *slice[T]) Pop() T {
 	result := o.Get(0)
 	*o = o.Chop(1, o.Len)
 	return result
-}
-
-// makeslice[T](n) is like make([]T, n) in golang.
-func makeslice[T any](n word) slice[T] {
-	var z slice[T]
-	if n == 0 {
-		return z
-	}
-	z.Base := zalloc(n * sizeof[T]())
-	z.Len = n
-	z.Cap = n
-	return z
-}
-
-// freeslice frees a malloced slice's contents, if it was made by Appending a zero slice, or by makeslice.
-func freeslice[T any](a slice[T]) {
-	p := (*byte)(a.Base)
-	free(p)
 }
 
 /////////////////////////////////////////////
@@ -490,30 +407,17 @@ func mod_int(a int, b int) int {
 	return result
 }
 
-/////////////////////////////////////////////
+///////////////////////////////
 
-// strdup uses the arg's Len and allocates a copy of the string, with NUL-termination past its Len
-func strdup(a string) string {
-	n := a.Len
-	p := word(malloc(n + 1))
-	for i := range n {
-		pokeb(p+i, a[i])
-	}
-	pokeb(p+n, 0) // NUL-terminate.
+// minigolf:linkage("putchar")
+func putchar(b int) // External; linkage overrides to C stdlib putchar
 
-	var z string
-	z.Base = p
-	z.Len = n
-	z.Cap = n + 1
-	return z
-}
+// minigolf:linkage("getchar")
+func getchar() int // External; linkage overrides to C stdlib getchar
 
-func strfree(a string) {
-	p := (*byte)(a.Base)
-	free(p)
-}
-
-/////////////////////////////////////////////
+//////////////////////////////
+//
+//   MAYBE here MAYBE malloc.golf
 
 type MallocHeader struct {
 	next  *MallocHeader
@@ -684,16 +588,223 @@ func BytesFree() word {
 	return mul_word(total_units, sizeof[MallocHeader]())
 }
 
+// strdup uses the arg's Len and allocates a copy of the string, with NUL-termination past its Len
+func strdup(a string) string {
+	n := a.Len
+	p := word(malloc(n + 1))
+	for i := range n {
+		pokeb(p+i, a[i])
+	}
+	pokeb(p+n, 0) // NUL-terminate.
+
+	var z string
+	z.Base = p
+	z.Len = n
+	z.Cap = n + 1
+	return z
+}
+
+func strfree(a string) {
+	p := (*byte)(a.Base)
+	free(p)
+}
+
+func (o *slice[T]) Append(x T) {
+	if o.Base == 0 {
+		o.Base = word(zalloc(8 * sizeof[T]()))
+		o.Cap = 8
+		o.Len = 1
+		o.Put(0, x)
+		return
+	}
+	n := o.Len
+	if n+1 < o.Cap {
+		o.Len++
+		o.Put(n, x)
+		return
+	}
+
+	// Must re-alloc
+	var z slice[T]
+	z.Cap = o.Cap + o.Cap
+	if z.Cap < 8 {
+		z.Cap = 8
+	}
+	z.Base = word(zalloc(z.Cap * sizeof[T]()))
+	z.Len = n + 1
+
+	for i := range n {
+		z.Put(i, o.Get(i))
+	}
+	z.Put(n, x)
+	free((*byte)(o.Base))
+	*o = z
+}
+
+// makeslice[T](n) is like make([]T, n) in golang.
+func makeslice[T any](n word) slice[T] {
+	var z slice[T]
+	if n == 0 {
+		return z
+	}
+	z.Base := zalloc(n * sizeof[T]())
+	z.Len = n
+	z.Cap = n
+	return z
+}
+
+// freeslice frees a malloced slice's contents, if it was made by Appending a zero slice, or by makeslice.
+func freeslice[T any](a slice[T]) {
+	p := (*byte)(a.Base)
+	free(p)
+}
+
 func init() {
 	if HEAP_SIZE > 0 {
 		malloc_init(&Heap[0], HEAP_SIZE)
 	}
 }
 
-///////////////////////////////
+// MAYBE
 
-// minigolf:linkage("putchar")
-func putchar(b int) // External; linkage overrides to C stdlib putchar
+//////////////////////////////
+//
+//   MAYBE here MAYBE cclib.golf
 
-// minigolf:linkage("getchar")
-func getchar() int // External; linkage overrides to C stdlib getchar
+func isspace(c word) bool {
+	return (c <= 32)
+}
+func isalpha(c word) bool {
+	return ('A' <= c && c <= 'Z' || 'a' <= c && c <= 'z')
+}
+func isdigit(c word) bool {
+	return ('0' <= c && c <= '9')
+}
+func isalnum(c word) bool {
+	return isalpha(c) || isdigit(c)
+}
+
+func clear[T any](p *T) {
+	addr := word(p)
+	for i := range sizeof[T]() {
+		pokeb(addr+i, 0)
+	}
+}
+
+func strcpy(d *byte, s *byte) {
+	dd := word(d)
+	ss := word(s)
+	for peekb(ss) {
+		pokeb(dd, peekb(ss))
+		dd++
+		ss++
+	}
+	pokeb(dd, 0)
+}
+func strncpy(d *byte, s *byte, n word) {
+	dd := word(d)
+	ss := word(s)
+	for i := range n {
+		if !peekb(ss) {
+			break
+		}
+		pokeb(dd, peekb(ss))
+		dd++
+		ss++
+	}
+	pokeb(dd, 0)
+}
+
+func memset(p *byte, x byte, n word) {
+	addr := word(p)
+	for i := range n {
+		pokeb(i+addr, x)
+	}
+}
+func memcpy(d *byte, s *byte, n word) {
+	dd := word(d)
+	ss := word(s)
+	for i := range n {
+		pokeb(dd+i, peekb(ss+i))
+	}
+}
+
+func memcmp(a *byte, b *byte, n word) int {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va < vb {
+			return -1
+		}
+		if va > vb {
+			return 1
+		}
+	}
+	return 0
+}
+
+func memeq(a *byte, b *byte, n word) bool {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va != vb {
+			return 0
+		}
+	}
+	return 1
+}
+func strcmp(a string, b string) int {
+	sz := a.Len
+	if b.Len < sz {
+		sz = b.Len
+	}
+	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
+	if c != 0 {
+		return c
+	}
+	if a.Len < b.Len {
+		return -1
+	}
+	if a.Len > b.Len {
+		return 1
+	}
+	return 0
+}
+
+func strncmp(a string, b string, n word) int {
+	sz := a.Len
+	if b.Len < sz {
+		sz = b.Len
+	}
+	if sz > n {
+		sz = n
+	}
+	c := memcmp((*byte)(a.Base), (*byte)(b.Base), sz)
+	if c != 0 {
+		return c
+	}
+	if a.Len < b.Len {
+		return -1
+	}
+	if a.Len > b.Len {
+		return 1
+	}
+	return 0
+}
+
+func streq(a string, b string) (z bool) {
+	// println("# streq: a.Len=", a.Len, " b.Len=", b.Len, " a=", a, " b=", b)
+	if a.Len == b.Len {
+		z = memeq((*byte)(a.Base), (*byte)(b.Base), a.Len)
+	}
+	// println("# =>", z)
+	return z
+}
+
+func strlen(s *byte) (n word) {
+	for *s != 0 {
+		n++
+		s = (*byte)(word(s) + 1)
+	}
+	return
+}

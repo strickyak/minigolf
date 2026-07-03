@@ -1,5 +1,7 @@
 package main
 
+// import . "malloc"
+
 type Node struct {
 	Kind   byte
 	Number int

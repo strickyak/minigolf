@@ -177,6 +177,16 @@ func (p *Parser) ParseProgram(overridePackage string) *ast.Program {
 	program := &ast.Program{}
 	program.Statements = []ast.Statement{}
 
+	// Inject a synthetic package statement so that explicit ones are optional.
+	syntheticPkgStmt := &ast.PackageStatement{
+		Token: p.curToken,
+		Name: &ast.Identifier{
+			Token: p.curToken,
+			Value: overridePackage,
+		},
+	}
+	program.Statements = append(program.Statements, syntheticPkgStmt)
+
 	for p.curToken.Type != token.EOF {
 		stmt := p.parseTopLevelStatement(overridePackage)
 		if stmt != nil {
@@ -191,7 +201,8 @@ func (p *Parser) ParseProgram(overridePackage string) *ast.Program {
 func (p *Parser) parseTopLevelStatement(overridePackage string) ast.Statement {
 	switch p.curToken.Type {
 	case token.PACKAGE:
-		return p.parsePackageStatement(overridePackage)
+		p.parsePackageStatement(overridePackage)
+		return nil
 	case token.IMPORT:
 		return p.parseImportStatement()
 	case token.CONST:
@@ -244,25 +255,14 @@ func (p *Parser) parsePragmaStatement() *ast.PragmaStatement {
 }
 
 func (p *Parser) parsePackageStatement(overridePackage string) *ast.PackageStatement {
-	stmt := &ast.PackageStatement{Token: p.curToken}
-
+	// We ignore explicit package statements because we already injected a synthetic one.
 	if !p.expectPeek(token.IDENT) {
 		return nil
 	}
-
-	pkg := p.curToken.Literal
-	if overridePackage != "" {
-		// The Identifier may have Token and Value fields
-		// that don't match up.  Let's hope Value gets used.
-		pkg = overridePackage
-	}
-	stmt.Name = &ast.Identifier{Token: p.curToken, Value: pkg}
-
 	if p.peekTokenIs(token.SEMICOLON) {
 		p.nextToken()
 	}
-
-	return stmt
+	return nil
 }
 
 func (p *Parser) parseImportStatement() *ast.ImportStatement {
