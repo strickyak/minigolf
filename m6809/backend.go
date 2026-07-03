@@ -178,6 +178,7 @@ type Backend struct {
 	useFramePointer bool
 	globalsAtY      bool
 	picMode         bool
+	passOnStack     bool
 	frameOffset     int
 	buf             bytes.Buffer
 	dataBuf         bytes.Buffer
@@ -203,7 +204,7 @@ type Backend struct {
 	ascizStrings    map[string][]string // internedAscizString -> list of labels
 }
 
-func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
+func New(useFramePointer bool, globalsAtY bool, picMode bool, passOnStack bool) *Backend {
 	frameOff := 0
 	if useFramePointer {
 		frameOff = 2
@@ -212,6 +213,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		useFramePointer: useFramePointer,
 		globalsAtY:      globalsAtY,
 		picMode:         picMode,
+		passOnStack:     passOnStack,
 		frameOffset:     frameOff,
 		slots:           make(map[int]int),
 		slotSizes:       make(map[int]int),
@@ -680,10 +682,10 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	for _, p := range f.Parameters {
 		sz := b.getTypeSizeByType(p.Typ)
-		if sz == 2 && firstWord == nil {
+		if !b.passOnStack && sz == 2 && firstWord == nil {
 			firstWord = p
 			fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
-		} else if sz == 1 && firstByte == nil {
+		} else if !b.passOnStack && sz == 1 && firstByte == nil {
 			firstByte = p
 			fmt.Fprintf(&b.buf, "\t\t; Note: param %q type %q is first size=2\n", p.Name, p.Type())
 		}
@@ -755,7 +757,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	retSize := b.getTypeSizeByType(f.ReturnType)
 	b.retSlot = -1
 	b.buf.WriteString("\t; --- Function parameters ---\n")
-	if retSize > 2 {
+	if (b.passOnStack && retSize > 0) || retSize > 2 {
 		aligned := align(retSize)
 		b.retSlot = stackArgOffset
 		b.buf.WriteString(fmt.Sprintf("\t; Return value: size=%d, stack_offset=%d\n", retSize, stackArgOffset))
@@ -873,7 +875,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		case *ir.Return:
 			if term.Val != nil {
 				retSize := b.getTypeSizeByType(term.Val.Type())
-				if retSize <= 2 {
+				if !b.passOnStack && retSize <= 2 {
 					b.loadVal(term.Val)
 					if retSize == 2 {
 						b.buf.WriteString("\ttfr d,x ;; return in X\n")
@@ -1755,10 +1757,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		for idx, arg := range i.Args {
 			sz := b.getTypeSizeByType(i.Func.Parameters[idx].Typ)
 			_ = sz
-			if sz == 2 && firstWordArg == nil {
+			if !b.passOnStack && sz == 2 && firstWordArg == nil {
 				firstWordArg = arg
 				firstWordIdx = idx
-			} else if sz == 1 && firstByteArg == nil {
+			} else if !b.passOnStack && sz == 1 && firstByteArg == nil {
 				firstByteArg = arg
 				firstByteIdx = idx
 			}
@@ -1800,7 +1802,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\t; --- Pushed args, pushedBytes=%d", pushedBytes))
 
 		retSize := b.getTypeSizeByType(i.Func.ReturnType)
-		if retSize > 2 {
+		if (b.passOnStack && retSize > 0) || retSize > 2 {
 			aligned := align(retSize)
 			b.buf.WriteString(fmt.Sprintf("\t; Allocate space for return value: size=%d\n", retSize))
 			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
@@ -1825,7 +1827,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tjsr %s\t\t; CALL\n", i.Func.EmitName()))
 		}
 
-		if retSize > 2 {
+		if (b.passOnStack && retSize > 0) || retSize > 2 {
 			b.buf.WriteString(fmt.Sprintf("\t\t\t; doing emitCopyXY(%d)\n", retSize))
 			dest := b.getAddrStr(i)
 			b.emitLoadAddr("x", dest)
@@ -1839,14 +1841,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.popBytes(pushedBytes)
 		}
 
-		if retSize == 2 {
-			b.buf.WriteString("\ttfr x,d\n")
-		} else if retSize == 1 {
-			//dont_clra// b.buf.WriteString("\tclra\n")
-		}
+		if !b.passOnStack {
+			if retSize == 2 {
+				b.buf.WriteString("\ttfr x,d\n")
+			} else if retSize == 1 {
+				//dont_clra// b.buf.WriteString("\tclra\n")
+			}
 
-		if !i.Typ.Equals(ir.TypeVoid) && retSize <= 2 {
-			b.storeResult(id)
+			if !i.Typ.Equals(ir.TypeVoid) && retSize <= 2 {
+				b.storeResult(id)
+			}
 		}
 
 	case *ir.IndirectCall:

@@ -278,6 +278,7 @@ func main() {
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
 	picFlag := flag.Bool("pic", false, "Generate position-independent code (PIC) using relative branches and localized PCR data segments")
+	passOnStackFlag := flag.Bool("pass_on_stack", false, "Pass all arguments and return values on the stack instead of registers in M6809")
 
 	noConstfold := flag.Bool("no-constfold", false, "Disable Constant Folding optimization")
 	noDbe := flag.Bool("no-dbe", false, "Disable Dead Branch Elimination optimization")
@@ -309,6 +310,9 @@ func main() {
 	flag.Parse()
 
 	// Apply environment variable overrides for optimization flags
+	if os.Getenv("PASS_ON_STACK") != "" {
+		*passOnStackFlag = true
+	}
 	if os.Getenv("NO_CONSTFOLD") != "" {
 		*noConstfold = true
 	}
@@ -715,7 +719,7 @@ func main() {
 		opt.OptimizeProgram(irProg, optConfig)
 		builder.AnnotateLeafLevels(*debugOpt)
 
-		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)
+		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag, *passOnStackFlag)
 		asmCode := backend.Generate(irProg)
 
 		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
