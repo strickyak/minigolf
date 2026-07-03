@@ -1,0 +1,18 @@
+package _
+
+func main() {
+	var a slice[byte] = slice[byte]{10, 20, 30}
+	println(a.Len)
+	println(a.Cap)
+	println(a[0])
+	println(a[1])
+	println(a[2])
+
+	var b slice[word] = slice[word]{100, 200, 300, 400}
+	println(b.Len)
+	println(b.Cap)
+	println(b[0])
+	println(b[1])
+	println(b[2])
+	println(b[3])
+}

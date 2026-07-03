@@ -1,3 +1,5 @@
+package _
+
 import . "test_dot2"
 import . "test_dot3"
 

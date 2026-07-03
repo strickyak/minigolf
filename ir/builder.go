@@ -2708,25 +2708,8 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 
 		if isSliceSugar {
 			eltTyp := typ.SliceElementType()
-			eltSize := b.tm.getTypeSize(eltTyp)
 
-			sliceVal := b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
-
-			zallocFunc, ok := b.funcs["prelude.zalloc"]
-			if !ok {
-				panic("prelude.zalloc not found")
-			}
-
-			nBytes := len(e.Elements) * eltSize
-			nBytesVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(nBytes)}, e)
-			basePtrVal := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Func: zallocFunc, Args: []Value{nBytesVal}}, e)
-			baseWordVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: basePtrVal}, e)
-
-			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 0, Val: baseWordVal}, e)
-			capVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(len(e.Elements))}, e)
-			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: capVal}, e)
-			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
-
+			// Create the anonymous local array type for stack backing storage.
 			arrTyp := b.tm.Intern(Type{
 				Expr: &ast.ArrayType{
 					Length: &ast.IntegerLiteral{Value: int64(len(e.Elements))},
@@ -2738,18 +2721,26 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				ArrayLen:    len(e.Elements),
 				Builder:     b,
 			})
-			arrPtrTyp := arrTyp.PointerTo()
-			arrPtrVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: arrPtrTyp}, Op: "word_to_ptr", Operand: baseWordVal}, e)
 
+			// Zero-init the array and fill it with the provided elements.
+			var arrVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: arrTyp}}, e)
 			for i, el := range e.Elements {
 				elVal := b.buildExpr(el)
 				elVal = b.coerceType(elVal, eltTyp)
-
 				idxVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(i)}, e)
-
-				elAddr := b.addInstr(&AddressOfElement{BaseInstruction: BaseInstruction{Typ: eltTyp.PointerTo()}, ArrayPtr: arrPtrVal, Index: idxVal}, e)
-				b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeUnknown}, Ptr: elAddr, Val: elVal}, e)
+				arrVal = b.addInstr(&InsertElement{BaseInstruction: BaseInstruction{Typ: arrTyp}, Array: arrVal, Index: idxVal, Val: elVal}, e)
 			}
+
+			// Take address of the local array and bitcast to element pointer.
+			arrPtr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: arrTyp.PointerTo()}, Local: arrVal}, e)
+			basePtr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: eltTyp.PointerTo()}, Op: "bitcast", Operand: arrPtr}, e)
+
+			// Build the slice struct: { Data: basePtr, Cap: n, Len: n }
+			var sliceVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
+			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 0, Val: basePtr}, e)
+			capVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(len(e.Elements))}, e)
+			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: capVal}, e)
+			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
 
 			return ExprResult{IsLValue: false, Value: sliceVal, Typ: typ}
 		}

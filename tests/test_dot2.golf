@@ -1,3 +1,5 @@
+package _
+
 import . "test_dot3"
 
 func number22() word { return 22 }
