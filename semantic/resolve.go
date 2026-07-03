@@ -10,13 +10,13 @@ import (
 )
 
 type Resolver struct {
-	packages    map[string]bool
-	globals     map[string]bool // fullyQualifiedName -> true
-	currentPkg  string
-	dotImports  []string // packages whose public names are in the unqualified namespace
-	localScopes []map[string]bool
-	errors      []string
-	defines     map[string]string
+	packages       map[string]bool
+	globals        map[string]bool // fullyQualifiedName -> true
+	currentPkg     string
+	fileDotImports map[string][]string // filename -> packages whose public names are in the unqualified namespace
+	localScopes    []map[string]bool
+	errors         []string
+	defines        map[string]string
 }
 
 func NewResolver(defines map[string]string) *Resolver {
@@ -24,12 +24,11 @@ func NewResolver(defines map[string]string) *Resolver {
 		defines = make(map[string]string)
 	}
 	return &Resolver{
-		packages:    make(map[string]bool),
-		globals:     make(map[string]bool),
-		localScopes: make([]map[string]bool, 0),
-		defines:     defines,
-		// prelude is always a dot-import: its public names are in the unqualified namespace.
-		dotImports: []string{"prelude"},
+		packages:       make(map[string]bool),
+		globals:        make(map[string]bool),
+		localScopes:    make([]map[string]bool, 0),
+		defines:        defines,
+		fileDotImports: make(map[string][]string),
 	}
 }
 
@@ -97,9 +96,12 @@ func (r *Resolver) Resolve(program *ast.Program) {
 				if ext := strings.LastIndex(pkgName, "."); ext >= 0 {
 					pkgName = pkgName[:ext]
 				}
-				// Don't add prelude twice (it's always the first entry).
 				if pkgName != "prelude" {
-					r.dotImports = append(r.dotImports, pkgName)
+					filename := ""
+					if s.GetToken() != nil {
+						filename = s.GetToken().Filename
+					}
+					r.fileDotImports[filename] = append(r.fileDotImports[filename], pkgName)
 				}
 			}
 		case *ast.FuncStatement:
@@ -295,10 +297,27 @@ func (r *Resolver) resolveExpression(expr ast.Expression) ast.Expression {
 				e.ShortName = e.Value
 				e.IsResolved = true
 			} else if !strings.HasPrefix(e.Value, "_") {
-				// Dot-import resolution: check all dot-imported packages.
+				// Dot-import resolution: check all dot-imported packages for this file.
 				// Names starting with '_' are package-private and never dot-imported.
 				var matches []string
-				for _, dotPkg := range r.dotImports {
+				filename := ""
+				if e.GetToken() != nil {
+					filename = e.GetToken().Filename
+				}
+
+				dotPkgs := []string{"prelude"}
+				dotPkgs = append(dotPkgs, r.fileDotImports[filename]...)
+
+				seen := make(map[string]bool)
+				var uniqueDotPkgs []string
+				for _, p := range dotPkgs {
+					if !seen[p] {
+						seen[p] = true
+						uniqueDotPkgs = append(uniqueDotPkgs, p)
+					}
+				}
+
+				for _, dotPkg := range uniqueDotPkgs {
 					if r.globals[dotPkg+"."+e.Value] {
 						matches = append(matches, dotPkg)
 					}
