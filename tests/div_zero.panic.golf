@@ -1,0 +1,7 @@
+package main
+
+func main() {
+	var a word = 42
+	var b word = 0
+	println(a / b)
+}

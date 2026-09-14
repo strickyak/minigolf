@@ -1289,7 +1289,11 @@ func (t *translator) xExpr(n cc.Expression) string {
 		return fmt.Sprintf("word(%d) /* sizeof fallback */", sz)
 
 	case *cc.SizeOfTypeExpr:
-		// sizeof(type) — use the pre-computed value from cc/v5.
+		golfType := t.typeNameToGolf(x.TypeName)
+		if golfType != "" {
+			return fmt.Sprintf("sizeof[%s]()", golfType)
+		}
+		// Fallback: use the pre-computed value from cc/v5.
 		if v := x.Value(); v != nil {
 			switch vv := v.(type) {
 			case cc.UInt64Value:
@@ -1298,7 +1302,6 @@ func (t *translator) xExpr(n cc.Expression) string {
 				return fmt.Sprintf("word(%d)", int64(vv))
 			}
 		}
-		// Fallback.
 		sz := x.TypeName.Type().Size()
 		return fmt.Sprintf("word(%d) /* sizeof fallback */", sz)
 

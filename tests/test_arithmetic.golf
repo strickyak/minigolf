@@ -1,18 +1,47 @@
 package main
 
 func main() {
-	println(0, "mul", 44, "is", mul_word(0, 44))
-	println(1, "mul", 44, "is", mul_word(1, 44))
-	println(2, "mul", 44, "is", mul_word(2, 44))
-	println(33, "mul", 44, "is", mul_word(33, 44))
-	println(99, "div", 7, "is", div_word(99, 7))
-	println(99, "mod", 5, "is", mod_word(99, 5))
-	/*
-	   println(0, "mul", 44, "is", 0*44)
-	   println(1, "mul", 44, "is", 1*44)
-	   println(2, "mul", 44, "is", 2*44)
-	   println(33, "mul", 44, "is", 33*44)
-	   println(99, "div", 7, "is", 99/7)
-	   println(99, "mod", 5, "is", 99%5)
-	*/
+	println("=== mul_byte ===")
+	println(prelude.mul_byte(10, 20))
+	println(prelude.mul_byte(255, 255))
+	println(prelude.mul_byte(12, 34))
+
+	println("=== mul_word ===")
+	println(prelude.mul_word(100, 200))
+	println(prelude.mul_word(1234, 50))
+	println(prelude.mul_word(1, 65535))
+
+	println("=== div_word & mod_word ===")
+	println(prelude.div_word(100, 7), prelude.mod_word(100, 7))
+	println(prelude.div_word(12345, 67), prelude.mod_word(12345, 67))
+	println(prelude.div_word(65535, 1), prelude.mod_word(65535, 1))
+	println(prelude.div_word(65535, 256), prelude.mod_word(65535, 256))
+	println(prelude.div_word(10, 20), prelude.mod_word(10, 20))
+
+	println("=== native word arithmetic ===")
+	var w1 word = 100
+	var w2 word = 7
+	println(w1 / w2, w1 % w2, w1 * w2)
+	println(w1 / 10, w1 % 10, w1 * 10)
+	w1 /= 3
+	println(w1)
+	w1 %= 7
+	println(w1)
+	w1 *= 5
+	println(w1)
+
+	println("=== native byte arithmetic ===")
+	var b1 byte = 200
+	var b2 byte = 13
+	println(b1 / b2, b1 % b2)
+	b1 /= byte(2)
+	println(b1)
+	b1 %= byte(7)
+	println(b1)
+
+	println("=== signed int arithmetic ===")
+	println(prelude.abs_int(42), prelude.abs_int(-42))
+	println(prelude.mul_int(6, 7), prelude.mul_int(-6, 7), prelude.mul_int(6, -7), prelude.mul_int(-6, -7))
+	println(prelude.div_int(42, 5), prelude.div_int(-42, 5), prelude.div_int(42, -5), prelude.div_int(-42, -5))
+	println(prelude.mod_int(42, 5), prelude.mod_int(-42, 5), prelude.mod_int(42, -5), prelude.mod_int(-42, -5))
 }

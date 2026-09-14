@@ -310,55 +310,15 @@ func recover() *byte {
 func mul_byte(a byte, b byte) word
 
 func mul_word(a word, b word) word {
-	a_H := byte(a >> 8)
-	a_L := byte(a)
-	b_H := byte(b >> 8)
-	b_L := byte(b)
-
-	cross1 := mul_byte(a_H, b_L)
-	cross2 := mul_byte(a_L, b_H)
-	crossSum := cross1 + cross2
-	crossSumShifted := crossSum << 8
-
-	low := mul_byte(a_L, b_L)
-
-	return crossSumShifted + low
+	return a * b
 }
 
 func div_word(a0 word, b word) word {
-	if b == 0 {
-		panic("1002")
-	}
-	var q word
-	var r word
-	for i := range 64 {
-		bit_idx := word(63) - i
-		r = r << 1
-		bit := (a0 >> bit_idx) & 1
-		r = r | bit
-		if r >= b {
-			r = r - b
-			q = q | (1 << bit_idx)
-		}
-	}
-	return q
+	return a0 / b
 }
 
 func mod_word(a0 word, b word) word {
-	if b == 0 {
-		panic("1004")
-	}
-	var r word
-	for i := range 64 {
-		bit_idx := word(63) - i
-		r = r << 1
-		bit := (a0 >> bit_idx) & 1
-		r = r | bit
-		if r >= b {
-			r = r - b
-		}
-	}
-	return r
+	return a0 % b
 }
 
 /////////////////////////////////////////////

@@ -2226,12 +2226,41 @@ __mul16:
 	}
 
 	if b.helpersEmitted["__div16"] || b.helpersEmitted["__mod16"] {
-		b.helpersBuf.WriteString(`
+		b.fmtCount++
+		lblDiv0Msg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"division by zero\"\n", lblDiv0Msg))
+
+		b.fmtCount++
+		lblPanicMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*PANIC* %%s\\n\"\n", lblPanicMsg))
+
+		b.fmtCount++
+		lblAbortMsg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n", lblAbortMsg))
+
+		lblDiv0Abort := b.nextLabel()
+
+		var loadDiv0Msg, loadPanicMsg, loadAbortMsg string
+		if b.picMode {
+			loadDiv0Msg = fmt.Sprintf("\tleax %s,pcr\n", lblDiv0Msg)
+			loadPanicMsg = fmt.Sprintf("\tleax %s,pcr\n", lblPanicMsg)
+			loadAbortMsg = fmt.Sprintf("\tleax %s,pcr\n", lblAbortMsg)
+		} else {
+			loadDiv0Msg = fmt.Sprintf("\tldx #%s\n", lblDiv0Msg)
+			loadPanicMsg = fmt.Sprintf("\tldx #%s\n", lblPanicMsg)
+			loadAbortMsg = fmt.Sprintf("\tldx #%s\n", lblAbortMsg)
+		}
+
+		callPrintf := "\tjsr _printf\n"
+		if b.picMode {
+			callPrintf = "\tlbsr _printf\n"
+		}
+
+		b.helpersBuf.WriteString(fmt.Sprintf(`
 __divmod16:
-	pshs y,u
-	tfr d,y
 	cmpd #0
 	beq .L_div0
+	pshs u,d
 	ldu #16
 	clra
 	clrb
@@ -2242,20 +2271,35 @@ __divmod16:
 	exg d,x
 	rolb
 	rola
-	cmpd y
+	cmpd ,s
 	blo .L_divnosub
-	subd y
+	subd ,s
 	leax 1,x
 .L_divnosub:
 	leau -1,u
 	cmpu #0
 	bne .L_divloop
-	puls y,u,pc
+	leas 2,s
+	puls u,pc
 .L_div0:
-	clra
-	clrb
-	puls y,u,pc
-
+%s`+
+			fmt.Sprintf("\tstx %s\n", b.panicAddr())+
+			"\tpshs x\n"+
+			loadPanicMsg+
+			"\tpshs x\n"+
+			callPrintf+
+			"\tleas 4,s\n"+
+			fmt.Sprintf("\tldx %s\n", b.jmpChainAddr())+
+			"\tcmpx #0\n"+
+			fmt.Sprintf("\tbeq %s\n", lblDiv0Abort)+
+			"\tclra\n\tldb #1\n"+
+			"\tldy 8,x\n\tldu 6,x\n\tlds 4,x\n\tjmp [2,x]\n"+
+			fmt.Sprintf("%s:\n", lblDiv0Abort)+
+			loadAbortMsg+
+			"\tpshs x\n"+
+			callPrintf+
+			"\tleas 2,s\n\tldx #1\n\tjmp __exit\n"+
+			`
 __div16:
 	lbsr __divmod16
 	tfr x,d
@@ -2264,7 +2308,7 @@ __div16:
 __mod16:
 	lbsr __divmod16
 	rts
-`)
+`, loadDiv0Msg))
 	}
 
 	if b.helpersEmitted["__memcpy"] {

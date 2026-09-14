@@ -1,6 +1,29 @@
-0 mul 44 is 0
-1 mul 44 is 44
-2 mul 44 is 88
-33 mul 44 is 1452
-99 div 7 is 14
-99 mod 5 is 4
+=== mul_byte ===
+200
+65025
+408
+=== mul_word ===
+20000
+61700
+65535
+=== div_word & mod_word ===
+14 2
+184 17
+65535 0
+255 255
+0 10
+=== native word arithmetic ===
+14 2 700
+10 0 1000
+33
+5
+25
+=== native byte arithmetic ===
+15 5
+100
+2
+=== signed int arithmetic ===
+42 42
+42 -42 -42 42
+8 -8 -8 8
+2 -2 2 -2
