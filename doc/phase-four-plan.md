@@ -187,6 +187,14 @@ flowchart TD
 
 ## 4. Proposed Milestone Schedule
 
+| Milestone | Scope & Deliverables | Guard Flag & Env Var | Expected Impact |
+|---|---|---|---|
+| **4.1: Foundation & Liveness** | Register bitmasks, variant availability filters, CFG live interval computation (`[start, end]`), and instruction register pressure tracking. | `-no-liveness6809`<br/>`NO_LIVENESS6809` | Zero assembly changes; verified mathematical foundation. |
+| **4.2: Local Block Allocation** | Straight-line register tracking; reuse values in `D`/`B`/`X`; eliminate redundant `std`/`ldd` stack traffic within basic blocks. | `-no-local-regalloc6809`<br/>`NO_LOCAL_REGALLOC6809` | Noticeable drop in stack loads/stores on straight-line code. |
+| **4.3: Loop Register Pinning** | Identify loop-carried variables and cursors; pin loop counters and array pointers into `X`, `Y`, `U`, or `B`; pre-header loads and post-loop stores. | `-no-loop-regalloc6809`<br/>`NO_LOOP_REGALLOC6809` | Major speedup (>25–40%) on loop-heavy benchmarks. |
+| **4.4: CSSA & Phi Lowering** | Parallel copy resolution across block boundaries; cyclic transfer decomposition using hardware `exg` and `tfr`. | `-no-cssa-lowering6809`<br/>`NO_CSSA_LOWERING6809` | Robust, lost-update-free inter-block register passing. |
+| **4.5: Global Chordal Coloring** | Decoupled linear-scan spilling to stack (pressure $\le K$); Maximum Cardinality Search (MCS) greedy coloring with class preferencing; Chaitin-Briggs copy coalescing. | `-no-global-regalloc6809`<br/>`NO_GLOBAL_REGALLOC6809` | Full end-to-end SSA register allocation for M6809. |
+
 - [ ] **Milestone 4.1**: Liveness analysis, `RegMask` bitmask architecture, interference graph & pressure computation.
 - [ ] **Milestone 4.2**: Local basic-block allocation (accumulator reuse & dead stack store elimination).
 - [ ] **Milestone 4.3**: Loop induction variable & pointer pinning (`X`, `Y`, `U`).
