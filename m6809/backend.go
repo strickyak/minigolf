@@ -444,6 +444,11 @@ func (b *Backend) emitCopy(destReg string, srcReg string, size int) {
 	if size <= 0 {
 		return
 	}
+	defer func() {
+		if b.globalsAtY {
+			b.buf.WriteString("\tldy #0\n")
+		}
+	}()
 	if size == 1 {
 		b.buf.WriteString(fmt.Sprintf("\tlda ,%s\n\tsta ,%s\n", srcReg, destReg))
 		return
@@ -525,8 +530,10 @@ func (b *Backend) computeElementAddr(destReg string, arrayVal ir.Value, indexVal
 		} else if eltSize == 2 {
 			b.buf.WriteString(fmt.Sprintf("\taslb\n\trola\n\tlea%s d,%s\n", destReg, destReg))
 		} else {
+			b.buf.WriteString(fmt.Sprintf("\tpshs %s\n", destReg))
 			b.buf.WriteString(fmt.Sprintf("\tldx #%d\n", eltSize))
 			b.callHelper("__mul16")
+			b.buf.WriteString(fmt.Sprintf("\tpuls %s\n", destReg))
 			b.buf.WriteString(fmt.Sprintf("\tlea%s d,%s\n", destReg, destReg))
 		}
 	}
@@ -1059,21 +1066,16 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 		format += "\n"
 	}
 
-	if b.picMode {
-		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", fmtLabel, format))
-	} else {
-		b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", fmtLabel, format))
-	}
+	b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", fmtLabel, format))
 
 	for i := len(dataArgs) - 1; i >= 0; i-- {
 		if strLit, ok := dataArgs[i].(*ir.StringLiteral); ok {
 			b.fmtCount++
 			lbl := fmt.Sprintf(".Lfmt%d", b.fmtCount)
+			b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
 			if b.picMode {
-				b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
 				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n", lbl))
 			} else {
-				b.dataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz %q\n", lbl, strLit.Value))
 				b.buf.WriteString(fmt.Sprintf("\tldx #%s\n", lbl))
 			}
 			b.buf.WriteString("\tpshs x\n")
@@ -1227,8 +1229,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
 		} else {
-			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitLoadAddr("x", destStr)
+			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitCopy("x", "y", sz)
 		}
 
@@ -1247,13 +1249,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.ExtractElement:
 		eltSize := b.getEltSizeUsingIrt(i.Array.Type())
-		b.computeElementAddr("y", i.Array, i.Index, eltSize)
 		destStr := b.localAddr(id)
 		if eltSize == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb ,y\n\tstb %s\n", destStr))
+			b.computeElementAddr("x", i.Array, i.Index, eltSize)
+			b.buf.WriteString(fmt.Sprintf("\tldb ,x\n\tstb %s\n", destStr))
 		} else if eltSize == 2 {
-			b.buf.WriteString(fmt.Sprintf("\tldd ,y\n\tstd %s\n", destStr))
+			b.computeElementAddr("x", i.Array, i.Index, eltSize)
+			b.buf.WriteString(fmt.Sprintf("\tldd ,x\n\tstd %s\n", destStr))
 		} else {
+			b.computeElementAddr("y", i.Array, i.Index, eltSize)
 			b.emitLoadAddr("x", destStr)
 			b.emitCopy("x", "y", eltSize)
 		}
@@ -1262,8 +1266,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		arrSize := b.getTypeSizeByType(i.Array.Type())
 		eltSize := b.getEltSizeUsingIrt(i.Array.Type())
 		destStr := b.localAddr(id)
-		b.emitLoadAddr("y", b.getAddrStr(i.Array))
 		b.emitLoadAddr("x", destStr)
+		b.emitLoadAddr("y", b.getAddrStr(i.Array))
 		b.emitCopy("x", "y", arrSize)
 		b.computeElementAddr("x", i, i.Index, eltSize)
 		if eltSize == 1 {
@@ -1286,22 +1290,22 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if byteOffset == 0 {
 				b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tstb %s\n", srcStr, destStr))
 			} else {
-				b.emitLoadAddr("y", srcStr)
-				b.buf.WriteString(fmt.Sprintf("\tldb %d,y\n\tstb %s\n", byteOffset, destStr))
+				b.emitLoadAddr("x", srcStr)
+				b.buf.WriteString(fmt.Sprintf("\tldb %d,x\n\tstb %s\n", byteOffset, destStr))
 			}
 		} else if fieldSize == 2 {
 			if byteOffset == 0 {
 				b.buf.WriteString(fmt.Sprintf("\tldd %s\n\tstd %s\n", srcStr, destStr))
 			} else {
-				b.emitLoadAddr("y", srcStr)
-				b.buf.WriteString(fmt.Sprintf("\tldd %d,y\n\tstd %s\n", byteOffset, destStr))
+				b.emitLoadAddr("x", srcStr)
+				b.buf.WriteString(fmt.Sprintf("\tldd %d,x\n\tstd %s\n", byteOffset, destStr))
 			}
 		} else {
+			b.emitLoadAddr("x", destStr)
 			b.emitLoadAddr("y", srcStr)
 			if byteOffset > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 			}
-			b.emitLoadAddr("x", destStr)
 			b.emitCopy("x", "y", fieldSize)
 		}
 
@@ -1310,8 +1314,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		structSize := b.getTypeSizeByType(structType)
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structType, i.FieldIndex)
 		destStr := b.localAddr(id)
-		b.emitLoadAddr("y", b.getAddrStr(i.Struct))
 		b.emitLoadAddr("x", destStr)
+		b.emitLoadAddr("y", b.getAddrStr(i.Struct))
 		b.emitCopy("x", "y", structSize)
 		if fieldSize == 1 {
 			b.loadVal(i.Val)
@@ -1397,13 +1401,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.ExtractFieldPtr:
 		structType := i.Ptr.Type().PointedType()
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structType, i.FieldIndex)
-		b.loadVal16("y", i.Ptr)
 		destStr := b.localAddr(id)
 		if fieldSize == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb %d,y\n\tstb %s\n", byteOffset, destStr))
+			b.loadVal16("x", i.Ptr)
+			b.buf.WriteString(fmt.Sprintf("\tldb %d,x\n\tstb %s\n", byteOffset, destStr))
 		} else if fieldSize == 2 {
-			b.buf.WriteString(fmt.Sprintf("\tldd %d,y\n\tstd %s\n", byteOffset, destStr))
+			b.loadVal16("x", i.Ptr)
+			b.buf.WriteString(fmt.Sprintf("\tldd %d,x\n\tstd %s\n", byteOffset, destStr))
 		} else {
+			b.loadVal16("y", i.Ptr)
 			if byteOffset > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 			}
@@ -1431,13 +1437,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.LoadPtr:
 		sz := b.getTypeSizeByType(i.Typ)
-		b.loadVal16("y", i.Ptr)
 		destStr := b.localAddr(id)
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb ,y\n\tstb %s\n", destStr))
+			b.loadVal16("x", i.Ptr)
+			b.buf.WriteString(fmt.Sprintf("\tldb ,x\n\tstb %s\n", destStr))
 		} else if sz == 2 {
-			b.buf.WriteString(fmt.Sprintf("\tldd ,y\n\tstd %s\n", destStr))
+			b.loadVal16("x", i.Ptr)
+			b.buf.WriteString(fmt.Sprintf("\tldd ,x\n\tstd %s\n", destStr))
 		} else {
+			b.loadVal16("y", i.Ptr)
 			b.emitLoadAddr("x", destStr)
 			b.emitCopy("x", "y", sz)
 		}
@@ -1705,9 +1713,21 @@ func (b *Backend) Generate(program *ir.Program) string {
 		for _, g := range program.Globals {
 			b.globalOffsets[g.Name] = offset
 			if g.IsInit {
+				b.dataBuf.WriteString(fmt.Sprintf("\torg %d\n", offset))
+				b.dataBuf.WriteString(fmt.Sprintf("*** global var init: name=%q type=%q init=%#v\n", g.Name, g.Typ.Name, g.InitString))
+				b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
 				if g.InitVal != nil {
+					b.emitData(g.InitVal)
 					offset += b.getTypeSizeByType(g.Typ)
 				} else {
+					for i := 0; i < len(g.InitString); i++ {
+						x := g.InitString[i]
+						c := byte('~')
+						if ' ' <= x && x < '~' {
+							c = x
+						}
+						b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d ; [%d] <%c>\n", g.InitString[i], i, c))
+					}
 					offset += len(g.InitString)
 				}
 			} else {
@@ -1734,6 +1754,9 @@ func (b *Backend) Generate(program *ir.Program) string {
 	}
 
 	b.buf.WriteString("_main:\n")
+	if b.globalsAtY {
+		b.buf.WriteString("\tldy #0\n")
+	}
 
 	if usesPanic {
 		b.buf.WriteString("\tleas -10,s\t; Allocate 10 bytes for jumper_main\n")
@@ -1743,16 +1766,19 @@ func (b *Backend) Generate(program *ir.Program) string {
 		b.buf.WriteString("\tleax ,s\n")
 		b.buf.WriteString(fmt.Sprintf("\tstx %s\n", b.jmpChainAddr()))
 
+		b.buf.WriteString("\tsts 4,x\n\tstu 6,x\n\tsty 8,x\n")
 		lblNext := b.nextLabel()
 		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleay %s,pcr\n\tsty 2,x\n", lblNext))
+			b.buf.WriteString(fmt.Sprintf("\tleau %s,pcr\n\tstu 2,x\n\tldu 6,x\n", lblNext))
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n\tstd 2,x\n", lblNext))
 		}
 
-		b.buf.WriteString("\tsts 4,x\n\tstu 6,x\n\tsty 8,x\n")
 		b.buf.WriteString("\tclra\n\tclrb\n")
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext))
+		if b.globalsAtY {
+			b.buf.WriteString("\tldy #0\n")
+		}
 		b.buf.WriteString("\tcmpd #0\n")
 		lblCallMain := b.nextLabel()
 		b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblCallMain))
@@ -1807,7 +1833,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 
 	b.emitHelpers()
 
-	rawCode := b.buf.String() + "\n" + b.rodataBuf.String() + "\n" + b.dataBuf.String() + "\n" + b.helpersBuf.String()
+	rawCode := b.buf.String() + "\n" + b.rodataBuf.String() + "\n" + b.helpersBuf.String() + "\n" + b.dataBuf.String()
 	return peepholeOptimize(rawCode)
 }
 

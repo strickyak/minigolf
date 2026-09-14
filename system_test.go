@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -269,26 +270,70 @@ func TestSystemTrianglesByte_m6809(t *testing.T) {
 	testBackend(t, "m6809", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
 
-func TestSystemTelemetryVariants_m6809(t *testing.T) {
-	variants := []struct {
-		name string
-		args []string
-	}{
-		{"default", nil},
-		{"globals-at-y", []string{"-globals-at-y"}},
-		{"frame-pointer", []string{"-frame-pointer"}},
-		{"pic", []string{"-pic"}},
-		{"globals-at-y-frame-pointer", []string{"-globals-at-y", "-frame-pointer"}},
-		{"globals-at-y-pic", []string{"-globals-at-y", "-pic"}},
-		{"frame-pointer-pic", []string{"-frame-pointer", "-pic"}},
-		{"globals-at-y-frame-pointer-pic", []string{"-globals-at-y", "-frame-pointer", "-pic"}},
-	}
+var m6809Variants = []struct {
+	name string
+	args []string
+}{
+	{"default", nil},
+	{"globals-at-y", []string{"-globals-at-y"}},
+	{"frame-pointer", []string{"-frame-pointer"}},
+	{"pic", []string{"-pic"}},
+	{"globals-at-y-frame-pointer", []string{"-globals-at-y", "-frame-pointer"}},
+	{"globals-at-y-pic", []string{"-globals-at-y", "-pic"}},
+	{"frame-pointer-pic", []string{"-frame-pointer", "-pic"}},
+	{"globals-at-y-frame-pointer-pic", []string{"-globals-at-y", "-frame-pointer", "-pic"}},
+}
 
-	for _, v := range variants {
+func TestSystemTelemetryVariants_m6809(t *testing.T) {
+	for _, v := range m6809Variants {
 		v := v
 		t.Run(v.name, func(t *testing.T) {
 			testBackendVariant(t, "m6809", v.name, v.args, "demos/triangles.golf", expectedOutput, false, false)
 		})
+	}
+}
+
+func TestSystemAllVariants_m6809(t *testing.T) {
+	runFlag := ""
+	if f := flag.Lookup("test.run"); f != nil {
+		runFlag = f.Value.String()
+	}
+	if os.Getenv("ALL_VARIANTS") == "" && os.Getenv("TELEMETRY_VARIANTS") == "" && !strings.Contains(runFlag, "AllVariants") {
+		t.Skip("skipping all 7 variants test; set ALL_VARIANTS=1 or TELEMETRY_VARIANTS=1 to run")
+	}
+
+	files, err := filepath.Glob("tests/*.golf")
+	if err != nil {
+		t.Fatalf("Failed to glob tests/*.golf: %v", err)
+	}
+
+	otherVariants := m6809Variants[1:]
+
+	for _, file := range files {
+		if strings.HasSuffix(file, ".bad.golf") || strings.HasSuffix(file, "_nomoto.golf") {
+			continue
+		}
+
+		expectCompileError := strings.HasSuffix(file, ".error.golf")
+		expectRunError := strings.HasSuffix(file, ".panic.golf")
+
+		var expectedStr string
+		if !expectCompileError && !expectRunError {
+			wantFile := strings.TrimSuffix(file, ".golf") + ".want"
+			wantBytes, err := os.ReadFile(wantFile)
+			if err != nil {
+				t.Fatalf("Failed to read want file %s: %v", wantFile, err)
+			}
+			expectedStr = string(wantBytes)
+		}
+
+		for _, v := range otherVariants {
+			v := v
+			testName := fmt.Sprintf("%s_%s", filepath.Base(file), v.name)
+			t.Run(testName, func(t *testing.T) {
+				testBackendVariant(t, "m6809", v.name, v.args, file, expectedStr, expectCompileError, expectRunError)
+			})
+		}
 	}
 }
 
