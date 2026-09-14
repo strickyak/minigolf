@@ -34,6 +34,10 @@ func TestAllCFiles(t *testing.T) {
 
 	backends := []string{"CBE", "amd64", "m6809"}
 
+	if err := os.MkdirAll("_tmp", 0777); err != nil {
+		t.Fatalf("Failed to create _tmp directory: %v", err)
+	}
+
 	for _, cFile := range files {
 		base := filepath.Base(cFile) // e.g. "hello1.c"
 

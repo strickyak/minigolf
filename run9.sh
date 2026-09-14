@@ -4,6 +4,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HATVAN_DIR="$(cd "$SCRIPT_DIR/../hatvan-os" && pwd)"
 HATVAN_VM="$HATVAN_DIR/hatvan-vm"
 
+mkdir -p _tmp
+
 P=$1
 shift
 
