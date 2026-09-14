@@ -1,6 +1,6 @@
 # Writing a New Backend for MiniGolf
 
-This guide explains the architecture of the MiniGolf Intermediate Representation (IR) and provides a reference for writing a new backend (e.g., for target architectures like the Motorola 68000, x86_64, or a C-Backend).
+This guide explains the architecture of the MiniGolf Intermediate Representation (IR) and provides a reference for writing a new backend (e.g., for target architectures like the Motorola 68000, amd64, or a C-Backend).
 
 ## The Intermediate Representation (IR)
 
@@ -85,7 +85,7 @@ Terminators end a basic block and manage control flow.
 * **`SourceMarker` (`source_marker`)**: A no-op instruction used for debugging. Backends can emit its `Comment` field as a comment in the generated assembly to map assembly lines back to original MiniGolf source code.
 
 ## Backend Implementation Strategy
-A typical backend like `x86_64` or `m6809` follows these phases:
+A typical backend like `amd64` or `m6809` follows these phases:
 
 1. **Stack Allocation**: Iterate over all `Function`s, their `BasicBlock`s, and `Instruction`s. Assign a stack offset/slot for every local variable and SSA virtual register (`v1`, `v2`, etc.). Ensure parameters are mapped to arguments provided by the caller.
 2. **Global Emitting**: Emit data sections (`.data` or `.bss`) for `ir.Global` variables, taking into account initialization values.

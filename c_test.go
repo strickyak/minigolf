@@ -12,7 +12,7 @@ import (
 
 // TestAllCFiles globs c-tests/*.c, translates each with the in-process
 // ctranslator into a temporary .golf file, then runs it through all three
-// backends (CBE, x86_64, m6809) comparing stdout against the matching .want
+// backends (CBE, amd64, m6809) comparing stdout against the matching .want
 // file.
 //
 // Naming conventions (mirroring system_test.go):
@@ -32,7 +32,7 @@ func TestAllCFiles(t *testing.T) {
 		t.Skip("No *.c files found in c-tests/")
 	}
 
-	backends := []string{"CBE", "x86_64", "m6809"}
+	backends := []string{"CBE", "amd64", "m6809"}
 
 	for _, cFile := range files {
 		base := filepath.Base(cFile) // e.g. "hello1.c"

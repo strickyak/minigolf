@@ -75,7 +75,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string, expectCo
 	os.MkdirAll(tmpDir, 0777)
 
 	ext := ".c"
-	if backend == "x86_64" {
+	if backend == "amd64" || backend == "x86_64" {
 		ext = ".s"
 	}
 	if backend == "m6809" {
@@ -179,12 +179,12 @@ func TestSystemTrianglesByte_CBE(t *testing.T) {
 	testBackend(t, "CBE", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
 
-func TestSystemTriangles_x86_64(t *testing.T) {
-	testBackend(t, "x86_64", "demos/triangles.golf", expectedOutput, false, false)
+func TestSystemTriangles_amd64(t *testing.T) {
+	testBackend(t, "amd64", "demos/triangles.golf", expectedOutput, false, false)
 }
 
-func TestSystemTrianglesByte_x86_64(t *testing.T) {
-	testBackend(t, "x86_64", "demos/triangles_byte.golf", expectedOutputByte, false, false)
+func TestSystemTrianglesByte_amd64(t *testing.T) {
+	testBackend(t, "amd64", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
 
 func TestSystemAllGolfFiles(t *testing.T) {
@@ -193,7 +193,7 @@ func TestSystemAllGolfFiles(t *testing.T) {
 		t.Fatalf("Failed to glob tests/*.golf: %v", err)
 	}
 
-	backends := []string{"CBE", "x86_64", "m6809"}
+	backends := []string{"CBE", "amd64", "m6809"}
 
 	for _, file := range files {
 		if strings.HasSuffix(file, ".bad.golf") {

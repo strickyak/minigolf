@@ -162,11 +162,11 @@ To bootstrap the language and provide a highly portable compilation path, the sy
 *   **C Transpiler (`-m=C`)**: Transpiles the parsed AST directly into equivalent high-level C code. This circumvents the SSA IR entirely, generating readable C structs, pointers, and variables that closely mirror the original MiniGolf source code. 
 *   **CBE (C Backend from SSA, `-m=CBE`)**: Translates the optimized, lowered SSA IR pipeline into C code. Variables are emitted as flat `v1`, `v2`, `v3` SSA variables alongside explicit block labels (`.Lb1`) and `goto` jumps.
 
-### 7.3 Testing and Debugging Target: x86_64
-For practical debugging, testing, and rapid development, the compiler includes a native machine code backend for **64-bit x86_64**. 
+### 7.3 Testing and Debugging Target: amd64
+For practical debugging, testing, and rapid development, the compiler includes a native machine code backend for **64-bit amd64**. 
 *   This allows the compiler's output to be executed and verified natively on modern Linux development machines.
 *   `byte` and `word` values map cleanly to the 8-bit and 64-bit portions of x86 registers. 
 
 ### 7.4 Metadata and Debugging Observability
 To assist users in verifying the compiler pipeline, the IR builder injects `SourceMarker` pseudo-instructions into the AST traversal. 
-These markers propagate through the optimization phases down to the backends (X86_64, M6809, and CBE), emitting human-readable comments in the final assembly or C output (e.g., `; line 15: AssignStatement`). This makes correlating the machine code back to the original `.golf` script trivial.
+These markers propagate through the optimization phases down to the backends (AMD64, M6809, and CBE), emitting human-readable comments in the final assembly or C output (e.g., `; line 15: AssignStatement`). This makes correlating the machine code back to the original `.golf` script trivial.

@@ -36,7 +36,7 @@ There are three supported backends:
 | Backend | File | Target | Toolchain |
 |---------|------|--------|-----------|
 | **CBE** | `cbe/cbe.go` | C99 source code | GCC on Linux |
-| **X86_64** | `x86_64/backend.go` | AMD64 Intel assembly | GCC on Linux |
+| **AMD64** | `amd64/backend.go` | AMD64 Intel assembly | GCC on Linux |
 | **M6809** | `m6809/backend.go` | Motorola 6809 assembly | `lwasm` |
 
 ### Project Goals

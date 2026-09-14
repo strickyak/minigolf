@@ -1,6 +1,6 @@
 ---
 name: compile-and-run
-description: Compile and run a `.c` or `.golf` source file with the MiniGolf compiler on all three target platforms (CBE, X86_64, M6809).
+description: Compile and run a `.c` or `.golf` source file with the MiniGolf compiler on all three target platforms (CBE, AMD64, M6809).
 ---
 
 # Compile and Run with MiniGolf
@@ -20,7 +20,7 @@ Replace `SOURCE_FILENAME` with the path to a `.c` or `.golf` source file.
 1. Compiles the source file with the MiniGolf compiler.
 2. Executes the compiled program on all three target platforms:
    - **CBE** (C Backend)
-   - **X86_64** (x86-64 native)
+   - **AMD64** (AMD64 native)
    - **M6809** (Motorola 6809)
 3. Shows the output of each platform's execution verbosely.
 4. Compares the outputs across platforms using `md5sum` and `wc` (Unix word count) to verify consistency.

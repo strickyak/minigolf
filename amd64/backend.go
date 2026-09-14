@@ -1,4 +1,4 @@
-package x86_64
+package amd64
 
 import (
 	"bytes"

@@ -61,7 +61,7 @@ The compiler has major phases:
 
 Multiple backends are already available:
 *   **CBE:** The "C Backend" outputs C99 code, which can be compiled on 64-bit platforms.
-*   **X86_64:** The "AMD64 Backend" outputs X86_64 assembly language, which can be compiled by modern gcc.
+*   **AMD64:** The "AMD64 Backend" outputs AMD64 assembly language, which can be compiled by modern gcc.
 *   **M6809:** The "Motorola 6809 Backend" outputs 6809 assembly language, which can be compiled by the `lwasm` toolchain.
 
 ## 1.2. Front Ends
