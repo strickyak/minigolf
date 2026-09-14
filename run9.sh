@@ -113,13 +113,20 @@ echo "    end cstart" >> moto.asm
 
 time - lwasm --decb --list=moto.list -o moto.decb moto.asm
 
+if test -s moto.decb; then
+    DECB_SIZE=$(wc -c < moto.decb)
+    PAYLOAD_SIZE=$((DECB_SIZE - 10))
+    echo "[m6809 codesize: $PAYLOAD_SIZE]" >&2
+fi
+
 #############
 
 test -s "$HATVAN_VM" || ( cd "$HATVAN_DIR" && go build -o hatvan-vm ./cmd/hatvan-vm )
 
 if test -z "$TRACE"
 then
-    "$HATVAN_VM" --hypercalls moto.decb
+    "$HATVAN_VM" --hypercalls --print-cycles moto.decb
 else
-    "$HATVAN_VM" --hypercalls --trace moto.decb moto.list
+    "$HATVAN_VM" --hypercalls --trace --print-cycles moto.decb moto.list
 fi
+

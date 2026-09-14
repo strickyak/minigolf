@@ -7,8 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 const expectedOutput = `Triangle number 1 is 1
@@ -70,8 +74,72 @@ func cleanOutput(out string) []string {
 	return result
 }
 
+var (
+	reCodeSize = regexp.MustCompile(`\[m6809 codesize:\s*(\d+)\]`)
+	reCycles   = regexp.MustCompile(`\[hatvan-vm finished:\s*(\d+)\s*total cycles executed\]`)
+
+	telemetryMu   sync.Mutex
+	telemetryOnce sync.Once
+	telemetryPath string
+)
+
+func getTelemetryPath() string {
+	telemetryOnce.Do(func() {
+		if os.Getenv("TELEMETRY") == "0" || os.Getenv("TELEMETRY") == "false" {
+			return
+		}
+		if path := os.Getenv("TELEMETRY_FILE"); path != "" {
+			telemetryPath = path
+			return
+		}
+		telemetryDir := "telemetry"
+		if fi, err := os.Stat(telemetryDir); err == nil && fi.IsDir() {
+			label := os.Getenv("TELEMETRY_LABEL")
+			if label == "" {
+				label = os.Getenv("TELEMETRY")
+			}
+			if label == "1" || label == "true" {
+				label = ""
+			}
+			if label == "" {
+				label = "phase-one-complete"
+			}
+			now := time.Now().Format("2006-01-02-150405")
+			telemetryPath = filepath.Join(telemetryDir, fmt.Sprintf("perf-%s-%s", now, label))
+		}
+	})
+	return telemetryPath
+}
+
+func recordTelemetry(testName, variant string, codeSize int, runCycles uint64) {
+	path := getTelemetryPath()
+	if path == "" {
+		return
+	}
+	telemetryMu.Lock()
+	defer telemetryMu.Unlock()
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	if codeSize > 0 {
+		fmt.Fprintf(f, "%s.%s.codesize %d\n", testName, variant, codeSize)
+	}
+	if runCycles > 0 {
+		fmt.Fprintf(f, "%s.%s.runcycles %d\n", testName, variant, runCycles)
+	}
+}
+
 func testBackend(t *testing.T, backend, sourceFile, expectedStr string, expectCompileError, expectRunError bool) {
-	tmpDir := filepath.Join("_tmp", backend+"_"+filepath.Base(sourceFile)+".dir")
+	testBackendVariant(t, backend, "default", nil, sourceFile, expectedStr, expectCompileError, expectRunError)
+}
+
+func testBackendVariant(t *testing.T, backend, variant string, extraArgs []string, sourceFile, expectedStr string, expectCompileError, expectRunError bool) {
+	variantDir := backend + "_" + variant + "_" + filepath.Base(sourceFile) + ".dir"
+	tmpDir := filepath.Join("_tmp", variantDir)
 	os.MkdirAll(tmpDir, 0777)
 
 	ext := ".c"
@@ -93,6 +161,7 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string, expectCo
 	}
 
 	args := []string{"-m=" + backend, "-o", midFile, "-I=tests", "-I=c-tests", "-I=demos", "-I=golflib"}
+	args = append(args, extraArgs...)
 	args = append(args, sourceFile)
 
 	cmd := exec.Command(compiler, args...)
@@ -149,25 +218,30 @@ func testBackend(t *testing.T, backend, sourceFile, expectedStr string, expectCo
 	actualLines := cleanOutput(out)
 	expectedLines := cleanOutput(expectedStr)
 
-	// t.Logf("actual: %q", out)
-	// t.Logf("wanted: %q", expectedLines)
-
-	// t.Logf("actual: %dx %s", len(actualLines), actualLines)
-	// t.Logf("wanted: %dx %s", len(expectedLines), expectedLines)
-
-	//if len(actualLines) < len(expectedLines) {
-	//t.Fatalf("Backend %s output too short. Expected at least %d lines, got %d", backend, len(expectedLines), len(actualLines))
-	//}
-
-	// // Truncate actual lines to length of expected lines (since triangles_byte limit is 100 but we only check first 30)
-	// actualLines = actualLines[:len(expectedLines)]
-
 	actual := strings.Join(actualLines, ";")
 	expected := strings.Join(expectedLines, ";")
 
 	if actual != expected {
 		t.Errorf("Backend %s output mismatch.\nGot %d lines:\n%q\n\nWanted %d lines:\n%q",
 			backend, len(actualLines), actual, len(expectedLines), expected)
+	} else if backend == "m6809" && !expectCompileError && !expectRunError {
+		codeSize := 0
+		var runCycles uint64
+
+		stderrStr := stderr.String()
+		if m := reCodeSize.FindStringSubmatch(stderrStr); len(m) > 1 {
+			codeSize, _ = strconv.Atoi(m[1])
+		}
+		if m := reCycles.FindStringSubmatch(stderrStr); len(m) > 1 {
+			runCycles, _ = strconv.ParseUint(m[1], 10, 64)
+		}
+
+		testName := filepath.Base(sourceFile)
+		testName = strings.TrimPrefix(testName, "c_test_")
+		testName = strings.TrimSuffix(testName, ".golf")
+		testName = strings.TrimSuffix(testName, ".c")
+
+		recordTelemetry(testName, variant, codeSize, runCycles)
 	}
 }
 
@@ -194,6 +268,30 @@ func TestSystemTriangles_m6809(t *testing.T) {
 func TestSystemTrianglesByte_m6809(t *testing.T) {
 	testBackend(t, "m6809", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
+
+func TestSystemTelemetryVariants_m6809(t *testing.T) {
+	variants := []struct {
+		name string
+		args []string
+	}{
+		{"default", nil},
+		{"globals-at-y", []string{"-globals-at-y"}},
+		{"frame-pointer", []string{"-frame-pointer"}},
+		{"pic", []string{"-pic"}},
+		{"globals-at-y-frame-pointer", []string{"-globals-at-y", "-frame-pointer"}},
+		{"globals-at-y-pic", []string{"-globals-at-y", "-pic"}},
+		{"frame-pointer-pic", []string{"-frame-pointer", "-pic"}},
+		{"globals-at-y-frame-pointer-pic", []string{"-globals-at-y", "-frame-pointer", "-pic"}},
+	}
+
+	for _, v := range variants {
+		v := v
+		t.Run(v.name, func(t *testing.T) {
+			testBackendVariant(t, "m6809", v.name, v.args, "demos/triangles.golf", expectedOutput, false, false)
+		})
+	}
+}
+
 
 func TestSystemAllGolfFiles(t *testing.T) {
 	files, err := filepath.Glob("tests/*.golf")
