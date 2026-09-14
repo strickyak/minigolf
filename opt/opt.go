@@ -7,17 +7,20 @@ import (
 )
 
 type Config struct {
-	EnableConstFold   bool
-	EnableDBE         bool
-	EnableDCE         bool
-	EnableCopyProp    bool
-	EnableCSE         bool
-	EnableStrengthRed bool
-	EnablePhiSimp     bool
-	EnableStackAlloc  bool
-	EnableBranchFold  bool
-	EnableDFE         bool
-	EnableDebugOpt    bool
+	EnableConstFold        bool
+	EnableDBE              bool
+	EnableDCE              bool
+	EnableCopyProp         bool
+	EnableCSE              bool
+	EnableStrengthRed      bool
+	EnablePhiSimp          bool
+	EnableStackAlloc       bool
+	EnableBranchFold       bool
+	EnableDFE              bool
+	EnableInline           bool
+	EnableInlineTiny       bool
+	EnableInlineSingleCall bool
+	EnableDebugOpt         bool
 }
 
 type Pass interface {
@@ -26,6 +29,13 @@ type Pass interface {
 }
 
 func OptimizeProgram(p *ir.Program, config Config) {
+	if config.EnableInline {
+		InlinePass(p, InlineOptions{
+			EnableTiny:       config.EnableInlineTiny,
+			EnableSingleCall: config.EnableInlineSingleCall,
+		})
+	}
+
 	var passes []Pass
 
 	if config.EnableConstFold {

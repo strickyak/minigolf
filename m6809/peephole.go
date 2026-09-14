@@ -10,6 +10,29 @@ import (
 var DisableTrivialMath = flag.Bool("disable_trivial_math", false, "disable trivial math and offset elimination peephole optimizations")
 var noPeephole6809 = flag.Bool("no-peephole6809", false, "disable peephole optimizations on M6809")
 
+var condInverses = map[string]string{
+	"beq":  "lbne",
+	"bne":  "lbeq",
+	"blt":  "lbge",
+	"ble":  "lbgt",
+	"bgt":  "lble",
+	"bge":  "lblt",
+	"blo":  "lbhs",
+	"bls":  "lbhi",
+	"bhi":  "lbls",
+	"bhs":  "lblo",
+	"lbeq": "lbne",
+	"lbne": "lbeq",
+	"lblt": "lbge",
+	"lble": "lbgt",
+	"lbgt": "lble",
+	"lbge": "lblt",
+	"lblo": "lbhs",
+	"lbls": "lbhi",
+	"lbhi": "lbls",
+	"lbhs": "lblo",
+}
+
 func peepholeOptimize(asm string) string {
 	if os.Getenv("NO_PEEPHOLE6809") != "" {
 		*noPeephole6809 = true
@@ -45,18 +68,26 @@ func peepholeOptimize(asm string) string {
 				}
 			}
 
-			var prevCode string
-			prevIdx := len(out) - 1
-			for prevIdx >= 0 {
-				pt := strings.TrimSpace(out[prevIdx])
+			var prevCode, prev2Code string
+			prevIdx := -1
+			prev2Idx := -1
+			p := len(out) - 1
+			for p >= 0 {
+				pt := strings.TrimSpace(out[p])
 				if idx := strings.Index(pt, ";"); idx != -1 {
 					pt = strings.TrimSpace(pt[:idx])
 				}
 				if pt != "" {
-					prevCode = pt
-					break
+					if prevIdx == -1 {
+						prevIdx = p
+						prevCode = pt
+					} else if prev2Idx == -1 {
+						prev2Idx = p
+						prev2Code = pt
+						break
+					}
 				}
-				prevIdx--
+				p--
 			}
 
 			if prevIdx >= 0 {
@@ -165,6 +196,32 @@ func peepholeOptimize(asm string) string {
 						}
 					}
 				}
+
+				// Conditional Branch Inversion over Jump:
+				//   b<cond> L1
+				//   (bra|lbra) L2
+				// L1:
+				//   -> lb<inv_cond> L2
+				//      L1:
+				if prev2Idx >= 0 && strings.HasSuffix(codePart, ":") {
+					label := codePart[:len(codePart)-1]
+					if strings.HasPrefix(prevCode, "bra ") || strings.HasPrefix(prevCode, "lbra ") {
+						prevFields := strings.Fields(prevCode)
+						prev2Fields := strings.Fields(prev2Code)
+						if len(prevFields) >= 2 && len(prev2Fields) >= 2 {
+							target2 := prevFields[1]
+							condOp := prev2Fields[0]
+							target1 := prev2Fields[1]
+							if target1 == label {
+								if invOp, ok := condInverses[condOp]; ok {
+									out[prev2Idx] = fmt.Sprintf("\t%s %s\t; peephole: inverted branch over jump", invOp, target2)
+									out = append(out[:prevIdx], out[prevIdx+1:]...) // remove prevCode (lbra/bra)
+									changed = true
+								}
+							}
+						}
+					}
+				}
 			}
 
 			out = append(out, line)
@@ -181,12 +238,14 @@ func peepholeOptimize(asm string) string {
 			if trimmed == "" || strings.HasSuffix(trimmed, ":") {
 				continue
 			}
-			if idx := strings.Index(trimmed, ".L_"); idx != -1 {
-				target := trimmed[idx:]
-				if spaceIdx := strings.IndexAny(target, " \t,"); spaceIdx != -1 {
-					target = target[:spaceIdx]
+			for _, word := range strings.Fields(trimmed) {
+				w := strings.TrimLeft(word, "#,[]")
+				if strings.HasPrefix(w, ".L") {
+					if spaceIdx := strings.IndexAny(w, " \t,"); spaceIdx != -1 {
+						w = w[:spaceIdx]
+					}
+					usedLabels[w] = true
 				}
-				usedLabels[target] = true
 			}
 		}
 
@@ -197,7 +256,7 @@ func peepholeOptimize(asm string) string {
 				trimmed = strings.TrimSpace(trimmed[:idx])
 			}
 
-			if strings.HasSuffix(trimmed, ":") && strings.HasPrefix(trimmed, ".L_") {
+			if strings.HasSuffix(trimmed, ":") && (strings.HasPrefix(trimmed, ".L_") || strings.HasPrefix(trimmed, ".LL")) {
 				label := trimmed[:len(trimmed)-1]
 				if !usedLabels[label] {
 					changed = true

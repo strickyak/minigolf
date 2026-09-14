@@ -289,6 +289,12 @@ func main() {
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
 	noStackAlloc := flag.Bool("no-stackalloc", false, "Disable Stack Slot Allocation (Slot Sharing)")
 	noBranchFold := flag.Bool("no-branchfold", false, "Disable Branch Folding optimization")
+	noInline := flag.Bool("no-inline", false, "Disable Function Inlining optimization")
+	noInlineTiny := flag.Bool("no-inline-tiny", false, "Disable Tiny Function Inlining optimization")
+	noInlineSingleCall := flag.Bool("no-inline-single-call", false, "Disable Single Callsite Inlining optimization")
+	noBranchLayout6809 := flag.Bool("no-branch-layout6809", false, "Disable M6809 branch layout and condition inversion")
+	noFusedCompares6809 := flag.Bool("no-fused-compares6809", false, "Disable M6809 fused compare and branch")
+	noLeafOpt6809 := flag.Bool("no-leaf-opt6809", false, "Disable M6809 leaf function frame optimization")
 	debugOpt := flag.Bool("debug_opt", false, "Enable debug output for optimizations like leaf level")
 	checkBoundsFlag := flag.Bool("check-bounds", false, "Enable bounds checking for slices and arrays")
 	checkNilFlag := flag.Bool("check-nil", false, "Enable nil pointer checks for pointers, method receivers, and function references")
@@ -614,17 +620,20 @@ func main() {
 		opt.MarkMagicFunctions(irProg)
 
 		optConfig := opt.Config{
-			EnableConstFold:   !*noConstfold,
-			EnableDBE:         !*noDbe,
-			EnableDCE:         !*noDce,
-			EnableCopyProp:    !*noCopyProp,
-			EnableCSE:         !*noCse,
-			EnableStrengthRed: !*noStrengthRed,
-			EnablePhiSimp:     !*noPhisimp,
-			EnableStackAlloc:  !*noStackAlloc,
-			EnableBranchFold:  !*noBranchFold,
-			EnableDFE:         !*noDfe,
-			EnableDebugOpt:    *debugOpt,
+			EnableConstFold:        !*noConstfold,
+			EnableDBE:              !*noDbe,
+			EnableDCE:              !*noDce,
+			EnableCopyProp:         !*noCopyProp,
+			EnableCSE:              !*noCse,
+			EnableStrengthRed:      !*noStrengthRed,
+			EnablePhiSimp:          !*noPhisimp,
+			EnableStackAlloc:       !*noStackAlloc,
+			EnableBranchFold:       !*noBranchFold,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			EnableDebugOpt:         *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -654,17 +663,20 @@ func main() {
 		opt.MarkMagicFunctions(irProg)
 
 		optConfig := opt.Config{
-			EnableConstFold:   !*noConstfold,
-			EnableDBE:         !*noDbe,
-			EnableDCE:         !*noDce,
-			EnableCopyProp:    !*noCopyProp,
-			EnableCSE:         !*noCse,
-			EnableStrengthRed: !*noStrengthRed,
-			EnablePhiSimp:     !*noPhisimp,
-			EnableStackAlloc:  !*noStackAlloc,
-			EnableBranchFold:  !*noBranchFold,
-			EnableDFE:         !*noDfe,
-			EnableDebugOpt:    *debugOpt,
+			EnableConstFold:        !*noConstfold,
+			EnableDBE:              !*noDbe,
+			EnableDCE:              !*noDce,
+			EnableCopyProp:         !*noCopyProp,
+			EnableCSE:              !*noCse,
+			EnableStrengthRed:      !*noStrengthRed,
+			EnablePhiSimp:          !*noPhisimp,
+			EnableStackAlloc:       !*noStackAlloc,
+			EnableBranchFold:       !*noBranchFold,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			EnableDebugOpt:         *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -694,21 +706,33 @@ func main() {
 		opt.MarkMagicFunctions(irProg)
 
 		optConfig := opt.Config{
-			EnableConstFold:  !*noConstfold,
-			EnableDBE:        !*noDbe,
-			EnableDCE:        !*noDce,
-			EnableCopyProp:   !*noCopyProp,
-			EnablePhiSimp:    !*noPhisimp,
-			EnableStackAlloc: !*noStackAlloc,
-			EnableBranchFold: !*noBranchFold,
-			EnableDFE:        !*noDfe,
-			EnableDebugOpt:   *debugOpt,
+			EnableConstFold:        !*noConstfold,
+			EnableDBE:              !*noDbe,
+			EnableDCE:              !*noDce,
+			EnableCopyProp:         !*noCopyProp,
+			EnablePhiSimp:          !*noPhisimp,
+			EnableStackAlloc:       !*noStackAlloc,
+			EnableBranchFold:       !*noBranchFold,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			EnableDebugOpt:         *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
 		builder.AnnotateLeafLevels(*debugOpt)
 
 		backend := m6809.New(*framePointerFlag, *globalsAtYFlag, *picFlag)
+		if *noBranchLayout6809 {
+			backend.NoBranchLayout = true
+		}
+		if *noFusedCompares6809 {
+			backend.NoFusedCompares = true
+		}
+		if *noLeafOpt6809 {
+			backend.NoLeafOpt = true
+		}
 		asmCode := backend.Generate(irProg)
 
 		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)

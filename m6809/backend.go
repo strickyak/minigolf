@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/strickyak/minigolf/ir"
@@ -157,6 +158,11 @@ type Backend struct {
 	retSlot         int // byte offset in arguments block where return buffer is located (if retSize > 2)
 	f               *ir.Function
 	fusedCompares   map[int]bool
+	needsFP         bool
+
+	NoBranchLayout  bool
+	NoFusedCompares bool
+	NoLeafOpt       bool
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -176,6 +182,9 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		globalOffsets:   make(map[string]int),
 		helpersEmitted:  make(map[string]bool),
 		fusedCompares:   make(map[int]bool),
+		NoBranchLayout:  os.Getenv("NO_BRANCH_LAYOUT6809") != "",
+		NoFusedCompares: os.Getenv("NO_FUSED_COMPARES6809") != "",
+		NoLeafOpt:       os.Getenv("NO_LEAF_OPT6809") != "",
 	}
 }
 
@@ -456,7 +465,16 @@ func (b *Backend) countUses(f *ir.Function) map[int]int {
 			visitOperands(instr, addUse)
 		}
 		if blk.Terminator != nil {
-			visitOperands(blk.Terminator, addUse)
+			inInstrs := false
+			for _, instr := range blk.Instructions {
+				if instr == blk.Terminator {
+					inInstrs = true
+					break
+				}
+			}
+			if !inInstrs {
+				visitOperands(blk.Terminator, addUse)
+			}
 		}
 	}
 	return uses
@@ -495,6 +513,10 @@ func (b *Backend) resolveVal(val ir.Value) ir.Value {
 				val = cast.Operand
 				continue
 			}
+		}
+		if sz, ok := val.(*ir.Sizeof); ok {
+			val = &ir.ConstWord{Val: uint64(b.getTypeSizeByType(sz.TargetTyp))}
+			continue
 		}
 		break
 	}
@@ -1223,37 +1245,52 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 	lblEnd := b.nextLabel()
 
 	isInt := i.Left.Type().Equals(ir.TypeInt) || i.Right.Type().Equals(ir.TypeInt)
-	switch i.Op {
-	case "eq":
-		b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblTrue))
-	case "neq":
-		b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
-	case "lt":
-		if isInt {
-			b.buf.WriteString(fmt.Sprintf("\tblt %s\n", lblTrue))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tblo %s\n", lblTrue))
+	if !isInt && b.isZeroVal(rightVal) {
+		switch i.Op {
+		case "eq":
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblTrue))
+		case "neq":
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
+		case "gt":
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
+		case "lte":
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblTrue))
+		default:
+			log.Panicf("emitCompare: unhandled unsigned cmp op against zero %s", i.Op)
 		}
-	case "lte":
-		if isInt {
-			b.buf.WriteString(fmt.Sprintf("\tble %s\n", lblTrue))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tbls %s\n", lblTrue))
+	} else {
+		switch i.Op {
+		case "eq":
+			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblTrue))
+		case "neq":
+			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
+		case "lt":
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tblt %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tblo %s\n", lblTrue))
+			}
+		case "lte":
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tble %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tbls %s\n", lblTrue))
+			}
+		case "gt":
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tbgt %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue))
+			}
+		case "gte":
+			if isInt {
+				b.buf.WriteString(fmt.Sprintf("\tbge %s\n", lblTrue))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue))
+			}
+		default:
+			log.Panicf("emitCompare: unknown op %s", i.Op)
 		}
-	case "gt":
-		if isInt {
-			b.buf.WriteString(fmt.Sprintf("\tbgt %s\n", lblTrue))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tbhi %s\n", lblTrue))
-		}
-	case "gte":
-		if isInt {
-			b.buf.WriteString(fmt.Sprintf("\tbge %s\n", lblTrue))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tbhs %s\n", lblTrue))
-		}
-	default:
-		log.Panicf("emitCompare: unknown op %s", i.Op)
 	}
 	b.buf.WriteString(fmt.Sprintf("\tclrb\n\tbra %s\n%s:\n\tldb #1\n%s:\n", lblEnd, lblTrue, lblEnd))
 	b.storeResult(i.GetID())
@@ -1651,14 +1688,183 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 	}
 }
 
-func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator) {
+func (b *Backend) isZeroVal(val ir.Value) bool {
+	val = b.resolveVal(val)
+	switch v := val.(type) {
+	case *ir.ZeroInit:
+		return true
+	case *ir.ConstByte:
+		return v.Val == 0
+	case *ir.ConstWord:
+		return v.Val == 0
+	}
+	return false
+}
+
+func (b *Backend) isLeafFunc(f *ir.Function) bool {
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			switch instr.(type) {
+			case *ir.Call, *ir.IndirectCall, *ir.BuiltinCall:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (b *Backend) invertCondOp(op string) string {
+	switch op {
+	case "beq":
+		return "bne"
+	case "bne":
+		return "beq"
+	case "blt":
+		return "bge"
+	case "ble":
+		return "bgt"
+	case "bgt":
+		return "ble"
+	case "bge":
+		return "blt"
+	case "blo":
+		return "bhs"
+	case "bls":
+		return "bhi"
+	case "bhi":
+		return "bls"
+	case "bhs":
+		return "blo"
+	case "lbeq":
+		return "lbne"
+	case "lbne":
+		return "lbeq"
+	case "lblt":
+		return "lbge"
+	case "lble":
+		return "lbgt"
+	case "lbgt":
+		return "lble"
+	case "lbge":
+		return "lblt"
+	case "lblo":
+		return "lbhs"
+	case "lbls":
+		return "lbhi"
+	case "lbhi":
+		return "lbls"
+	case "lbhs":
+		return "lblo"
+	default:
+		log.Panicf("invertCondOp: unknown op %s", op)
+		return ""
+	}
+}
+
+func (b *Backend) hasPhiAssignments(from, to *ir.BasicBlock) bool {
+	if to == nil {
+		return false
+	}
+	for _, instr := range to.Instructions {
+		if phi, ok := instr.(*ir.Phi); ok {
+			for _, edge := range phi.Edges {
+				if edge.Block == from {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (b *Backend) emitBranchWithLayout(blk, trueBlk, falseBlk, nextBlk *ir.BasicBlock, condOp, invOp string) {
+	trueHasPhis := b.hasPhiAssignments(blk, trueBlk)
+	falseHasPhis := b.hasPhiAssignments(blk, falseBlk)
+
+	if !b.NoBranchLayout {
+		// Case A: true block is next in layout -> invert condition, jump to false block on inverted condition, fall through to true block
+		if trueBlk == nextBlk {
+			if !falseHasPhis {
+				b.buf.WriteString(fmt.Sprintf("\t%s .L_%s_b%d\n", invOp, b.f.Name, falseBlk.ID))
+				b.emitPhiAssignments(blk, trueBlk)
+				return
+			}
+			lblFalse := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\t%s %s\n", invOp, lblFalse))
+			b.emitPhiAssignments(blk, trueBlk)
+			lblEnd := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tlbra %s\n", lblEnd))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblFalse))
+			b.emitPhiAssignments(blk, falseBlk)
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, falseBlk.ID))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblEnd))
+			return
+		}
+
+		// Case B: false block is next in layout -> jump to true block on condition, fall through to false block
+		if falseBlk == nextBlk {
+			if !trueHasPhis {
+				b.buf.WriteString(fmt.Sprintf("\t%s .L_%s_b%d\n", condOp, b.f.Name, trueBlk.ID))
+				b.emitPhiAssignments(blk, falseBlk)
+				return
+			}
+			lblTrue := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\t%s %s\n", condOp, lblTrue))
+			b.emitPhiAssignments(blk, falseBlk)
+			lblEnd := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tlbra %s\n", lblEnd))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
+			b.emitPhiAssignments(blk, trueBlk)
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, trueBlk.ID))
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblEnd))
+			return
+		}
+
+		// Case C: neither is nextBlk
+		if !trueHasPhis && !falseHasPhis {
+			b.buf.WriteString(fmt.Sprintf("\t%s .L_%s_b%d\n", condOp, b.f.Name, trueBlk.ID))
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, falseBlk.ID))
+			return
+		}
+	}
+
+	lblTrue := b.nextLabel()
+	b.buf.WriteString(fmt.Sprintf("\t%s %s\n", condOp, lblTrue))
+	b.emitPhiAssignments(blk, falseBlk)
+	b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, falseBlk.ID))
+	b.buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
+	b.emitPhiAssignments(blk, trueBlk)
+	b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, trueBlk.ID))
+}
+
+func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk *ir.BasicBlock) {
 	switch t := term.(type) {
 	case *ir.Jump:
 		b.emitPhiAssignments(blk, t.Target)
-		b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.Target.ID))
+		if b.NoBranchLayout || t.Target != nextBlk {
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.Target.ID))
+		}
 
 	case *ir.Branch:
-		if cmp, ok := t.Condition.(*ir.Compare); ok && b.fusedCompares[cmp.GetID()] {
+		condVal := t.Condition
+		if cmp2, ok := condVal.(*ir.Compare); ok && cmp2.Op == "neq" && b.fusedCompares[cmp2.GetID()] {
+			if b.isZeroVal(cmp2.Right) {
+				leftVal := cmp2.Left
+				for {
+					leftVal = b.resolveVal(leftVal)
+					if c, ok := leftVal.(*ir.Cast); ok {
+						leftVal = c.Operand
+						continue
+					}
+					break
+				}
+				leftVal = b.resolveVal(leftVal)
+				if innerCmp, ok := leftVal.(*ir.Compare); ok && b.fusedCompares[innerCmp.GetID()] {
+					condVal = innerCmp
+				}
+			}
+		}
+		if cmp, ok := condVal.(*ir.Compare); ok && b.fusedCompares[cmp.GetID()] {
 			leftVal := b.resolveVal(cmp.Left)
 			rightVal := b.resolveVal(cmp.Right)
 			leftSize := b.getValSize(leftVal)
@@ -1689,63 +1895,64 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator) {
 				}
 			}
 
-			lblTrue := b.nextLabel()
 			isInt := cmp.Left.Type().Equals(ir.TypeInt) || cmp.Right.Type().Equals(ir.TypeInt)
 			var condOp string
-			switch cmp.Op {
-			case "eq":
-				condOp = "beq"
-			case "neq":
-				condOp = "bne"
-			case "lt":
-				if isInt {
-					condOp = "blt"
-				} else {
-					condOp = "blo"
+			if !isInt && b.isZeroVal(rightVal) {
+				switch cmp.Op {
+				case "eq":
+					condOp = "lbeq"
+				case "neq":
+					condOp = "lbne"
+				case "gt":
+					condOp = "lbne"
+				case "lte":
+					condOp = "lbeq"
+				default:
+					log.Panicf("emitTerminator: unhandled unsigned cmp op against zero %s", cmp.Op)
 				}
-			case "lte":
-				if isInt {
-					condOp = "ble"
-				} else {
-					condOp = "bls"
+			} else {
+				switch cmp.Op {
+				case "eq":
+					condOp = "lbeq"
+				case "neq":
+					condOp = "lbne"
+				case "lt":
+					if isInt {
+						condOp = "lblt"
+					} else {
+						condOp = "lblo"
+					}
+				case "lte":
+					if isInt {
+						condOp = "lble"
+					} else {
+						condOp = "lbls"
+					}
+				case "gt":
+					if isInt {
+						condOp = "lbgt"
+					} else {
+						condOp = "lbhi"
+					}
+				case "gte":
+					if isInt {
+						condOp = "lbge"
+					} else {
+						condOp = "lbhs"
+					}
+				default:
+					log.Panicf("emitTerminator: unknown cmp op %s", cmp.Op)
 				}
-			case "gt":
-				if isInt {
-					condOp = "bgt"
-				} else {
-					condOp = "bhi"
-				}
-			case "gte":
-				if isInt {
-					condOp = "bge"
-				} else {
-					condOp = "bhs"
-				}
-			default:
-				log.Panicf("emitTerminator: unknown cmp op %s", cmp.Op)
 			}
 
-			b.buf.WriteString(fmt.Sprintf("\t%s %s\n", condOp, lblTrue))
-			b.emitPhiAssignments(blk, t.FalseBlock)
-			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.FalseBlock.ID))
-
-			b.buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
-			b.emitPhiAssignments(blk, t.TrueBlock)
-			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.TrueBlock.ID))
+			invOp := b.invertCondOp(condOp)
+			b.emitBranchWithLayout(blk, t.TrueBlock, t.FalseBlock, nextBlk, condOp, invOp)
 			return
 		}
 
 		b.loadVal(t.Condition)
 		b.buf.WriteString("\ttstb\n")
-		lblTrue := b.nextLabel()
-		b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
-
-		b.emitPhiAssignments(blk, t.FalseBlock)
-		b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.FalseBlock.ID))
-
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
-		b.emitPhiAssignments(blk, t.TrueBlock)
-		b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.TrueBlock.ID))
+		b.emitBranchWithLayout(blk, t.TrueBlock, t.FalseBlock, nextBlk, "lbne", "lbeq")
 
 	case *ir.Return:
 		if t.Val != nil {
@@ -1764,7 +1971,7 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator) {
 				b.emitCopy("x", "y", retSize)
 			}
 		}
-		if b.useFramePointer {
+		if b.needsFP {
 			b.buf.WriteString("\tleas 0,u\n\tpuls u,pc\n")
 		} else {
 			if b.stackSize > 0 {
@@ -2103,19 +2310,49 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.jmpSlots = make(map[int]int)
 	b.fusedCompares = make(map[int]bool)
 
-	uses := b.countUses(f)
-	for _, blk := range f.Blocks {
-		if br, ok := blk.Terminator.(*ir.Branch); ok {
-			if cmp, ok := br.Condition.(*ir.Compare); ok && uses[cmp.GetID()] == 1 {
-				var lastInstr ir.Instruction
-				for j := len(blk.Instructions) - 1; j >= 0; j-- {
-					if _, isMarker := blk.Instructions[j].(*ir.SourceMarker); !isMarker {
-						lastInstr = blk.Instructions[j]
-						break
+	if !b.NoFusedCompares {
+		uses := b.countUses(f)
+		for _, blk := range f.Blocks {
+			if br, ok := blk.Terminator.(*ir.Branch); ok {
+				condVal := br.Condition
+				if cmp2, ok := condVal.(*ir.Compare); ok && cmp2.Op == "neq" && uses[cmp2.GetID()] == 1 {
+					if b.isZeroVal(cmp2.Right) {
+						leftVal := cmp2.Left
+						var casts []*ir.Cast
+						for {
+							if c, ok := leftVal.(*ir.Cast); ok {
+								casts = append(casts, c)
+								leftVal = c.Operand
+								continue
+							}
+							break
+						}
+						if innerCmp, ok := leftVal.(*ir.Compare); ok && uses[innerCmp.GetID()] == 1 {
+							condVal = innerCmp
+							b.fusedCompares[cmp2.GetID()] = true
+							if zi, ok := cmp2.Right.(*ir.ZeroInit); ok {
+								b.fusedCompares[zi.GetID()] = true
+							}
+							for _, c := range casts {
+								b.fusedCompares[c.GetID()] = true
+							}
+						}
 					}
 				}
-				if lastInstr != nil && lastInstr.GetID() == cmp.GetID() {
-					b.fusedCompares[cmp.GetID()] = true
+				if cmp, ok := condVal.(*ir.Compare); ok && uses[cmp.GetID()] == 1 {
+					var lastInstr ir.Instruction
+					for j := len(blk.Instructions) - 1; j >= 0; j-- {
+						if _, isMarker := blk.Instructions[j].(*ir.SourceMarker); !isMarker {
+							id := blk.Instructions[j].GetID()
+							if id == cmp.GetID() || b.fusedCompares[id] {
+								lastInstr = blk.Instructions[j]
+								break
+							}
+						}
+					}
+					if lastInstr != nil && (lastInstr.GetID() == cmp.GetID() || b.fusedCompares[lastInstr.GetID()]) {
+						b.fusedCompares[cmp.GetID()] = true
+					}
 				}
 			}
 		}
@@ -2157,14 +2394,23 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	b.buf.WriteString(fmt.Sprintf("\n%s:\n", f.EmitName()))
 
-	if b.useFramePointer {
+	if b.NoLeafOpt {
+		b.needsFP = b.useFramePointer
+	} else {
+		b.needsFP = b.useFramePointer && (b.stackSize > 0 || len(f.Parameters) > 0)
+	}
+	if b.needsFP {
 		b.buf.WriteString("\tpshs u\n\ttfr s,u\n")
 	}
 	if b.stackSize > 0 {
 		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", b.stackSize))
 	}
 
-	for _, blk := range f.Blocks {
+	for idx, blk := range f.Blocks {
+		var nextBlk *ir.BasicBlock
+		if idx+1 < len(f.Blocks) {
+			nextBlk = f.Blocks[idx+1]
+		}
 		b.buf.WriteString(fmt.Sprintf(".L_%s_b%d:\n", f.Name, blk.ID))
 		for _, instr := range blk.Instructions {
 			if _, isPhi := instr.(*ir.Phi); isPhi {
@@ -2179,7 +2425,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			b.emitInstr(instr)
 		}
 		if blk.Terminator != nil {
-			b.emitTerminator(blk, blk.Terminator)
+			b.emitTerminator(blk, blk.Terminator, nextBlk)
 		}
 	}
 }
