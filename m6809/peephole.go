@@ -2,6 +2,7 @@ package m6809
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -38,7 +39,7 @@ func peepholeOptimize(asm string) string {
 			}
 
 			if !*DisableTrivialMath {
-				if codePart == "addd #0" || codePart == "subd #0" || codePart == "leax 0,x" || codePart == "leau 0,u" {
+				if codePart == "addd #0" || codePart == "subd #0" || codePart == "leax 0,x" || codePart == "leau 0,u" || codePart == "leas 0,s" {
 					changed = true
 					continue
 				}
@@ -71,6 +72,27 @@ func peepholeOptimize(asm string) string {
 					continue
 				}
 
+				// Stack adjustment combination
+				if strings.HasPrefix(codePart, "leas ") && strings.HasPrefix(prevCode, "leas ") {
+					if strings.HasSuffix(codePart, ",s") && strings.HasSuffix(prevCode, ",s") {
+						var n, m int
+						if _, err1 := fmt.Sscanf(codePart, "leas %d,s", &n); err1 == nil {
+							if _, err2 := fmt.Sscanf(prevCode, "leas %d,s", &m); err2 == nil {
+								sum := n + m
+								if sum == 0 {
+									out = append(out[:prevIdx], out[prevIdx+1:]...)
+									changed = true
+									continue
+								} else {
+									out[prevIdx] = fmt.Sprintf("\tleas %d,s", sum)
+									changed = true
+									continue
+								}
+							}
+						}
+					}
+				}
+
 				// Redundant TFR
 				if codePart == "tfr x,d" && prevCode == "tfr d,x" {
 					changed = true
@@ -84,12 +106,33 @@ func peepholeOptimize(asm string) string {
 					changed = true
 					continue
 				}
+				if codePart == "tfr d,d" || codePart == "tfr x,x" || codePart == "tfr y,y" || codePart == "tfr u,u" || codePart == "tfr s,s" {
+					changed = true
+					continue
+				}
+
+				// Redundant TST
+
 
 				// Redundant Load/Store
 				if strings.HasPrefix(codePart, "ldd ") && strings.HasPrefix(prevCode, "std ") {
 					if codePart[4:] == prevCode[4:] {
 						changed = true
 						continue // redundant load
+					}
+				}
+				if strings.HasPrefix(codePart, "ldx ") && strings.HasPrefix(prevCode, "std ") {
+					if codePart[4:] == prevCode[4:] {
+						out = append(out, "\ttfr d,x\t; peephole: std+ldx -> tfr d,x")
+						changed = true
+						continue
+					}
+				}
+				if strings.HasPrefix(codePart, "ldd ") && strings.HasPrefix(prevCode, "stx ") {
+					if codePart[4:] == prevCode[4:] {
+						out = append(out, "\ttfr x,d\t; peephole: stx+ldd -> tfr x,d")
+						changed = true
+						continue
 					}
 				}
 				if strings.HasPrefix(codePart, "ldx ") && strings.HasPrefix(prevCode, "stx ") {

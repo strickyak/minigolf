@@ -156,6 +156,7 @@ type Backend struct {
 	lblCount        int
 	retSlot         int // byte offset in arguments block where return buffer is located (if retSize > 2)
 	f               *ir.Function
+	fusedCompares   map[int]bool
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -174,6 +175,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		jmpSlots:        make(map[int]int),
 		globalOffsets:   make(map[string]int),
 		helpersEmitted:  make(map[string]bool),
+		fusedCompares:   make(map[int]bool),
 	}
 }
 
@@ -280,6 +282,10 @@ func offsetAddrStr(valStr string, offset int) string {
 	if offset == 0 {
 		return valStr
 	}
+	if strings.HasSuffix(valStr, ",pcr") {
+		base := strings.TrimSuffix(valStr, ",pcr")
+		return fmt.Sprintf("%s+%d,pcr", base, offset)
+	}
 	if idx := strings.Index(valStr, ","); idx != -1 {
 		numPart := valStr[:idx]
 		regPart := valStr[idx:]
@@ -288,6 +294,172 @@ func offsetAddrStr(valStr string, offset int) string {
 		return fmt.Sprintf("%d%s", baseNum+offset, regPart)
 	}
 	return fmt.Sprintf("%s+%d", valStr, offset)
+}
+
+func (b *Backend) canDirectEA(val ir.Value, opSize int) bool {
+	val = b.resolveVal(val)
+	switch v := val.(type) {
+	case *ir.ConstByte:
+		return true
+	case *ir.ConstWord:
+		return opSize == 2 || (v.Val >= 0 && v.Val <= 255)
+	case *ir.Parameter:
+		return b.getValSize(v) == opSize
+	case ir.Instruction:
+		return b.getValSize(v) == opSize
+	case *ir.Global:
+		return b.getValSize(v) == opSize
+	default:
+		return false
+	}
+}
+
+func (b *Backend) getRightEA(val ir.Value, opSize int) string {
+	val = b.resolveVal(val)
+	switch v := val.(type) {
+	case *ir.ConstByte:
+		if opSize == 1 {
+			return fmt.Sprintf("#%d", uint8(v.Val))
+		}
+		return fmt.Sprintf("#%d", uint16(v.Val))
+	case *ir.ConstWord:
+		if opSize == 1 {
+			return fmt.Sprintf("#%d", uint8(v.Val))
+		}
+		return fmt.Sprintf("#%d", v.Val)
+	case *ir.Parameter, ir.Instruction, *ir.Global:
+		return b.getAddrStr(v)
+	default:
+		log.Panicf("getRightEA: unhandled type %T (%v)", val, val)
+		return ""
+	}
+}
+
+func (b *Backend) asConstByte(val ir.Value) (byte, bool) {
+	val = b.resolveVal(val)
+	if c, ok := val.(*ir.ConstByte); ok {
+		return c.Val, true
+	}
+	if c, ok := val.(*ir.ConstWord); ok && c.Val <= 255 {
+		return byte(c.Val), true
+	}
+	return 0, false
+}
+
+func (b *Backend) asConstWord(val ir.Value) (uint16, bool) {
+	val = b.resolveVal(val)
+	if c, ok := val.(*ir.ConstWord); ok {
+		return uint16(c.Val), true
+	}
+	if c, ok := val.(*ir.ConstByte); ok {
+		return uint16(c.Val), true
+	}
+	return 0, false
+}
+
+func visitOperands(instr ir.Instruction, visitor func(ir.Value)) {
+	if instr == nil {
+		return
+	}
+	switch i := instr.(type) {
+	case *ir.Store:
+		visitor(i.Val)
+	case *ir.BinaryOp:
+		visitor(i.Left)
+		visitor(i.Right)
+	case *ir.Compare:
+		visitor(i.Left)
+		visitor(i.Right)
+	case *ir.UnaryOp:
+		visitor(i.Operand)
+	case *ir.ExtractElement:
+		visitor(i.Array)
+		visitor(i.Index)
+	case *ir.InsertElement:
+		visitor(i.Array)
+		visitor(i.Index)
+		visitor(i.Val)
+	case *ir.ExtractField:
+		visitor(i.Struct)
+	case *ir.InsertField:
+		visitor(i.Struct)
+		visitor(i.Val)
+	case *ir.AddressOfLocal:
+		visitor(i.Local)
+	case *ir.AddressOfField:
+		visitor(i.Ptr)
+	case *ir.AddressOfElement:
+		visitor(i.ArrayPtr)
+		visitor(i.Index)
+	case *ir.ExtractFieldPtr:
+		visitor(i.Ptr)
+	case *ir.InsertFieldPtr:
+		visitor(i.Ptr)
+		visitor(i.Val)
+	case *ir.LoadPtr:
+		visitor(i.Ptr)
+	case *ir.StorePtr:
+		visitor(i.Ptr)
+		visitor(i.Val)
+	case *ir.Phi:
+		for _, edge := range i.Edges {
+			visitor(edge.Value)
+		}
+	case *ir.Call:
+		for _, arg := range i.Args {
+			visitor(arg)
+		}
+	case *ir.IndirectCall:
+		visitor(i.FuncPtr)
+		for _, arg := range i.Args {
+			visitor(arg)
+		}
+	case *ir.BuiltinCall:
+		for _, arg := range i.Args {
+			visitor(arg)
+		}
+	case *ir.Cast:
+		visitor(i.Operand)
+	case *ir.Branch:
+		visitor(i.Condition)
+	case *ir.Return:
+		if i.Val != nil {
+			visitor(i.Val)
+		}
+	case *ir.SetJmp:
+		visitor(i.JmpBuf)
+	case *ir.LongJmp:
+		visitor(i.JmpBuf)
+	case *ir.ConstArray:
+		for _, el := range i.Elements {
+			visitor(el)
+		}
+	case *ir.ConstStruct:
+		for _, el := range i.Fields {
+			visitor(el)
+		}
+	}
+}
+
+func (b *Backend) countUses(f *ir.Function) map[int]int {
+	uses := make(map[int]int)
+	addUse := func(v ir.Value) {
+		if v == nil {
+			return
+		}
+		if instr, ok := v.(ir.Instruction); ok {
+			uses[instr.GetID()]++
+		}
+	}
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			visitOperands(instr, addUse)
+		}
+		if blk.Terminator != nil {
+			visitOperands(blk.Terminator, addUse)
+		}
+	}
+	return uses
 }
 
 func (b *Backend) emitLoadAddr(reg string, addrStr string) {
@@ -406,14 +578,40 @@ func (b *Backend) loadVal(val ir.Value) {
 func (b *Backend) loadVal16(reg string, val ir.Value) {
 	val = b.resolveVal(val)
 	switch v := val.(type) {
+	case *ir.ConstByte:
+		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, uint8(v.Val)))
 	case *ir.ConstWord:
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, v.Val))
 	case *ir.Parameter:
-		b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.paramAddr(v.Name)))
+		if b.getValSize(v) == 1 {
+			b.loadVal(v)
+			b.buf.WriteString("\tclra\n")
+			if reg != "d" {
+				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
+			}
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.paramAddr(v.Name)))
+		}
 	case ir.Instruction:
-		b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.localAddr(v.GetID())))
+		if b.getValSize(v) == 1 {
+			b.loadVal(v)
+			b.buf.WriteString("\tclra\n")
+			if reg != "d" {
+				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
+			}
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.localAddr(v.GetID())))
+		}
 	case *ir.Global:
-		b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.getAddrStr(v)))
+		if b.getValSize(v) == 1 {
+			b.loadVal(v)
+			b.buf.WriteString("\tclra\n")
+			if reg != "d" {
+				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
+			}
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.getAddrStr(v)))
+		}
 	case *ir.AddressOfGlobal:
 		b.emitLoadAddr(reg, b.getAddrStr(v.Global))
 	case *ir.AddressOfFunc:
@@ -541,59 +739,200 @@ func (b *Backend) computeElementAddr(destReg string, arrayVal ir.Value, indexVal
 
 func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 	sz := b.getTypeSizeByType(i.Typ)
+	rightVal := b.resolveVal(i.Right)
 	if sz == 1 {
-		b.loadVal(i.Right)
-		b.buf.WriteString("\tpshs b\n")
-		b.pushBytes(1)
-		b.loadVal(i.Left)
 		switch i.Op {
 		case "add":
-			b.buf.WriteString("\taddb ,s+\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			if c, ok := b.asConstByte(rightVal); ok {
+				if c == 1 {
+					b.buf.WriteString("\tincb\n")
+				} else if c == 255 {
+					b.buf.WriteString("\tdecb\n")
+				} else if c != 0 {
+					b.buf.WriteString(fmt.Sprintf("\taddb #%d\n", c))
+				}
+			} else if b.canDirectEA(rightVal, 1) {
+				b.buf.WriteString(fmt.Sprintf("\taddb %s\n", b.getRightEA(rightVal, 1)))
+			} else {
+				b.loadVal(i.Right)
+				b.buf.WriteString("\tpshs b\n")
+				b.loadVal(i.Left)
+				b.buf.WriteString("\taddb ,s+\n")
+			}
 		case "sub":
-			b.buf.WriteString("\tsubb ,s+\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			if c, ok := b.asConstByte(rightVal); ok {
+				if c == 1 {
+					b.buf.WriteString("\tdecb\n")
+				} else if c == 255 {
+					b.buf.WriteString("\tincb\n")
+				} else if c != 0 {
+					b.buf.WriteString(fmt.Sprintf("\tsubb #%d\n", c))
+				}
+			} else if b.canDirectEA(rightVal, 1) {
+				b.buf.WriteString(fmt.Sprintf("\tsubb %s\n", b.getRightEA(rightVal, 1)))
+			} else {
+				b.loadVal(i.Right)
+				b.buf.WriteString("\tpshs b\n")
+				b.loadVal(i.Left)
+				b.buf.WriteString("\tsubb ,s+\n")
+			}
 		case "and":
-			b.buf.WriteString("\tandb ,s+\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			if c, ok := b.asConstByte(rightVal); ok {
+				if c == 0 {
+					b.buf.WriteString("\tclrb\n")
+				} else if c != 255 {
+					b.buf.WriteString(fmt.Sprintf("\tandb #%d\n", c))
+				}
+			} else if b.canDirectEA(rightVal, 1) {
+				b.buf.WriteString(fmt.Sprintf("\tandb %s\n", b.getRightEA(rightVal, 1)))
+			} else {
+				b.loadVal(i.Right)
+				b.buf.WriteString("\tpshs b\n")
+				b.loadVal(i.Left)
+				b.buf.WriteString("\tandb ,s+\n")
+			}
 		case "or":
-			b.buf.WriteString("\torb ,s+\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			if c, ok := b.asConstByte(rightVal); ok {
+				if c != 0 {
+					b.buf.WriteString(fmt.Sprintf("\torb #%d\n", c))
+				}
+			} else if b.canDirectEA(rightVal, 1) {
+				b.buf.WriteString(fmt.Sprintf("\torb %s\n", b.getRightEA(rightVal, 1)))
+			} else {
+				b.loadVal(i.Right)
+				b.buf.WriteString("\tpshs b\n")
+				b.loadVal(i.Left)
+				b.buf.WriteString("\torb ,s+\n")
+			}
 		case "xor":
-			b.buf.WriteString("\teorb ,s+\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			if c, ok := b.asConstByte(rightVal); ok {
+				if c == 255 {
+					b.buf.WriteString("\tcomb\n")
+				} else if c != 0 {
+					b.buf.WriteString(fmt.Sprintf("\teorb #%d\n", c))
+				}
+			} else if b.canDirectEA(rightVal, 1) {
+				b.buf.WriteString(fmt.Sprintf("\teorb %s\n", b.getRightEA(rightVal, 1)))
+			} else {
+				b.loadVal(i.Right)
+				b.buf.WriteString("\tpshs b\n")
+				b.loadVal(i.Left)
+				b.buf.WriteString("\teorb ,s+\n")
+			}
 		case "andnot":
-			b.buf.WriteString("\tcom ,s\n\tandb ,s+\n")
-			b.popBytes(1)
+			if c, ok := b.asConstByte(rightVal); ok {
+				b.loadVal(i.Left)
+				inv := byte(^c)
+				if inv == 0 {
+					b.buf.WriteString("\tclrb\n")
+				} else if inv != 255 {
+					b.buf.WriteString(fmt.Sprintf("\tandb #%d\n", inv))
+				}
+			} else {
+				b.loadVal(i.Right)
+				b.buf.WriteString("\tcomb\n")
+				if c, ok := b.asConstByte(i.Left); ok {
+					b.buf.WriteString(fmt.Sprintf("\tandb #%d\n", c))
+				} else if b.canDirectEA(i.Left, 1) {
+					b.buf.WriteString(fmt.Sprintf("\tandb %s\n", b.getRightEA(i.Left, 1)))
+				} else {
+					b.buf.WriteString("\tpshs b\n")
+					b.loadVal(i.Left)
+					b.buf.WriteString("\tandb ,s+\n")
+				}
+			}
 		case "mul":
-			b.buf.WriteString("\tlda ,s+\n\tmul\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			if b.canDirectEA(rightVal, 1) {
+				b.buf.WriteString(fmt.Sprintf("\tlda %s\n\tmul\n", b.getRightEA(rightVal, 1)))
+			} else {
+				b.loadVal(i.Right)
+				b.buf.WriteString("\tpshs b\n")
+				b.loadVal(i.Left)
+				b.buf.WriteString("\tlda ,s+\n\tmul\n")
+			}
 		case "div":
-			b.buf.WriteString("\tclra\n\ttfr d,x\n\tclra\n\tldb ,s+\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			b.buf.WriteString("\tclra\n\ttfr d,x\n")
+			b.loadVal(i.Right)
+			b.buf.WriteString("\tclra\n")
 			b.callHelper("__div16")
 		case "mod":
-			b.buf.WriteString("\tclra\n\ttfr d,x\n\tclra\n\tldb ,s+\n")
-			b.popBytes(1)
+			b.loadVal(i.Left)
+			b.buf.WriteString("\tclra\n\ttfr d,x\n")
+			b.loadVal(i.Right)
+			b.buf.WriteString("\tclra\n")
 			b.callHelper("__mod16")
 		case "shl":
-			lblLoop := b.nextLabel()
-			lblDone := b.nextLabel()
-			b.buf.WriteString("\ttst ,s\n")
-			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblDone))
-			b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
-			b.buf.WriteString("\taslb\n\tdec ,s\n")
-			b.buf.WriteString(fmt.Sprintf("\tbne %s\n%s:\n\tleas 1,s\n", lblLoop, lblDone))
-			b.popBytes(1)
+			if c, ok := b.asConstByte(rightVal); ok {
+				b.loadVal(i.Left)
+				k := int(c)
+				if k == 0 {
+					// no-op
+				} else if k <= 4 {
+					for s := 0; s < k; s++ {
+						b.buf.WriteString("\taslb\n")
+					}
+				} else if k >= 8 {
+					b.buf.WriteString("\tclrb\n")
+				} else {
+					lblLoop := b.nextLabel()
+					b.buf.WriteString(fmt.Sprintf("\tlda #%d\n%s:\n\taslb\n\tdeca\n\tbne %s\n", k, lblLoop, lblLoop))
+				}
+			} else {
+				lblLoop := b.nextLabel()
+				lblDone := b.nextLabel()
+				if b.canDirectEA(rightVal, 1) {
+					b.buf.WriteString(fmt.Sprintf("\tlda %s\n", b.getRightEA(rightVal, 1)))
+					b.loadVal(i.Left)
+				} else {
+					b.loadVal(i.Right)
+					b.buf.WriteString("\tpshs b\n")
+					b.loadVal(i.Left)
+					b.buf.WriteString("\tpuls a\n")
+				}
+				b.buf.WriteString(fmt.Sprintf("\ttsta\n\tbeq %s\n%s:\n\taslb\n\tdeca\n\tbne %s\n%s:\n", lblDone, lblLoop, lblLoop, lblDone))
+			}
 		case "shr":
-			lblLoop := b.nextLabel()
-			lblDone := b.nextLabel()
-			b.buf.WriteString("\ttst ,s\n")
-			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblDone))
-			b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
-			b.buf.WriteString("\tlsrb\n\tdec ,s\n")
-			b.buf.WriteString(fmt.Sprintf("\tbne %s\n%s:\n\tleas 1,s\n", lblLoop, lblDone))
-			b.popBytes(1)
+			isInt := i.Typ.Equals(ir.TypeInt)
+			shiftInst := "\tlsrb\n"
+			if isInt {
+				shiftInst = "\tasrb\n"
+			}
+			if c, ok := b.asConstByte(rightVal); ok {
+				b.loadVal(i.Left)
+				k := int(c)
+				if k == 0 {
+					// no-op
+				} else if k <= 4 {
+					for s := 0; s < k; s++ {
+						b.buf.WriteString(shiftInst)
+					}
+				} else if k >= 8 && !isInt {
+					b.buf.WriteString("\tclrb\n")
+				} else {
+					lblLoop := b.nextLabel()
+					b.buf.WriteString(fmt.Sprintf("\tlda #%d\n%s:\n%s\tdeca\n\tbne %s\n", k, lblLoop, shiftInst, lblLoop))
+				}
+			} else {
+				lblLoop := b.nextLabel()
+				lblDone := b.nextLabel()
+				if b.canDirectEA(rightVal, 1) {
+					b.buf.WriteString(fmt.Sprintf("\tlda %s\n", b.getRightEA(rightVal, 1)))
+					b.loadVal(i.Left)
+				} else {
+					b.loadVal(i.Right)
+					b.buf.WriteString("\tpshs b\n")
+					b.loadVal(i.Left)
+					b.buf.WriteString("\tpuls a\n")
+				}
+				b.buf.WriteString(fmt.Sprintf("\ttsta\n\tbeq %s\n%s:\n%s\tdeca\n\tbne %s\n%s:\n", lblDone, lblLoop, shiftInst, lblLoop, lblDone))
+			}
 		default:
 			log.Panicf("unhandled 1-byte op: %s", i.Op)
 		}
@@ -602,70 +941,244 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 	}
 
 	// 2-byte binary operation
-	b.loadVal(i.Right)
-	if b.getValSize(i.Right) == 1 {
-		b.buf.WriteString("\tclra\n")
-	}
-	b.buf.WriteString("\tpshs d\n")
-	b.pushBytes(2)
-	b.loadVal(i.Left)
-	if b.getValSize(i.Left) == 1 {
-		b.buf.WriteString("\tclra\n")
-	}
 	switch i.Op {
 	case "add":
-		b.buf.WriteString("\taddd ,s++\n")
-		b.popBytes(2)
+		b.loadVal(i.Left)
+		if b.getValSize(i.Left) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if c, ok := b.asConstWord(rightVal); ok {
+			if c != 0 {
+				b.buf.WriteString(fmt.Sprintf("\taddd #%d\n", c))
+			}
+		} else if b.canDirectEA(rightVal, 2) {
+			b.buf.WriteString(fmt.Sprintf("\taddd %s\n", b.getRightEA(rightVal, 2)))
+		} else {
+			b.loadVal16("x", i.Right)
+			b.buf.WriteString("\tpshs x\n\taddd ,s++\n")
+		}
 	case "sub":
-		b.buf.WriteString("\tsubd ,s++\n")
-		b.popBytes(2)
+		b.loadVal(i.Left)
+		if b.getValSize(i.Left) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if c, ok := b.asConstWord(rightVal); ok {
+			if c != 0 {
+				b.buf.WriteString(fmt.Sprintf("\tsubd #%d\n", c))
+			}
+		} else if b.canDirectEA(rightVal, 2) {
+			b.buf.WriteString(fmt.Sprintf("\tsubd %s\n", b.getRightEA(rightVal, 2)))
+		} else {
+			b.loadVal16("x", i.Right)
+			b.buf.WriteString("\tpshs x\n\tsubd ,s++\n")
+		}
 	case "and":
-		b.buf.WriteString("\tanda 0,s\n\tandb 1,s\n\tleas 2,s\n")
-		b.popBytes(2)
+		b.loadVal(i.Left)
+		if b.getValSize(i.Left) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if c, ok := b.asConstWord(rightVal); ok {
+			hi := byte(c >> 8)
+			lo := byte(c & 0xff)
+			if hi == 0 {
+				b.buf.WriteString("\tclra\n")
+			} else if hi != 255 {
+				b.buf.WriteString(fmt.Sprintf("\tanda #%d\n", hi))
+			}
+			if lo == 0 {
+				b.buf.WriteString("\tclrb\n")
+			} else if lo != 255 {
+				b.buf.WriteString(fmt.Sprintf("\tandb #%d\n", lo))
+			}
+		} else if b.canDirectEA(rightVal, 2) {
+			addr := b.getRightEA(rightVal, 2)
+			b.buf.WriteString(fmt.Sprintf("\tanda %s\n\tandb %s\n", addr, offsetAddrStr(addr, 1)))
+		} else {
+			b.loadVal16("x", i.Right)
+			b.buf.WriteString("\tpshs x\n\tanda 0,s\n\tandb 1,s\n\tleas 2,s\n")
+		}
 	case "or":
-		b.buf.WriteString("\tora 0,s\n\torb 1,s\n\tleas 2,s\n")
-		b.popBytes(2)
+		b.loadVal(i.Left)
+		if b.getValSize(i.Left) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if c, ok := b.asConstWord(rightVal); ok {
+			hi := byte(c >> 8)
+			lo := byte(c & 0xff)
+			if hi != 0 {
+				b.buf.WriteString(fmt.Sprintf("\tora #%d\n", hi))
+			}
+			if lo != 0 {
+				b.buf.WriteString(fmt.Sprintf("\torb #%d\n", lo))
+			}
+		} else if b.canDirectEA(rightVal, 2) {
+			addr := b.getRightEA(rightVal, 2)
+			b.buf.WriteString(fmt.Sprintf("\tora %s\n\torb %s\n", addr, offsetAddrStr(addr, 1)))
+		} else {
+			b.loadVal16("x", i.Right)
+			b.buf.WriteString("\tpshs x\n\tora 0,s\n\torb 1,s\n\tleas 2,s\n")
+		}
 	case "xor":
-		b.buf.WriteString("\teora 0,s\n\teorb 1,s\n\tleas 2,s\n")
-		b.popBytes(2)
+		b.loadVal(i.Left)
+		if b.getValSize(i.Left) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if c, ok := b.asConstWord(rightVal); ok {
+			hi := byte(c >> 8)
+			lo := byte(c & 0xff)
+			if hi == 255 {
+				b.buf.WriteString("\tcoma\n")
+			} else if hi != 0 {
+				b.buf.WriteString(fmt.Sprintf("\teora #%d\n", hi))
+			}
+			if lo == 255 {
+				b.buf.WriteString("\tcomb\n")
+			} else if lo != 0 {
+				b.buf.WriteString(fmt.Sprintf("\teorb #%d\n", lo))
+			}
+		} else if b.canDirectEA(rightVal, 2) {
+			addr := b.getRightEA(rightVal, 2)
+			b.buf.WriteString(fmt.Sprintf("\teora %s\n\teorb %s\n", addr, offsetAddrStr(addr, 1)))
+		} else {
+			b.loadVal16("x", i.Right)
+			b.buf.WriteString("\tpshs x\n\teora 0,s\n\teorb 1,s\n\tleas 2,s\n")
+		}
 	case "andnot":
-		b.buf.WriteString("\tcom 0,s\n\tcom 1,s\n\tanda 0,s\n\tandb 1,s\n\tleas 2,s\n")
-		b.popBytes(2)
+		if c, ok := b.asConstWord(rightVal); ok {
+			b.loadVal(i.Left)
+			if b.getValSize(i.Left) == 1 {
+				b.buf.WriteString("\tclra\n")
+			}
+			inv := ^c
+			hi := byte(inv >> 8)
+			lo := byte(inv & 0xff)
+			if hi == 0 {
+				b.buf.WriteString("\tclra\n")
+			} else if hi != 255 {
+				b.buf.WriteString(fmt.Sprintf("\tanda #%d\n", hi))
+			}
+			if lo == 0 {
+				b.buf.WriteString("\tclrb\n")
+			} else if lo != 255 {
+				b.buf.WriteString(fmt.Sprintf("\tandb #%d\n", lo))
+			}
+		} else {
+			b.loadVal(i.Right)
+			if b.getValSize(i.Right) == 1 {
+				b.buf.WriteString("\tclra\n")
+			}
+			b.buf.WriteString("\tcoma\n\tcomb\n")
+			if c, ok := b.asConstWord(i.Left); ok {
+				hi := byte(c >> 8)
+				lo := byte(c & 0xff)
+				if hi == 0 {
+					b.buf.WriteString("\tclra\n")
+				} else if hi != 255 {
+					b.buf.WriteString(fmt.Sprintf("\tanda #%d\n", hi))
+				}
+				if lo == 0 {
+					b.buf.WriteString("\tclrb\n")
+				} else if lo != 255 {
+					b.buf.WriteString(fmt.Sprintf("\tandb #%d\n", lo))
+				}
+			} else if b.canDirectEA(i.Left, 2) {
+				addr := b.getRightEA(i.Left, 2)
+				b.buf.WriteString(fmt.Sprintf("\tanda %s\n\tandb %s\n", addr, offsetAddrStr(addr, 1)))
+			} else {
+				b.loadVal16("x", i.Left)
+				b.buf.WriteString("\tpshs x\n\tanda 0,s\n\tandb 1,s\n\tleas 2,s\n")
+			}
+		}
 	case "mul":
-		b.buf.WriteString("\tpuls x\n")
-		b.popBytes(2)
+		b.loadVal(i.Left)
+		if b.getValSize(i.Left) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		b.loadVal16("x", i.Right)
 		b.callHelper("__mul16")
 	case "div":
-		b.buf.WriteString("\ttfr d,x\n\tpuls d\n")
-		b.popBytes(2)
+		b.loadVal16("x", i.Left)
+		b.loadVal(i.Right)
+		if b.getValSize(i.Right) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
 		b.callHelper("__div16")
 	case "mod":
-		b.buf.WriteString("\ttfr d,x\n\tpuls d\n")
-		b.popBytes(2)
+		b.loadVal16("x", i.Left)
+		b.loadVal(i.Right)
+		if b.getValSize(i.Right) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
 		b.callHelper("__mod16")
 	case "shl":
-		lblLoop := b.nextLabel()
-		lblDone := b.nextLabel()
-		b.buf.WriteString("\ttst 1,s\n")
-		b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblDone))
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
-		b.buf.WriteString("\taslb\n\trola\n\tdec 1,s\n")
-		b.buf.WriteString(fmt.Sprintf("\tbne %s\n%s:\n\tleas 2,s\n", lblLoop, lblDone))
-		b.popBytes(2)
-	case "shr":
-		lblLoop := b.nextLabel()
-		lblDone := b.nextLabel()
-		b.buf.WriteString("\ttst 1,s\n")
-		b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblDone))
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lblLoop))
-		if i.Typ.Equals(ir.TypeInt) {
-			b.buf.WriteString("\tasra\n\trorb\n")
+		if c, ok := b.asConstWord(rightVal); ok {
+			b.loadVal(i.Left)
+			if b.getValSize(i.Left) == 1 {
+				b.buf.WriteString("\tclra\n")
+			}
+			k := int(c)
+			if k == 0 {
+				// no-op
+			} else if k <= 4 {
+				for s := 0; s < k; s++ {
+					b.buf.WriteString("\taslb\n\trola\n")
+				}
+			} else if k == 8 {
+				b.buf.WriteString("\ttfr b,a\n\tclrb\n")
+			} else if k >= 16 {
+				b.buf.WriteString("\tclra\n\tclrb\n")
+			} else {
+				lblLoop := b.nextLabel()
+				lblDone := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n%s:\n\taslb\n\trola\n\tleax -1,x\n\tbne %s\n%s:\n", k, lblLoop, lblLoop, lblDone))
+			}
 		} else {
-			b.buf.WriteString("\tlsra\n\trorb\n")
+			lblLoop := b.nextLabel()
+			lblDone := b.nextLabel()
+			b.loadVal16("x", i.Right)
+			b.loadVal(i.Left)
+			if b.getValSize(i.Left) == 1 {
+				b.buf.WriteString("\tclra\n")
+			}
+			b.buf.WriteString(fmt.Sprintf("\tcmpx #0\n\tbeq %s\n%s:\n\taslb\n\trola\n\tleax -1,x\n\tbne %s\n%s:\n", lblDone, lblLoop, lblLoop, lblDone))
 		}
-		b.buf.WriteString("\tdec 1,s\n")
-		b.buf.WriteString(fmt.Sprintf("\tbne %s\n%s:\n\tleas 2,s\n", lblLoop, lblDone))
-		b.popBytes(2)
+	case "shr":
+		isInt := i.Typ.Equals(ir.TypeInt)
+		shiftInst := "\tlsra\n\trorb\n"
+		if isInt {
+			shiftInst = "\tasra\n\trorb\n"
+		}
+		if c, ok := b.asConstWord(rightVal); ok {
+			b.loadVal(i.Left)
+			if b.getValSize(i.Left) == 1 {
+				b.buf.WriteString("\tclra\n")
+			}
+			k := int(c)
+			if k == 0 {
+				// no-op
+			} else if k <= 4 {
+				for s := 0; s < k; s++ {
+					b.buf.WriteString(shiftInst)
+				}
+			} else if k == 8 && !isInt {
+				b.buf.WriteString("\ttfr a,b\n\tclra\n")
+			} else if k >= 16 && !isInt {
+				b.buf.WriteString("\tclra\n\tclrb\n")
+			} else {
+				lblLoop := b.nextLabel()
+				lblDone := b.nextLabel()
+				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n%s:\n%s\tleax -1,x\n\tbne %s\n%s:\n", k, lblLoop, shiftInst, lblLoop, lblDone))
+			}
+		} else {
+			lblLoop := b.nextLabel()
+			lblDone := b.nextLabel()
+			b.loadVal16("x", i.Right)
+			b.loadVal(i.Left)
+			if b.getValSize(i.Left) == 1 {
+				b.buf.WriteString("\tclra\n")
+			}
+			b.buf.WriteString(fmt.Sprintf("\tcmpx #0\n\tbeq %s\n%s:\n%s\tleax -1,x\n\tbne %s\n%s:\n", lblDone, lblLoop, shiftInst, lblLoop, lblDone))
+		}
 	default:
 		log.Panicf("unhandled 2-byte op: %s", i.Op)
 	}
@@ -673,37 +1186,43 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 }
 
 func (b *Backend) emitCompare(i *ir.Compare) {
+	if b.fusedCompares[i.GetID()] {
+		return
+	}
 	leftVal := b.resolveVal(i.Left)
 	rightVal := b.resolveVal(i.Right)
 	leftSize := b.getValSize(leftVal)
 	rightSize := b.getValSize(rightVal)
 
 	if leftSize == 1 && rightSize == 1 {
-		b.loadVal(i.Right)
-		b.buf.WriteString("\tpshs b\n")
-		b.pushBytes(1)
 		b.loadVal(i.Left)
-		b.buf.WriteString("\tcmpb ,s+\n")
-		b.popBytes(1)
-	} else {
-		b.loadVal(i.Right)
-		if rightSize == 1 {
-			b.buf.WriteString("\tclra\n")
+		if c, ok := b.asConstByte(rightVal); ok && c == 0 {
+			b.buf.WriteString("\ttstb\n")
+		} else if b.canDirectEA(rightVal, 1) {
+			b.buf.WriteString(fmt.Sprintf("\tcmpb %s\n", b.getRightEA(rightVal, 1)))
+		} else {
+			b.loadVal(i.Right)
+			b.buf.WriteString("\tpshs b\n")
+			b.loadVal(i.Left)
+			b.buf.WriteString("\tcmpb ,s+\n")
 		}
-		b.buf.WriteString("\tpshs d\n")
-		b.pushBytes(2)
+	} else {
 		b.loadVal(i.Left)
 		if leftSize == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
-		b.buf.WriteString("\tcmpd ,s++\n")
-		b.popBytes(2)
+		if b.canDirectEA(rightVal, 2) {
+			b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
+		} else {
+			b.loadVal16("x", i.Right)
+			b.buf.WriteString("\tpshs x\n\tcmpd ,s++\n")
+		}
 	}
 
 	lblTrue := b.nextLabel()
 	lblEnd := b.nextLabel()
 
-	isInt := i.Left.Type().Equals(ir.TypeInt)
+	isInt := i.Left.Type().Equals(ir.TypeInt) || i.Right.Type().Equals(ir.TypeInt)
 	switch i.Op {
 	case "eq":
 		b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblTrue))
@@ -736,7 +1255,7 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 	default:
 		log.Panicf("emitCompare: unknown op %s", i.Op)
 	}
-	b.buf.WriteString(fmt.Sprintf("\tclra\n\tclrb\n\tbra %s\n%s:\n\tclra\n\tldb #1\n%s:\n", lblEnd, lblTrue, lblEnd))
+	b.buf.WriteString(fmt.Sprintf("\tclrb\n\tbra %s\n%s:\n\tldb #1\n%s:\n", lblEnd, lblTrue, lblEnd))
 	b.storeResult(i.GetID())
 }
 
@@ -1139,19 +1658,94 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator) {
 		b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.Target.ID))
 
 	case *ir.Branch:
+		if cmp, ok := t.Condition.(*ir.Compare); ok && b.fusedCompares[cmp.GetID()] {
+			leftVal := b.resolveVal(cmp.Left)
+			rightVal := b.resolveVal(cmp.Right)
+			leftSize := b.getValSize(leftVal)
+			rightSize := b.getValSize(rightVal)
+
+			if leftSize == 1 && rightSize == 1 {
+				b.loadVal(cmp.Left)
+				if c, ok := b.asConstByte(rightVal); ok && c == 0 {
+					b.buf.WriteString("\ttstb\n")
+				} else if b.canDirectEA(rightVal, 1) {
+					b.buf.WriteString(fmt.Sprintf("\tcmpb %s\n", b.getRightEA(rightVal, 1)))
+				} else {
+					b.loadVal(cmp.Right)
+					b.buf.WriteString("\tpshs b\n")
+					b.loadVal(cmp.Left)
+					b.buf.WriteString("\tcmpb ,s+\n")
+				}
+			} else {
+				b.loadVal(cmp.Left)
+				if leftSize == 1 {
+					b.buf.WriteString("\tclra\n")
+				}
+				if b.canDirectEA(rightVal, 2) {
+					b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
+				} else {
+					b.loadVal16("x", cmp.Right)
+					b.buf.WriteString("\tpshs x\n\tcmpd ,s++\n")
+				}
+			}
+
+			lblTrue := b.nextLabel()
+			isInt := cmp.Left.Type().Equals(ir.TypeInt) || cmp.Right.Type().Equals(ir.TypeInt)
+			var condOp string
+			switch cmp.Op {
+			case "eq":
+				condOp = "beq"
+			case "neq":
+				condOp = "bne"
+			case "lt":
+				if isInt {
+					condOp = "blt"
+				} else {
+					condOp = "blo"
+				}
+			case "lte":
+				if isInt {
+					condOp = "ble"
+				} else {
+					condOp = "bls"
+				}
+			case "gt":
+				if isInt {
+					condOp = "bgt"
+				} else {
+					condOp = "bhi"
+				}
+			case "gte":
+				if isInt {
+					condOp = "bge"
+				} else {
+					condOp = "bhs"
+				}
+			default:
+				log.Panicf("emitTerminator: unknown cmp op %s", cmp.Op)
+			}
+
+			b.buf.WriteString(fmt.Sprintf("\t%s %s\n", condOp, lblTrue))
+			b.emitPhiAssignments(blk, t.FalseBlock)
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.FalseBlock.ID))
+
+			b.buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
+			b.emitPhiAssignments(blk, t.TrueBlock)
+			b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.TrueBlock.ID))
+			return
+		}
+
 		b.loadVal(t.Condition)
 		b.buf.WriteString("\ttstb\n")
 		lblTrue := b.nextLabel()
-		lblFalse := b.nextLabel()
-		b.buf.WriteString(fmt.Sprintf("\tbne %s\n\tlbra %s\n", lblTrue, lblFalse))
+		b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
+
+		b.emitPhiAssignments(blk, t.FalseBlock)
+		b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.FalseBlock.ID))
 
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
 		b.emitPhiAssignments(blk, t.TrueBlock)
 		b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.TrueBlock.ID))
-
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lblFalse))
-		b.emitPhiAssignments(blk, t.FalseBlock)
-		b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.FalseBlock.ID))
 
 	case *ir.Return:
 		if t.Val != nil {
@@ -1507,6 +2101,25 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.slotSizes = make(map[int]int)
 	b.paramOffsets = make(map[string]int)
 	b.jmpSlots = make(map[int]int)
+	b.fusedCompares = make(map[int]bool)
+
+	uses := b.countUses(f)
+	for _, blk := range f.Blocks {
+		if br, ok := blk.Terminator.(*ir.Branch); ok {
+			if cmp, ok := br.Condition.(*ir.Compare); ok && uses[cmp.GetID()] == 1 {
+				var lastInstr ir.Instruction
+				for j := len(blk.Instructions) - 1; j >= 0; j-- {
+					if _, isMarker := blk.Instructions[j].(*ir.SourceMarker); !isMarker {
+						lastInstr = blk.Instructions[j]
+						break
+					}
+				}
+				if lastInstr != nil && lastInstr.GetID() == cmp.GetID() {
+					b.fusedCompares[cmp.GetID()] = true
+				}
+			}
+		}
+	}
 
 	paramOffset := 0
 	for _, p := range f.Parameters {
@@ -1524,6 +2137,9 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
+			if b.fusedCompares[instr.GetID()] {
+				continue
+			}
 			if cast, ok := instr.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
 				if b.getTypeSizeByType(cast.Typ) == b.getTypeSizeByType(cast.Operand.Type()) {
 					continue
@@ -1555,6 +2171,9 @@ func (b *Backend) emitFunc(f *ir.Function) {
 				continue
 			}
 			if _, isTerm := instr.(ir.Terminator); isTerm {
+				continue
+			}
+			if b.fusedCompares[instr.GetID()] {
 				continue
 			}
 			b.emitInstr(instr)
