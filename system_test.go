@@ -187,6 +187,14 @@ func TestSystemTrianglesByte_amd64(t *testing.T) {
 	testBackend(t, "amd64", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
 
+func TestSystemTriangles_m6809(t *testing.T) {
+	testBackend(t, "m6809", "demos/triangles.golf", expectedOutput, false, false)
+}
+
+func TestSystemTrianglesByte_m6809(t *testing.T) {
+	testBackend(t, "m6809", "demos/triangles_byte.golf", expectedOutputByte, false, false)
+}
+
 func TestSystemAllGolfFiles(t *testing.T) {
 	files, err := filepath.Glob("tests/*.golf")
 	if err != nil {

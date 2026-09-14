@@ -61,14 +61,13 @@ _getchar:
 
 putchar:
 _putchar:
-    ; first byte arg is already in B
     clra
     fcb  $12,$21,132  ; Hyper PutChar
     rts
 
 **  putchar:
 **  _putchar:
-**      ; first byte arg is already in B
+**      ldb  2,s
 **      clra
 **      fcb  $12,$21,104  ; Hyper ShowChar
 **      rts
@@ -79,10 +78,10 @@ _printf:
     rts
 
 f_prelude__mul_byte:
-    ; first byte arg is already in B
-    lda 2,s   ; get second byte arg
+    lda 2,s   ; first byte arg a
+    ldb 3,s   ; second byte arg b
     mul
-    tfr d,x   ; leave result in X
+    tfr d,x   ; leave result in D and X
     rts
 
 percent_c:
