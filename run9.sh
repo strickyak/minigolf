@@ -1,5 +1,9 @@
 set -ex
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HATVAN_DIR="$(cd "$SCRIPT_DIR/../hatvan-os" && pwd)"
+HATVAN_VM="$HATVAN_DIR/hatvan-vm"
+
 P=$1
 shift
 
@@ -26,15 +30,7 @@ cat >cstart.asm <<'HERE'
 
     org $8000
 
-    daa
-    daa
-    daa
-    daa
-    daa
-    daa
-    daa
-    daa
-
+cstart:
     lds  #$8000
 
 cstart_continue_to_main:
@@ -52,17 +48,14 @@ __exit0:
 
 __exit:
     fcb  $12,$21,107  ; 1. Hyper Exit (with status in X)
-    fcb 1             ; 2. Illegal Instruction
-    nop
-    nop
-    nop
+    stb  $FF05        ; 2. Hatvan Exit port ($FF05)
 stuck:
     bra stuck         ; 3. Infinite Loop
 
 getchar:
 _getchar:
     ; get byte in B or 0
-    fcb  $12,$21,133
+    fcb  $12,$21,133  ; Hyper GetChar
     clra
     rts
 
@@ -115,31 +108,17 @@ percent_c:
 HERE
 
 cat cstart.asm main.asm > moto.asm
+echo "    end cstart" >> moto.asm
 
-time - lwasm --format=raw -o'moto.rom' moto.asm
+time - lwasm --decb --list=moto.list -o moto.decb moto.asm
 
 #############
 
+test -s "$HATVAN_VM" || ( cd "$HATVAN_DIR" && go build -o hatvan-vm ./cmd/hatvan-vm )
+
 if test -z "$TRACE"
 then
-    test -s /home/strick/modoc/coco-shelf/gomar/gomar0n || \
-    ( cd /home/strick/modoc/coco-shelf/gomar/ ; go build -o gomar0n --tags=noos,coco0 gomar.go )
-
-    /home/strick/modoc/coco-shelf/gomar/gomar0n  \
-        -ttl=600s \
-        -write_rom_fail=1 \
-        --entry=0x8000 -n=1 -raw_hyper_print=1   \
-         -big_rom  moto.rom \
-         -external_rom_listing   moto.rom.list
+    "$HATVAN_VM" --hypercalls moto.decb
 else
-    test -s /home/strick/modoc/coco-shelf/gomar/gomar0nt || \
-    ( cd /home/strick/modoc/coco-shelf/gomar/ ; go build -o gomar0nt --tags=noos,coco0,trace gomar.go )
-
-    /home/strick/modoc/coco-shelf/gomar/gomar0nt  \
-        -t=1  \
-        -ttl=600s \
-        -write_rom_fail=1 \
-        --entry=0x8000 -n=1 -raw_hyper_print=1   \
-         -big_rom  moto.rom \
-         -external_rom_listing   moto.rom.list
+    "$HATVAN_VM" --hypercalls --trace moto.decb moto.list
 fi
