@@ -172,6 +172,8 @@ type Backend struct {
 	NoSlotSharing   bool
 	NoLocalRegAlloc   bool
 	NoCSSALowering    bool
+	NoGlobalRegAlloc  bool
+	globalRegs        map[int]string
 	cssaScratchOffset int
 }
 
@@ -198,6 +200,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		NoSlotSharing:     os.Getenv("NO_SLOT_SHARING6809") != "",
 		NoLocalRegAlloc:   os.Getenv("NO_LOCAL_REGALLOC6809") != "",
 		NoCSSALowering:    os.Getenv("NO_CSSA_LOWERING6809") != "",
+		NoGlobalRegAlloc:  os.Getenv("NO_GLOBAL_REGALLOC6809") != "",
 		cssaScratchOffset: -1,
 	}
 }
@@ -405,6 +408,11 @@ func (b *Backend) canDirectEA(val ir.Value, opSize int) bool {
 	case *ir.Parameter:
 		return b.getValSize(v) == opSize
 	case ir.Instruction:
+		if len(b.globalRegs) > 0 {
+			if _, ok := b.globalRegs[v.GetID()]; ok {
+				return false
+			}
+		}
 		return b.getValSize(v) == opSize
 	case *ir.Global:
 		return b.getValSize(v) == opSize
@@ -641,6 +649,15 @@ func (b *Backend) loadVal(val ir.Value) {
 			return
 		}
 	}
+	if inst, ok := val.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+		if reg, ok := b.globalRegs[inst.GetID()]; ok {
+			b.buf.WriteString(fmt.Sprintf("\ttfr %s,d\n", reg))
+			if !b.NoLocalRegAlloc {
+				b.setD(val)
+			}
+			return
+		}
+	}
 	switch v := val.(type) {
 	case *ir.ConstByte:
 		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", v.Val))
@@ -711,6 +728,18 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 			}
 		}
 	}
+	if inst, ok := val.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+		if srcReg, ok := b.globalRegs[inst.GetID()]; ok {
+			if srcReg == reg {
+				return
+			}
+			b.buf.WriteString(fmt.Sprintf("\ttfr %s,%s\n", srcReg, reg))
+			if !b.NoLocalRegAlloc && reg == "d" {
+				b.setD(val)
+			}
+			return
+		}
+	}
 	switch v := val.(type) {
 	case *ir.ConstByte:
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, uint8(v.Val)))
@@ -771,6 +800,19 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 }
 
 func (b *Backend) storeResult(id int) {
+	if len(b.globalRegs) > 0 {
+		if reg, ok := b.globalRegs[id]; ok {
+			b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
+			if !b.NoLocalRegAlloc {
+				if b.curInstr != nil && b.curInstr.GetID() == id {
+					b.setD(b.curInstr)
+				} else {
+					b.clobberD()
+				}
+			}
+			return
+		}
+	}
 	sz := b.slotSizes[id]
 	addr := b.localAddr(id)
 	if sz == 1 {
@@ -1800,6 +1842,10 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	b.popBytes(cleanup)
 }
 
+func isReg(loc string) bool {
+	return loc == "u" || loc == "y" || loc == "x" || loc == "d"
+}
+
 func (b *Backend) getPhiSrcLoc(val ir.Value) string {
 	val = b.resolveVal(val)
 	switch v := val.(type) {
@@ -1816,6 +1862,11 @@ func (b *Backend) getPhiSrcLoc(val ir.Value) string {
 		}
 		return fmt.Sprintf("v_%s", v.Name)
 	case ir.Instruction:
+		if len(b.globalRegs) > 0 {
+			if reg, ok := b.globalRegs[v.GetID()]; ok {
+				return reg
+			}
+		}
 		canon := b.resolveSlot(v.GetID())
 		if _, ok := b.slots[canon]; ok {
 			return b.localAddr(v.GetID())
@@ -1834,7 +1885,14 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 					if edge.Block == from {
 						sz := b.getTypeSizeByType(phi.Typ)
 						destAddr := b.localAddr(phi.GetID())
-						if sz == 1 {
+						if len(b.globalRegs) > 0 {
+							if reg, ok := b.globalRegs[phi.GetID()]; ok {
+								destAddr = reg
+							}
+						}
+						if isReg(destAddr) {
+							b.loadVal16(destAddr, edge.Value)
+						} else if sz == 1 {
 							b.loadVal(edge.Value)
 							b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
 						} else if sz == 2 {
@@ -1872,6 +1930,11 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 				if edge.Block == from {
 					sz := b.getTypeSizeByType(phi.Typ)
 					destAddr := b.localAddr(phi.GetID())
+					if len(b.globalRegs) > 0 {
+						if reg, ok := b.globalRegs[phi.GetID()]; ok {
+							destAddr = reg
+						}
+					}
 					srcAddr := b.getPhiSrcLoc(edge.Value)
 					assignments = append(assignments, phiAssignment{
 						phi:      phi,
@@ -1907,7 +1970,9 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 			destAddr := step.Dest.(string)
 			sz := step.Size
 			if assign, ok := assignMap[destAddr]; ok {
-				if sz == 1 {
+				if isReg(destAddr) {
+					b.loadVal16(destAddr, assign.val)
+				} else if sz == 1 {
 					b.loadVal(assign.val)
 					b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
 				} else if sz == 2 {
@@ -1923,7 +1988,17 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 				}
 			} else {
 				srcAddr := step.Src.(string)
-				if sz == 1 {
+				if isReg(destAddr) {
+					if isReg(srcAddr) {
+						if destAddr != srcAddr {
+							b.buf.WriteString(fmt.Sprintf("\ttfr %s,%s\n", srcAddr, destAddr))
+						}
+					} else {
+						b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", destAddr, srcAddr))
+					}
+				} else if isReg(srcAddr) {
+					b.buf.WriteString(fmt.Sprintf("\tst%s %s\n", srcAddr, destAddr))
+				} else if sz == 1 {
 					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", srcAddr))
 					b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
 				} else if sz == 2 {
@@ -1940,7 +2015,17 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 			loc1 := step.Loc1.(string)
 			loc2 := step.Loc2.(string)
 			sz := step.Size
-			if sz == 1 {
+			if isReg(loc1) && isReg(loc2) {
+				b.buf.WriteString(fmt.Sprintf("\texg %s,%s\n", loc1, loc2))
+			} else if isReg(loc1) {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", loc2))
+				b.buf.WriteString(fmt.Sprintf("\texg %s,d\n", loc1))
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", loc2))
+			} else if isReg(loc2) {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", loc1))
+				b.buf.WriteString(fmt.Sprintf("\texg %s,d\n", loc2))
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", loc1))
+			} else if sz == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tlda %s\n", loc1))
 				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", loc2))
 				b.buf.WriteString("\texg a,b\n")
@@ -1970,7 +2055,9 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 			srcAddr := step.Src.(string)
 			scratch := b.cssaScratchAddr()
 			sz := step.Size
-			if sz == 1 {
+			if isReg(srcAddr) {
+				b.buf.WriteString(fmt.Sprintf("\tst%s %s\n", srcAddr, scratch))
+			} else if sz == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", srcAddr))
 				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", scratch))
 			} else if sz == 2 {
@@ -1987,7 +2074,9 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 			destAddr := step.Dest.(string)
 			scratch := b.cssaScratchAddr()
 			sz := step.Size
-			if sz == 1 {
+			if isReg(destAddr) {
+				b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", destAddr, scratch))
+			} else if sz == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", scratch))
 				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
 			} else if sz == 2 {
@@ -2571,14 +2660,23 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.LoadPtr:
 		sz := b.getTypeSizeByType(i.Typ)
-		if sz == 1 {
-			b.loadVal16("x", i.Ptr)
-			b.buf.WriteString("\tldb ,x\n")
-			b.storeResult(id)
-		} else if sz == 2 {
-			b.loadVal16("x", i.Ptr)
-			b.buf.WriteString("\tldd ,x\n")
-			b.storeResult(id)
+		if sz <= 2 {
+			ptrReg := "x"
+			if ptrInst, ok := i.Ptr.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+				if r, ok := b.globalRegs[ptrInst.GetID()]; ok {
+					ptrReg = r
+				}
+			}
+			if ptrReg == "x" {
+				b.loadVal16("x", i.Ptr)
+			}
+			if sz == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb ,%s\n", ptrReg))
+				b.storeResult(id)
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd ,%s\n", ptrReg))
+				b.storeResult(id)
+			}
 		} else {
 			destStr := b.localAddr(id)
 			b.loadVal16("y", i.Ptr)
@@ -2589,17 +2687,28 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.StorePtr:
 		sz := b.getTypeSizeByType(i.Val.Type())
-		b.loadVal16("x", i.Ptr)
-		if sz == 1 {
-			b.loadVal(i.Val)
-			b.buf.WriteString("\tstb ,x\n")
-		} else if sz == 2 {
-			b.loadVal(i.Val)
-			if b.getValSize(i.Val) == 1 {
-				b.buf.WriteString("\tclra\n")
+		if sz <= 2 {
+			ptrReg := "x"
+			if ptrInst, ok := i.Ptr.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+				if r, ok := b.globalRegs[ptrInst.GetID()]; ok {
+					ptrReg = r
+				}
 			}
-			b.buf.WriteString("\tstd ,x\n")
+			if ptrReg == "x" {
+				b.loadVal16("x", i.Ptr)
+			}
+			if sz == 1 {
+				b.loadVal(i.Val)
+				b.buf.WriteString(fmt.Sprintf("\tstb ,%s\n", ptrReg))
+			} else {
+				b.loadVal(i.Val)
+				if b.getValSize(i.Val) == 1 {
+					b.buf.WriteString("\tclra\n")
+				}
+				b.buf.WriteString(fmt.Sprintf("\tstd ,%s\n", ptrReg))
+			}
 		} else {
+			b.loadVal16("x", i.Ptr)
 			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitCopy("x", "y", sz)
 		}
@@ -2656,6 +2765,8 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			}
 		}
 	}
+
+	b.globalRegs = b.AllocateRegisters(f)
 
 	if !b.NoFusedCompares {
 		uses := b.countUses(f)
@@ -2745,6 +2856,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 						if edge.Block == blk {
 							sz := b.getTypeSizeByType(phi.Typ)
 							destAddr := b.localAddr(phi.GetID())
+							if len(b.globalRegs) > 0 {
+								if reg, ok := b.globalRegs[phi.GetID()]; ok {
+									destAddr = reg
+								}
+							}
 							srcAddr := b.getPhiSrcLoc(edge.Value)
 							moves = append(moves, opt.ParallelMove{
 								Dest: destAddr,
