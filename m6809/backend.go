@@ -158,11 +158,13 @@ type Backend struct {
 	retSlot         int // byte offset in arguments block where return buffer is located (if retSize > 2)
 	f               *ir.Function
 	fusedCompares   map[int]bool
+	addressTaken    map[int]bool
 	needsFP         bool
 
 	NoBranchLayout  bool
 	NoFusedCompares bool
 	NoLeafOpt       bool
+	NoSlotSharing   bool
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -185,6 +187,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		NoBranchLayout:  os.Getenv("NO_BRANCH_LAYOUT6809") != "",
 		NoFusedCompares: os.Getenv("NO_FUSED_COMPARES6809") != "",
 		NoLeafOpt:       os.Getenv("NO_LEAF_OPT6809") != "",
+		NoSlotSharing:   os.Getenv("NO_SLOT_SHARING6809") != "",
 	}
 }
 
@@ -210,12 +213,35 @@ func (b *Backend) offsetAddr(off int, sz int) string {
 	return fmt.Sprintf("%d,s", off+b.pushedBytes)
 }
 
-func (b *Backend) localAddr(slotId int) string {
-	off, ok := b.slots[slotId]
-	if !ok {
-		log.Panicf("localAddr: slot not found for id %d", slotId)
+func (b *Backend) resolveSlot(id int) int {
+	if b.NoSlotSharing {
+		return id
 	}
-	sz := b.slotSizes[slotId]
+	if b.f != nil && b.f.SlotAlias != nil {
+		for {
+			if alias, ok := b.f.SlotAlias[id]; ok {
+				id = alias
+			} else {
+				break
+			}
+		}
+	}
+	return id
+}
+
+func (b *Backend) localAddr(slotId int) string {
+	canon := b.resolveSlot(slotId)
+	off, ok := b.slots[canon]
+	if !ok {
+		off, ok = b.slots[slotId]
+	}
+	if !ok {
+		log.Panicf("localAddr: slot not found for id %d (canon %d)", slotId, canon)
+	}
+	sz := b.slotSizes[canon]
+	if sz == 0 {
+		sz = b.slotSizes[slotId]
+	}
 	return b.offsetAddr(off, sz)
 }
 
@@ -506,14 +532,6 @@ func (b *Backend) callHelper(name string) {
 
 func (b *Backend) resolveVal(val ir.Value) ir.Value {
 	for {
-		if cast, ok := val.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
-			dstSz := b.getTypeSizeByType(cast.Typ)
-			srcSz := b.getTypeSizeByType(cast.Operand.Type())
-			if dstSz == srcSz {
-				val = cast.Operand
-				continue
-			}
-		}
 		if sz, ok := val.(*ir.Sizeof); ok {
 			val = &ir.ConstWord{Val: uint64(b.getTypeSizeByType(sz.TargetTyp))}
 			continue
@@ -1548,6 +1566,8 @@ func (b *Backend) emitCast(i *ir.Cast) {
 	switch i.Op {
 	case "word_to_ptr", "ptr_to_word", "bitcast":
 		if dstSz == srcSz {
+			b.loadVal(i.Operand)
+			b.storeResult(id)
 			return
 		}
 		b.loadVal(i.Operand)
@@ -2309,6 +2329,17 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.paramOffsets = make(map[string]int)
 	b.jmpSlots = make(map[int]int)
 	b.fusedCompares = make(map[int]bool)
+	b.addressTaken = make(map[int]bool)
+
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			if aol, ok := instr.(*ir.AddressOfLocal); ok {
+				if locInst, ok := aol.Local.(ir.Instruction); ok {
+					b.addressTaken[locInst.GetID()] = true
+				}
+			}
+		}
+	}
 
 	if !b.NoFusedCompares {
 		uses := b.countUses(f)
@@ -2377,11 +2408,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if b.fusedCompares[instr.GetID()] {
 				continue
 			}
-			if cast, ok := instr.(*ir.Cast); ok && (cast.Op == "word_to_ptr" || cast.Op == "ptr_to_word" || cast.Op == "bitcast") {
-				if b.getTypeSizeByType(cast.Typ) == b.getTypeSizeByType(cast.Operand.Type()) {
-					continue
-				}
-			}
+
 			if setjmp, ok := instr.(*ir.SetJmp); ok {
 				b.jmpSlots[setjmp.GetID()] = b.allocateRawSlot(10)
 			}
@@ -2438,9 +2465,19 @@ func (b *Backend) allocateRawSlot(sz int) int {
 }
 
 func (b *Backend) allocateSlot(sz int, id int) int {
+	canon := b.resolveSlot(id)
+	if offset, ok := b.slots[canon]; ok {
+		b.slots[id] = offset
+		b.slotSizes[id] = sz
+		return offset
+	}
 	offset := b.allocateRawSlot(sz)
-	b.slots[id] = offset
-	b.slotSizes[id] = sz
+	b.slots[canon] = offset
+	b.slotSizes[canon] = sz
+	if canon != id {
+		b.slots[id] = offset
+		b.slotSizes[id] = sz
+	}
 	return offset
 }
 

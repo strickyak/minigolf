@@ -70,7 +70,7 @@ func (p *StackAllocPass) Run(f *ir.Function) bool {
 		endIdx := make(map[ir.Value]int)
 
 		for i, inst := range b.Instructions {
-			if !crossBlock[inst] && !escapes[inst] {
+			if !inst.Type().Equals(ir.TypeVoid) && !inst.Type().Equals(ir.TypeUnknown) && !crossBlock[inst] && !escapes[inst] {
 				locals = append(locals, inst)
 				startIdx[inst] = i
 				endIdx[inst] = i // default end index is its definition
@@ -92,6 +92,21 @@ func (p *StackAllocPass) Run(f *ir.Function) bool {
 				if db, ok := defBlock[op]; ok && db == b && !crossBlock[op] {
 					if i > endIdx[op] {
 						endIdx[op] = i
+					}
+				}
+			}
+		}
+
+		// Propagate endIdx backward through casts:
+		// When backends optimize away or alias casts, the underlying operand
+		// remains live as long as the cast's result is live.
+		for j := len(b.Instructions) - 1; j >= 0; j-- {
+			if cast, ok := b.Instructions[j].(*ir.Cast); ok {
+				if op, ok := cast.Operand.(ir.Instruction); ok {
+					if db, ok2 := defBlock[op]; ok2 && db == b && !crossBlock[op] {
+						if endIdx[cast] > endIdx[op] {
+							endIdx[op] = endIdx[cast]
+						}
 					}
 				}
 			}
@@ -205,6 +220,18 @@ func getOperands(instr ir.Instruction) []ir.Value {
 		if i.Val != nil {
 			ops = append(ops, i.Val)
 		}
+	case *ir.SetJmp:
+		if i.JmpBuf != nil {
+			ops = append(ops, i.JmpBuf)
+		}
+	case *ir.LongJmp:
+		if i.JmpBuf != nil {
+			ops = append(ops, i.JmpBuf)
+		}
+	case *ir.ConstStruct:
+		ops = append(ops, i.Fields...)
+	case *ir.ConstArray:
+		ops = append(ops, i.Elements...)
 	}
 	return ops
 }

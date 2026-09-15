@@ -295,6 +295,7 @@ func main() {
 	noBranchLayout6809 := flag.Bool("no-branch-layout6809", false, "Disable M6809 branch layout and condition inversion")
 	noFusedCompares6809 := flag.Bool("no-fused-compares6809", false, "Disable M6809 fused compare and branch")
 	noLeafOpt6809 := flag.Bool("no-leaf-opt6809", false, "Disable M6809 leaf function frame optimization")
+	noSlotSharing6809 := flag.Bool("no-slotsharing6809", false, "Disable M6809 stack slot sharing")
 	debugOpt := flag.Bool("debug_opt", false, "Enable debug output for optimizations like leaf level")
 	checkBoundsFlag := flag.Bool("check-bounds", false, "Enable bounds checking for slices and arrays")
 	checkNilFlag := flag.Bool("check-nil", false, "Enable nil pointer checks for pointers, method receivers, and function references")
@@ -732,6 +733,9 @@ func main() {
 		}
 		if *noLeafOpt6809 {
 			backend.NoLeafOpt = true
+		}
+		if *noSlotSharing6809 {
+			backend.NoSlotSharing = true
 		}
 		asmCode := backend.Generate(irProg)
 

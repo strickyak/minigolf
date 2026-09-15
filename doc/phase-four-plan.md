@@ -195,7 +195,7 @@ flowchart TD
 | **4.4: CSSA & Phi Lowering** | Parallel copy resolution across block boundaries; cyclic transfer decomposition using hardware `exg` and `tfr`. | `-no-cssa-lowering6809`<br/>`NO_CSSA_LOWERING6809` | Robust, lost-update-free inter-block register passing. |
 | **4.5: Global Chordal Coloring** | Decoupled linear-scan spilling to stack (pressure $\le K$); Maximum Cardinality Search (MCS) greedy coloring with class preferencing; Chaitin-Briggs copy coalescing. | `-no-global-regalloc6809`<br/>`NO_GLOBAL_REGALLOC6809` | Full end-to-end SSA register allocation for M6809. |
 
-- [ ] **Milestone 4.1**: Liveness analysis, `RegMask` bitmask architecture, interference graph & pressure computation.
+- [x] **Milestone 4.1**: Liveness analysis, `RegMask` bitmask architecture, interference graph & pressure computation, M6809 stack slot sharing integration.
 - [ ] **Milestone 4.2**: Local basic-block allocation (accumulator reuse & dead stack store elimination).
 - [ ] **Milestone 4.3**: Loop induction variable & pointer pinning (`X`, `Y`, `U`).
 - [ ] **Milestone 4.4**: Conventional SSA ($\Phi$-elimination) & parallel copy resolution with `exg`.
