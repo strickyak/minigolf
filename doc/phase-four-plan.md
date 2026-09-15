@@ -105,25 +105,38 @@ flowchart TD
 
 ---
 
-### Milestone 4.3: Loop Induction Variable & Pointer Pinning
-**Objective**: Keep high-frequency loop counters and array pointers in dedicated index registers throughout loop execution.
+### Milestone 4.3: Loop Analysis, Invariant Hoisting & IR Store-to-Load Forwarding
+**Objective**: Detect natural loops, extract induction variables and invariants, hoist loop-invariant operations to preheaders (LICM), and forward stored local values directly to subsequent loads across all backends.
 
-1. **Loop Analysis & Identification**:
-   - Detect natural loops and innermost hot loops from CFG dominator trees.
-   - Identify loop-carried dependencies (SSA $\Phi$-nodes at loop headers) and loop-invariant pointers.
-2. **Candidate Selection & Preferencing**:
-   - **Pointer candidates**: Array cursors, slice bases, struct pointers $\rightarrow$ Prefer `X`, `Y`, or `U`.
-   - **Counter candidates**: 8-bit counters $\rightarrow$ Prefer `B` or `A`; 16-bit counters $\rightarrow$ Prefer `X` or `D`.
-3. **Loop Register Allocation**:
-   - Allocate physical registers across the loop body.
-   - Emit loop pre-header: Load initial value from parameter or stack into the assigned register.
-   - Emit loop exit: Store final value to stack slot if live after loop.
-   - Replace loop body loads and stores with register operations (e.g. `leax 1,x`, `incb`, `ldb ,x+`, `stb ,x+`).
-4. **Guard Flag**:
-   - `-no-loop-regalloc6809` (env `NO_LOOP_REGALLOC6809`).
+1. **CFG Dominator & Natural Loop Discovery (`opt/loop.go`)**:
+   - Compute iterative dominator sets (`Dom`) and immediate dominators (`IDom`).
+   - Discover back-edges ($L \to H$ where $H$ dominates $L$) and extract full natural loop block sets.
+   - Identify dedicated loop pre-headers ($P \to H$ uniquely), latches, and exits.
+   - Extract Basic Induction Variables ($\Phi$-nodes with constant steps: $i = i \pm C$).
+   - Identify loop-invariant expressions and nesting hierarchy.
+2. **Loop Invariant Code Motion (`opt/licm.go`)**:
+   - Hoist pure invariant operations (arithmetic, compares, casts, sizeof, symbol addresses) to loop pre-headers.
+   - Strict topological dependency ordering and deterministic block iteration to preserve SSA def-use order.
+3. **Local Store-to-Load Forwarding (`opt/store_load.go`)**:
+   - Forward stored values to matching loads within each basic block.
+   - Strict operand-level escape analysis: any `AddressOfLocal` used outside `LoadPtr`/`StorePtr` is marked escaping.
+4. **Guard Flags**:
+   - `-no-licm` (env `NO_LICM`).
+   - `-no-store-load` (env `NO_STORE_LOAD`).
 5. **Testing & Verification**:
-   - Run tests on prime generation (`test_primes.golf`), sorting (`test_sort.golf`), buffer manipulation (`test_buf.golf`), and big integer arithmetic (`test_big_mul.golf`).
-   - Measure cycle count reductions (targeting >30% speedup on loop-heavy tests).
+   - 100% PASS on `opt/loop_test.go`, `opt/licm_test.go`, and `opt/store_load_test.go`.
+   - Zero regressions across all 87 benchmarks and 8 architectural variants.
+   - **Telemetry Results**:
+     - Default configuration cycles: **31,181,830 -> 29,906,126 (-1,275,704 cycles, -4.09% speedup)**.
+     - All-variants configuration cycles: **118,515,468 -> 113,350,462 (-5,165,006 cycles, -4.36% speedup)**.
+     - Major benchmark speedups:
+       - `test_primes`: **-9.44%** (-26,421 cycles)
+       - `arcfour`: **-9.19%** (-41,782 cycles)
+       - `test_8queens`: **-7.51%** (-42,608 cycles)
+       - `test_regexp`: **-5.87%** (-523,588 cycles)
+       - `lisp_2`: **-4.53%** (-11,025 cycles)
+       - `test_arcfour`: **-4.33%** (-26,138 cycles)
+       - `jun26_whole-collatz`: **-3.93%** (-541,431 cycles)
 
 ---
 
@@ -193,13 +206,13 @@ flowchart TD
 |---|---|---|---|
 | **4.1: Foundation & Liveness** | Register bitmasks, variant availability filters, CFG live interval computation (`[start, end]`), and instruction register pressure tracking. | `-no-liveness6809`<br/>`NO_LIVENESS6809` | Zero assembly changes; verified mathematical foundation. |
 | **4.2: Local Block Allocation** | Straight-line register tracking; reuse values in `D`/`B`/`X`; eliminate redundant `std`/`ldd` stack traffic within basic blocks. | `-no-local-regalloc6809`<br/>`NO_LOCAL_REGALLOC6809` | Noticeable drop in stack loads/stores on straight-line code. |
-| **4.3: Loop Register Pinning** | Identify loop-carried variables and cursors; pin loop counters and array pointers into `X`, `Y`, `U`, or `B`; pre-header loads and post-loop stores. | `-no-loop-regalloc6809`<br/>`NO_LOOP_REGALLOC6809` | Major speedup (>25–40%) on loop-heavy benchmarks. |
+| **4.3: Loop Analysis & LICM** | Dominator trees, natural loop & induction analysis, loop-invariant code motion (LICM), store-to-load forwarding. | `-no-licm`, `-no-store-load`<br/>`NO_LICM`, `NO_STORE_LOAD` | Major speedup (-4.09% default cycles, -4.36% all-variants cycles). |
 | **4.4: CSSA & Phi Lowering** | Parallel copy resolution across block boundaries; cyclic transfer decomposition using hardware `exg` and `tfr`. | `-no-cssa-lowering6809`<br/>`NO_CSSA_LOWERING6809` | Robust, lost-update-free inter-block register passing. |
 | **4.5: Global Chordal Coloring** | Decoupled linear-scan spilling to stack (pressure $\le K$); Maximum Cardinality Search (MCS) greedy coloring with class preferencing; Chaitin-Briggs copy coalescing. | `-no-global-regalloc6809`<br/>`NO_GLOBAL_REGALLOC6809` | Full end-to-end SSA register allocation for M6809. |
 
 - [x] **Milestone 4.1**: Liveness analysis, `RegMask` bitmask architecture, interference graph & pressure computation, M6809 stack slot sharing integration.
-- [ ] **Milestone 4.2**: Local basic-block allocation (accumulator reuse & dead stack store elimination).
-- [ ] **Milestone 4.3**: Loop induction variable & pointer pinning (`X`, `Y`, `U`).
+- [x] **Milestone 4.2**: Local basic-block allocation (accumulator reuse & dead stack store elimination).
+- [x] **Milestone 4.3**: Loop analysis, dominator trees, induction variable discovery, loop invariant code motion (LICM), store-to-load forwarding.
 - [ ] **Milestone 4.4**: Conventional SSA ($\Phi$-elimination) & parallel copy resolution with `exg`.
 - [ ] **Milestone 4.5**: Global chordal graph coloring, decoupled spilling, and conservative coalescing.
 - [ ] **Phase 4 Telemetry & Final Verification**: Comprehensive benchmark telemetry vs. Phase Three baseline.

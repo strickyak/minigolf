@@ -289,6 +289,8 @@ func main() {
 	noPhisimp := flag.Bool("no-phisimp", false, "Disable Phi Simplification optimization")
 	noStackAlloc := flag.Bool("no-stackalloc", false, "Disable Stack Slot Allocation (Slot Sharing)")
 	noBranchFold := flag.Bool("no-branchfold", false, "Disable Branch Folding optimization")
+	noStoreLoad := flag.Bool("no-store-load", false, "Disable Store-to-Load Forwarding optimization")
+	noLicm := flag.Bool("no-licm", false, "Disable Loop Invariant Code Motion optimization")
 	noInline := flag.Bool("no-inline", false, "Disable Function Inlining optimization")
 	noInlineTiny := flag.Bool("no-inline-tiny", false, "Disable Tiny Function Inlining optimization")
 	noInlineSingleCall := flag.Bool("no-inline-single-call", false, "Disable Single Callsite Inlining optimization")
@@ -346,6 +348,36 @@ func main() {
 	}
 	if os.Getenv("NO_BRANCHFOLD") != "" {
 		*noBranchFold = true
+	}
+	if os.Getenv("NO_STORE_LOAD") != "" {
+		*noStoreLoad = true
+	}
+	if os.Getenv("NO_LICM") != "" {
+		*noLicm = true
+	}
+	if os.Getenv("NO_INLINE") != "" {
+		*noInline = true
+	}
+	if os.Getenv("NO_INLINE_TINY") != "" {
+		*noInlineTiny = true
+	}
+	if os.Getenv("NO_INLINE_SINGLE_CALL") != "" {
+		*noInlineSingleCall = true
+	}
+	if os.Getenv("NO_BRANCH_LAYOUT6809") != "" {
+		*noBranchLayout6809 = true
+	}
+	if os.Getenv("NO_FUSED_COMPARES6809") != "" {
+		*noFusedCompares6809 = true
+	}
+	if os.Getenv("NO_LEAF_OPT6809") != "" {
+		*noLeafOpt6809 = true
+	}
+	if os.Getenv("NO_SLOT_SHARING6809") != "" {
+		*noSlotSharing6809 = true
+	}
+	if os.Getenv("NO_LOCAL_REGALLOC6809") != "" {
+		*noLocalRegAlloc6809 = true
 	}
 
 	// Validate required flags
@@ -593,6 +625,8 @@ func main() {
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
+			EnableStoreLoad:   !*noStoreLoad,
+			EnableLICM:        !*noLicm,
 			EnableDFE:         !*noDfe,
 			EnableDebugOpt:    *debugOpt,
 		}
@@ -631,6 +665,8 @@ func main() {
 			EnablePhiSimp:          !*noPhisimp,
 			EnableStackAlloc:       !*noStackAlloc,
 			EnableBranchFold:       !*noBranchFold,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
 			EnableDFE:              !*noDfe,
 			EnableInline:           !*noInline,
 			EnableInlineTiny:       !*noInline && !*noInlineTiny,
@@ -674,6 +710,8 @@ func main() {
 			EnablePhiSimp:          !*noPhisimp,
 			EnableStackAlloc:       !*noStackAlloc,
 			EnableBranchFold:       !*noBranchFold,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
 			EnableDFE:              !*noDfe,
 			EnableInline:           !*noInline,
 			EnableInlineTiny:       !*noInline && !*noInlineTiny,
@@ -715,6 +753,8 @@ func main() {
 			EnablePhiSimp:          !*noPhisimp,
 			EnableStackAlloc:       !*noStackAlloc,
 			EnableBranchFold:       !*noBranchFold,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
 			EnableDFE:              !*noDfe,
 			EnableInline:           !*noInline,
 			EnableInlineTiny:       !*noInline && !*noInlineTiny,

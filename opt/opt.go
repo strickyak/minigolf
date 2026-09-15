@@ -16,6 +16,8 @@ type Config struct {
 	EnablePhiSimp          bool
 	EnableStackAlloc       bool
 	EnableBranchFold       bool
+	EnableStoreLoad        bool
+	EnableLICM             bool
 	EnableDFE              bool
 	EnableInline           bool
 	EnableInlineTiny       bool
@@ -38,6 +40,12 @@ func OptimizeProgram(p *ir.Program, config Config) {
 
 	var passes []Pass
 
+	if config.EnableStoreLoad {
+		passes = append(passes, &StoreLoadForwardingPass{})
+	}
+	if config.EnableLICM {
+		passes = append(passes, &LICMPass{})
+	}
 	if config.EnableConstFold {
 		passes = append(passes, &ConstFoldPass{})
 	}
