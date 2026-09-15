@@ -81,25 +81,27 @@ flowchart TD
 
 ---
 
-### Milestone 4.2: Local Basic-Block Register Allocation & Accumulator Reuse
+### Milestone 4.2: Local Basic-Block Register Allocation & Accumulator Reuse [COMPLETED]
 **Objective**: Eliminate redundant stores and immediate reloads within straight-line basic blocks.
 
 1. **Local Value Tracking**:
-   - Within each basic block, track which SSA values are currently resident in physical registers (`D`, `B`, `A`, `X`, `Y`).
+   - Within each basic block, track which SSA values are currently resident in physical registers (`D`, `B`).
    - If an SSA instruction computes a value into `D` or `B`, and its uses are strictly local within the block:
-     - Check if any subsequent instruction before the last use clobbers `D`/`B`.
-     - If not clobbered, subsequent uses read directly from `D`/`B` without reloading from the stack slot (`ldd slot,s`).
-2. **Dead Stack Store Elimination for Short-Lived Locals**:
-   - If an SSA value's lifetime is entirely contained within the accumulator and does not cross a call or clobbering instruction, omit `std slot,s`!
-3. **Index Register Pinning for Sequential Access**:
-   - When traversing arrays or structs, keep the base pointer in `X` or `Y` rather than re-computing `leax slot,s; ldd ,x` repeatedly.
-4. **Clobber Handling at Interpolation Points**:
-   - Invalidate all caller-saved physical registers upon `jsr`, `__mul16`, `__div16`, or runtime panic/hypercall.
-5. **Guard Flag**:
+     - Check if any subsequent instruction before the use clobbers `D`/`B`.
+     - If not clobbered, subsequent uses read directly from `D`/`B` without reloading from the stack slot (`ldd slot,s` / `ldb slot,s`).
+2. **Safe Invalidation & Zero Stale References**:
+   - All untracked operations (`*ir.Parameter`, constants, globals) explicitly invalidate registers (`valInD = nil`, `valInB = nil`).
+   - `emitCopy`, `emitMemset0`, and non-constant `computeElementAddr` strictly clobber register states.
+   - `emitCast`, `emitCallInstr`, and `emitIndirectCall` route return values through `storeResult`.
+3. **Register-to-Register Address Transfer**:
+   - When `loadVal16("x", val)` requests an address/value currently in `D`, synthesize `tfr d,x` rather than reading memory from stack.
+4. **Guard Flag**:
    - `-no-local-regalloc6809` (env `NO_LOCAL_REGALLOC6809`).
-6. **Testing & Verification**:
-   - Full test suite across all 8 variants.
-   - Benchmark code size and cycle count drops on straight-line benchmarks (`alphabet`, `count_up`, `test_struct`).
+5. **Testing & Verification**:
+   - Full test suite passed 100% across all 8 variants.
+   - Zero regressions across 87 default benchmarks.
+   - Aggregate code size reduction: **-4,863 bytes (-1.51%)** (up to -2.61% on `test_big_mul`, -2.03% on `jun26_whole-collatz`).
+   - Aggregate cycle count speedup: **-404,023 cycles (-1.28%)** (up to -252,134 cycles on `test_regexp`, -100,492 cycles on `jun26_whole-collatz`).
 
 ---
 

@@ -161,10 +161,15 @@ type Backend struct {
 	addressTaken    map[int]bool
 	needsFP         bool
 
+	curInstr ir.Instruction
+	valInD   ir.Value
+	valInB   ir.Value
+
 	NoBranchLayout  bool
 	NoFusedCompares bool
 	NoLeafOpt       bool
 	NoSlotSharing   bool
+	NoLocalRegAlloc bool
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -188,7 +193,54 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		NoFusedCompares: os.Getenv("NO_FUSED_COMPARES6809") != "",
 		NoLeafOpt:       os.Getenv("NO_LEAF_OPT6809") != "",
 		NoSlotSharing:   os.Getenv("NO_SLOT_SHARING6809") != "",
+		NoLocalRegAlloc: os.Getenv("NO_LOCAL_REGALLOC6809") != "",
 	}
+}
+
+func (b *Backend) canTrack(val ir.Value) bool {
+	if b.NoLocalRegAlloc || val == nil {
+		return false
+	}
+	if inst, ok := val.(ir.Instruction); ok {
+		if b.addressTaken != nil && b.addressTaken[inst.GetID()] {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func (b *Backend) clobberAllRegs() {
+	b.valInD = nil
+	b.valInB = nil
+}
+
+func (b *Backend) clobberD() {
+	b.valInD = nil
+	b.valInB = nil
+}
+
+func (b *Backend) clobberB() {
+	b.valInB = nil
+	b.valInD = nil
+}
+
+func (b *Backend) setD(val ir.Value) {
+	if b.canTrack(val) {
+		b.valInD = val
+	} else {
+		b.valInD = nil
+	}
+	b.valInB = nil
+}
+
+func (b *Backend) setB(val ir.Value) {
+	if b.canTrack(val) {
+		b.valInB = val
+	} else {
+		b.valInB = nil
+	}
+	b.valInD = nil
 }
 
 func (b *Backend) pushBytes(n int) {
@@ -515,6 +567,7 @@ func (b *Backend) emitLoadAddr(reg string, addrStr string) {
 }
 
 func (b *Backend) emitCall(target string) {
+	b.clobberAllRegs()
 	if b.picMode {
 		b.buf.WriteString(fmt.Sprintf("\tlbsr %s\n", target))
 	} else {
@@ -567,6 +620,15 @@ func (b *Backend) getValSize(val ir.Value) int {
 
 func (b *Backend) loadVal(val ir.Value) {
 	val = b.resolveVal(val)
+	if !b.NoLocalRegAlloc && b.canTrack(val) {
+		sz := b.getValSize(val)
+		if sz == 1 && b.valInB == val {
+			return
+		}
+		if sz == 2 && b.valInD == val {
+			return
+		}
+	}
 	switch v := val.(type) {
 	case *ir.ConstByte:
 		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", v.Val))
@@ -613,10 +675,30 @@ func (b *Backend) loadVal(val ir.Value) {
 	default:
 		log.Panicf("loadVal: unhandled %T (%v)", val, val)
 	}
+	if !b.NoLocalRegAlloc {
+		sz := b.getValSize(val)
+		if sz == 1 {
+			b.setB(val)
+		} else if sz == 2 {
+			b.setD(val)
+		}
+	}
 }
 
 func (b *Backend) loadVal16(reg string, val ir.Value) {
 	val = b.resolveVal(val)
+	if !b.NoLocalRegAlloc && b.canTrack(val) {
+		if reg == "d" {
+			if b.valInD == val {
+				return
+			}
+		} else if reg == "x" {
+			if b.valInD == val {
+				b.buf.WriteString("\ttfr d,x\n")
+				return
+			}
+		}
+	}
 	switch v := val.(type) {
 	case *ir.ConstByte:
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, uint8(v.Val)))
@@ -626,6 +708,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		if b.getValSize(v) == 1 {
 			b.loadVal(v)
 			b.buf.WriteString("\tclra\n")
+			b.clobberD()
 			if reg != "d" {
 				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 			}
@@ -636,6 +719,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		if b.getValSize(v) == 1 {
 			b.loadVal(v)
 			b.buf.WriteString("\tclra\n")
+			b.clobberD()
 			if reg != "d" {
 				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 			}
@@ -646,6 +730,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		if b.getValSize(v) == 1 {
 			b.loadVal(v)
 			b.buf.WriteString("\tclra\n")
+			b.clobberD()
 			if reg != "d" {
 				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 			}
@@ -666,6 +751,11 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 			b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 		}
 	}
+	if !b.NoLocalRegAlloc {
+		if reg == "d" {
+			b.setD(val)
+		}
+	}
 }
 
 func (b *Backend) storeResult(id int) {
@@ -673,8 +763,22 @@ func (b *Backend) storeResult(id int) {
 	addr := b.localAddr(id)
 	if sz == 1 {
 		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", addr))
+		if !b.NoLocalRegAlloc {
+			if b.curInstr != nil && b.curInstr.GetID() == id {
+				b.setB(b.curInstr)
+			} else {
+				b.clobberB()
+			}
+		}
 	} else {
 		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", addr))
+		if !b.NoLocalRegAlloc {
+			if b.curInstr != nil && b.curInstr.GetID() == id {
+				b.setD(b.curInstr)
+			} else {
+				b.clobberD()
+			}
+		}
 	}
 }
 
@@ -687,6 +791,7 @@ func (b *Backend) emitCopy(destReg string, srcReg string, size int) {
 			b.buf.WriteString("\tldy #0\n")
 		}
 	}()
+	b.clobberAllRegs()
 	if size == 1 {
 		b.buf.WriteString(fmt.Sprintf("\tlda ,%s\n\tsta ,%s\n", srcReg, destReg))
 		return
@@ -721,6 +826,7 @@ func (b *Backend) emitMemset0(destReg string, size int) {
 	if size <= 0 {
 		return
 	}
+	b.clobberAllRegs()
 	if size == 1 {
 		b.buf.WriteString(fmt.Sprintf("\tclr ,%s\n", destReg))
 		return
@@ -774,6 +880,7 @@ func (b *Backend) computeElementAddr(destReg string, arrayVal ir.Value, indexVal
 			b.buf.WriteString(fmt.Sprintf("\tpuls %s\n", destReg))
 			b.buf.WriteString(fmt.Sprintf("\tlea%s d,%s\n", destReg, destReg))
 		}
+		b.clobberD()
 	}
 }
 
@@ -1358,9 +1465,9 @@ func (b *Backend) emitCallInstr(i *ir.Call) {
 
 	if !i.Typ.Equals(ir.TypeVoid) {
 		if retSize == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.localAddr(i.GetID())))
+			b.storeResult(i.GetID())
 		} else if retSize == 2 {
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.localAddr(i.GetID())))
+			b.storeResult(i.GetID())
 		} else {
 			b.emitLoadAddr("x", b.localAddr(i.GetID()))
 			b.buf.WriteString("\tleay ,s\n")
@@ -1417,9 +1524,9 @@ func (b *Backend) emitIndirectCall(i *ir.IndirectCall) {
 
 	if !i.Typ.Equals(ir.TypeVoid) {
 		if retSize == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.localAddr(i.GetID())))
+			b.storeResult(i.GetID())
 		} else if retSize == 2 {
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.localAddr(i.GetID())))
+			b.storeResult(i.GetID())
 		} else {
 			b.emitLoadAddr("x", b.localAddr(i.GetID()))
 			b.buf.WriteString("\tleay ,s\n")
@@ -1572,7 +1679,7 @@ func (b *Backend) emitCast(i *ir.Cast) {
 		}
 		b.loadVal(i.Operand)
 		if dstSz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.localAddr(id)))
+			b.storeResult(id)
 		} else {
 			if srcSz == 1 {
 				if i.Operand.Type().Equals(ir.TypeInt) {
@@ -1581,35 +1688,35 @@ func (b *Backend) emitCast(i *ir.Cast) {
 					b.buf.WriteString("\tclra\n")
 				}
 			}
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.localAddr(id)))
+			b.storeResult(id)
 		}
 	case "trunc":
 		b.loadVal(i.Operand)
-		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.localAddr(id)))
+		b.storeResult(id)
 	case "zext", "zero_ext":
 		opSz := b.getTypeSizeByType(i.Operand.Type())
 		b.loadVal(i.Operand)
 		if opSz == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.localAddr(id)))
+		b.storeResult(id)
 	case "sext", "sign_ext":
 		opSz := b.getTypeSizeByType(i.Operand.Type())
 		b.loadVal(i.Operand)
 		if opSz == 1 {
 			b.buf.WriteString("\tsex\n")
 		}
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.localAddr(id)))
+		b.storeResult(id)
 	default:
 		sz := b.getTypeSizeByType(i.Typ)
 		b.loadVal(i.Operand)
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tstb %s\n", b.localAddr(id)))
+			b.storeResult(id)
 		} else {
 			if b.getTypeSizeByType(i.Operand.Type()) == 1 {
 				b.buf.WriteString("\tclra\n")
 			}
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", b.localAddr(id)))
+			b.storeResult(id)
 		}
 	}
 }
@@ -2026,15 +2133,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.Load:
 		sz := b.getTypeSizeByType(i.Global.Typ)
 		srcStr := b.getAddrStr(i.Global)
-		destStr := b.localAddr(id)
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tstb %s\n", srcStr, destStr))
+			b.buf.WriteString(fmt.Sprintf("\tldb %s\n", srcStr))
+			b.storeResult(id)
 		} else if sz == 2 {
-			b.buf.WriteString(fmt.Sprintf("\tldd %s\n\tstd %s\n", srcStr, destStr))
+			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", srcStr))
+			b.storeResult(id)
 		} else {
+			destStr := b.localAddr(id)
 			b.emitLoadAddr("y", srcStr)
 			b.emitLoadAddr("x", destStr)
 			b.emitCopy("x", "y", sz)
+			b.clobberAllRegs()
 		}
 
 	case *ir.Store:
@@ -2047,12 +2157,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.loadVal(i.Val)
 			if b.getValSize(i.Val) == 1 {
 				b.buf.WriteString("\tclra\n")
+				b.clobberD()
 			}
 			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
 		} else {
 			b.emitLoadAddr("x", destStr)
 			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitCopy("x", "y", sz)
+			b.clobberAllRegs()
 		}
 
 	case *ir.ZeroInit:
@@ -2062,25 +2174,29 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.buf.WriteString(fmt.Sprintf("\tclr %s\n", destStr))
 		} else if sz == 2 {
 			b.buf.WriteString("\tclra\n\tclrb\n")
-			b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destStr))
+			b.storeResult(id)
 		} else {
 			b.emitLoadAddr("x", destStr)
 			b.emitMemset0("x", sz)
+			b.clobberAllRegs()
 		}
 
 	case *ir.ExtractElement:
 		eltSize := b.getEltSizeUsingIrt(i.Array.Type())
-		destStr := b.localAddr(id)
 		if eltSize == 1 {
 			b.computeElementAddr("x", i.Array, i.Index, eltSize)
-			b.buf.WriteString(fmt.Sprintf("\tldb ,x\n\tstb %s\n", destStr))
+			b.buf.WriteString("\tldb ,x\n")
+			b.storeResult(id)
 		} else if eltSize == 2 {
 			b.computeElementAddr("x", i.Array, i.Index, eltSize)
-			b.buf.WriteString(fmt.Sprintf("\tldd ,x\n\tstd %s\n", destStr))
+			b.buf.WriteString("\tldd ,x\n")
+			b.storeResult(id)
 		} else {
+			destStr := b.localAddr(id)
 			b.computeElementAddr("y", i.Array, i.Index, eltSize)
 			b.emitLoadAddr("x", destStr)
 			b.emitCopy("x", "y", eltSize)
+			b.clobberAllRegs()
 		}
 
 	case *ir.InsertElement:
@@ -2101,33 +2217,37 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitCopy("x", "y", eltSize)
 		}
+		b.clobberAllRegs()
 
 	case *ir.ExtractField:
 		structType := i.Struct.Type()
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structType, i.FieldIndex)
 		srcStr := b.getAddrStr(i.Struct)
-		destStr := b.localAddr(id)
 		if fieldSize == 1 {
 			if byteOffset == 0 {
-				b.buf.WriteString(fmt.Sprintf("\tldb %s\n\tstb %s\n", srcStr, destStr))
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", srcStr))
 			} else {
 				b.emitLoadAddr("x", srcStr)
-				b.buf.WriteString(fmt.Sprintf("\tldb %d,x\n\tstb %s\n", byteOffset, destStr))
+				b.buf.WriteString(fmt.Sprintf("\tldb %d,x\n", byteOffset))
 			}
+			b.storeResult(id)
 		} else if fieldSize == 2 {
 			if byteOffset == 0 {
-				b.buf.WriteString(fmt.Sprintf("\tldd %s\n\tstd %s\n", srcStr, destStr))
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", srcStr))
 			} else {
 				b.emitLoadAddr("x", srcStr)
-				b.buf.WriteString(fmt.Sprintf("\tldd %d,x\n\tstd %s\n", byteOffset, destStr))
+				b.buf.WriteString(fmt.Sprintf("\tldd %d,x\n", byteOffset))
 			}
+			b.storeResult(id)
 		} else {
+			destStr := b.localAddr(id)
 			b.emitLoadAddr("x", destStr)
 			b.emitLoadAddr("y", srcStr)
 			if byteOffset > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 			}
 			b.emitCopy("x", "y", fieldSize)
+			b.clobberAllRegs()
 		}
 
 	case *ir.InsertField:
@@ -2154,28 +2274,28 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 
 	case *ir.AddressOfGlobal:
-		destStr := b.localAddr(id)
 		if b.globalsAtY {
-			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n\tstd %s\n", b.globalOffsets[i.Global.Name], destStr))
+			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
 		} else if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n\tstd %s\n", i.Global.Name, destStr))
+			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n\tstd %s\n", i.Global.Name, destStr))
+			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
 		}
+		b.storeResult(id)
 
 	case *ir.AddressOfFunc:
-		destStr := b.localAddr(id)
 		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n\tstd %s\n", i.Func.EmitName(), destStr))
+			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", i.Func.EmitName()))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n\tstd %s\n", i.Func.EmitName(), destStr))
+			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
 		}
+		b.storeResult(id)
 
 	case *ir.AddressOfLocal:
-		destStr := b.localAddr(id)
 		targetStr := b.getAddrStr(i.Local)
 		b.emitLoadAddr("x", targetStr)
-		b.buf.WriteString(fmt.Sprintf("\ttfr x,d\n\tstd %s\n", destStr))
+		b.buf.WriteString("\ttfr x,d\n")
+		b.storeResult(id)
 
 	case *ir.AddressOfField:
 		structType := i.Ptr.Type().PointedType()
@@ -2184,8 +2304,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
 		}
-		destStr := b.localAddr(id)
-		b.buf.WriteString(fmt.Sprintf("\ttfr x,d\n\tstd %s\n", destStr))
+		b.buf.WriteString("\ttfr x,d\n")
+		b.storeResult(id)
 
 	case *ir.AddressOfElement:
 		eltSize := b.getEltSizeUsingIrt(i.ArrayPtr.Type())
@@ -2216,26 +2336,29 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				b.buf.WriteString("\tpuls x\n\tleax d,x\n")
 			}
 		}
-		destStr := b.localAddr(id)
-		b.buf.WriteString(fmt.Sprintf("\ttfr x,d\n\tstd %s\n", destStr))
+		b.buf.WriteString("\ttfr x,d\n")
+		b.storeResult(id)
 
 	case *ir.ExtractFieldPtr:
 		structType := i.Ptr.Type().PointedType()
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structType, i.FieldIndex)
-		destStr := b.localAddr(id)
 		if fieldSize == 1 {
 			b.loadVal16("x", i.Ptr)
-			b.buf.WriteString(fmt.Sprintf("\tldb %d,x\n\tstb %s\n", byteOffset, destStr))
+			b.buf.WriteString(fmt.Sprintf("\tldb %d,x\n", byteOffset))
+			b.storeResult(id)
 		} else if fieldSize == 2 {
 			b.loadVal16("x", i.Ptr)
-			b.buf.WriteString(fmt.Sprintf("\tldd %d,x\n\tstd %s\n", byteOffset, destStr))
+			b.buf.WriteString(fmt.Sprintf("\tldd %d,x\n", byteOffset))
+			b.storeResult(id)
 		} else {
+			destStr := b.localAddr(id)
 			b.loadVal16("y", i.Ptr)
 			if byteOffset > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleay %d,y\n", byteOffset))
 			}
 			b.emitLoadAddr("x", destStr)
 			b.emitCopy("x", "y", fieldSize)
+			b.clobberAllRegs()
 		}
 
 	case *ir.InsertFieldPtr:
@@ -2255,20 +2378,24 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitCopy("x", "y", fieldSize)
 		}
+		b.clobberAllRegs()
 
 	case *ir.LoadPtr:
 		sz := b.getTypeSizeByType(i.Typ)
-		destStr := b.localAddr(id)
 		if sz == 1 {
 			b.loadVal16("x", i.Ptr)
-			b.buf.WriteString(fmt.Sprintf("\tldb ,x\n\tstb %s\n", destStr))
+			b.buf.WriteString("\tldb ,x\n")
+			b.storeResult(id)
 		} else if sz == 2 {
 			b.loadVal16("x", i.Ptr)
-			b.buf.WriteString(fmt.Sprintf("\tldd ,x\n\tstd %s\n", destStr))
+			b.buf.WriteString("\tldd ,x\n")
+			b.storeResult(id)
 		} else {
+			destStr := b.localAddr(id)
 			b.loadVal16("y", i.Ptr)
 			b.emitLoadAddr("x", destStr)
 			b.emitCopy("x", "y", sz)
+			b.clobberAllRegs()
 		}
 
 	case *ir.StorePtr:
@@ -2439,6 +2566,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			nextBlk = f.Blocks[idx+1]
 		}
 		b.buf.WriteString(fmt.Sprintf(".L_%s_b%d:\n", f.Name, blk.ID))
+		b.clobberAllRegs()
 		for _, instr := range blk.Instructions {
 			if _, isPhi := instr.(*ir.Phi); isPhi {
 				continue
@@ -2449,8 +2577,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if b.fusedCompares[instr.GetID()] {
 				continue
 			}
+			b.curInstr = instr
 			b.emitInstr(instr)
 		}
+		b.curInstr = nil
+		b.clobberAllRegs()
 		if blk.Terminator != nil {
 			b.emitTerminator(blk, blk.Terminator, nextBlk)
 		}
