@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/strickyak/minigolf/ir"
+	"github.com/strickyak/minigolf/opt"
 )
 
 var GLOBAL_VAR_OFFSET = flag.Int("global_var_offset", 16, "must be positive, so address 0 is not used, that is nil")
@@ -169,7 +170,9 @@ type Backend struct {
 	NoFusedCompares bool
 	NoLeafOpt       bool
 	NoSlotSharing   bool
-	NoLocalRegAlloc bool
+	NoLocalRegAlloc   bool
+	NoCSSALowering    bool
+	cssaScratchOffset int
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -178,22 +181,24 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		frameOff = 2
 	}
 	return &Backend{
-		useFramePointer: useFramePointer,
-		globalsAtY:      globalsAtY,
-		picMode:         picMode,
-		frameOffset:     frameOff,
-		slots:           make(map[int]int),
-		slotSizes:       make(map[int]int),
-		paramOffsets:    make(map[string]int),
-		jmpSlots:        make(map[int]int),
-		globalOffsets:   make(map[string]int),
-		helpersEmitted:  make(map[string]bool),
-		fusedCompares:   make(map[int]bool),
-		NoBranchLayout:  os.Getenv("NO_BRANCH_LAYOUT6809") != "",
-		NoFusedCompares: os.Getenv("NO_FUSED_COMPARES6809") != "",
-		NoLeafOpt:       os.Getenv("NO_LEAF_OPT6809") != "",
-		NoSlotSharing:   os.Getenv("NO_SLOT_SHARING6809") != "",
-		NoLocalRegAlloc: os.Getenv("NO_LOCAL_REGALLOC6809") != "",
+		useFramePointer:   useFramePointer,
+		globalsAtY:        globalsAtY,
+		picMode:           picMode,
+		frameOffset:       frameOff,
+		slots:             make(map[int]int),
+		slotSizes:         make(map[int]int),
+		paramOffsets:      make(map[string]int),
+		jmpSlots:          make(map[int]int),
+		globalOffsets:     make(map[string]int),
+		helpersEmitted:    make(map[string]bool),
+		fusedCompares:     make(map[int]bool),
+		NoBranchLayout:    os.Getenv("NO_BRANCH_LAYOUT6809") != "",
+		NoFusedCompares:   os.Getenv("NO_FUSED_COMPARES6809") != "",
+		NoLeafOpt:         os.Getenv("NO_LEAF_OPT6809") != "",
+		NoSlotSharing:     os.Getenv("NO_SLOT_SHARING6809") != "",
+		NoLocalRegAlloc:   os.Getenv("NO_LOCAL_REGALLOC6809") != "",
+		NoCSSALowering:    os.Getenv("NO_CSSA_LOWERING6809") != "",
+		cssaScratchOffset: -1,
 	}
 }
 
@@ -263,6 +268,13 @@ func (b *Backend) offsetAddr(off int, sz int) string {
 	}
 	// In S frame: locals start at S + pushedBytes + off
 	return fmt.Sprintf("%d,s", off+b.pushedBytes)
+}
+
+func (b *Backend) cssaScratchAddr() string {
+	if b.cssaScratchOffset < 0 {
+		return ""
+	}
+	return b.offsetAddr(b.cssaScratchOffset, 2)
 }
 
 func (b *Backend) resolveSlot(id int) int {
@@ -1788,31 +1800,208 @@ func (b *Backend) emitPrint(newline bool, args []ir.Value) {
 	b.popBytes(cleanup)
 }
 
+func (b *Backend) getPhiSrcLoc(val ir.Value) string {
+	val = b.resolveVal(val)
+	switch v := val.(type) {
+	case *ir.ConstByte, *ir.ConstWord, *ir.ZeroInit, *ir.StringLiteral:
+		return fmt.Sprintf("$const_%p", v)
+	case *ir.Parameter:
+		return b.paramAddr(v.Name)
+	case *ir.Global:
+		if b.globalsAtY {
+			return fmt.Sprintf("%d,y", b.globalOffsets[v.Name])
+		}
+		if b.picMode {
+			return fmt.Sprintf("v_%s,pcr", v.Name)
+		}
+		return fmt.Sprintf("v_%s", v.Name)
+	case ir.Instruction:
+		canon := b.resolveSlot(v.GetID())
+		if _, ok := b.slots[canon]; ok {
+			return b.localAddr(v.GetID())
+		}
+		return fmt.Sprintf("$instr_%d", v.GetID())
+	default:
+		return fmt.Sprintf("$val_%p", val)
+	}
+}
+
 func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
+	if b.NoCSSALowering {
+		for _, instr := range to.Instructions {
+			if phi, ok := instr.(*ir.Phi); ok {
+				for _, edge := range phi.Edges {
+					if edge.Block == from {
+						sz := b.getTypeSizeByType(phi.Typ)
+						destAddr := b.localAddr(phi.GetID())
+						if sz == 1 {
+							b.loadVal(edge.Value)
+							b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
+						} else if sz == 2 {
+							b.loadVal(edge.Value)
+							if b.getValSize(edge.Value) == 1 {
+								b.buf.WriteString("\tclra\n")
+							}
+							b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destAddr))
+						} else {
+							b.emitLoadAddr("y", b.getAddrStr(edge.Value))
+							b.emitLoadAddr("x", destAddr)
+							b.emitCopy("x", "y", sz)
+						}
+					}
+				}
+			}
+		}
+		return
+	}
+
+	type phiAssignment struct {
+		phi      *ir.Phi
+		val      ir.Value
+		sz       int
+		destAddr string
+		srcAddr  string
+	}
+
+	var assignments []phiAssignment
+	var moves []opt.ParallelMove
+
 	for _, instr := range to.Instructions {
 		if phi, ok := instr.(*ir.Phi); ok {
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
 					sz := b.getTypeSizeByType(phi.Typ)
 					destAddr := b.localAddr(phi.GetID())
-					if sz == 1 {
-						b.loadVal(edge.Value)
-						b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
-					} else if sz == 2 {
-						b.loadVal(edge.Value)
-						if b.getValSize(edge.Value) == 1 {
-							b.buf.WriteString("\tclra\n")
-						}
-						b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destAddr))
-					} else {
-						b.emitLoadAddr("y", b.getAddrStr(edge.Value))
-						b.emitLoadAddr("x", destAddr)
-						b.emitCopy("x", "y", sz)
-					}
+					srcAddr := b.getPhiSrcLoc(edge.Value)
+					assignments = append(assignments, phiAssignment{
+						phi:      phi,
+						val:      edge.Value,
+						sz:       sz,
+						destAddr: destAddr,
+						srcAddr:  srcAddr,
+					})
+					moves = append(moves, opt.ParallelMove{
+						Dest: destAddr,
+						Src:  srcAddr,
+						Size: sz,
+					})
 				}
 			}
 		}
 	}
+
+	if len(assignments) == 0 {
+		return
+	}
+
+	assignMap := make(map[string]phiAssignment, len(assignments))
+	for _, a := range assignments {
+		assignMap[a.destAddr] = a
+	}
+
+	steps := opt.SequentializeParallelCopies(moves)
+
+	for _, step := range steps {
+		switch step.Kind {
+		case opt.StepCopy:
+			destAddr := step.Dest.(string)
+			sz := step.Size
+			if assign, ok := assignMap[destAddr]; ok {
+				if sz == 1 {
+					b.loadVal(assign.val)
+					b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
+				} else if sz == 2 {
+					b.loadVal(assign.val)
+					if b.getValSize(assign.val) == 1 {
+						b.buf.WriteString("\tclra\n")
+					}
+					b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destAddr))
+				} else {
+					b.emitLoadAddr("y", assign.srcAddr)
+					b.emitLoadAddr("x", destAddr)
+					b.emitCopy("x", "y", sz)
+				}
+			} else {
+				srcAddr := step.Src.(string)
+				if sz == 1 {
+					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", srcAddr))
+					b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
+				} else if sz == 2 {
+					b.buf.WriteString(fmt.Sprintf("\tldd %s\n", srcAddr))
+					b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destAddr))
+				} else {
+					b.emitLoadAddr("y", srcAddr)
+					b.emitLoadAddr("x", destAddr)
+					b.emitCopy("x", "y", sz)
+				}
+			}
+
+		case opt.StepSwap:
+			loc1 := step.Loc1.(string)
+			loc2 := step.Loc2.(string)
+			sz := step.Size
+			if sz == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tlda %s\n", loc1))
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", loc2))
+				b.buf.WriteString("\texg a,b\n")
+				b.buf.WriteString(fmt.Sprintf("\tsta %s\n", loc1))
+				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", loc2))
+			} else if sz == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", loc1))
+				b.buf.WriteString(fmt.Sprintf("\tldx %s\n", loc2))
+				b.buf.WriteString("\texg d,x\n")
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", loc1))
+				b.buf.WriteString(fmt.Sprintf("\tstx %s\n", loc2))
+			} else {
+				scratch := b.cssaScratchAddr()
+				b.emitLoadAddr("y", loc1)
+				b.emitLoadAddr("x", scratch)
+				b.emitCopy("x", "y", sz)
+				b.emitLoadAddr("y", loc2)
+				b.emitLoadAddr("x", loc1)
+				b.emitCopy("x", "y", sz)
+				b.emitLoadAddr("y", scratch)
+				b.emitLoadAddr("x", loc2)
+				b.emitCopy("x", "y", sz)
+			}
+			b.clobberAllRegs()
+
+		case opt.StepSave:
+			srcAddr := step.Src.(string)
+			scratch := b.cssaScratchAddr()
+			sz := step.Size
+			if sz == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", srcAddr))
+				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", scratch))
+			} else if sz == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", srcAddr))
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", scratch))
+			} else {
+				b.emitLoadAddr("y", srcAddr)
+				b.emitLoadAddr("x", scratch)
+				b.emitCopy("x", "y", sz)
+			}
+			b.clobberAllRegs()
+
+		case opt.StepRestore:
+			destAddr := step.Dest.(string)
+			scratch := b.cssaScratchAddr()
+			sz := step.Size
+			if sz == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", scratch))
+				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", destAddr))
+			} else if sz == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", scratch))
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destAddr))
+			} else {
+				b.emitLoadAddr("y", scratch)
+				b.emitLoadAddr("x", destAddr)
+				b.emitCopy("x", "y", sz)
+			}
+			b.clobberAllRegs()
+		}
+	}
+	b.clobberAllRegs()
 }
 
 func (b *Backend) isZeroVal(val ir.Value) bool {
@@ -2544,6 +2733,49 @@ func (b *Backend) emitFunc(f *ir.Function) {
 				b.allocateSlot(sz, instr.GetID())
 			}
 		}
+	}
+
+	needsScratch := false
+	for _, blk := range f.Blocks {
+		for _, succ := range blk.Successors {
+			var moves []opt.ParallelMove
+			for _, instr := range succ.Instructions {
+				if phi, ok := instr.(*ir.Phi); ok {
+					for _, edge := range phi.Edges {
+						if edge.Block == blk {
+							sz := b.getTypeSizeByType(phi.Typ)
+							destAddr := b.localAddr(phi.GetID())
+							srcAddr := b.getPhiSrcLoc(edge.Value)
+							moves = append(moves, opt.ParallelMove{
+								Dest: destAddr,
+								Src:  srcAddr,
+								Size: sz,
+							})
+						}
+					}
+				}
+			}
+			if len(moves) >= 3 {
+				steps := opt.SequentializeParallelCopies(moves)
+				for _, s := range steps {
+					if s.Kind == opt.StepSave {
+						needsScratch = true
+						break
+					}
+				}
+			}
+			if needsScratch {
+				break
+			}
+		}
+		if needsScratch {
+			break
+		}
+	}
+	if needsScratch {
+		b.cssaScratchOffset = b.allocateRawSlot(2)
+	} else {
+		b.cssaScratchOffset = -1
 	}
 
 	b.buf.WriteString(fmt.Sprintf("\n%s:\n", f.EmitName()))

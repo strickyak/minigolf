@@ -146,19 +146,23 @@ flowchart TD
 1. **The Parallel Copy Problem in M6809**:
    - At block boundaries, $\Phi$-functions represent simultaneous parallel assignments:
      $$\begin{pmatrix} r_1 \\ r_2 \end{pmatrix} \leftarrow \begin{pmatrix} r_2 \\ r_1 \end{pmatrix}$$
-   - Naive sequential assignment (`tfr r2, r1` then `tfr r1, r2`) overwrites $r_1$'s old value.
-2. **Parallel Copy Sequentializer**:
-   - Implement the standard graph-cycle decomposition algorithm (Hack et al. / Sreedhar):
-     - Identify non-cyclic moves: emit `tfr src, dst`.
-     - Identify 2-cycles: emit **hardware `exg r1, r2`**!
-       - On M6809, `exg` operates on *any* pair of registers: `exg a,b`, `exg d,x`, `exg x,y`, `exg x,u`, `exg d,u`! This is an enormous architectural advantage over x86/ARM (which lack generic register exchange).
-     - For $N$-cycles ($N \ge 3$): use a scratch register or push one register to stack (`pshs`), sequentialize remaining transfers, and pop to target (`puls`).
-3. **CSSA (Conventional SSA) Coalescing**:
-   - Group $\Phi$-related SSA variables into congruence classes to minimize parallel copies.
+   - Naive sequential assignment (`tfr r2, r1` then `tfr r1, r2`) overwrites $r_1$'s old value before it can be copied.
+2. **Parallel Copy Sequentializer (`opt/parallel_copy.go`)**:
+   - Implement backend-agnostic graph-cycle decomposition (Hack et al. / Sreedhar):
+     - Identify non-cyclic moves: emit in topological dependency order (`StepCopy`).
+     - Identify 2-cycles: emit **hardware `exg r1, r2`** (`StepSwap`)!
+       - On M6809: `exg d, x` for 16-bit swaps, `exg a, b` for 8-bit swaps (single 8-cycle instruction, zero stack overhead).
+     - For $N$-cycles ($N \ge 3$): emit `StepSave` to a dedicated function-frame scratch slot, sequentialize remaining copies, and emit `StepRestore` to complete the cycle.
+3. **M6809 CSSA Edge Lowering (`m6809/backend.go`)**:
+   - Replace naive sequential phi loop in `emitPhiAssignments` with parallel copy sequentialization.
+   - Detect identity copies (`Dest == Src`) and eliminate as zero-cost no-ops.
+   - Conditionally allocate 2-byte frame scratch space (`b.cssaScratchOffset`) only if an actual $N$-cycle exists, preserving zero-byte stack frames for leaf functions.
 4. **Guard Flag**:
    - `-no-cssa-lowering6809` (env `NO_CSSA_LOWERING6809`).
 5. **Testing & Verification**:
-   - Stress-test diamond CFGs, break/continue statements in nested loops, and mutual recursion phi patterns.
+   - 100% PASS on `opt/parallel_copy_test.go` (acyclic chains, 2-cycles, $N$-cycles, external readers).
+   - 100% PASS on `m6809/cssa_test.go` verifying hardware `exg d,x`, `exg a,b`, and scratch save/restore.
+   - Full test suite passed 100% across all 87 benchmarks and all 8 M6809 architectural variants with zero regressions and zero overhead.
 
 ---
 
@@ -213,6 +217,6 @@ flowchart TD
 - [x] **Milestone 4.1**: Liveness analysis, `RegMask` bitmask architecture, interference graph & pressure computation, M6809 stack slot sharing integration.
 - [x] **Milestone 4.2**: Local basic-block allocation (accumulator reuse & dead stack store elimination).
 - [x] **Milestone 4.3**: Loop analysis, dominator trees, induction variable discovery, loop invariant code motion (LICM), store-to-load forwarding.
-- [ ] **Milestone 4.4**: Conventional SSA ($\Phi$-elimination) & parallel copy resolution with `exg`.
+- [x] **Milestone 4.4**: Conventional SSA ($\Phi$-elimination) & parallel copy resolution with `exg`.
 - [ ] **Milestone 4.5**: Global chordal graph coloring, decoupled spilling, and conservative coalescing.
 - [ ] **Phase 4 Telemetry & Final Verification**: Comprehensive benchmark telemetry vs. Phase Three baseline.

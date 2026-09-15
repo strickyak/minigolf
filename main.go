@@ -299,6 +299,7 @@ func main() {
 	noLeafOpt6809 := flag.Bool("no-leaf-opt6809", false, "Disable M6809 leaf function frame optimization")
 	noSlotSharing6809 := flag.Bool("no-slotsharing6809", false, "Disable M6809 stack slot sharing")
 	noLocalRegAlloc6809 := flag.Bool("no-local-regalloc6809", false, "Disable M6809 local basic-block register allocation")
+	noCSSALowering6809 := flag.Bool("no-cssa-lowering6809", false, "Disable M6809 CSSA parallel copy resolution")
 	debugOpt := flag.Bool("debug_opt", false, "Enable debug output for optimizations like leaf level")
 	checkBoundsFlag := flag.Bool("check-bounds", false, "Enable bounds checking for slices and arrays")
 	checkNilFlag := flag.Bool("check-nil", false, "Enable nil pointer checks for pointers, method receivers, and function references")
@@ -378,6 +379,9 @@ func main() {
 	}
 	if os.Getenv("NO_LOCAL_REGALLOC6809") != "" {
 		*noLocalRegAlloc6809 = true
+	}
+	if os.Getenv("NO_CSSA_LOWERING6809") != "" {
+		*noCSSALowering6809 = true
 	}
 
 	// Validate required flags
@@ -780,6 +784,9 @@ func main() {
 		}
 		if *noLocalRegAlloc6809 {
 			backend.NoLocalRegAlloc = true
+		}
+		if *noCSSALowering6809 {
+			backend.NoCSSALowering = true
 		}
 		asmCode := backend.Generate(irProg)
 
