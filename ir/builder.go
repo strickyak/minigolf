@@ -2442,7 +2442,7 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			typ = def
 			typ.Name = "slice_byte"
 		} else {
-			typ = b.tm.Intern(Type{Expr: &ast.Identifier{Value: "slice_byte"}, Name: "slice_byte", Builder: b})
+			panic("type prelude.slice_byte (string) is required for string literals but was not defined in prelude")
 		}
 
 		var structVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: typ}}, e)
@@ -3185,7 +3185,7 @@ func (b *Builder) tryResolve(item *GlobalItem) (err error) {
 					typ = def
 					typ.Name = "slice_byte"
 				} else {
-					typ = b.tm.Intern(Type{Expr: &ast.Identifier{Value: "slice_byte"}, Name: "slice_byte", Builder: b})
+					panic("type prelude.slice_byte (string) is required for string literals but was not defined in prelude")
 				}
 			} else {
 				panic("Cannot infer type for global variable: " + item.QName)

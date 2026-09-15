@@ -27,7 +27,7 @@ cstart_minigolf.asm:
 	@printf '\tpragma cescapes\n\torg $$8000\ncstart:\n\tlds #$$8000\n\tclra\n\tclrb\n\ttfr d,x\n\ttfr d,y\n\ttfr d,u\n\tlbsr _main\n__exit0:\n\tclra\n\tclrb\n__exit:\n\tstb $$FF05\nstuck:\n\tbra stuck\n_printf:\n\trts\n' > $@
 
 minigolf_core.asm: lnbasic.c
-	cd ../.. && go run main.go -I=golflib -I=c-tests -m=m6809 -o c-demos/lnbasic/minigolf_core.asm c-demos/lnbasic/lnbasic.c
+	cd ../.. && go run main.go -I c-demos/lnbasic/minimal -m=m6809 -o c-demos/lnbasic/minigolf_core.asm c-demos/lnbasic/lnbasic.c
 
 minigolf.decb: cstart_minigolf.asm minigolf_core.asm
 	cat cstart_minigolf.asm minigolf_core.asm > minigolf.asm
