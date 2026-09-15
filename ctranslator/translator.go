@@ -46,6 +46,7 @@ func TranslateFile(cFile string, opts Options) (string, error) {
 	// Build sources list: predefined macros, optional -D defines, then the C file.
 	var extraDefs strings.Builder
 	for name, val := range opts.Defines {
+		fmt.Fprintf(&extraDefs, "#undef %s\n", name)
 		if val == "" {
 			fmt.Fprintf(&extraDefs, "#define %s\n", name)
 		} else {

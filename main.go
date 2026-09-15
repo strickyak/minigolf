@@ -421,6 +421,13 @@ func main() {
 		}
 	}
 
+	archLower := strings.ToLower(*archFlag)
+	if archLower == "m6809" || archLower == "6809" || archLower == "m" {
+		if _, ok := cDefines["unix"]; !ok {
+			cDefines["unix"] = "0"
+		}
+	}
+
 	// Remaining arguments are source files.
 	sourceFiles := flag.Args()
 	if len(sourceFiles) != 1 {
