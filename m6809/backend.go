@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ir"
@@ -175,6 +176,13 @@ type Backend struct {
 	NoGlobalRegAlloc  bool
 	globalRegs        map[int]string
 	cssaScratchOffset int
+
+	// Tunable optimization and code-generation thresholds (time vs space)
+	InlineMul16           bool // Inline 16-bit multiplication instead of calling __mul16 helper
+	InlineDivMod16        bool // Inline 16-bit division/modulus instead of calling __divmod16 helper
+	MemcpyUnrollThreshold int  // Max bytes to copy inline before calling __memcpy or looping (default: 4)
+	MemsetUnrollThreshold int  // Max bytes to zero inline before calling __memset0 or looping (default: 2)
+	ShiftUnrollThreshold  int  // Max bit count to shift inline before looping (default: 4)
 }
 
 func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
@@ -182,27 +190,48 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 	if useFramePointer {
 		frameOff = 2
 	}
-	return &Backend{
-		useFramePointer:   useFramePointer,
-		globalsAtY:        globalsAtY,
-		picMode:           picMode,
-		frameOffset:       frameOff,
-		slots:             make(map[int]int),
-		slotSizes:         make(map[int]int),
-		paramOffsets:      make(map[string]int),
-		jmpSlots:          make(map[int]int),
-		globalOffsets:     make(map[string]int),
-		helpersEmitted:    make(map[string]bool),
-		fusedCompares:     make(map[int]bool),
-		NoBranchLayout:    os.Getenv("NO_BRANCH_LAYOUT6809") != "",
-		NoFusedCompares:   os.Getenv("NO_FUSED_COMPARES6809") != "",
-		NoLeafOpt:         os.Getenv("NO_LEAF_OPT6809") != "",
-		NoSlotSharing:     os.Getenv("NO_SLOT_SHARING6809") != "",
-		NoLocalRegAlloc:   os.Getenv("NO_LOCAL_REGALLOC6809") != "",
-		NoCSSALowering:    os.Getenv("NO_CSSA_LOWERING6809") != "",
-		NoGlobalRegAlloc:  os.Getenv("NO_GLOBAL_REGALLOC6809") != "",
-		cssaScratchOffset: -1,
+	b := &Backend{
+		useFramePointer:       useFramePointer,
+		globalsAtY:            globalsAtY,
+		picMode:               picMode,
+		frameOffset:           frameOff,
+		slots:                 make(map[int]int),
+		slotSizes:             make(map[int]int),
+		paramOffsets:          make(map[string]int),
+		jmpSlots:              make(map[int]int),
+		globalOffsets:         make(map[string]int),
+		helpersEmitted:        make(map[string]bool),
+		fusedCompares:         make(map[int]bool),
+		NoBranchLayout:        os.Getenv("NO_BRANCH_LAYOUT6809") != "",
+		NoFusedCompares:       os.Getenv("NO_FUSED_COMPARES6809") != "",
+		NoLeafOpt:             os.Getenv("NO_LEAF_OPT6809") != "",
+		NoSlotSharing:         os.Getenv("NO_SLOT_SHARING6809") != "",
+		NoLocalRegAlloc:       os.Getenv("NO_LOCAL_REGALLOC6809") != "",
+		NoCSSALowering:        os.Getenv("NO_CSSA_LOWERING6809") != "",
+		NoGlobalRegAlloc:      os.Getenv("NO_GLOBAL_REGALLOC6809") != "",
+		cssaScratchOffset:     -1,
+		InlineMul16:           os.Getenv("INLINE_MUL16") != "",
+		InlineDivMod16:        os.Getenv("INLINE_DIVMOD16") != "",
+		MemcpyUnrollThreshold: 4,
+		MemsetUnrollThreshold: 2,
+		ShiftUnrollThreshold:  4,
 	}
+	if v := os.Getenv("MEMCPY_UNROLL_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			b.MemcpyUnrollThreshold = n
+		}
+	}
+	if v := os.Getenv("MEMSET_UNROLL_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			b.MemsetUnrollThreshold = n
+		}
+	}
+	if v := os.Getenv("SHIFT_UNROLL_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			b.ShiftUnrollThreshold = n
+		}
+	}
+	return b
 }
 
 func (b *Backend) canTrack(val ir.Value) bool {
@@ -854,7 +883,7 @@ func (b *Backend) emitCopy(destReg string, srcReg string, size int) {
 		b.buf.WriteString(fmt.Sprintf("\tldd ,%s\n\tstd ,%s\n", srcReg, destReg))
 		return
 	}
-	if size <= 4 {
+	if size <= b.MemcpyUnrollThreshold {
 		for i := 0; i < size; i++ {
 			b.buf.WriteString(fmt.Sprintf("\tlda %d,%s\n\tsta %d,%s\n", i, srcReg, i, destReg))
 		}
@@ -888,6 +917,12 @@ func (b *Backend) emitMemset0(destReg string, size int) {
 	if size == 2 {
 		b.buf.WriteString("\tclra\n\tclrb\n")
 		b.buf.WriteString(fmt.Sprintf("\tstd ,%s\n", destReg))
+		return
+	}
+	if size <= b.MemsetUnrollThreshold {
+		for i := 0; i < size; i++ {
+			b.buf.WriteString(fmt.Sprintf("\tclr %d,%s\n", i, destReg))
+		}
 		return
 	}
 	if destReg == "x" {
@@ -930,7 +965,11 @@ func (b *Backend) computeElementAddr(destReg string, arrayVal ir.Value, indexVal
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tpshs %s\n", destReg))
 			b.buf.WriteString(fmt.Sprintf("\tldx #%d\n", eltSize))
-			b.callHelper("__mul16")
+			if b.InlineMul16 {
+				b.emitInlineMul16()
+			} else {
+				b.callHelper("__mul16")
+			}
 			b.buf.WriteString(fmt.Sprintf("\tpuls %s\n", destReg))
 			b.buf.WriteString(fmt.Sprintf("\tlea%s d,%s\n", destReg, destReg))
 		}
@@ -1062,20 +1101,28 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			b.buf.WriteString("\tclra\n\ttfr d,x\n")
 			b.loadVal(i.Right)
 			b.buf.WriteString("\tclra\n")
-			b.callHelper("__div16")
+			if b.InlineDivMod16 {
+				b.emitInlineDivMod16(true)
+			} else {
+				b.callHelper("__div16")
+			}
 		case "mod":
 			b.loadVal(i.Left)
 			b.buf.WriteString("\tclra\n\ttfr d,x\n")
 			b.loadVal(i.Right)
 			b.buf.WriteString("\tclra\n")
-			b.callHelper("__mod16")
+			if b.InlineDivMod16 {
+				b.emitInlineDivMod16(false)
+			} else {
+				b.callHelper("__mod16")
+			}
 		case "shl":
 			if c, ok := b.asConstByte(rightVal); ok {
 				b.loadVal(i.Left)
 				k := int(c)
 				if k == 0 {
 					// no-op
-				} else if k <= 4 {
+				} else if k <= b.ShiftUnrollThreshold {
 					for s := 0; s < k; s++ {
 						b.buf.WriteString("\taslb\n")
 					}
@@ -1110,7 +1157,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				k := int(c)
 				if k == 0 {
 					// no-op
-				} else if k <= 4 {
+				} else if k <= b.ShiftUnrollThreshold {
 					for s := 0; s < k; s++ {
 						b.buf.WriteString(shiftInst)
 					}
@@ -1296,21 +1343,33 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			b.buf.WriteString("\tclra\n")
 		}
 		b.loadVal16("x", i.Right)
-		b.callHelper("__mul16")
+		if b.InlineMul16 {
+			b.emitInlineMul16()
+		} else {
+			b.callHelper("__mul16")
+		}
 	case "div":
 		b.loadVal16("x", i.Left)
 		b.loadVal(i.Right)
 		if b.getValSize(i.Right) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
-		b.callHelper("__div16")
+		if b.InlineDivMod16 {
+			b.emitInlineDivMod16(true)
+		} else {
+			b.callHelper("__div16")
+		}
 	case "mod":
 		b.loadVal16("x", i.Left)
 		b.loadVal(i.Right)
 		if b.getValSize(i.Right) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
-		b.callHelper("__mod16")
+		if b.InlineDivMod16 {
+			b.emitInlineDivMod16(false)
+		} else {
+			b.callHelper("__mod16")
+		}
 	case "shl":
 		if c, ok := b.asConstWord(rightVal); ok {
 			b.loadVal(i.Left)
@@ -1320,7 +1379,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			k := int(c)
 			if k == 0 {
 				// no-op
-			} else if k <= 4 {
+			} else if k <= b.ShiftUnrollThreshold {
 				for s := 0; s < k; s++ {
 					b.buf.WriteString("\taslb\n\trola\n")
 				}
@@ -1357,7 +1416,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			k := int(c)
 			if k == 0 {
 				// no-op
-			} else if k <= 4 {
+			} else if k <= b.ShiftUnrollThreshold {
 				for s := 0; s < k; s++ {
 					b.buf.WriteString(shiftInst)
 				}
@@ -2610,7 +2669,11 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			} else {
 				b.buf.WriteString("\tpshs x\n")
 				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n", eltSize))
-				b.callHelper("__mul16")
+				if b.InlineMul16 {
+					b.emitInlineMul16()
+				} else {
+					b.callHelper("__mul16")
+				}
 				b.buf.WriteString("\tpuls x\n\tleax d,x\n")
 			}
 		}
@@ -2960,6 +3023,66 @@ func (b *Backend) allocateSlot(sz int, id int) int {
 	return offset
 }
 
+func (b *Backend) emitInlineMul16() {
+	b.clobberAllRegs()
+	b.buf.WriteString("\tpshs d,x\n" +
+		"\tlda 1,s\n" +
+		"\tldb 3,s\n" +
+		"\tmul\n" +
+		"\ttfr d,x\n" +
+		"\tlda 0,s\n" +
+		"\tldb 3,s\n" +
+		"\tmul\n" +
+		"\ttfr b,a\n" +
+		"\tclrb\n" +
+		"\tleax d,x\n" +
+		"\tlda 1,s\n" +
+		"\tldb 2,s\n" +
+		"\tmul\n" +
+		"\ttfr b,a\n" +
+		"\tclrb\n" +
+		"\tleax d,x\n" +
+		"\ttfr x,d\n" +
+		"\tleas 4,s\n")
+}
+
+func (b *Backend) emitInlineDivMod16(isDiv bool) {
+	b.clobberAllRegs()
+	if b.helpersEmitted == nil {
+		b.helpersEmitted = make(map[string]bool)
+	}
+	b.helpersEmitted["__div0_error"] = true
+	lblLoop := b.nextLabel()
+	lblNoSub := b.nextLabel()
+	lblNonZero := b.nextLabel()
+	b.buf.WriteString(fmt.Sprintf("\tcmpd #0\n"+
+		"\tbne %s\n"+
+		"\tjmp __div0_error\n"+
+		"%s:\n"+
+		"\tpshs u,d\n"+
+		"\tldu #16\n"+
+		"\tclra\n\tclrb\n"+
+		"%s:\n"+
+		"\texg d,x\n"+
+		"\taslb\n\trola\n"+
+		"\texg d,x\n"+
+		"\trolb\n\trola\n"+
+		"\tcmpd ,s\n"+
+		"\tblo %s\n"+
+		"\tsubd ,s\n"+
+		"\tleax 1,x\n"+
+		"%s:\n"+
+		"\tleau -1,u\n"+
+		"\tcmpu #0\n"+
+		"\tbne %s\n"+
+		"\tleas 2,s\n"+
+		"\tpuls u\n",
+		lblNonZero, lblNonZero, lblLoop, lblNoSub, lblNoSub, lblLoop))
+	if isDiv {
+		b.buf.WriteString("\ttfr x,d\n")
+	}
+}
+
 func (b *Backend) emitHelpers() {
 	if b.helpersEmitted["__mul16"] {
 		b.helpersBuf.WriteString(`
@@ -2987,7 +3110,7 @@ __mul16:
 `)
 	}
 
-	if b.helpersEmitted["__div16"] || b.helpersEmitted["__mod16"] {
+	if b.helpersEmitted["__div16"] || b.helpersEmitted["__mod16"] || b.helpersEmitted["__div0_error"] {
 		b.fmtCount++
 		lblDiv0Msg := fmt.Sprintf(".Lfmt%d", b.fmtCount)
 		b.rodataBuf.WriteString(fmt.Sprintf("%s:\n\t.asciz \"division by zero\"\n", lblDiv0Msg))
@@ -3021,7 +3144,7 @@ __mul16:
 		b.helpersBuf.WriteString(fmt.Sprintf(`
 __divmod16:
 	cmpd #0
-	beq .L_div0
+	beq __div0_error
 	pshs u,d
 	ldu #16
 	clra
@@ -3043,7 +3166,7 @@ __divmod16:
 	bne .L_divloop
 	leas 2,s
 	puls u,pc
-.L_div0:
+__div0_error:
 %s`+
 			fmt.Sprintf("\tstx %s\n", b.panicAddr())+
 			"\tpshs x\n"+

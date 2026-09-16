@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
@@ -294,6 +295,13 @@ func main() {
 	noInline := flag.Bool("no-inline", false, "Disable Function Inlining optimization")
 	noInlineTiny := flag.Bool("no-inline-tiny", false, "Disable Tiny Function Inlining optimization")
 	noInlineSingleCall := flag.Bool("no-inline-single-call", false, "Disable Single Callsite Inlining optimization")
+	inlineMaxTiny := flag.Int("inline-max-tiny", 8, "Maximum instructions for tiny function inlining")
+	inlineMaxRounds := flag.Int("inline-max-rounds", 10, "Maximum rounds of function inlining")
+	inlineMul16 := flag.Bool("inline-mul16", false, "Inline 16-bit multiplication instead of calling __mul16 helper (M6809)")
+	inlineDivMod16 := flag.Bool("inline-divmod16", false, "Inline 16-bit division/modulo instead of calling __divmod16 helper (M6809)")
+	memcpyUnrollThreshold := flag.Int("memcpy-unroll-threshold", 4, "Maximum byte size to inline memcpy (M6809)")
+	memsetUnrollThreshold := flag.Int("memset-unroll-threshold", 2, "Maximum byte size to inline memset0 (M6809)")
+	shiftUnrollThreshold := flag.Int("shift-unroll-threshold", 4, "Maximum bit count to unroll constant shifts (M6809)")
 	noBranchLayout6809 := flag.Bool("no-branch-layout6809", false, "Disable M6809 branch layout and condition inversion")
 	noFusedCompares6809 := flag.Bool("no-fused-compares6809", false, "Disable M6809 fused compare and branch")
 	noLeafOpt6809 := flag.Bool("no-leaf-opt6809", false, "Disable M6809 leaf function frame optimization")
@@ -365,6 +373,37 @@ func main() {
 	}
 	if os.Getenv("NO_INLINE_SINGLE_CALL") != "" {
 		*noInlineSingleCall = true
+	}
+	if v := os.Getenv("INLINE_MAX_TINY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			*inlineMaxTiny = n
+		}
+	}
+	if v := os.Getenv("INLINE_MAX_ROUNDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			*inlineMaxRounds = n
+		}
+	}
+	if os.Getenv("INLINE_MUL16") != "" {
+		*inlineMul16 = true
+	}
+	if os.Getenv("INLINE_DIVMOD16") != "" {
+		*inlineDivMod16 = true
+	}
+	if v := os.Getenv("MEMCPY_UNROLL_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			*memcpyUnrollThreshold = n
+		}
+	}
+	if v := os.Getenv("MEMSET_UNROLL_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			*memsetUnrollThreshold = n
+		}
+	}
+	if v := os.Getenv("SHIFT_UNROLL_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			*shiftUnrollThreshold = n
+		}
 	}
 	if os.Getenv("NO_BRANCH_LAYOUT6809") != "" {
 		*noBranchLayout6809 = true
@@ -686,6 +725,8 @@ func main() {
 			EnableInline:           !*noInline,
 			EnableInlineTiny:       !*noInline && !*noInlineTiny,
 			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:   *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
 			EnableDebugOpt:         *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
@@ -731,6 +772,8 @@ func main() {
 			EnableInline:           !*noInline,
 			EnableInlineTiny:       !*noInline && !*noInlineTiny,
 			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:   *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
 			EnableDebugOpt:         *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
@@ -774,6 +817,8 @@ func main() {
 			EnableInline:           !*noInline,
 			EnableInlineTiny:       !*noInline && !*noInlineTiny,
 			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:   *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
 			EnableDebugOpt:         *debugOpt,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
@@ -801,6 +846,21 @@ func main() {
 		}
 		if *noGlobalRegAlloc6809 {
 			backend.NoGlobalRegAlloc = true
+		}
+		if *inlineMul16 {
+			backend.InlineMul16 = true
+		}
+		if *inlineDivMod16 {
+			backend.InlineDivMod16 = true
+		}
+		if *memcpyUnrollThreshold != 4 {
+			backend.MemcpyUnrollThreshold = *memcpyUnrollThreshold
+		}
+		if *memsetUnrollThreshold != 2 {
+			backend.MemsetUnrollThreshold = *memsetUnrollThreshold
+		}
+		if *shiftUnrollThreshold != 4 {
+			backend.ShiftUnrollThreshold = *shiftUnrollThreshold
 		}
 		asmCode := backend.Generate(irProg)
 

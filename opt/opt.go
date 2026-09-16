@@ -17,12 +17,16 @@ type Config struct {
 	EnableStackAlloc       bool
 	EnableBranchFold       bool
 	EnableStoreLoad        bool
-	EnableLICM             bool
-	EnableDFE              bool
-	EnableInline           bool
-	EnableInlineTiny       bool
-	EnableInlineSingleCall bool
-	EnableDebugOpt         bool
+	EnableLICM                bool
+	EnableDFE                 bool
+	EnableInline              bool
+	EnableInlineTiny          bool
+	EnableInlineSingleCall    bool
+	MaxTinyInstructions      int
+	MaxInlineRounds           int
+	MaxLoopUnrollCount        int
+	MaxLoopUnrollInstructions int
+	EnableDebugOpt            bool
 }
 
 type Pass interface {
@@ -32,9 +36,19 @@ type Pass interface {
 
 func OptimizeProgram(p *ir.Program, config Config) {
 	if config.EnableInline {
+		maxTiny := config.MaxTinyInstructions
+		if maxTiny <= 0 {
+			maxTiny = 8
+		}
+		maxRounds := config.MaxInlineRounds
+		if maxRounds <= 0 {
+			maxRounds = 10
+		}
 		InlinePass(p, InlineOptions{
-			EnableTiny:       config.EnableInlineTiny,
-			EnableSingleCall: config.EnableInlineSingleCall,
+			EnableTiny:           config.EnableInlineTiny,
+			EnableSingleCall:     config.EnableInlineSingleCall,
+			MaxTinyInstructions: maxTiny,
+			MaxInlineRounds:      maxRounds,
 		})
 	}
 

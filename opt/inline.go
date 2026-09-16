@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ir"
@@ -12,17 +13,33 @@ import (
 var _ = fmt.Sprintf
 
 type InlineOptions struct {
-	EnableTiny       bool
-	EnableSingleCall bool
+	EnableTiny           bool
+	EnableSingleCall     bool
+	MaxTinyInstructions int // Maximum instructions for a tiny function (default: 8)
+	MaxInlineRounds      int // Maximum inlining passes (default: 10)
 }
 
 func DefaultInlineOptions() InlineOptions {
 	noInline := os.Getenv("NO_INLINE") != ""
 	noTiny := os.Getenv("NO_INLINE_TINY") != "" || noInline
 	noSingle := os.Getenv("NO_INLINE_SINGLE_CALL") != "" || noInline
+	maxTiny := 8
+	if v := os.Getenv("INLINE_MAX_TINY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxTiny = n
+		}
+	}
+	maxRounds := 10
+	if v := os.Getenv("INLINE_MAX_ROUNDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxRounds = n
+		}
+	}
 	return InlineOptions{
-		EnableTiny:       !noTiny,
-		EnableSingleCall: !noSingle,
+		EnableTiny:           !noTiny,
+		EnableSingleCall:     !noSingle,
+		MaxTinyInstructions: maxTiny,
+		MaxInlineRounds:      maxRounds,
 	}
 }
 
@@ -50,7 +67,16 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 		return maxID
 	}
 
-	for round := 0; round < 10; round++ {
+	maxRounds := opts.MaxInlineRounds
+	if maxRounds <= 0 {
+		maxRounds = 10
+	}
+	maxTiny := opts.MaxTinyInstructions
+	if maxTiny <= 0 {
+		maxTiny = 8
+	}
+
+	for round := 0; round < maxRounds; round++ {
 		roundChanged := false
 
 		// Analyze call counts across all functions in the program
@@ -88,7 +114,7 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 						continue
 					}
 
-					isTiny := opts.EnableTiny && isTinyFunction(callee)
+					isTiny := opts.EnableTiny && isTinyFunction(callee, maxTiny)
 					isSingle := opts.EnableSingleCall && callCounts[callee] == 1 && !addrTaken[callee]
 
 					if isTiny || isSingle {
@@ -185,7 +211,7 @@ func isStraightLine(f *ir.Function) bool {
 }
 
 // isTinyFunction checks if a function is small enough to inline unconditionally everywhere.
-func isTinyFunction(f *ir.Function) bool {
+func isTinyFunction(f *ir.Function, maxTiny int) bool {
 	if !isStraightLine(f) {
 		return false
 	}
@@ -202,7 +228,7 @@ func isTinyFunction(f *ir.Function) bool {
 			}
 		}
 	}
-	return instrCount <= 8
+	return instrCount <= maxTiny
 }
 
 // inlineStraightLine inlines a straight-line callee into caller block b at callIdx.
