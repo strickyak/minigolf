@@ -38,7 +38,7 @@ func TranslateFile(cFile string, opts Options) (string, error) {
 
 	// Apply user include paths.
 	if len(opts.IncludePaths) > 0 {
-		cfg.IncludePaths = append([]string{"@"}, opts.IncludePaths...)
+		cfg.IncludePaths = append([]string{""}, opts.IncludePaths...)
 		// Last -I directory serves as the system include path for <...>.
 		cfg.SysIncludePaths = []string{opts.IncludePaths[len(opts.IncludePaths)-1]}
 	}
@@ -1314,11 +1314,12 @@ func (t *translator) xExpr(n cc.Expression) string {
 		// Wrapped in parens so that *post_increment[T](&p) is not misread by the
 		// MiniGolf parser as a type-cast (*post_increment[T])(&p).
 		if x.Expr.Type().Kind() == cc.Ptr {
-			golfType := t.cTypeToGolf(x.Expr.Type())
+			pt := x.Expr.Type().(*cc.PointerType)
+			eltGolf := t.cTypeToGolf(pt.Elem())
 			if x.Dec {
-				return fmt.Sprintf("(post_decrement[%s](&%s))", golfType, base)
+				return fmt.Sprintf("(pointer_post_decrement[%s](&%s))", eltGolf, base)
 			}
-			return fmt.Sprintf("(post_increment[%s](&%s))", golfType, base)
+			return fmt.Sprintf("(pointer_post_increment[%s](&%s))", eltGolf, base)
 		}
 		// Non-pointer: use prelude helper that returns old value then mutates.
 		golfType := t.cTypeToGolf(x.Expr.Type())
@@ -1333,11 +1334,12 @@ func (t *translator) xExpr(n cc.Expression) string {
 			// Pointer prefix increment/decrement: use prelude helpers that mutate
 			// and return the new pointer value. Wrapped in parens for the same
 			// reason as postfix: avoid *pre_increment[T](&p) being parsed as a cast.
-			golfType := t.cTypeToGolf(x.Expr.Type())
+			pt := x.Expr.Type().(*cc.PointerType)
+			eltGolf := t.cTypeToGolf(pt.Elem())
 			if x.Dec {
-				return fmt.Sprintf("(pre_decrement[%s](&%s))", golfType, base)
+				return fmt.Sprintf("(pointer_pre_decrement[%s](&%s))", eltGolf, base)
 			}
-			return fmt.Sprintf("(pre_increment[%s](&%s))", golfType, base)
+			return fmt.Sprintf("(pointer_pre_increment[%s](&%s))", eltGolf, base)
 		}
 		// Non-pointer: use prelude helper that mutates and returns new value.
 		golfType := t.cTypeToGolf(x.Expr.Type())
@@ -1488,25 +1490,21 @@ func (t *translator) xPrimary(x *cc.PrimaryExpression) string {
 		// Substitute static-local names with their mangled global names.
 		if gname, ok := t.staticNameMap[name]; ok {
 			// If the global is an array, decay it to a pointer as C would.
-			if ptrType, ok := t.staticArrayMap[gname]; ok {
-				return fmt.Sprintf("(%s)(%s)", ptrType, gname)
+			if _, ok := t.staticArrayMap[gname]; ok {
+				return fmt.Sprintf("&%s[0]", gname)
 			}
 			return gname
 		}
 		// Array-to-pointer decay for regular (non-static) variables:
 		// if the declared type of this identifier is an array (e.g. char buf[5]),
 		// cc/v5 decays the expression type to a pointer but Golf keeps the
-		// variable as [N]T. Emit (*EltType)(name) to force the decay.
+		// variable as [N]T. Emit &name[0] to take the address of the first element.
 		if resolved := x.ResolvedTo(); resolved != nil {
 			type typer interface{ Type() cc.Type }
 			if typerNode, ok := resolved.(typer); ok {
 				declaredTyp := typerNode.Type()
 				if declaredTyp != nil && declaredTyp.Kind() == cc.Array {
-					at, ok := declaredTyp.(*cc.ArrayType)
-					if ok {
-						eltGolf := t.cTypeToGolf(at.Elem())
-						return fmt.Sprintf("(*%s)(%s)", eltGolf, name)
-					}
+					return fmt.Sprintf("&%s[0]", name)
 				}
 			}
 		}
@@ -1624,7 +1622,7 @@ func (t *translator) xCall(x *cc.CallExpr) string {
 func (t *translator) xUnary(x *cc.UnaryExpr) string {
 	switch x.Case {
 	case cc.UnaryExpressionAddrof:
-		return "&" + t.xExpr(x.Expr)
+		return "&" + t.xExprNoDecay(x.Expr)
 	case cc.UnaryExpressionDeref:
 		// Detect: *((*T)(__builtin_va_arg_impl(ap)))
 		// → peek[T](ap.Pop().BaseAddr)

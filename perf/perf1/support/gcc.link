@@ -1,0 +1,8 @@
+define basesympat s_%s
+define lensympat l_%s
+section .text.startup load 8000
+section .text
+section .rodata
+section .data
+section .bss,bss
+entry cstart

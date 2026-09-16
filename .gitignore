@@ -42,3 +42,9 @@ go.work.sum
 _tmp/
 minigolf
 _test_out
+perf/*/build/
+perf/*/disasm/
+*.decb
+*.map
+*.list
+*.o

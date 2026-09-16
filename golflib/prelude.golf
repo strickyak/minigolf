@@ -75,6 +75,29 @@ func pre_decrement[T any](p *T) T {
 	return *p
 }
 
+func pointer_post_increment[T any](p **T) *T {
+	z := *p
+	*p = pointer_add[T](*p, 1)
+	return z
+}
+
+func pointer_post_decrement[T any](p **T) *T {
+	z := *p
+	*p = pointer_sub[T](*p, 1)
+	return z
+}
+
+func pointer_pre_increment[T any](p **T) *T {
+	*p = pointer_add[T](*p, 1)
+	return *p
+}
+
+func pointer_pre_decrement[T any](p **T) *T {
+	*p = pointer_sub[T](*p, 1)
+	return *p
+}
+
+
 /////////////////////////////////////////////
 
 func clear[T any](p *T) {
