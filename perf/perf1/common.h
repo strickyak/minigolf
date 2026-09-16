@@ -5,19 +5,17 @@
 #include <stdio.h>
 #else
 #ifdef _CMOC_VERSION_
-#define VOLATILE
-#else
-#define VOLATILE volatile
+#define volatile
 #endif
 
 static void putchar(char c) {
-    *(VOLATILE char *)0xFF00 = c;
+    *(volatile char *)0xFF00 = c;
 }
 
 static int getchar(void) {
     int c;
     do {
-        c = (int)(*(VOLATILE unsigned char *)0xFF01);
+        c = (int)(*(volatile unsigned char *)0xFF01);
     } while (c == 0);
     return c;
 }

@@ -17,8 +17,8 @@ All tests were executed bare-metal on the **Hatvan VM** (`hatvan-vm --hypercalls
 | Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCC | MG vs GCCMax |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | `01_putchar` | **134** | 122 | 75 | 66 | 1.79x | 2.03x |
-| `02_count_loop` | **1,370** | 845 | 129 | 120 | 10.62x | 11.42x |
-| `03_arithmetic` | **15,015** | 14,503 | 95 | 86 | 158.05x | 174.59x |
+| `02_count_loop` | **1,620** | 895 | 542 | 531 | 2.99x | 3.05x |
+| `03_arithmetic` | **15,519** | 14,679 | 16,390 | 16,409 | 0.95x | 0.95x |
 | `04_fibonacci` | **21,700** | 14,322 | 12,466 | 11,519 | 1.74x | 1.88x |
 | `05_array_sum` | **17,348** | 12,165 | 11,997 | 11,836 | 1.45x | 1.47x |
 | `06_string_ops` | **26,473** | 7,271 | 5,643 | 5,319 | 4.69x | 4.98x |
@@ -32,8 +32,8 @@ All tests were executed bare-metal on the **Hatvan VM** (`hatvan-vm --hypercalls
 | Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCC | MG vs GCCMax |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | `01_putchar` | **74 B** | 204 B | 92 B | 87 B | 0.80x | 0.85x |
-| `02_count_loop` | **171 B** | 237 B | 128 B | 123 B | 1.34x | 1.39x |
-| `03_arithmetic` | **957 B** | 622 B | 104 B | 99 B | 9.20x | 9.67x |
+| `02_count_loop` | **203 B** | 251 B | 139 B | 133 B | 1.46x | 1.53x |
+| `03_arithmetic` | **1054 B** | 659 B | 586 B | 548 B | 1.80x | 1.92x |
 | `04_fibonacci` | **758 B** | 459 B | 362 B | 333 B | 2.09x | 2.28x |
 | `05_array_sum` | **1225 B** | 571 B | 373 B | 348 B | 3.28x | 3.52x |
 | `06_string_ops` | **1794 B** | 710 B | 514 B | 466 B | 3.49x | 3.85x |
