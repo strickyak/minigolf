@@ -86,6 +86,8 @@ By inspecting the disassembled assembly in `perf/perf1/disasm/`, key differences
 
 ## 4. Prioritized Optimization Roadmap for MiniGolf
 
+For detailed analysis of heuristics (`Popularity`, `TrunkLevel`, `LeafLevel`), time-vs-space trade-offs, and concrete tasks, see [**`optimization-ideas.md`**](file:///home/strick/github.com/strickyak/minigolf/perf/perf1/optimization-ideas.md).
+
 Based on these empirical results, the following optimizations will yield the highest performance gains for MiniGolf:
 
 1. **Redundant Spill/Reload Elimination**: Remove consecutive `std X,s; ldd X,s` or `tfr x,d; tfr d,u; ldd ,u`.
