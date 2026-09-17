@@ -1,0 +1,16 @@
+--- Sqrt Zero and One ---
+sqrt(0) = 0.0
+sqrt(1) = 1.0
+--- Sqrt Exact Squares ---
+sqrt(4) = 2.0
+sqrt(9) = 3.0
+sqrt(16) = 4.0
+sqrt(25) = 5.0
+sqrt(100) = 10.0
+--- Sqrt Fractions ---
+sqrt(0.25) = 0.5
+sqrt(0.0625) = 0.25
+--- Sqrt Irrational ---
+sqrt(2) = 1.414213
+--- Hypot ---
+hypot(3, 4) = 5.0

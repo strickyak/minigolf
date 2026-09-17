@@ -1,0 +1,9 @@
+package main
+
+import "floating"
+import "math"
+
+func main() {
+	negFour := floating.FromInt(-4)
+	math.Sqrt(negFour)
+}

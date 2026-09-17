@@ -1,0 +1,44 @@
+package main
+
+import "floating"
+import "math"
+
+func main() {
+	println("--- Sqrt Zero and One ---")
+	zero := floating.FromWord(0)
+	println("sqrt(0) =", floating.Format(math.Sqrt(zero)))
+
+	one := floating.FromWord(1)
+	println("sqrt(1) =", floating.Format(math.Sqrt(one)))
+
+	println("--- Sqrt Exact Squares ---")
+	four := floating.FromWord(4)
+	println("sqrt(4) =", floating.Format(math.Sqrt(four)))
+
+	nine := floating.FromWord(9)
+	println("sqrt(9) =", floating.Format(math.Sqrt(nine)))
+
+	sixteen := floating.FromWord(16)
+	println("sqrt(16) =", floating.Format(math.Sqrt(sixteen)))
+
+	twentyfive := floating.FromWord(25)
+	println("sqrt(25) =", floating.Format(math.Sqrt(twentyfive)))
+
+	hundred := floating.FromWord(100)
+	println("sqrt(100) =", floating.Format(math.Sqrt(hundred)))
+
+	println("--- Sqrt Fractions ---")
+	pt25 := floating.Scan("0.25")
+	println("sqrt(0.25) =", floating.Format(math.Sqrt(pt25)))
+
+	pt0625 := floating.Scan("0.0625")
+	println("sqrt(0.0625) =", floating.Format(math.Sqrt(pt0625)))
+
+	println("--- Sqrt Irrational ---")
+	two := floating.FromWord(2)
+	println("sqrt(2) =", floating.Format(math.Sqrt(two)))
+
+	println("--- Hypot ---")
+	three := floating.FromWord(3)
+	println("hypot(3, 4) =", floating.Format(math.Hypot(three, four)))
+}

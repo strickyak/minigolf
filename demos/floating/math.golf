@@ -1,0 +1,58 @@
+package math
+
+import "floating"
+
+func Sqrt(x floating.FloatingPoint) floating.FloatingPoint {
+	if x.Sign() != 0 && !x.IsZero() {
+		panic("math.Sqrt: negative input")
+	}
+	if x.IsZero() {
+		return x
+	}
+
+	exp := x.GetExp()
+	var resExp int
+	var y floating.FloatingPoint
+
+	if (exp & 1) == 0 {
+		resExp = exp / 2
+		y.Mantissa[0] = 0x98
+	} else {
+		if exp < 0 {
+			resExp = (exp - 1) / 2
+		} else {
+			resExp = exp / 2
+		}
+		y.Mantissa[0] = 0xD8
+	}
+	y.SetSignExp(0, resExp)
+
+	for iter := 0; iter < 6; iter++ {
+		div := floating.Div(x, y)
+		sum := floating.Add(y, div)
+		next := sum
+		next.SetSignExp(0, next.GetExp()-1)
+		if next.SignExp == y.SignExp &&
+			next.Mantissa[0] == y.Mantissa[0] &&
+			next.Mantissa[1] == y.Mantissa[1] &&
+			next.Mantissa[2] == y.Mantissa[2] &&
+			next.Mantissa[3] == y.Mantissa[3] {
+			break
+		}
+		y = next
+	}
+	return y
+}
+
+func Abs(x floating.FloatingPoint) floating.FloatingPoint {
+	if x.Sign() != 0 {
+		return floating.Neg(x)
+	}
+	return x
+}
+
+func Hypot(p floating.FloatingPoint, q floating.FloatingPoint) floating.FloatingPoint {
+	p2 := floating.Mul(p, p)
+	q2 := floating.Mul(q, q)
+	return Sqrt(floating.Add(p2, q2))
+}
