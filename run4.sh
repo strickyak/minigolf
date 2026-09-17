@@ -3,13 +3,13 @@ mkdir -p _tmp
 rm -f $T.*.out
 
 echo "[ IR ] _tmp/ir" >&2
-(set -x; go run main.go  -I=c-tests -I=c-demos -I=c-demos/floating -I=demos -I=demos/floating -I=golflib -m=ir -o=_tmp/ir  "$@" )
+(set -x; go run main.go  -I=c-tests -I=c-demos -I=c-demos/floating -I=c-demos/pythonsub -I=demos -I=demos/floating -I=golflib -m=ir -o=_tmp/ir  "$@" )
 
 echo "[ CBE ] _tmp/cbe.c $T.cbe.out" >&2
-(set -x; go run main.go  -I=c-tests -I=c-demos -I=c-demos/floating -I=demos -I=demos/floating -I=golflib -m=cbe -o=_tmp/cbe.c "$@"  &&  ( cd _tmp ; gcc -O1 -g -o cbe cbe.c ; ./cbe > $T.cbe.out ) )
+(set -x; go run main.go  -I=c-tests -I=c-demos -I=c-demos/floating -I=c-demos/pythonsub -I=demos -I=demos/floating -I=golflib -m=cbe -o=_tmp/cbe.c "$@"  &&  ( cd _tmp ; gcc -O1 -g -o cbe cbe.c ; ./cbe > $T.cbe.out ) )
 
 echo "[ AMD64 ] _tmp/amd64.s $T.amd64.out" >&2
-(set -x; go run main.go  -I=c-tests -I=c-demos -I=c-demos/floating -I=demos -I=demos/floating -I=golflib -m=amd64 -o=_tmp/amd64.s "$@"  &&  ( cd _tmp ; gcc -O1 -g -o amd64 amd64.s ; ./amd64 > $T.amd64.out ) )
+(set -x; go run main.go  -I=c-tests -I=c-demos -I=c-demos/floating -I=c-demos/pythonsub -I=demos -I=demos/floating -I=golflib -m=amd64 -o=_tmp/amd64.s "$@"  &&  ( cd _tmp ; gcc -O1 -g -o amd64 amd64.s ; ./amd64 > $T.amd64.out ) )
 
 echo "[ M6809 ] _tmp/m.s $T.m.out" >&2
 # go run main.go  -I=demos -I=golflib -m=m -o=_tmp/m.s "$@"  &&  sh scripts/run-6809-at-4000.sh _tmp/m.s > $T.m.out
