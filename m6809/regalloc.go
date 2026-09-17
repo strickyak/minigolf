@@ -159,6 +159,12 @@ func (b *Backend) AllocateRegisters(f *ir.Function) map[int]string {
 				continue
 			}
 
+			// Do not allocate physical registers to constants or sizeof
+			switch instr.(type) {
+			case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof:
+				continue
+			}
+
 			// Do not allocate physical registers to non-escaping AddressOfLocal
 			// (they are synthetic addresses and will not be materialized).
 			if aol, ok := instr.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {

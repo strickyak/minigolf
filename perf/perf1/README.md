@@ -16,31 +16,31 @@ All tests were executed bare-metal on the **Hatvan VM** (`hatvan-vm --hypercalls
 
 | Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCC | MG vs GCCMax |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `01_putchar` | **134** | 122 | 75 | 66 | 1.79x | 2.03x |
-| `02_count_loop` | **1,620** | 895 | 542 | 531 | 2.99x | 3.05x |
-| `03_arithmetic` | **15,519** | 14,679 | 16,390 | 16,409 | 0.95x | 0.95x |
-| `04_fibonacci` | **21,700** | 14,322 | 12,466 | 11,519 | 1.74x | 1.88x |
-| `05_array_sum` | **17,348** | 12,165 | 11,997 | 11,836 | 1.45x | 1.47x |
-| `06_string_ops` | **26,473** | 7,271 | 5,643 | 5,319 | 4.69x | 4.98x |
-| `07_sieve` | **45,323** | 17,772 | 14,256 | 14,800 | 3.18x | 3.06x |
-| `08_bubble_sort` | **86,883** | 44,102 | 42,391 | 41,207 | 2.05x | 2.11x |
-| `09_struct_ops` | **10,942** | 8,173 | 8,015 | 7,891 | 1.37x | 1.39x |
-| `10_switch_case` | **12,385** | 6,808 | 6,865 | 6,794 | 1.80x | 1.82x |
+| `01_putchar` | **78** | 122 | 75 | 66 | 1.04x | 1.18x |
+| `02_count_loop` | **1,212** | 895 | 542 | 531 | 2.24x | 2.28x |
+| `03_arithmetic` | **14,423** | 14,679 | 16,390 | 16,409 | 0.88x | 0.88x |
+| `04_fibonacci` | **18,957** | 14,322 | 12,466 | 11,519 | 1.52x | 1.65x |
+| `05_array_sum` | **15,943** | 12,165 | 11,997 | 11,836 | 1.33x | 1.35x |
+| `06_string_ops` | **25,901** | 7,271 | 5,643 | 5,319 | 4.59x | 4.87x |
+| `07_sieve` | **33,897** | 17,772 | 14,256 | 14,800 | 2.38x | 2.29x |
+| `08_bubble_sort` | **80,800** | 44,102 | 42,391 | 41,207 | 1.91x | 1.96x |
+| `09_struct_ops` | **9,912** | 8,173 | 8,015 | 7,891 | 1.24x | 1.26x |
+| `10_switch_case` | **11,514** | 6,808 | 6,865 | 6,794 | 1.68x | 1.69x |
 
 ### Code Size (DECB Loaded Payload Bytes)
 
 | Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCC | MG vs GCCMax |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `01_putchar` | **74 B** | 204 B | 92 B | 87 B | 0.80x | 0.85x |
-| `02_count_loop` | **203 B** | 251 B | 139 B | 133 B | 1.46x | 1.53x |
-| `03_arithmetic` | **1054 B** | 659 B | 586 B | 548 B | 1.80x | 1.92x |
-| `04_fibonacci` | **758 B** | 459 B | 362 B | 333 B | 2.09x | 2.28x |
-| `05_array_sum` | **1225 B** | 571 B | 373 B | 348 B | 3.28x | 3.52x |
-| `06_string_ops` | **1794 B** | 710 B | 514 B | 466 B | 3.49x | 3.85x |
-| `07_sieve` | **1118 B** | 537 B | 354 B | 329 B | 3.16x | 3.40x |
-| `08_bubble_sort` | **1670 B** | 648 B | 427 B | 395 B | 3.91x | 4.23x |
-| `09_struct_ops` | **1641 B** | 653 B | 326 B | 303 B | 5.03x | 5.42x |
-| `10_switch_case` | **1336 B** | 737 B | 593 B | 569 B | 2.25x | 2.35x |
+| `01_putchar` | **44 B** | 204 B | 92 B | 87 B | 0.48x | 0.51x |
+| `02_count_loop` | **132 B** | 251 B | 139 B | 133 B | 0.95x | 0.99x |
+| `03_arithmetic` | **743 B** | 659 B | 586 B | 548 B | 1.27x | 1.36x |
+| `04_fibonacci` | **590 B** | 459 B | 362 B | 333 B | 1.63x | 1.77x |
+| `05_array_sum` | **907 B** | 571 B | 373 B | 348 B | 2.43x | 2.61x |
+| `06_string_ops` | **1442 B** | 710 B | 514 B | 466 B | 2.81x | 3.09x |
+| `07_sieve` | **747 B** | 537 B | 354 B | 329 B | 2.11x | 2.27x |
+| `08_bubble_sort` | **1156 B** | 648 B | 427 B | 395 B | 2.71x | 2.93x |
+| `09_struct_ops` | **1230 B** | 653 B | 326 B | 303 B | 3.77x | 4.06x |
+| `10_switch_case` | **962 B** | 737 B | 593 B | 569 B | 1.62x | 1.69x |
 
 ---
 
@@ -85,8 +85,6 @@ By inspecting the disassembled assembly in `perf/perf1/disasm/`, key differences
 ---
 
 ## 4. Prioritized Optimization Roadmap for MiniGolf
-
-For detailed analysis of heuristics (`Popularity`, `TrunkLevel`, `LeafLevel`), time-vs-space trade-offs, and concrete tasks, see [**`optimization-ideas.md`**](file:///home/strick/github.com/strickyak/minigolf/perf/perf1/optimization-ideas.md).
 
 Based on these empirical results, the following optimizations will yield the highest performance gains for MiniGolf:
 

@@ -264,10 +264,23 @@ When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF`
 
 ## 4. Immediate Action Plan: Path to GCC/CMOC Parity
 
-### Step 1: Dead Stack Slot & Dead Store Elimination (Targets `01_putchar` and `02_count_loop`)
-* In [`m6809/backend.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/backend.go), track uses of SSA instructions across the function. If an instruction's result is never read by any other instruction (e.g. constant loaded only to be passed to an inlined call or dead temp), omit storing it to stack slots.
-* If no stack slots are used in a function, eliminate `leas -N,s` and `leas N,s` completely.
-* Directly emit constant port stores (`stb $FF00`) when the pointer operand is a known constant word.
+### Step 1: Dead Stack Slot & Dead Store Elimination (COMPLETED)
+* **Implementation Details**:
+  * In [`m6809/backend.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/backend.go), extended `getDirectEA` to resolve constant addresses (e.g. `asConstWord`) directly into `$XXXX` hex addresses (such as `$FF00` or `$FF01` via `offsetAddrStr`).
+  * In `assignStackSlots`: eliminated stack slots for pure constants (`ConstByte`, `ConstWord`, `Sizeof`) and addresses (`AddressOfGlobal`, `AddressOfFunc`) unless their address is explicitly taken by an `AddressOfLocal` (`b.localAddressTaken`).
+  * In `emitInstr`: eliminated standalone loading and stack-storing of pure constants/addresses, materializing them on-demand at use sites (`loadVal`, `loadVal16`, `canDirectEA`).
+  * In `regalloc.go`: excluded constants from global register allocation candidates so hardware registers `U`/`Y` are reserved for active loop variables.
+  * In `opt/constfold.go`: added constant folding for `word_to_ptr`, `ptr_to_word`, and `bitcast`.
+* **Empirical Results**:
+  * `01_putchar`: Payload dropped from **68 B to 44 B** (vs GCCMax 87 B, 50% smaller!); Cycles dropped from **124 to 78** (beats GCC -O2 75 cycles and CMOC 122 cycles).
+  * `02_count_loop`: Payload dropped from **179 B to 132 B** (smaller than GCCMax 133 B!); Cycles dropped from **1,303 to 1,212**.
+  * `03_arithmetic`: Payload dropped from **921 B to 743 B**; Cycles dropped to **14,423** (solidly beating CMOC 14,679 and GCC 16,390).
+  * `04_fibonacci`: Payload dropped from **691 B to 590 B**; Cycles dropped from **21,524 to 18,957** (2,567 cycle drop!).
+  * `06_string_ops`: Payload dropped from **1,696 B to 1,442 B** (254 bytes smaller); Cycles dropped to **25,901**.
+  * `07_sieve`: Payload dropped from **935 B to 747 B** (188 bytes smaller); Cycles dropped to **33,897**.
+  * `08_bubble_sort`: Payload dropped from **1,401 B to 1,156 B** (245 bytes smaller); Cycles dropped to **80,800**.
+  * `09_struct_ops`: Payload dropped from **1,399 B to 1,230 B** (169 bytes smaller); Cycles dropped to **9,912**.
+  * `10_switch_case`: Payload dropped from **1,144 B to 962 B** (182 bytes smaller); Cycles dropped to **11,514**.
 
 ### Step 2: Callee-Saved Registers (`U`/`Y`) & Leaf-Call Awareness (Targets `02_count_loop`)
 * Allow register allocation when calls do not clobber the candidate register (e.g. inlined `putchar` or leaf hypercalls).

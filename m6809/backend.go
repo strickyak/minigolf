@@ -162,7 +162,9 @@ type Backend struct {
 	fusedCompares   map[int]bool
 	addressTaken    map[int]bool
 	escapeRes       opt.EscapeAnalysisResult
-	needsFP         bool
+	needsFP           bool
+	uses              map[int]int
+	localAddressTaken map[int]bool
 
 	curInstr ir.Instruction
 	valInD   ir.Value
@@ -414,6 +416,12 @@ func offsetAddrStr(valStr string, offset int) string {
 	if offset == 0 {
 		return valStr
 	}
+	if strings.HasPrefix(valStr, "$") && !strings.Contains(valStr, ",") {
+		var hexVal uint32
+		if _, err := fmt.Sscanf(valStr, "$%x", &hexVal); err == nil {
+			return fmt.Sprintf("$%04X", uint16(int(hexVal)+offset))
+		}
+	}
 	if strings.HasSuffix(valStr, ",pcr") {
 		base := strings.TrimSuffix(valStr, ",pcr")
 		return fmt.Sprintf("%s+%d,pcr", base, offset)
@@ -448,6 +456,10 @@ func (b *Backend) getDirectEA(ptrVal ir.Value) (string, bool) {
 			byteOffset, _ := b.getFieldOffsetAndSize(structType, v.FieldIndex)
 			return offsetAddrStr(baseEA, byteOffset), true
 		}
+	default:
+		if c, ok := b.asConstWord(ptrVal); ok {
+			return fmt.Sprintf("$%04X", c), true
+		}
 	}
 	return "", false
 }
@@ -459,11 +471,20 @@ func (b *Backend) canDirectEA(val ir.Value, opSize int) bool {
 		return true
 	case *ir.ConstWord:
 		return opSize == 2 || (v.Val >= 0 && v.Val <= 255)
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		return opSize == 2 || (sz >= 0 && sz <= 255)
 	case *ir.Parameter:
 		return b.getValSize(v) == opSize
 	case ir.Instruction:
 		if len(b.globalRegs) > 0 {
 			if _, ok := b.globalRegs[v.GetID()]; ok {
+				return false
+			}
+		}
+		canon := b.resolveSlot(v.GetID())
+		if _, ok := b.slots[canon]; !ok {
+			if _, ok := b.slots[v.GetID()]; !ok {
 				return false
 			}
 		}
@@ -488,6 +509,12 @@ func (b *Backend) getRightEA(val ir.Value, opSize int) string {
 			return fmt.Sprintf("#%d", uint8(v.Val))
 		}
 		return fmt.Sprintf("#%d", v.Val)
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		if opSize == 1 {
+			return fmt.Sprintf("#%d", uint8(sz))
+		}
+		return fmt.Sprintf("#%d", sz)
 	case *ir.Parameter, ir.Instruction, *ir.Global:
 		return b.getAddrStr(v)
 	default:
@@ -504,6 +531,12 @@ func (b *Backend) asConstByte(val ir.Value) (byte, bool) {
 	if c, ok := val.(*ir.ConstWord); ok && c.Val <= 255 {
 		return byte(c.Val), true
 	}
+	if sz, ok := val.(*ir.Sizeof); ok {
+		s := b.getTypeSizeByType(sz.TargetTyp)
+		if s <= 255 {
+			return byte(s), true
+		}
+	}
 	return 0, false
 }
 
@@ -514,6 +547,9 @@ func (b *Backend) asConstWord(val ir.Value) (uint16, bool) {
 	}
 	if c, ok := val.(*ir.ConstByte); ok {
 		return uint16(c.Val), true
+	}
+	if sz, ok := val.(*ir.Sizeof); ok {
+		return uint16(b.getTypeSizeByType(sz.TargetTyp)), true
 	}
 	return 0, false
 }
@@ -717,6 +753,9 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", v.Val))
 	case *ir.ConstWord:
 		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", v.Val))
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
 	case *ir.Parameter:
 		sz := b.getTypeSizeByType(v.Typ)
 		addr := b.paramAddr(v.Name)
@@ -802,6 +841,9 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, uint8(v.Val)))
 	case *ir.ConstWord:
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, v.Val))
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, sz))
 	case *ir.Parameter:
 		if b.getValSize(v) == 1 {
 			b.loadVal(v)
@@ -869,6 +911,12 @@ func (b *Backend) storeResult(id int) {
 					b.clobberD()
 				}
 			}
+			return
+		}
+	}
+	canon := b.resolveSlot(id)
+	if _, ok := b.slots[canon]; !ok {
+		if _, ok := b.slots[id]; !ok {
 			return
 		}
 	}
@@ -1997,11 +2045,20 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 				for _, edge := range phi.Edges {
 					if edge.Block == from {
 						sz := b.getTypeSizeByType(phi.Typ)
-						destAddr := b.localAddr(phi.GetID())
+						var destAddr string
 						if len(b.globalRegs) > 0 {
 							if reg, ok := b.globalRegs[phi.GetID()]; ok {
 								destAddr = reg
 							}
+						}
+						if destAddr == "" {
+							canon := b.resolveSlot(phi.GetID())
+							if _, ok := b.slots[canon]; !ok {
+								if _, ok := b.slots[phi.GetID()]; !ok {
+									continue
+								}
+							}
+							destAddr = b.localAddr(phi.GetID())
 						}
 						if isReg(destAddr) {
 							b.loadVal16(destAddr, edge.Value)
@@ -2042,11 +2099,20 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
 					sz := b.getTypeSizeByType(phi.Typ)
-					destAddr := b.localAddr(phi.GetID())
+					var destAddr string
 					if len(b.globalRegs) > 0 {
 						if reg, ok := b.globalRegs[phi.GetID()]; ok {
 							destAddr = reg
 						}
+					}
+					if destAddr == "" {
+						canon := b.resolveSlot(phi.GetID())
+						if _, ok := b.slots[canon]; !ok {
+							if _, ok := b.slots[phi.GetID()]; !ok {
+								continue
+							}
+						}
+						destAddr = b.localAddr(phi.GetID())
 					}
 					srcAddr := b.getPhiSrcLoc(edge.Value)
 					assignments = append(assignments, phiAssignment{
@@ -2509,17 +2575,33 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\t; %s\n", i.Comment))
 
 	case *ir.ConstByte:
-		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", i.Val))
-		b.storeResult(id)
+		if _, inReg := b.globalRegs[id]; inReg {
+			b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", i.Val))
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", i.Val))
+			b.storeResult(id)
+		}
 
 	case *ir.ConstWord:
-		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", i.Val))
-		b.storeResult(id)
+		if _, inReg := b.globalRegs[id]; inReg {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", i.Val))
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", i.Val))
+			b.storeResult(id)
+		}
 
 	case *ir.Sizeof:
-		sz := b.getTypeSizeByType(i.TargetTyp)
-		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
-		b.storeResult(id)
+		if _, inReg := b.globalRegs[id]; inReg {
+			sz := b.getTypeSizeByType(i.TargetTyp)
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			sz := b.getTypeSizeByType(i.TargetTyp)
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
+			b.storeResult(id)
+		}
 
 	case *ir.Load:
 		sz := b.getTypeSizeByType(i.Global.Typ)
@@ -2665,22 +2747,42 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 
 	case *ir.AddressOfGlobal:
-		if b.globalsAtY {
-			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
-		} else if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+		if _, inReg := b.globalRegs[id]; inReg {
+			if b.globalsAtY {
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
+			} else if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+			}
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			if b.globalsAtY {
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
+			} else if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+			}
+			b.storeResult(id)
 		}
-		b.storeResult(id)
 
 	case *ir.AddressOfFunc:
-		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", i.Func.EmitName()))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
+		if _, inReg := b.globalRegs[id]; inReg {
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", i.Func.EmitName()))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
+			}
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", i.Func.EmitName()))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
+			}
+			b.storeResult(id)
 		}
-		b.storeResult(id)
 
 	case *ir.AddressOfLocal:
 		if b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[id] {
@@ -2926,11 +3028,22 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.fusedCompares = make(map[int]bool)
 	b.escapeRes = opt.AnalyzeEscape(f)
 	b.addressTaken = b.escapeRes.EscapingLocals
+	b.uses = b.countUses(f)
+	b.localAddressTaken = make(map[int]bool)
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			if aol, ok := instr.(*ir.AddressOfLocal); ok {
+				if loc, ok := aol.Local.(ir.Instruction); ok {
+					b.localAddressTaken[loc.GetID()] = true
+				}
+			}
+		}
+	}
 
 	b.globalRegs = b.AllocateRegisters(f)
 
 	if !b.NoFusedCompares {
-		uses := b.countUses(f)
+		uses := b.uses
 		for _, blk := range f.Blocks {
 			if br, ok := blk.Terminator.(*ir.Branch); ok {
 				condVal := br.Condition
@@ -3003,6 +3116,12 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if aol, ok := instr.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
 				continue
 			}
+			if !b.localAddressTaken[instr.GetID()] {
+				switch instr.(type) {
+				case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
+					continue
+				}
+			}
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				sz := b.getTypeSizeByType(instr.Type())
 				b.allocateSlot(sz, instr.GetID())
@@ -3019,11 +3138,20 @@ func (b *Backend) emitFunc(f *ir.Function) {
 					for _, edge := range phi.Edges {
 						if edge.Block == blk {
 							sz := b.getTypeSizeByType(phi.Typ)
-							destAddr := b.localAddr(phi.GetID())
+							var destAddr string
 							if len(b.globalRegs) > 0 {
 								if reg, ok := b.globalRegs[phi.GetID()]; ok {
 									destAddr = reg
 								}
+							}
+							if destAddr == "" {
+								canon := b.resolveSlot(phi.GetID())
+								if _, ok := b.slots[canon]; !ok {
+									if _, ok := b.slots[phi.GetID()]; !ok {
+										continue
+									}
+								}
+								destAddr = b.localAddr(phi.GetID())
 							}
 							srcAddr := b.getPhiSrcLoc(edge.Value)
 							moves = append(moves, opt.ParallelMove{
