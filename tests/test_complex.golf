@@ -1,0 +1,48 @@
+package main
+
+import "floating"
+import "complex"
+
+func main() {
+	println("--- Sizeof ---")
+	println("sizeof Complex:", sizeof[complex.Complex]())
+
+	println("--- New and Format ---")
+	re1 := floating.FromWord(1)
+	im2 := floating.FromWord(2)
+	z1 := complex.New(re1, im2)
+	println("z1:", z1.Format())
+
+	re3 := floating.FromInt(3)
+	imNeg4 := floating.FromInt(-4)
+	z2 := complex.New(re3, imNeg4)
+	println("z2:", z2.Format())
+
+	println("--- Add and Sub ---")
+	zAdd := complex.Add(z1, z2)
+	println("z1 + z2 =", zAdd.Format())
+
+	zSub := complex.Sub(z1, z2)
+	println("z1 - z2 =", zSub.Format())
+
+	println("--- Neg and Conj ---")
+	println("-z1 =", complex.Format(complex.Neg(z1)))
+	println("conj(z2) =", complex.Format(complex.Conj(z2)))
+
+	println("--- Mul ---")
+	zMul := complex.Mul(z1, z2)
+	println("z1 * z2 =", zMul.Format())
+
+	im4 := floating.FromWord(4)
+	z3 := complex.New(re3, im4)
+	zMul2 := complex.Mul(z1, z3)
+	println("z1 * z3 =", zMul2.Format())
+
+	println("--- Div ---")
+	zDiv := complex.Div(zMul2, z3)
+	println("zMul2 / z3 =", zDiv.Format())
+
+	println("--- AbsSq ---")
+	absSq := complex.AbsSq(z3)
+	println("|z3|^2 =", absSq.Format())
+}

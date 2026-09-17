@@ -1,0 +1,144 @@
+package complex
+
+import "floating"
+
+type Complex struct {
+	Re floating.FloatingPoint
+	Im floating.FloatingPoint
+}
+
+func New(re floating.FloatingPoint, im floating.FloatingPoint) Complex {
+	var c Complex
+	c.Re = re
+	c.Im = im
+	return c
+}
+
+func FromFloats(re floating.FloatingPoint, im floating.FloatingPoint) Complex {
+	return New(re, im)
+}
+
+func FromWord(re word, im word) Complex {
+	return New(floating.FromWord(re), floating.FromWord(im))
+}
+
+func FromInt(re int, im int) Complex {
+	return New(floating.FromInt(re), floating.FromInt(im))
+}
+
+func (c *Complex) IsZero() bool {
+	return c.Re.IsZero() && c.Im.IsZero()
+}
+
+func Add(a Complex, b Complex) Complex {
+	var res Complex
+	res.Re = floating.Add(a.Re, b.Re)
+	res.Im = floating.Add(a.Im, b.Im)
+	return res
+}
+
+func (c *Complex) Add(other *Complex) Complex {
+	return Add(*c, *other)
+}
+
+func Sub(a Complex, b Complex) Complex {
+	var res Complex
+	res.Re = floating.Sub(a.Re, b.Re)
+	res.Im = floating.Sub(a.Im, b.Im)
+	return res
+}
+
+func (c *Complex) Sub(other *Complex) Complex {
+	return Sub(*c, *other)
+}
+
+func Neg(c Complex) Complex {
+	var res Complex
+	res.Re = floating.Neg(c.Re)
+	res.Im = floating.Neg(c.Im)
+	return res
+}
+
+func (c *Complex) Neg() Complex {
+	return Neg(*c)
+}
+
+func Conj(c Complex) Complex {
+	var res Complex
+	res.Re = c.Re
+	res.Im = floating.Neg(c.Im)
+	return res
+}
+
+func (c *Complex) Conj() Complex {
+	return Conj(*c)
+}
+
+func Mul(a Complex, b Complex) Complex {
+	var res Complex
+	ac := floating.Mul(a.Re, b.Re)
+	bd := floating.Mul(a.Im, b.Im)
+	ad := floating.Mul(a.Re, b.Im)
+	bc := floating.Mul(a.Im, b.Re)
+	res.Re = floating.Sub(ac, bd)
+	res.Im = floating.Add(ad, bc)
+	return res
+}
+
+func (c *Complex) Mul(other *Complex) Complex {
+	return Mul(*c, *other)
+}
+
+func AbsSq(c Complex) floating.FloatingPoint {
+	re2 := floating.Mul(c.Re, c.Re)
+	im2 := floating.Mul(c.Im, c.Im)
+	return floating.Add(re2, im2)
+}
+
+func (c *Complex) AbsSq() floating.FloatingPoint {
+	return AbsSq(*c)
+}
+
+func Div(a Complex, b Complex) Complex {
+	var res Complex
+	denom := AbsSq(b)
+	if denom.IsZero() {
+		panic("complex div by zero")
+	}
+	ac := floating.Mul(a.Re, b.Re)
+	bd := floating.Mul(a.Im, b.Im)
+	bc := floating.Mul(a.Im, b.Re)
+	ad := floating.Mul(a.Re, b.Im)
+	numRe := floating.Add(ac, bd)
+	numIm := floating.Sub(bc, ad)
+	res.Re = floating.Div(numRe, denom)
+	res.Im = floating.Div(numIm, denom)
+	return res
+}
+
+func (c *Complex) Div(other *Complex) Complex {
+	return Div(*c, *other)
+}
+
+func Format(c Complex) string {
+	var out slice[byte]
+	out.Append('(')
+	reStr := floating.Format(c.Re)
+	for i := range reStr.Len {
+		out.Append(reStr[i])
+	}
+	if c.Im.Sign() == 0 {
+		out.Append('+')
+	}
+	imStr := floating.Format(c.Im)
+	for i := range imStr.Len {
+		out.Append(imStr[i])
+	}
+	out.Append('i')
+	out.Append(')')
+	return out
+}
+
+func (c *Complex) Format() string {
+	return Format(*c)
+}

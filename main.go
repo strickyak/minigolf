@@ -61,6 +61,14 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 			if err == nil {
 				return
 			}
+			matches, _ := filepath.Glob(filepath.Join(d, "*", base))
+			for _, m := range matches {
+				content, err = os.ReadFile(m)
+				log.Printf("RFFP: Looking for %q ... %v", m, err)
+				if err == nil {
+					return
+				}
+			}
 		}
 	}
 
