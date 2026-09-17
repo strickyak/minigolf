@@ -53,6 +53,15 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 		if err == nil {
 			return
 		}
+		if strings.HasSuffix(base, ".golf") {
+			modName := strings.TrimSuffix(base, ".golf")
+			subFilename := filepath.Join(d, modName, base)
+			content, err = os.ReadFile(subFilename)
+			log.Printf("RFFP: Looking for %q ... %v", subFilename, err)
+			if err == nil {
+				return
+			}
+		}
 	}
 
 	//disabled// // If "prelude.golf" is not found in the path, we use the version included in this compiler.

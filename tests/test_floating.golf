@@ -1,0 +1,124 @@
+package main
+
+import "floating"
+
+func main() {
+	println("--- Sizeof ---")
+	println("sizeof:", sizeof[floating.FloatingPoint]())
+
+	println("--- FromWord and ToWord ---")
+	w0 := floating.FromWord(0)
+	println("w0:", w0.Format(), w0.ToWord())
+
+	w1 := floating.FromWord(1)
+	println("w1:", w1.Format(), w1.ToWord())
+
+	w10 := floating.FromWord(10)
+	println("w10:", w10.Format(), w10.ToWord())
+
+	w42 := floating.FromWord(42)
+	println("w42:", w42.Format(), w42.ToWord())
+
+	w1000 := floating.FromWord(1000)
+	println("w1000:", w1000.Format(), w1000.ToWord())
+
+	wMax := floating.FromWord(65535)
+	println("wMax:", wMax.Format(), wMax.ToWord())
+
+	println("--- FromInt and ToInt ---")
+	i0 := floating.FromInt(0)
+	println("i0:", i0.Format(), i0.ToInt())
+
+	i1 := floating.FromInt(1)
+	println("i1:", i1.Format(), i1.ToInt())
+
+	iNeg1 := floating.FromInt(-1)
+	println("iNeg1:", iNeg1.Format(), iNeg1.ToInt())
+
+	i42 := floating.FromInt(42)
+	println("i42:", i42.Format(), i42.ToInt())
+
+	iNeg42 := floating.FromInt(-42)
+	println("iNeg42:", iNeg42.Format(), iNeg42.ToInt())
+
+	iPosMax := floating.FromInt(32767)
+	println("iPosMax:", iPosMax.Format(), iPosMax.ToInt())
+
+	iNegMax := floating.FromInt(-32767)
+	println("iNegMax:", iNegMax.Format(), iNegMax.ToInt())
+
+	println("--- Addition ---")
+	a1 := floating.FromWord(1)
+	a2 := floating.FromWord(2)
+	a3 := floating.Add(a1, a2)
+	println("1 + 2 =", a3.Format())
+
+	a10 := floating.FromWord(10)
+	a20 := floating.FromWord(20)
+	println("10 + 20 =", floating.Format(floating.Add(a10, a20)))
+
+	pos5 := floating.FromWord(5)
+	neg3 := floating.FromInt(-3)
+	println("5 + (-3) =", floating.Format(floating.Add(pos5, neg3)))
+
+	neg5 := floating.FromInt(-5)
+	pos3 := floating.FromWord(3)
+	println("(-5) + 3 =", floating.Format(floating.Add(neg5, pos3)))
+
+	println("(-5) + (-3) =", floating.Format(floating.Add(neg5, neg3)))
+
+	println("5 + (-5) =", floating.Format(floating.Add(pos5, neg5)))
+
+	println("--- Subtraction ---")
+	println("5 - 3 =", floating.Format(floating.Sub(pos5, pos3)))
+	println("3 - 5 =", floating.Format(floating.Sub(pos3, pos5)))
+	println("5 - (-3) =", floating.Format(floating.Sub(pos5, neg3)))
+	println("(-5) - 3 =", floating.Format(floating.Sub(neg5, pos3)))
+	println("5 - 5 =", floating.Format(floating.Sub(pos5, pos5)))
+
+	println("--- Multiplication and Division ---")
+	m2 := floating.FromWord(2)
+	m3 := floating.FromWord(3)
+	println("2 * 3 =", floating.Format(floating.Mul(m2, m3)))
+
+	m10 := floating.FromWord(10)
+	m4 := floating.FromWord(4)
+	println("10 / 4 =", floating.Format(floating.Div(m10, m4)))
+
+	m1 := floating.FromWord(1)
+	m8 := floating.FromWord(8)
+	println("1 / 8 =", floating.Format(floating.Div(m1, m8)))
+
+	println("--- Scanner and Formatter ---")
+	s0 := floating.Scan("0.0")
+	println("scan 0.0 =", s0.Format())
+
+	s1 := floating.Scan("1.0")
+	println("scan 1.0 =", s1.Format())
+
+	s12_5 := floating.Scan("12.5")
+	println("scan 12.5 =", s12_5.Format())
+
+	sNeg3_75 := floating.Scan("-3.75")
+	println("scan -3.75 =", sNeg3_75.Format())
+
+	s0_125 := floating.Scan("0.125")
+	println("scan 0.125 =", s0_125.Format())
+
+	s42 := floating.Scan("42")
+	println("scan 42 =", s42.Format())
+
+	sSci1 := floating.Scan("1.5e2")
+	println("scan 1.5e2 =", sSci1.Format())
+
+	sSci2 := floating.Scan("1.5e-1")
+	println("scan 1.5e-1 =", sSci2.Format())
+
+	println("--- Operations with Scanned Numbers ---")
+	x := floating.Scan("1.25")
+	y := floating.Scan("2.5")
+	println("1.25 + 2.5 =", floating.Format(floating.Add(x, y)))
+	println("2.5 - 1.25 =", floating.Format(floating.Sub(y, x)))
+	println("1.25 * 2.5 =", floating.Format(floating.Mul(x, y)))
+	println("2.5 / 1.25 =", floating.Format(floating.Div(y, x)))
+}

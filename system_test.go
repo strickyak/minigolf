@@ -161,7 +161,7 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 		exec.Command("go", "build", "-o", compiler, "main.go").Run()
 	}
 
-	args := []string{"-m=" + backend, "-o", midFile, "-I=tests", "-I=c-tests", "-I=demos", "-I=golflib"}
+	args := []string{"-m=" + backend, "-o", midFile, "-I=tests", "-I=c-tests", "-I=demos", "-I=demos/floating", "-I=golflib"}
 	args = append(args, extraArgs...)
 	args = append(args, sourceFile)
 

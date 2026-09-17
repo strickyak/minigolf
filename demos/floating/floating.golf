@@ -1,0 +1,572 @@
+package floating
+
+type FloatingPoint struct {
+	SignExp  byte
+	Mantissa [4]byte
+}
+
+func (f *FloatingPoint) IsZero() bool {
+	return f.Mantissa[0] == 0 && f.Mantissa[1] == 0 && f.Mantissa[2] == 0 && f.Mantissa[3] == 0
+}
+
+func (f *FloatingPoint) Sign() byte {
+	return (f.SignExp >> 7) & 1
+}
+
+func (f *FloatingPoint) GetExp() int {
+	raw := int(f.SignExp & 0x7F)
+	if (raw & 0x40) != 0 {
+		return raw - 128
+	}
+	return raw
+}
+
+func (f *FloatingPoint) SetSignExp(sign byte, exp int) {
+	e := byte(exp & 0x7F)
+	if sign != 0 {
+		f.SignExp = 0x80 | e
+	} else {
+		f.SignExp = e
+	}
+}
+
+func Neg(f FloatingPoint) FloatingPoint {
+	if f.IsZero() {
+		return f
+	}
+	f.SignExp = f.SignExp ^ 0x80
+	return f
+}
+
+func (f *FloatingPoint) Neg() FloatingPoint {
+	return Neg(*f)
+}
+
+func mantissaIsZero(m *[4]byte) bool {
+	return (*m)[0] == 0 && (*m)[1] == 0 && (*m)[2] == 0 && (*m)[3] == 0
+}
+
+func mantissaCmp(a *[4]byte, b *[4]byte) int {
+	for i := 0; i < 4; i++ {
+		if (*a)[i] > (*b)[i] {
+			return 1
+		}
+		if (*a)[i] < (*b)[i] {
+			return -1
+		}
+	}
+	return 0
+}
+
+func shiftLeft1(m *[4]byte) byte {
+	b3 := (*m)[3]
+	c3 := (b3 >> 7) & 1
+	(*m)[3] = b3 << 1
+
+	b2 := (*m)[2]
+	c2 := (b2 >> 7) & 1
+	(*m)[2] = (b2 << 1) | c3
+
+	b1 := (*m)[1]
+	c1 := (b1 >> 7) & 1
+	(*m)[1] = (b1 << 1) | c2
+
+	b0 := (*m)[0]
+	c0 := (b0 >> 7) & 1
+	(*m)[0] = (b0 << 1) | c1
+
+	return c0
+}
+
+func shiftRight1(m *[4]byte, carryIn byte) {
+	b0 := (*m)[0]
+	c0 := b0 & 1
+	(*m)[0] = (b0 >> 1) | (carryIn << 7)
+
+	b1 := (*m)[1]
+	c1 := b1 & 1
+	(*m)[1] = (b1 >> 1) | (c0 << 7)
+
+	b2 := (*m)[2]
+	c2 := b2 & 1
+	(*m)[2] = (b2 >> 1) | (c1 << 7)
+
+	b3 := (*m)[3]
+	(*m)[3] = (b3 >> 1) | (c2 << 7)
+}
+
+func shiftRightN(m *[4]byte, n word) {
+	if n >= 32 {
+		(*m)[0] = 0
+		(*m)[1] = 0
+		(*m)[2] = 0
+		(*m)[3] = 0
+		return
+	}
+	for n >= 8 {
+		(*m)[3] = (*m)[2]
+		(*m)[2] = (*m)[1]
+		(*m)[1] = (*m)[0]
+		(*m)[0] = 0
+		n -= 8
+	}
+	for n > 0 {
+		shiftRight1(m, 0)
+		n--
+	}
+}
+
+func addMantissa(a *[4]byte, b *[4]byte) byte {
+	var carry word
+	sum3 := word((*a)[3]) + word((*b)[3]) + carry
+	(*a)[3] = byte(sum3)
+	carry = sum3 >> 8
+
+	sum2 := word((*a)[2]) + word((*b)[2]) + carry
+	(*a)[2] = byte(sum2)
+	carry = sum2 >> 8
+
+	sum1 := word((*a)[1]) + word((*b)[1]) + carry
+	(*a)[1] = byte(sum1)
+	carry = sum1 >> 8
+
+	sum0 := word((*a)[0]) + word((*b)[0]) + carry
+	(*a)[0] = byte(sum0)
+	carry = sum0 >> 8
+
+	return byte(carry)
+}
+
+func subMantissa(a *[4]byte, b *[4]byte) byte {
+	borrow := word(0)
+
+	diff3 := (word((*a)[3]) + 256) - word((*b)[3]) - borrow
+	(*a)[3] = byte(diff3)
+	borrow = 1 - (diff3 >> 8)
+
+	diff2 := (word((*a)[2]) + 256) - word((*b)[2]) - borrow
+	(*a)[2] = byte(diff2)
+	borrow = 1 - (diff2 >> 8)
+
+	diff1 := (word((*a)[1]) + 256) - word((*b)[1]) - borrow
+	(*a)[1] = byte(diff1)
+	borrow = 1 - (diff1 >> 8)
+
+	diff0 := (word((*a)[0]) + 256) - word((*b)[0]) - borrow
+	(*a)[0] = byte(diff0)
+	borrow = 1 - (diff0 >> 8)
+
+	return byte(borrow)
+}
+
+func (f *FloatingPoint) Normalize(carry byte, exp int) {
+	if carry != 0 {
+		shiftRight1(&f.Mantissa, carry)
+		exp++
+		f.SetSignExp(f.Sign(), exp)
+		return
+	}
+	if mantissaIsZero(&f.Mantissa) {
+		f.SignExp = 0
+		return
+	}
+	for (f.Mantissa[0] & 0x80) == 0 {
+		shiftLeft1(&f.Mantissa)
+		exp--
+	}
+	f.SetSignExp(f.Sign(), exp)
+}
+
+func FromWord(w word) FloatingPoint {
+	var res FloatingPoint
+	if w == 0 {
+		return res
+	}
+	res.Mantissa[0] = byte(w >> 8)
+	res.Mantissa[1] = byte(w)
+	res.Mantissa[2] = 0
+	res.Mantissa[3] = 0
+
+	exp := 15
+	for (res.Mantissa[0] & 0x80) == 0 {
+		shiftLeft1(&res.Mantissa)
+		exp--
+	}
+	res.SetSignExp(0, exp)
+	return res
+}
+
+func (f *FloatingPoint) FromWord(w word) {
+	*f = FromWord(w)
+}
+
+func FromInt(i int) FloatingPoint {
+	if i == 0 {
+		var z FloatingPoint
+		return z
+	}
+	if i < 0 {
+		mag := word(int(0) - i)
+		res := FromWord(mag)
+		res.SignExp = res.SignExp | 0x80
+		return res
+	}
+	return FromWord(word(i))
+}
+
+func (f *FloatingPoint) FromInt(i int) {
+	*f = FromInt(i)
+}
+
+func ToWord(f FloatingPoint) word {
+	if f.IsZero() || f.Sign() != 0 {
+		return 0
+	}
+	exp := f.GetExp()
+	if exp < 0 {
+		return 0
+	}
+	if exp > 15 {
+		return 65535
+	}
+	w := (word(f.Mantissa[0]) << 8) | word(f.Mantissa[1])
+	shift := word(15 - exp)
+	return w >> shift
+}
+
+func (f *FloatingPoint) ToWord() word {
+	return ToWord(*f)
+}
+
+func ToInt(f FloatingPoint) int {
+	if f.IsZero() {
+		return 0
+	}
+	sign := f.Sign()
+	f.SignExp = f.SignExp & 0x7F
+	w := ToWord(f)
+	if sign != 0 {
+		return int(0) - int(w)
+	}
+	return int(w)
+}
+
+func (f *FloatingPoint) ToInt() int {
+	return ToInt(*f)
+}
+
+func Add(a FloatingPoint, b FloatingPoint) FloatingPoint {
+	if a.IsZero() {
+		return b
+	}
+	if b.IsZero() {
+		return a
+	}
+
+	expA := a.GetExp()
+	expB := b.GetExp()
+	signA := a.Sign()
+	signB := b.Sign()
+
+	var res FloatingPoint
+
+	if expA < expB {
+		tmp := a
+		a = b
+		b = tmp
+		expA = a.GetExp()
+		expB = b.GetExp()
+		signA = a.Sign()
+		signB = b.Sign()
+	}
+
+	diff := word(expA - expB)
+	shiftRightN(&b.Mantissa, diff)
+
+	if signA == signB {
+		res.Mantissa = a.Mantissa
+		carry := addMantissa(&res.Mantissa, &b.Mantissa)
+		res.SetSignExp(signA, expA)
+		res.Normalize(carry, expA)
+	} else {
+		cmp := mantissaCmp(&a.Mantissa, &b.Mantissa)
+		if cmp == 0 {
+			return res
+		} else if cmp > 0 {
+			res.Mantissa = a.Mantissa
+			subMantissa(&res.Mantissa, &b.Mantissa)
+			res.SetSignExp(signA, expA)
+			res.Normalize(0, expA)
+		} else {
+			res.Mantissa = b.Mantissa
+			subMantissa(&res.Mantissa, &a.Mantissa)
+			res.SetSignExp(signB, expA)
+			res.Normalize(0, expA)
+		}
+	}
+	return res
+}
+
+func (a *FloatingPoint) Add(b *FloatingPoint) FloatingPoint {
+	return Add(*a, *b)
+}
+
+func Sub(a FloatingPoint, b FloatingPoint) FloatingPoint {
+	return Add(a, Neg(b))
+}
+
+func (a *FloatingPoint) Sub(b *FloatingPoint) FloatingPoint {
+	return Sub(*a, *b)
+}
+
+func Mul(a FloatingPoint, b FloatingPoint) FloatingPoint {
+	var res FloatingPoint
+	if a.IsZero() || b.IsZero() {
+		return res
+	}
+	sign := a.Sign() ^ b.Sign()
+	exp := a.GetExp() + b.GetExp()
+
+	var acc [4]byte
+	carry := byte(0)
+	for i := 0; i < 32; i++ {
+		if i > 0 {
+			shiftRight1(&acc, carry)
+			carry = 0
+		}
+		byteIdx := 3 - (i >> 3)
+		bitMask := byte(1 << byte(i & 7))
+		if (b.Mantissa[byteIdx] & bitMask) != 0 {
+			c := addMantissa(&acc, &a.Mantissa)
+			carry = c
+		}
+	}
+	if carry != 0 {
+		shiftRight1(&acc, carry)
+		exp++
+	}
+	res.Mantissa = acc
+	res.SetSignExp(sign, exp)
+	return res
+}
+
+func (a *FloatingPoint) Mul(b *FloatingPoint) FloatingPoint {
+	return Mul(*a, *b)
+}
+
+func Div(a FloatingPoint, b FloatingPoint) FloatingPoint {
+	var res FloatingPoint
+	if b.IsZero() {
+		panic("div by zero")
+	}
+	if a.IsZero() {
+		return res
+	}
+
+	expA := a.GetExp()
+	expB := b.GetExp()
+	signA := a.Sign()
+	signB := b.Sign()
+	resSign := signA ^ signB
+
+	rem := a.Mantissa
+	divisor := b.Mantissa
+
+	var expQ int
+
+	cmp := mantissaCmp(&rem, &divisor)
+	if cmp >= 0 {
+		expQ = expA - expB
+		res.Mantissa[0] = 0x80
+		subMantissa(&rem, &divisor)
+	} else {
+		expQ = expA - expB - 1
+		res.Mantissa[0] = 0x80
+		shiftLeft1(&rem)
+		subMantissa(&rem, &divisor)
+	}
+
+	for bit := 1; bit < 32; bit++ {
+		carry := shiftLeft1(&rem)
+		if carry != 0 || mantissaCmp(&rem, &divisor) >= 0 {
+			subMantissa(&rem, &divisor)
+			byteIdx := bit >> 3
+			bitMask := byte(1 << byte(7-(bit&7)))
+			res.Mantissa[byteIdx] = res.Mantissa[byteIdx] | bitMask
+		}
+	}
+
+	// Round to nearest: check 33rd bit
+	carry := shiftLeft1(&rem)
+	if carry != 0 || mantissaCmp(&rem, &divisor) >= 0 {
+		var one [4]byte
+		one[3] = 1
+		c := addMantissa(&res.Mantissa, &one)
+		if c != 0 {
+			shiftRight1(&res.Mantissa, c)
+			expQ++
+		}
+	}
+
+	if expQ < -64 {
+		var z FloatingPoint
+		return z
+	}
+	res.SetSignExp(resSign, expQ)
+	return res
+}
+
+func (a *FloatingPoint) Div(b *FloatingPoint) FloatingPoint {
+	return Div(*a, *b)
+}
+
+func Cmp(a FloatingPoint, b FloatingPoint) int {
+	diff := Sub(a, b)
+	if diff.IsZero() {
+		return 0
+	}
+	if diff.Sign() != 0 {
+		return -1
+	}
+	return 1
+}
+
+func (a *FloatingPoint) Cmp(b *FloatingPoint) int {
+	return Cmp(*a, *b)
+}
+
+func Format(f FloatingPoint) string {
+	if f.IsZero() {
+		return "0.0"
+	}
+	var out slice[byte]
+	if f.Sign() != 0 {
+		out.Append('-')
+		f = Neg(f)
+	}
+
+	intPart := ToWord(f)
+	if intPart == 0 {
+		out.Append('0')
+	} else {
+		var digits [10]byte
+		dlen := 0
+		w := intPart
+		for w > 0 {
+			digits[dlen] = byte('0' + (w % 10))
+			w = w / 10
+			dlen++
+		}
+		for dlen > 0 {
+			dlen--
+			out.Append(digits[dlen])
+		}
+	}
+
+	out.Append('.')
+
+	frac := Sub(f, FromWord(intPart))
+	if frac.IsZero() {
+		out.Append('0')
+		return out
+	}
+
+	ten := FromWord(10)
+	for places := 0; places < 6; places++ {
+		if frac.IsZero() || frac.GetExp() < -20 {
+			break
+		}
+		frac = Mul(frac, ten)
+		d := ToWord(frac)
+		out.Append('0' + byte(d))
+		frac = Sub(frac, FromWord(d))
+	}
+	return out
+}
+
+func (f *FloatingPoint) Format() string {
+	return Format(*f)
+}
+
+func Scan(s string) FloatingPoint {
+	var val FloatingPoint
+	n := s.Len
+	if n == 0 {
+		return val
+	}
+
+	i := word(0)
+	for i < n && (s[i] == ' ' || s[i] == '\t') {
+		i++
+	}
+	if i >= n {
+		return val
+	}
+
+	isNeg := false
+	if s[i] == '-' {
+		isNeg = true
+		i++
+	} else if s[i] == '+' {
+		i++
+	}
+
+	ten := FromWord(10)
+	decPlaces := 0
+
+	for i < n && s[i] >= '0' && s[i] <= '9' {
+		digit := FromWord(word(s[i] - '0'))
+		val = Add(Mul(val, ten), digit)
+		i++
+	}
+
+	if i < n && s[i] == '.' {
+		i++
+		for i < n && s[i] >= '0' && s[i] <= '9' {
+			digit := FromWord(word(s[i] - '0'))
+			val = Add(Mul(val, ten), digit)
+			decPlaces++
+			i++
+		}
+	}
+
+	if decPlaces > 0 {
+		div := FromWord(1)
+		for k := 0; k < decPlaces; k++ {
+			div = Mul(div, ten)
+		}
+		val = Div(val, div)
+	}
+
+	if i < n && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		expNeg := false
+		if i < n && s[i] == '-' {
+			expNeg = true
+			i++
+		} else if i < n && s[i] == '+' {
+			i++
+		}
+		expVal := 0
+		for i < n && s[i] >= '0' && s[i] <= '9' {
+			expVal = expVal*10 + int(s[i]-'0')
+			i++
+		}
+		for k := 0; k < expVal; k++ {
+			if expNeg {
+				val = Div(val, ten)
+			} else {
+				val = Mul(val, ten)
+			}
+		}
+	}
+
+	if isNeg {
+		val = Neg(val)
+	}
+	return val
+}
+
+func (f *FloatingPoint) Scan(s string) {
+	*f = Scan(s)
+}

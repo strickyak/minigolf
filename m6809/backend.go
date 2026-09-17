@@ -1547,6 +1547,10 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 			b.buf.WriteString(fmt.Sprintf("\tbne %s\n", lblTrue))
 		case "lte":
 			b.buf.WriteString(fmt.Sprintf("\tbeq %s\n", lblTrue))
+		case "gte":
+			b.buf.WriteString(fmt.Sprintf("\tbra %s\n", lblTrue))
+		case "lt":
+			// Unsigned < 0 is never true, do not branch to lblTrue
 		default:
 			log.Panicf("emitCompare: unhandled unsigned cmp op against zero %s", i.Op)
 		}
@@ -2095,9 +2099,15 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 					}
 					b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destAddr))
 				} else {
-					b.emitLoadAddr("y", assign.srcAddr)
-					b.emitLoadAddr("x", destAddr)
-					b.emitCopy("x", "y", sz)
+					if _, isZero := assign.val.(*ir.ZeroInit); isZero || strings.HasPrefix(assign.srcAddr, "$const_") {
+						b.emitLoadAddr("x", destAddr)
+						b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
+						b.callHelper("__memset0")
+					} else {
+						b.emitLoadAddr("y", assign.srcAddr)
+						b.emitLoadAddr("x", destAddr)
+						b.emitCopy("x", "y", sz)
+					}
 				}
 			} else {
 				srcAddr := step.Src.(string)
@@ -2118,9 +2128,15 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 					b.buf.WriteString(fmt.Sprintf("\tldd %s\n", srcAddr))
 					b.buf.WriteString(fmt.Sprintf("\tstd %s\n", destAddr))
 				} else {
-					b.emitLoadAddr("y", srcAddr)
-					b.emitLoadAddr("x", destAddr)
-					b.emitCopy("x", "y", sz)
+					if strings.HasPrefix(srcAddr, "$const_") {
+						b.emitLoadAddr("x", destAddr)
+						b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
+						b.callHelper("__memset0")
+					} else {
+						b.emitLoadAddr("y", srcAddr)
+						b.emitLoadAddr("x", destAddr)
+						b.emitCopy("x", "y", sz)
+					}
 				}
 			}
 
@@ -2425,6 +2441,18 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 					condOp = "lbne"
 				case "lte":
 					condOp = "lbeq"
+				case "gte":
+					b.emitPhiAssignments(blk, t.TrueBlock)
+					if b.NoBranchLayout || t.TrueBlock != nextBlk {
+						b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.TrueBlock.ID))
+					}
+					return
+				case "lt":
+					b.emitPhiAssignments(blk, t.FalseBlock)
+					if b.NoBranchLayout || t.FalseBlock != nextBlk {
+						b.buf.WriteString(fmt.Sprintf("\tlbra .L_%s_b%d\n", b.f.Name, t.FalseBlock.ID))
+					}
+					return
 				default:
 					log.Panicf("emitTerminator: unhandled unsigned cmp op against zero %s", cmp.Op)
 				}
