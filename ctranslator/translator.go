@@ -646,45 +646,89 @@ func (t *translator) translateExprStmt(s *cc.ExpressionStatement) {
 // translateExprStmtOne emits a single expression as a statement, with special
 // handling for pointer arithmetic patterns that MiniGolf cannot express directly.
 func (t *translator) translateExprStmtOne(e cc.Expression) {
-	// Pattern: *p++ = expr  (assign to dereferenced pointer, then advance pointer)
-	// Detect AssignmentExpression where LHS is UnaryExpr(Deref, PostfixExpr(++))
+	// Pattern: *p++ = expr, lhs = *p++, or *dst++ = *src++
 	if asgn, ok := e.(*cc.AssignmentExpression); ok && asgn.Op == cc.AssignmentOperationAssign {
-		if unary, ok := asgn.Lhs.(*cc.UnaryExpr); ok && unary.Case == cc.UnaryExpressionDeref {
-			if postfix, ok := unary.Expr.(*cc.PostfixExpr); ok && !postfix.Dec {
-				// This is *(p++) = rhs → split into: *p = rhs ; p = (*T)(word(p)+1)
-				pStr := t.xExpr(postfix.Expr)
-				rhsStr := t.xExpr(asgn.Rhs)
-				golfType := t.cTypeToGolf(postfix.Expr.Type())
-				// Narrow the RHS to byte if the destination is *byte and the
-				// source expression is wider (int or word). In C, char literals
-				// and arithmetic promote to int; storing into a *char needs
-				// truncation. In Golf, char literals are const_integer and adapt
-				// to context, but explicit int(...) casts in the RHS force int type.
-				if golfType == "*byte" {
-					rhsGolf := t.cTypeToGolf(asgn.Rhs.Type())
-					if rhsGolf == "int" || rhsGolf == "word" {
-						rhsStr = "byte(" + rhsStr + ")"
-					}
-				}
-				t.line("*%s = %s", pStr, rhsStr)
-				t.line("%s = (%s)(word(%s) + 1)", pStr, golfType, pStr)
-				return
+		var lhsPost *cc.PostfixExpr
+		var rhsPost *cc.PostfixExpr
+
+		if unaryLhs, ok := asgn.Lhs.(*cc.UnaryExpr); ok && unaryLhs.Case == cc.UnaryExpressionDeref {
+			if post, ok := unaryLhs.Expr.(*cc.PostfixExpr); ok {
+				lhsPost = post
 			}
 		}
-	}
-	// Pattern: p++  or  p--  where p is a pointer type
-	// Emit:  p = (*T)(word(p) ± 1)   instead of bare p++/p--
-	if postfix, ok := e.(*cc.PostfixExpr); ok {
-		if postfix.Expr.Type().Kind() == cc.Ptr {
-			base := t.xExpr(postfix.Expr)
-			golfType := t.cTypeToGolf(postfix.Expr.Type())
-			if postfix.Dec {
-				t.line("%s = (%s)(word(%s) - 1)", base, golfType, base)
+		if unaryRhs, ok := asgn.Rhs.(*cc.UnaryExpr); ok && unaryRhs.Case == cc.UnaryExpressionDeref {
+			if post, ok := unaryRhs.Expr.(*cc.PostfixExpr); ok {
+				rhsPost = post
+			}
+		}
+
+		if lhsPost != nil && rhsPost != nil {
+			// Pattern: *dst++ = *src++ (or with --)
+			dstStr := t.xExpr(lhsPost.Expr)
+			srcStr := t.xExpr(rhsPost.Expr)
+			rhsVal := "*" + srcStr
+			if t.cTypeToGolf(lhsPost.Expr.Type()) == "*byte" {
+				rhsGolf := t.cTypeToGolf(asgn.Rhs.Type())
+				if rhsGolf == "int" || rhsGolf == "word" {
+					rhsVal = "byte(" + rhsVal + ")"
+				}
+			}
+			t.line("*%s = %s", dstStr, rhsVal)
+			if lhsPost.Dec {
+				t.line("%s--", dstStr)
 			} else {
-				t.line("%s = (%s)(word(%s) + 1)", base, golfType, base)
+				t.line("%s++", dstStr)
+			}
+			if rhsPost.Dec {
+				t.line("%s--", srcStr)
+			} else {
+				t.line("%s++", srcStr)
 			}
 			return
 		}
+
+		if lhsPost != nil {
+			// Pattern: *dst++ = rhs
+			dstStr := t.xExpr(lhsPost.Expr)
+			rhsStr := t.xExpr(asgn.Rhs)
+			if t.cTypeToGolf(lhsPost.Expr.Type()) == "*byte" {
+				rhsGolf := t.cTypeToGolf(asgn.Rhs.Type())
+				if rhsGolf == "int" || rhsGolf == "word" {
+					rhsStr = "byte(" + rhsStr + ")"
+				}
+			}
+			t.line("*%s = %s", dstStr, rhsStr)
+			if lhsPost.Dec {
+				t.line("%s--", dstStr)
+			} else {
+				t.line("%s++", dstStr)
+			}
+			return
+		}
+
+		if rhsPost != nil {
+			// Pattern: lhs = *src++
+			lhsStr := t.xExpr(asgn.Lhs)
+			srcStr := t.xExpr(rhsPost.Expr)
+			rhsVal := "*" + srcStr
+			lGolf := t.cTypeToGolf(asgn.Lhs.Type())
+			if lGolf == "byte" {
+				rGolf := t.cTypeToGolf(asgn.Rhs.Type())
+				if rGolf == "int" || rGolf == "word" {
+					rhsVal = "byte(" + rhsVal + ")"
+				}
+			}
+			t.line("%s = %s", lhsStr, rhsVal)
+			if rhsPost.Dec {
+				t.line("%s--", srcStr)
+			} else {
+				t.line("%s++", srcStr)
+			}
+			return
+		}
+	}
+	// Pattern: p++ or p-- (both pointer and integer)
+	if postfix, ok := e.(*cc.PostfixExpr); ok {
 		base := t.xExpr(postfix.Expr)
 		if postfix.Dec {
 			t.line("%s--", base)
@@ -693,18 +737,8 @@ func (t *translator) translateExprStmtOne(e cc.Expression) {
 		}
 		return
 	}
-	// Pattern: ++p  or  --p  where p is a pointer type
+	// Pattern: ++p or --p (both pointer and integer)
 	if prefix, ok := e.(*cc.PrefixExpr); ok {
-		if prefix.Expr.Type().Kind() == cc.Ptr {
-			base := t.xExpr(prefix.Expr)
-			golfType := t.cTypeToGolf(prefix.Expr.Type())
-			if prefix.Dec {
-				t.line("%s = (%s)(word(%s) - 1)", base, golfType, base)
-			} else {
-				t.line("%s = (%s)(word(%s) + 1)", base, golfType, base)
-			}
-			return
-		}
 		base := t.xExpr(prefix.Expr)
 		if prefix.Dec {
 			t.line("%s--", base)
@@ -712,6 +746,48 @@ func (t *translator) translateExprStmtOne(e cc.Expression) {
 			t.line("%s++", base)
 		}
 		return
+	}
+	// Pattern: fn(*p++) or fn(p++) as a statement
+	if call, ok := e.(*cc.CallExpr); ok && call.Arguments != nil && call.Arguments.ArgumentExpressionList == nil {
+		arg := call.Arguments.Expression
+		if unary, ok := arg.(*cc.UnaryExpr); ok && unary.Case == cc.UnaryExpressionDeref {
+			if post, ok := unary.Expr.(*cc.PostfixExpr); ok {
+				pStr := t.xExpr(post.Expr)
+				fnStr := t.xExpr(call.Func)
+				argStr := "*" + pStr
+				callType := call.Func.Type()
+				if pt, ok := callType.(*cc.PointerType); ok {
+					callType = pt.Elem()
+				}
+				if ft, ok := callType.(*cc.FunctionType); ok && len(ft.Parameters()) > 0 {
+					paramGolf := t.cTypeToGolf(ft.Parameters()[0].Type())
+					if paramGolf == "byte" {
+						argGolf := t.cTypeToGolf(unary.Type())
+						if argGolf == "int" || argGolf == "word" {
+							argStr = "byte(" + argStr + ")"
+						}
+					}
+				}
+				t.line("%s(%s)", fnStr, argStr)
+				if post.Dec {
+					t.line("%s--", pStr)
+				} else {
+					t.line("%s++", pStr)
+				}
+				return
+			}
+		}
+		if post, ok := arg.(*cc.PostfixExpr); ok {
+			pStr := t.xExpr(post.Expr)
+			fnStr := t.xExpr(call.Func)
+			t.line("%s(%s)", fnStr, pStr)
+			if post.Dec {
+				t.line("%s--", pStr)
+			} else {
+				t.line("%s++", pStr)
+			}
+			return
+		}
 	}
 	result := t.xExpr(e)
 	if result != "" {
@@ -1495,17 +1571,7 @@ func (t *translator) xExpr(n cc.Expression) string {
 				// no explicit cast is needed — it's already the right pointer type.
 			}
 		} else if (op == "+=" || op == "-=") && strings.HasPrefix(lGolf, "*") {
-			// Pointer compound assignment: p += n  →  p = prelude.pointer_add[T](p, n)
-			elemType := lGolf[1:]
-			fn := "pointer_add"
-			if op == "-=" {
-				fn = "pointer_sub"
-			}
-			rhsInt := rhs
-			if rGolf != "int" {
-				rhsInt = "int(" + rhs + ")"
-			}
-			return fmt.Sprintf("%s = prelude.%s[%s](%s, %s)", lhs, fn, elemType, lhs, rhsInt)
+			return lhs + " " + op + " " + rhs
 		} else {
 			// For other compound assignment ops (+=, -=, …) promote the RHS if narrower.
 			_, rhs = t.promoteForBinop(x.Lhs.Type(), lhs, x.Rhs.Type(), rhs)

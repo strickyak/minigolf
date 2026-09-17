@@ -37,15 +37,30 @@ func (p *StoreLoadForwardingPass) Run(f *ir.Function) bool {
 	escapeRes := AnalyzeEscape(f)
 	escaping := escapeRes.EscapingAOL
 
-	// Step 2: Forward stores to loads within each basic block
+	// Step 2: Forward stores to loads within each basic block, and eliminate redundant loads
+	blockOutLoads := make(map[int]map[ir.Value]ir.Value)
+
 	for _, b := range f.Blocks {
 		// Map from AddressOfLocal ID to known Value
 		knownStore := make(map[int]ir.Value)
+		// Map from pointer ir.Value to loaded ir.Value (only valid when ZERO stores/calls have occurred)
+		availableLoads := make(map[ir.Value]ir.Value)
+
+		if len(b.Predecessors) == 1 {
+			pred := b.Predecessors[0]
+			if pLoads, ok := blockOutLoads[pred.ID]; ok {
+				for k, v := range pLoads {
+					availableLoads[k] = v
+				}
+			}
+		}
+
 		var remaining []ir.Instruction
 
 		for _, instr := range b.Instructions {
 			switch inst := instr.(type) {
 			case *ir.StorePtr:
+				availableLoads = make(map[ir.Value]ir.Value)
 				if aol, ok := inst.Ptr.(*ir.AddressOfLocal); ok && !escaping[aol.GetID()] {
 					knownStore[aol.GetID()] = inst.Val
 				} else {
@@ -61,6 +76,10 @@ func (p *StoreLoadForwardingPass) Run(f *ir.Function) bool {
 				}
 				remaining = append(remaining, instr)
 
+			case *ir.Store, *ir.InsertFieldPtr:
+				availableLoads = make(map[ir.Value]ir.Value)
+				remaining = append(remaining, instr)
+
 			case *ir.LoadPtr:
 				if aol, ok := inst.Ptr.(*ir.AddressOfLocal); ok && !escaping[aol.GetID()] {
 					if val, ok := knownStore[aol.GetID()]; ok && val.Type().Equals(inst.Type()) {
@@ -73,9 +92,17 @@ func (p *StoreLoadForwardingPass) Run(f *ir.Function) bool {
 					// If not known, this load establishes the value
 					knownStore[aol.GetID()] = inst
 				}
+				// Redundant load elimination: if the exact same pointer was already loaded and no intervening stores/calls occurred
+				if val, ok := availableLoads[inst.Ptr]; ok && val.Type().Equals(inst.Type()) {
+					ReplaceUsesOf(f, inst, val)
+					changed = true
+					continue
+				}
+				availableLoads[inst.Ptr] = inst
 				remaining = append(remaining, instr)
 
-			case *ir.Call, *ir.IndirectCall:
+			case *ir.Call, *ir.IndirectCall, *ir.BuiltinCall, *ir.SetJmp, *ir.LongJmp:
+				availableLoads = make(map[ir.Value]ir.Value)
 				// Calls can only modify escaping variables or globals.
 				// Non-escaping locals are guaranteed safe!
 				for id := range knownStore {
@@ -91,6 +118,7 @@ func (p *StoreLoadForwardingPass) Run(f *ir.Function) bool {
 		}
 
 		b.Instructions = remaining
+		blockOutLoads[b.ID] = availableLoads
 	}
 
 	return changed

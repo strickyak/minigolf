@@ -76,7 +76,7 @@ func (p *CSEPass) exprKey(instr ir.Instruction) string {
 		return fmt.Sprintf("ext_fld:%s:%d", p.valueKey(i.Struct), i.FieldIndex)
 
 	case *ir.AddressOfLocal:
-		return fmt.Sprintf("addr_loc:%s", p.valueKey(i.Local))
+		return fmt.Sprintf("addr_loc:%p", i.Local)
 
 	case *ir.AddressOfGlobal:
 		return fmt.Sprintf("addr_glb:%p", i.Global)

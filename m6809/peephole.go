@@ -171,7 +171,28 @@ func peepholeOptimize(asm string) string {
 					continue
 				}
 
+
 				// Redundant TST
+				if codePart == "tstb" {
+					if strings.HasPrefix(prevCode, "ldb ") || strings.HasPrefix(prevCode, "stb ") ||
+						strings.HasPrefix(prevCode, "addb ") || strings.HasPrefix(prevCode, "subb ") ||
+						strings.HasPrefix(prevCode, "andb ") || strings.HasPrefix(prevCode, "orb ") ||
+						strings.HasPrefix(prevCode, "eorb ") || strings.HasPrefix(prevCode, "negb") ||
+						prevCode == "clrb" {
+						changed = true
+						continue
+					}
+				}
+				if codePart == "tsta" {
+					if strings.HasPrefix(prevCode, "lda ") || strings.HasPrefix(prevCode, "sta ") ||
+						strings.HasPrefix(prevCode, "adda ") || strings.HasPrefix(prevCode, "suba ") ||
+						strings.HasPrefix(prevCode, "anda ") || strings.HasPrefix(prevCode, "ora ") ||
+						strings.HasPrefix(prevCode, "eora ") || strings.HasPrefix(prevCode, "nega") ||
+						prevCode == "clra" {
+						changed = true
+						continue
+					}
+				}
 
 				// Redundant Store
 				if strings.HasPrefix(codePart, "std ") || strings.HasPrefix(codePart, "stb ") || strings.HasPrefix(codePart, "sta ") || strings.HasPrefix(codePart, "stx ") || strings.HasPrefix(codePart, "sty ") || strings.HasPrefix(codePart, "stu ") {
@@ -261,6 +282,31 @@ func peepholeOptimize(asm string) string {
 					}
 				}
 
+				// Redundant load after store across non-modifying conditional branch
+				if prev2Idx >= 0 {
+					pCode := prevCode
+					if idx := strings.Index(pCode, " "); idx != -1 {
+						pOp := pCode[:idx]
+						switch pOp {
+						case "beq", "lbeq", "bne", "lbne", "bgt", "lbgt", "blt", "lblt",
+							"bge", "lbge", "ble", "lble", "blo", "lblo", "bhi", "lbhi",
+							"bls", "lbls", "bhs", "lbhs":
+							if strings.HasPrefix(codePart, "ldb ") && strings.HasPrefix(prev2Code, "stb ") && codePart[4:] == prev2Code[4:] {
+								changed = true
+								continue
+							}
+							if strings.HasPrefix(codePart, "lda ") && strings.HasPrefix(prev2Code, "sta ") && codePart[4:] == prev2Code[4:] {
+								changed = true
+								continue
+							}
+							if strings.HasPrefix(codePart, "ldd ") && strings.HasPrefix(prev2Code, "std ") && codePart[4:] == prev2Code[4:] {
+								changed = true
+								continue
+							}
+						}
+					}
+				}
+
 				// Autoincrement / Autodecrement Addressing
 				if codePart == "leax 1,x" {
 					if prevCode == "ldb ,x" || prevCode == "stb ,x" || prevCode == "lda ,x" || prevCode == "sta ,x" {
@@ -294,6 +340,22 @@ func peepholeOptimize(asm string) string {
 						continue
 					}
 				}
+				if codePart == "leau 1,u" {
+					if prevCode == "ldb ,u" || prevCode == "stb ,u" || prevCode == "lda ,u" || prevCode == "sta ,u" {
+						c := combineComments(getComment(out[prevIdx]), "peephole: auto-increment")
+						out[prevIdx] = withComment("\t"+prevCode[:3]+" ,u+", c)
+						changed = true
+						continue
+					}
+				}
+				if codePart == "leau 2,u" {
+					if prevCode == "ldd ,u" || prevCode == "std ,u" {
+						c := combineComments(getComment(out[prevIdx]), "peephole: auto-increment")
+						out[prevIdx] = withComment("\t"+prevCode[:3]+" ,u++", c)
+						changed = true
+						continue
+					}
+				}
 				if prevCode == "leax -1,x" {
 					if codePart == "ldb ,x" || codePart == "stb ,x" || codePart == "lda ,x" || codePart == "sta ,x" {
 						c := combineComments(getComment(line), "peephole: auto-decrement")
@@ -313,8 +375,9 @@ func peepholeOptimize(asm string) string {
 				}
 				if prevCode == "leay -1,y" {
 					if codePart == "ldb ,y" || codePart == "stb ,y" || codePart == "lda ,y" || codePart == "sta ,y" {
+						c := combineComments(getComment(line), "peephole: auto-decrement")
 						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leay
-						out = append(out, "\t"+codePart[:3]+" ,-y\t; peephole: auto-decrement")
+						out = append(out, withComment("\t"+codePart[:3]+" ,-y", c))
 						changed = true
 						continue
 					}
@@ -323,6 +386,23 @@ func peepholeOptimize(asm string) string {
 					if codePart == "ldd ,y" || codePart == "std ,y" {
 						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leay
 						out = append(out, "\t"+codePart[:3]+" ,--y\t; peephole: auto-decrement")
+						changed = true
+						continue
+					}
+				}
+				if prevCode == "leau -1,u" {
+					if codePart == "ldb ,u" || codePart == "stb ,u" || codePart == "lda ,u" || codePart == "sta ,u" {
+						c := combineComments(getComment(line), "peephole: auto-decrement")
+						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leau
+						out = append(out, withComment("\t"+codePart[:3]+" ,-u", c))
+						changed = true
+						continue
+					}
+				}
+				if prevCode == "leau -2,u" {
+					if codePart == "ldd ,u" || codePart == "std ,u" {
+						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leau
+						out = append(out, "\t"+codePart[:3]+" ,--u\t; peephole: auto-decrement")
 						changed = true
 						continue
 					}

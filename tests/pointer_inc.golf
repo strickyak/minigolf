@@ -1,0 +1,69 @@
+package main
+
+type Pair struct {
+	a word
+	b word
+}
+
+func main() {
+	// Byte pointers
+	var bArr [5]byte
+	bArr[0] = byte('H')
+	bArr[1] = byte('e')
+	bArr[2] = byte('l')
+	bArr[3] = byte('l')
+	bArr[4] = byte('o')
+
+	bp := &bArr[0]
+	putchar(*bp)
+	bp++
+	putchar(*bp)
+	bp += 2
+	putchar(*bp)
+	bp--
+	putchar(*bp)
+	bp -= 2
+	putchar(*bp)
+	putchar(byte(10))
+
+	// Word pointers
+	var wArr [5]word
+	wArr[0] = 100
+	wArr[1] = 200
+	wArr[2] = 300
+	wArr[3] = 400
+	wArr[4] = 500
+
+	wp := &wArr[0]
+	println("wp:", *wp)
+	wp++
+	println("wp++:", *wp)
+	wp += 2
+	println("wp+=2:", *wp)
+	wp--
+	println("wp--:", *wp)
+	wp -= 2
+	println("wp-=2:", *wp)
+
+	// Struct pointers
+	var pArr [4]Pair
+	pArr[0].a = 10
+	pArr[0].b = 11
+	pArr[1].a = 20
+	pArr[1].b = 21
+	pArr[2].a = 30
+	pArr[2].b = 31
+	pArr[3].a = 40
+	pArr[3].b = 41
+
+	pp := &pArr[0]
+	println("pair:", pp.a, pp.b)
+	pp++
+	println("pair++:", pp.a, pp.b)
+	pp += 2
+	println("pair+=2:", pp.a, pp.b)
+	pp--
+	println("pair--:", pp.a, pp.b)
+	pp -= 2
+	println("pair-=2:", pp.a, pp.b)
+}

@@ -46,6 +46,8 @@ func (p *ConstFoldPass) Run(f *ir.Function) bool {
 
 func (p *ConstFoldPass) foldInstruction(instr ir.Instruction, f *ir.Function) ir.Instruction {
 	switch i := instr.(type) {
+	case *ir.ZeroInit:
+		return p.foldZeroInit(i)
 	case *ir.BinaryOp:
 		return p.foldBinaryOp(i)
 	case *ir.Compare:
@@ -56,6 +58,23 @@ func (p *ConstFoldPass) foldInstruction(instr ir.Instruction, f *ir.Function) ir
 		return p.foldCast(i)
 	case *ir.Sizeof:
 		return p.foldSizeof(i)
+	}
+	return nil
+}
+
+func (p *ConstFoldPass) foldZeroInit(i *ir.ZeroInit) ir.Instruction {
+	typ := i.Typ
+	if typ.IsByte() || typ.IsBool() || typ.Name == "byte" || typ.Name == "bool" {
+		return &ir.ConstByte{
+			BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded ZeroInit"},
+			Val:             0,
+		}
+	}
+	if typ.IsWord() || typ.IsInt() || typ.Name == "word" || typ.Name == "int" || typ.IsAPointer() {
+		return &ir.ConstWord{
+			BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded ZeroInit"},
+			Val:             0,
+		}
 	}
 	return nil
 }
@@ -362,6 +381,53 @@ func (p *ConstFoldPass) foldCompare(i *ir.Compare) ir.Instruction {
 			return &ir.ConstByte{
 				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded compare self false"},
 				Val:             0,
+			}
+		}
+	}
+	// Narrow comparisons of zero-extended bytes:
+	// zero_ext(b1) op zero_ext(b2) -> b1 op b2
+	castL, isCastL := i.Left.(*ir.Cast)
+	castR, isCastR := i.Right.(*ir.Cast)
+	if isCastL && castL.Op == "zero_ext" && (castL.Operand.Type().IsByte() || castL.Operand.Type().Name == "byte") {
+		if isCastR && castR.Op == "zero_ext" && (castR.Operand.Type().IsByte() || castR.Operand.Type().Name == "byte") {
+			return &ir.Compare{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Narrowed zero_ext compare"},
+				Op:              i.Op,
+				Left:            castL.Operand,
+				Right:           castR.Operand,
+			}
+		}
+		if cRightW, ok := i.Right.(*ir.ConstWord); ok {
+			if cRightW.Val <= 255 {
+				return &ir.Compare{
+					BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Narrowed zero_ext compare"},
+					Op:              i.Op,
+					Left:            castL.Operand,
+					Right: &ir.ConstByte{
+						BaseInstruction: ir.BaseInstruction{Typ: ir.TypeByte},
+						Val:             uint8(cRightW.Val),
+					},
+				}
+			} else {
+				if i.Op == "eq" {
+					return &ir.ConstByte{BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ}, Val: 0}
+				}
+				if i.Op == "neq" {
+					return &ir.ConstByte{BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ}, Val: 1}
+				}
+			}
+		}
+	}
+	if isCastR && castR.Op == "zero_ext" && (castR.Operand.Type().IsByte() || castR.Operand.Type().Name == "byte") {
+		if cLeftW, ok := i.Left.(*ir.ConstWord); ok && cLeftW.Val <= 255 {
+			return &ir.Compare{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Narrowed zero_ext compare"},
+				Op:              i.Op,
+				Left: &ir.ConstByte{
+					BaseInstruction: ir.BaseInstruction{Typ: ir.TypeByte},
+					Val:             uint8(cLeftW.Val),
+				},
+				Right: castR.Operand,
 			}
 		}
 	}

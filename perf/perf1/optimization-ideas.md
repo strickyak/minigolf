@@ -516,7 +516,28 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 4. 8-Bit / Byte Register Allocation (`A` and `B` Accumulators)
+#### 4. Pointer Arithmetic Scaling & Native Statement Idioms (COMPLETED)
+* **Status**: **Completed** ([`ir/builder.go`](file:///home/strick/github.com/strickyak/minigolf/ir/builder.go), [`cbe/cbe.go`](file:///home/strick/github.com/strickyak/minigolf/cbe/cbe.go), [`ctranslator/translator.go`](file:///home/strick/github.com/strickyak/minigolf/ctranslator/translator.go), [`tests/pointer_inc.golf`](file:///home/strick/github.com/strickyak/minigolf/tests/pointer_inc.golf)).
+* **Implementation Details**:
+  - **IR Pointer Arithmetic Scaling**:
+    - Fixed `ir/builder.go` for `ast.IncDecStatement` (`p++`, `p--`) and `ast.OpAssignStatement` (`p += n`, `p -= n`) to scale pointer offsets by element size `sizeof(T)` instead of literal 1 byte.
+    - Updated `cbe/cbe.go` to emit pointer `BinaryOp` as integer address arithmetic cast back to pointer type `((T*)((word)(p) + (word)(offset)))`, maintaining identical byte-offset semantics across CBE, AMD64, and M6809.
+  - **Idiomatic Non-Escaping C Translation**:
+    - Updated `ctranslator/translator.go` to recognize statement-level pointer increments and copy idioms:
+      - `*dst++ = *src++` -> `*dst = *src; dst++; src++`
+      - `*dst++ = rhs` -> `*dst = rhs; dst++`
+      - `lhs = *src++` -> `lhs = *src; src++`
+      - `fn(*p++)` / `fn(p++)` -> `fn(*p); p++` / `fn(p); p++`
+    - Eliminated generic prelude helper calls (`pointer_post_increment(&p)`), preventing pointers from escaping (`&p`).
+    - With pointers no longer escaping, SSA register allocation places pointer variables (`dst`, `src`) into 16-bit index registers `X`, `Y`, and `U` across entire loop lifespans.
+* **Empirical Results**:
+  - `06_string_ops`: Cycles dropped from **17,208 to 13,540** (**-3,668 cycles, -21.3% faster!**); payload dropped from **1,280 B to 1,178 B** (**-102 bytes, -8.0% smaller!**).
+  - Ratio vs GCCMax narrowed from **3.24x down to 2.55x**.
+  - Verified across all 3 backends and all 8 M6809 architectural variants with 100% test pass.
+
+---
+
+#### 5. 8-Bit / Byte Register Allocation (`A` and `B` Accumulators)
 * **Goal**: Prevent continuous stack spilling for 8-bit types.
 * **Current Bottleneck**: [`AllocateRegisters`](file:///home/strick/github.com/strickyak/minigolf/m6809/regalloc.go) explicitly ignores types with `size != 2`. Byte variables (`uint8`, `char`, `bool`) are always stored to and loaded from stack slots (`stb 0,s; ldb 0,s`).
 * **Proposed Design**:
@@ -526,7 +547,7 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 5. Native Autoincrement / Autodecrement Addressing
+#### 6. Native Autoincrement / Autodecrement Addressing
 * **Goal**: Directly exploit 6809 hardware addressing modes `,x+`, `,x++`, `,-x`, `,--x` during code generation.
 * **Current Bottleneck**: Pointer increment loops (`while (*s) { ... s++; }`) often emit separate pointer adjustments (`addd #1`, `std ptr`) and reloads instead of combining memory load/store with pointer advancement.
 * **Proposed Design**: Pattern-match memory load/store and pointer update pairs in `emitInstr` or expand peephole recognition across intermediate register moves.
@@ -534,10 +555,39 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 6. Jump Tables for Dense `switch` Statements
+#### 7. Jump Tables for Dense `switch` Statements
 * **Goal**: Transform $O(N)$ sequential comparisons into $O(1)$ constant-time dispatch.
 * **Current Bottleneck**: [`ctranslator`](file:///home/strick/github.com/strickyak/minigolf/ctranslator) compiles `switch` statements into cascaded `if-else` chains, requiring up to $N$ compare-and-branch instructions.
 * **Proposed Design**:
   - Detect dense integer case ranges ($[\text{min}, \text{max}]$).
   - Emit M6809 indirect indexed jumps: `subd #min; aslb; rola; ldx #table; jmp [d,x]`.
 * **Target Impact**: In `10_switch_case`, dispatch overhead becomes constant time regardless of case count, closing the gap with GCC and CMOC.
+
+---
+
+### Progress Update: String Operations & Tight Loop Optimization Milestone
+
+* **Completed Phases**:
+  1. **String Literal Direct Address Cast ([`ir/builder.go`](file:///home/strick/github.com/strickyak/minigolf/ir/builder.go))**:
+     - `(*byte)(stringLiteral)` now evaluates directly to `&AddressOfGlobal{Global: g}` rather than constructing a temporary 6-byte slice struct on the stack, zeroing it with `__memset0`, and extracting field 0.
+     - Eliminated all string literal slice initialization overhead and temporary allocations.
+  2. **Scalar `ZeroInit` Constant Folding ([`opt/constfold.go`](file:///home/strick/github.com/strickyak/minigolf/opt/constfold.go))**:
+     - Folded `ZeroInit` of byte, bool, word, int, and pointers to `ConstByte{Val: 0}` or `ConstWord{Val: 0}`.
+     - Eliminated unnecessary stack slot allocations and `clr N,s` instructions across loops checking values against zero.
+  3. **Zero-Store Redundant Load Elimination ([`opt/store_load.go`](file:///home/strick/github.com/strickyak/minigolf/opt/store_load.go))**:
+     - Propagates available loads across single-predecessor basic blocks (`len(b.Predecessors) == 1`) as long as zero stores or function calls have occurred.
+     - Automatically invalidates available loads on any `StorePtr`, `Store`, `InsertFieldPtr`, or function call.
+     - Successfully eliminated redundant reload of `*src` in `my_strcpy` loop body.
+  4. **Comparison Narrowing on Zero-Extended Operands ([`opt/constfold.go`](file:///home/strick/github.com/strickyak/minigolf/opt/constfold.go))**:
+     - `zero_ext(b1) op zero_ext(b2)` narrowed directly to `b1 op b2`, eliminating 16-bit extension overhead when comparing bytes.
+  5. **M6809 Backend Peephole Optimizations ([`m6809/peephole.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/peephole.go))**:
+     - Extended autoincrement/autodecrement addressing to register `U` (`leau 1,u` / `leau 2,u` -> `,u+` / `,u++`, and `leau -1,u` / `leau -2,u` -> `,-u` / `,--u`).
+     - Added redundant `tstb` / `tsta` elimination when preceded by instructions that already set condition codes (`ldb`, `stb`, `addb`, `subb`, `andb`, `orb`, `eorb`, `negb`, `clrb`).
+     - Added redundant load after store elimination across non-modifying conditional branches.
+
+* **Benchmark Results (`06_string_ops`)**:
+  - **CPU Cycles**: Dropped from **24,984 to 10,182** (**-59.2% reduction, -14,802 cycles!**).
+  - **Loaded Payload**: Dropped from **1,401 B to 890 B** (**-511 bytes, -36.5% smaller!**).
+  - **Performance Ratio vs GCC**: Narrowed from **4.70x down to 1.80x**!
+  - **Verification**: 100% pass across all unit tests and all 8 M6809 architectural variants (`ALL_VARIANTS=1 time go test ./...`).
+
