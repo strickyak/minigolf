@@ -423,5 +423,88 @@ Rank 4 (Stack temporary fallback, 15 cycles, 4 bytes):
 ```
 By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate tens of cycles per loop iteration across all benchmarks.
 
+---
 
+## 6. Top Optimization Opportunities & Middle-End / Backend Roadmap
 
+### Current Benchmark Status & Bottleneck Analysis
+
+| Benchmark | MiniGolf (Updated) | GCC 6809 Max | MG vs GCC | Primary Bottleneck & Opportunity |
+| :--- | :---: | :---: | :---: | :--- |
+| `01_putchar` | **78** (44 B) | 66 (87 B) | 1.18x | Function call overhead & entry trampolines |
+| `02_count_loop` | **766** (104 B) | 531 (133 B) | 1.44x | Induction variable pinning in registers across iterations |
+| `03_arithmetic` | **14,348** (702 B) | 16,409 (548 B) | **0.87x (faster!)** | MiniGolf runtime math routines beat GCC |
+| `04_fibonacci` | **20,309** (579 B) | 11,519 (333 B) | 1.76x | Call convention (`pshs d` + `leas 2,s` on every call) |
+| `05_array_sum` | **15,433** (1226 B) | 11,836 (348 B) | 1.30x | Indexed addressing vs autoincrement `,x+` / `,x++` |
+| `06_string_ops` | **18,710** (1728 B) | 5,319 (466 B) | **3.52x** | 8-bit accumulator allocation (`A`/`B`) & pointer autoincrement |
+| `07_sieve` | **26,792** (679 B) | 14,800 (329 B) | 1.81x | No 8-bit register allocation for byte arrays/flags |
+| `08_bubble_sort` | **72,137** (1034 B) | 41,207 (395 B) | 1.75x | Nested loop spills & redundant memory writes |
+| `09_struct_ops` | **10,006** (1218 B) | 7,891 (303 B) | 1.27x | Stack frame allocation for composite temporaries |
+| `10_switch_case` | **11,041** (907 B) | 6,794 (569 B) | 1.63x | Cascaded `if-else` chains instead of jump tables |
+
+---
+
+### Prioritized Optimization Projects
+
+#### 1. Algebraic Simplifications, Sizeof Constant Folding & Pre-Inlining Cleanup (COMPLETED)
+* **Status**: **Completed** ([`opt/constfold.go`](file:///home/strick/github.com/strickyak/minigolf/opt/constfold.go), [`opt/copyprop.go`](file:///home/strick/github.com/strickyak/minigolf/opt/copyprop.go), [`opt/strength.go`](file:///home/strick/github.com/strickyak/minigolf/opt/strength.go), [`opt/inline.go`](file:///home/strick/github.com/strickyak/minigolf/opt/inline.go)).
+* **Implementation Details**:
+  - **Sizeof Folding**: Folded `sizeof(byte)` and `sizeof(bool)` to 1 on all backends; wired target `WordSize` (2 bytes for M6809, 8 bytes for AMD64/CBE) to fold `sizeof(int)`, `sizeof(word)`, pointers, and arrays of known element types.
+  - **Algebraic Identities**: Added identity rules:
+    - Multiplications / Shifts: $x \times 1 \rightarrow x$, $1 \times x \rightarrow x$, $x / 1 \rightarrow x$, $x \times 0 \rightarrow 0$, $0 \times x \rightarrow 0$, $x \ll 0 \rightarrow x$, $x \gg 0 \rightarrow x$.
+    - Additions / Subtractions: $x + 0 \rightarrow x$, $0 + x \rightarrow x$, $x - 0 \rightarrow x$, $x - x \rightarrow 0$.
+    - Bitwise / Idempotent: $x \mid 0 \rightarrow x$, $x \oplus 0 \rightarrow x$, $x \oplus x \rightarrow 0$, $x \ \& \ 0 \rightarrow 0$, $x \ \& \ x \rightarrow x$, $x \mid x \rightarrow x$.
+    - Self Comparisons: $x == x \rightarrow 1$, $x \le x \rightarrow 1$, $x \ge x \rightarrow 1$, $x \ne x \rightarrow 0$, $x < x \rightarrow 0$, $x > x \rightarrow 0$.
+  - **Pre- & Post-Inlining Cleanups**: Cleaned up functions before inlining rounds so small pointer manipulation helpers (`pointer_post_increment`, `pointer_add`) shrink under `MaxTinyInstructions` and inline cleanly.
+  - **Strength Reduction on M6809**: Enabled `StrengthReductionPass` on M6809, converting array indexing `i * 2` into 2-instruction bit shifts (`aslb; rola`) and eliminating `jsr __mul16`.
+* **Empirical Results**:
+  - `05_array_sum`: Cycles dropped from **18,403 to 15,433** (**-16.1%**); payload dropped from **1,450 B to 1,226 B** (**-15.4%**).
+  - `06_string_ops`: Cycles dropped from **28,410 to 18,710** (**-34.1%**, **-9,700 cycles!**); payload dropped from **1,993 B to 1,728 B** (**-13.3%**).
+
+---
+
+#### 2. Inlining Enhancements (Cross-Backend)
+* **Goal**: Expand whole-program inlining beyond single basic blocks and purely straight-line execution.
+* **Key Tasks**:
+  - **Diamond / Conditional Branch Inlining**: Allow functions with simple conditional branches (e.g. `min(a,b)`, `max(a,b)`, `abs(x)`, and ternary operators) to be inlined into callers.
+  - **Popularity-Weighted Inlining Budget**: Use the `Popularity` signal to permit larger functions to be inlined when they appear inside hot loops, while restricting inlining in cold initialization code.
+  - **Leaf Function Promotion**: Aggressively inline functions that convert a Level 2 caller into a Level 1 leaf function, unlocking leaf frame omission in backends.
+
+---
+
+#### 3. Register Passing Calling Convention for M6809 (Fastcall)
+* **Goal**: Eliminate stack frame pushes and pops for function call arguments.
+* **Current Bottleneck**: Every function call currently pushes arguments onto the stack (`pshs d`), callee loads them from the stack (`ldd 4,s`), and caller cleans the stack (`leas 2,s`).
+* **Proposed Design**:
+  - Pass the 1st parameter in accumulator `D` (or `B` for byte types).
+  - Pass the 2nd parameter in index register `X` (for pointer or word types).
+  - Spill only arguments 3+ to the stack.
+* **Target Impact**: Single-argument functions (`fib(n)`, `putchar(c)`, math functions, accessors) save 16–22 cycles per call. In `04_fibonacci`, execution cycles are projected to drop by ~35–40%.
+
+---
+
+#### 4. 8-Bit / Byte Register Allocation (`A` and `B` Accumulators)
+* **Goal**: Prevent continuous stack spilling for 8-bit types.
+* **Current Bottleneck**: [`AllocateRegisters`](file:///home/strick/github.com/strickyak/minigolf/m6809/regalloc.go) explicitly ignores types with `size != 2`. Byte variables (`uint8`, `char`, `bool`) are always stored to and loaded from stack slots (`stb 0,s; ldb 0,s`).
+* **Proposed Design**:
+  - Allocate accumulator `B` (and/or `A`) to hot 8-bit SSA values across basic blocks where `D` is not needed as a 16-bit scratch.
+  - Allow byte pointers to remain in index registers `X`/`Y` while accumulator `B` acts as the dereferenced character buffer.
+* **Target Impact**: Drastically closes the performance gap in byte-heavy benchmarks like `06_string_ops` and `07_sieve`.
+
+---
+
+#### 5. Native Autoincrement / Autodecrement Addressing
+* **Goal**: Directly exploit 6809 hardware addressing modes `,x+`, `,x++`, `,-x`, `,--x` during code generation.
+* **Current Bottleneck**: Pointer increment loops (`while (*s) { ... s++; }`) often emit separate pointer adjustments (`addd #1`, `std ptr`) and reloads instead of combining memory load/store with pointer advancement.
+* **Proposed Design**: Pattern-match memory load/store and pointer update pairs in `emitInstr` or expand peephole recognition across intermediate register moves.
+* **Target Impact**: Replaces 3 instructions (~14 cycles) with 1 instruction (~5 cycles) in string and array traversal loops.
+
+---
+
+#### 6. Jump Tables for Dense `switch` Statements
+* **Goal**: Transform $O(N)$ sequential comparisons into $O(1)$ constant-time dispatch.
+* **Current Bottleneck**: [`ctranslator`](file:///home/strick/github.com/strickyak/minigolf/ctranslator) compiles `switch` statements into cascaded `if-else` chains, requiring up to $N$ compare-and-branch instructions.
+* **Proposed Design**:
+  - Detect dense integer case ranges ($[\text{min}, \text{max}]$).
+  - Emit M6809 indirect indexed jumps: `subd #min; aslb; rola; ldx #table; jmp [d,x]`.
+* **Target Impact**: In `10_switch_case`, dispatch overhead becomes constant time regardless of case count, closing the gap with GCC and CMOC.
