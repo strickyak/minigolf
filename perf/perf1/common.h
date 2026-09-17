@@ -1,7 +1,12 @@
 #ifndef COMMON_H
 #define COMMON_H
 
-#if unix
+#if defined(__MINIGOLF__) || defined(__GOLF__)
+extern void putchar(char c);
+static int getchar(void) {
+    return 0;
+}
+#elif unix
 #include <stdio.h>
 #else
 #ifdef _CMOC_VERSION_

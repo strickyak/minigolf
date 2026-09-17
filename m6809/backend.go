@@ -301,8 +301,12 @@ func (b *Backend) nextLabel() string {
 
 func (b *Backend) offsetAddr(off int, sz int) string {
 	if b.useFramePointer {
-		// In U frame: locals are allocated below saved U, so base address is -(off + sz) from U
-		return fmt.Sprintf("-%d,u", off+sz)
+		extra := 0
+		if b.saveYFP {
+			extra = 2
+		}
+		// In U frame: locals are allocated below saved U (and saved Y if present), so base address is -(extra + off + sz) from U
+		return fmt.Sprintf("-%d,u", extra+off+sz)
 	}
 	// In S frame: locals start at S + pushedBytes + off
 	return fmt.Sprintf("%d,s", off+b.pushedBytes)
@@ -772,7 +776,12 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString("\ttfr x,d\n")
 	case *ir.AddressOfGlobal:
 		if b.globalsAtY {
-			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[v.Global.Name]))
+			offset := b.globalOffsets[v.Global.Name]
+			if offset == 0 {
+				b.buf.WriteString("\ttfr y,d\n")
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\ttfr y,d\n\taddd #%d\n", offset))
+			}
 		} else if b.picMode {
 			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", v.Global.Name))
 		} else {
@@ -2985,12 +2994,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.InsertFieldPtr:
 		structType := i.Ptr.Type().PointedType()
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structType, i.FieldIndex)
-		b.loadVal16("x", i.Ptr)
 		if fieldSize == 1 {
 			b.loadVal(i.Val)
+			b.loadVal16("x", i.Ptr)
 			b.buf.WriteString(fmt.Sprintf("\tstb %d,x\n", byteOffset))
 		} else if fieldSize == 2 {
 			b.loadVal(i.Val)
+			if b.getValSize(i.Val) == 1 {
+				b.buf.WriteString("\tclra\n")
+			}
+			b.loadVal16("x", i.Ptr)
 			b.buf.WriteString(fmt.Sprintf("\tstd %d,x\n", byteOffset))
 		} else {
 			if byteOffset > 0 {
@@ -3087,17 +3100,20 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 					ptrReg = r
 				}
 			}
-			if ptrReg == "x" {
-				b.loadVal16("x", i.Ptr)
-			}
 			if sz == 1 {
 				b.loadVal(i.Val)
-				b.buf.WriteString(fmt.Sprintf("\tstb ,%s\n", ptrReg))
 			} else {
 				b.loadVal(i.Val)
 				if b.getValSize(i.Val) == 1 {
 					b.buf.WriteString("\tclra\n")
 				}
+			}
+			if ptrReg == "x" {
+				b.loadVal16("x", i.Ptr)
+			}
+			if sz == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tstb ,%s\n", ptrReg))
+			} else {
 				b.buf.WriteString(fmt.Sprintf("\tstd ,%s\n", ptrReg))
 			}
 		} else {

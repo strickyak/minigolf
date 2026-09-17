@@ -49,13 +49,13 @@ func (c *CBE) mapType(typ string) string {
 		return "word"
 	}
 	if typ == "int" {
-		return "int16_t"
+		return "intptr_t"
 	}
 	if typ == "noreturn" {
 		return "int"
 	}
 	if typ == "uint" {
-		return "uint16_t"
+		return "uintptr_t"
 	}
 	if strings.HasPrefix(typ, "*") {
 		return c.mapType(typ[1:]) + "*"
@@ -120,9 +120,9 @@ func (c *CBE) mapIRType(typ ir.Type) string {
 	case "const_integer":
 		return "word"
 	case "int":
-		return "int16_t"
+		return "intptr_t"
 	case "uint":
-		return "uint16_t"
+		return "uintptr_t"
 	case "noreturn":
 		return "int"
 	}
@@ -136,7 +136,7 @@ func (c *CBE) mapIRType(typ ir.Type) string {
 		return "byte"
 	}
 	if typ.IsInt() {
-		return "int16_t"
+		return "intptr_t"
 	}
 	if typ.IsConstInt() {
 		return "word"
