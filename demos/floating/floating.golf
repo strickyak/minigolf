@@ -22,6 +22,17 @@ func (f *FloatingPoint) GetExp() int {
 }
 
 func (f *FloatingPoint) SetSignExp(sign byte, exp int) {
+	if exp < -64 {
+		f.SignExp = 0
+		f.Mantissa[0] = 0
+		f.Mantissa[1] = 0
+		f.Mantissa[2] = 0
+		f.Mantissa[3] = 0
+		return
+	}
+	if exp > 63 {
+		panic("floating: exponent overflow")
+	}
 	e := byte(exp & 0x7F)
 	if sign != 0 {
 		f.SignExp = 0x80 | e
@@ -173,6 +184,14 @@ func (f *FloatingPoint) Normalize(carry byte, exp int) {
 	for (f.Mantissa[0] & 0x80) == 0 {
 		shiftLeft1(&f.Mantissa)
 		exp--
+		if exp < -64 {
+			f.SignExp = 0
+			f.Mantissa[0] = 0
+			f.Mantissa[1] = 0
+			f.Mantissa[2] = 0
+			f.Mantissa[3] = 0
+			return
+		}
 	}
 	f.SetSignExp(f.Sign(), exp)
 }
@@ -326,6 +345,9 @@ func Mul(a FloatingPoint, b FloatingPoint) FloatingPoint {
 	}
 	sign := a.Sign() ^ b.Sign()
 	exp := a.GetExp() + b.GetExp()
+	if exp < -64 {
+		return res
+	}
 
 	var acc [4]byte
 	carry := byte(0)
@@ -344,6 +366,12 @@ func Mul(a FloatingPoint, b FloatingPoint) FloatingPoint {
 	if carry != 0 {
 		shiftRight1(&acc, carry)
 		exp++
+	}
+	if exp < -64 {
+		return res
+	}
+	if exp > 63 {
+		panic("floating: exponent overflow")
 	}
 	res.Mantissa = acc
 	res.SetSignExp(sign, exp)
@@ -411,6 +439,9 @@ func Div(a FloatingPoint, b FloatingPoint) FloatingPoint {
 	if expQ < -64 {
 		var z FloatingPoint
 		return z
+	}
+	if expQ > 63 {
+		panic("floating: exponent overflow")
 	}
 	res.SetSignExp(resSign, expQ)
 	return res
@@ -480,6 +511,9 @@ func Format(f FloatingPoint) string {
 		d := ToWord(frac)
 		out.Append('0' + byte(d))
 		frac = Sub(frac, FromWord(d))
+	}
+	if out[out.Len-1] == '.' {
+		out.Append('0')
 	}
 	return out
 }

@@ -52,16 +52,23 @@ func Sqrt(x floating.FloatingPoint) floating.FloatingPoint {
 	var y floating.FloatingPoint
 
 	if (exp & 1) == 0 {
-		resExp = exp / 2
+		if exp < 0 {
+			resExp = 0 - int((word(0-exp)) / 2)
+		} else {
+			resExp = exp / 2
+		}
 		y.Mantissa[0] = 0x98
 	} else {
 		if exp < 0 {
-			resExp = (exp - 1) / 2
+			resExp = 0 - int((word(0-(exp-1))) / 2)
 		} else {
 			resExp = exp / 2
 		}
 		y.Mantissa[0] = 0xD8
 	}
+	y.Mantissa[1] = 0
+	y.Mantissa[2] = 0
+	y.Mantissa[3] = 0
 	y.SetSignExp(0, resExp)
 
 	for iter := 0; iter < 6; iter++ {
