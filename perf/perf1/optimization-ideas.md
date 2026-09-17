@@ -277,4 +277,94 @@ When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF`
 ### Step 3: Single-Callsite Inlining for Static Functions (Targets `03_arithmetic`)
 * In [`opt/`](file:///home/strick/github.com/strickyak/minigolf/opt), check popularity/call counts: if a private function has exactly 1 callsite (like `compute` in `03_arithmetic`), inline it into the caller to eliminate stack parameter passing and function call overhead.
 
+---
+
+## 5. Architectural Brainstorm: Multi-Alternative Instruction Selection & The M6809 Addition Zoo
+
+GCC's M6809 backend (`m6809.md`) achieves industry-leading code density and speed by employing **cost-based multi-alternative matching**. Instead of fixed code emission templates, it defines multiple code generation alternatives for every operation based on where operands reside (**Memory**, **Accumulators**, **Index Registers**, **Immediate Constants**, or **Stack Slots**), ranking them by byte size and cycle cost.
+
+Below is the complete M6809 addition taxonomy, condition code flag dynamics, and a blueprint for adopting multi-alternative selection in MiniGolf.
+
+---
+
+### A. The Complete M6809 Addition Matrix
+
+| Instruction | Operands & Direction | Bytes | Cycles | **C** (Carry) | **N** (Negative) | **Z** (Zero) | **V** (Overflow) | **H** (Half-Carry) | Strategic Strengths & Use Cases |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- |
+| **`ABX`** | $X \leftarrow X + \text{unsigned}(B)$ | **1 B** | **3** | **No** | **No** | **No** | **No** | No | **Fastest addition in M6809.** 1-byte opcode, 3 cycles. **Preserves ALL flags!** Ideal for 8-bit unsigned array indexing (`arr[b]`). |
+| **`LEAr D,r`** | $r \leftarrow r + D$ ($r \in \{X, Y, U, S\}$) | **2 B** | **4** | **No** | **No** | $Z$ (X,Y) | **No** | No | 16-bit register in-place addition. On $U$ and $S$, touches **ZERO flags**. |
+| **`LEAr1 D,r2`** | $r_1 \leftarrow r_2 + D$ ($r_1 \ne r_2$) | **2 B** | **4** | **No** | **No** | $Z$ (X,Y) | **No** | No | **True 3-operand non-destructive adder.** Neither source $r_2$ nor $D$ is modified! Zero spills. |
+| **`LEAr1 B,r2`** | $r_1 \leftarrow r_2 + \text{signext}(B)$ | **2 B** | **4** | **No** | **No** | $Z$ (X,Y) | **No** | No | Signed 8-bit offset addition to pointer without needing `sex` into D. |
+| **`LEAr n,r`** | $r \leftarrow r + n$ (constant $n$) | **2–3 B** | **4–5** | **No** | **No** | $Z$ (X,Y) | **No** | No | Fast pointer stepping and constant bump (`leax 1,x`, `leau 1,u`). |
+| **`INCB` / `INCA`** | $B/A \leftarrow B/A + 1$ | **1 B** | **2** | **No** | **Yes** | **Yes** | **Yes** | No | 1-byte accumulator increment. **Preserves Carry!** Can bump loop indices in multi-precision arithmetic. |
+| **`INC <ea>`** | $M \leftarrow M + 1$ | **2–3 B** | **6–7** | **No** | **Yes** | **Yes** | **Yes** | No | In-memory increment without loading into a register. **Preserves Carry!** |
+| **`ADDB` / `ADDA`** | $B/A \leftarrow B/A + M_{8}$ | **2–3 B** | **2–5** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | Full 8-bit arithmetic with all condition flags. |
+| **`ADCB` / `ADCA`** | $B/A \leftarrow B/A + M_{8} + C$ | **2–3 B** | **2–5** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | Multi-precision addition (word 2 of 32-bit, or bignums). |
+| **`ADDD <ea>`** | $D \leftarrow D + M_{16}$ | **2–4 B** | **4–7** | **Yes** | **Yes** | **Yes** | **Yes** | No | Full 16-bit accumulator addition with signed/unsigned flags. |
+| **`,R+` / `,R++`** | $R \leftarrow R + 1$ or $R + 2$ | **0 B** | **0** | **No** | **No** | **No** | **No** | No | Implicit hardware post-increment during load/store. Free pointer advancement. |
+
+---
+
+### B. M6809 Addition Superpowers to Exploit
+
+#### 1. Three-Operand Non-Destructive Addition (`LEAr1 D,r2`)
+On most 8/16-bit processors (like 6502 or Z80), adding two registers destroys one of the sources ($A \leftarrow A + B$).
+On the 6809, `lea<dest> d,<src>` produces $r_1 \leftarrow r_2 + D$ in 2 bytes and 4 cycles without altering $r_2$ or $D$:
+```asm
+leax d,y    ; X = Y + D  (Y and D remain intact!)
+leau d,x    ; U = X + D  (X and D remain intact!)
+```
+* **Impact**: Eliminates register save/restore spills when an offset or base pointer is needed again in the same basic block.
+
+#### 2. Flag-Transparent Additions (`ABX`, `LEAU`, `LEAS`)
+* `ABX` modifies **zero condition codes**.
+* `LEAU` and `LEAS` modify **zero condition codes** (not even Zero flag $Z$).
+* **Impact**: We can insert loop counter bumps (`leau 1,u`) or stack pops (`leas 2,s`) directly between a comparison and a conditional branch without corrupting condition codes:
+  ```asm
+  cmpd 8,s
+  leau 1,u    ; Bump counter: CC flags from cmpd are 100% PRESERVED!
+  blt .Lloop  ; Branch correctly branches on cmpd result!
+  ```
+
+#### 3. Carry-Preserving Increments (`INCB`, `INC`)
+* Standard additions set $C$.
+* `INCB` and memory `INC` set $N, Z, V$, but **leave the Carry bit untouched**.
+* **Impact**: Bignum loops and multi-word arithmetic can update loop indices or counters without spilling the Carry flag to the stack.
+
+#### 4. Fused Add-and-Access via Accumulator Indexing
+If an addition is immediately followed by a memory read or write, the addition instruction should not be emitted at all:
+```asm
+; Instead of:
+leax d,y
+ldb ,x
+; Emit fused indexed load:
+ldb d,y     ; 1 instruction, 2 bytes, 7 cycles!
+```
+
+---
+
+### C. Blueprint: Multi-Alternative Emission Rules for MiniGolf
+
+When compiling an addition `z = x + y`, MiniGolf should inspect the storage classes of `x` and `y` and pick the cheapest alternative:
+
+```
+Rank 1 (0–3 cycles, 0–1 byte):
+  - Invariant array access:              ldb/stb ,r+ (autoincrement, 0 cycles)
+  - Unsigned byte index into pointer:    ldx #arr; abx (3 cycles, 1 byte)
+
+Rank 2 (4 cycles, 2 bytes):
+  - Constant increment in register:      lea<r> 1,<r> (4 cycles, 2 bytes)
+  - Index register + Accumulator:        lea<dest> d,<src> (4 cycles, 2 bytes)
+  - Accumulator + immediate #1:          incb (2 cycles, 1 byte)
+
+Rank 3 (4–6 cycles, 2–3 bytes):
+  - Accumulator D + immediate:           addd #c (4 cycles, 3 bytes)
+  - Accumulator D + Direct EA memory:    addd <ea> (5–6 cycles, 2–3 bytes)
+
+Rank 4 (Spill fallback, 16+ cycles, 4+ bytes):
+  - Spilling to stack and pulling:       pshs x; addd ,s++ (16 cycles, 4 bytes)
+```
+By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate tens of cycles per loop iteration across all benchmarks.
+
+
 
