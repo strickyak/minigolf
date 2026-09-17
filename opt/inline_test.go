@@ -181,3 +181,306 @@ func TestInlineSingleCallsite(t *testing.T) {
 		}
 	}
 }
+
+func TestInlineDiamondCFG(t *testing.T) {
+	// Callee: min(a, b) -> if a < b return a else return b
+	paramA := &ir.Parameter{ID: 1, Name: "a", Typ: ir.TypeWord}
+	paramB := &ir.Parameter{ID: 2, Name: "b", Typ: ir.TypeWord}
+
+	cBlk0 := &ir.BasicBlock{ID: 100}
+	cBlk1 := &ir.BasicBlock{ID: 101}
+	cBlk2 := &ir.BasicBlock{ID: 102}
+
+	cmp := &ir.Compare{
+		BaseInstruction: ir.BaseInstruction{ID: 103, Typ: ir.TypeByte},
+		Op:              "lt",
+		Left:            paramA,
+		Right:           paramB,
+	}
+	br := &ir.Branch{
+		BaseInstruction: ir.BaseInstruction{ID: 104, Typ: ir.TypeVoid},
+		Condition:       cmp,
+		TrueBlock:       cBlk1,
+		FalseBlock:      cBlk2,
+	}
+	cBlk0.Instructions = []ir.Instruction{cmp}
+	cBlk0.Terminator = br
+	cBlk0.Successors = []*ir.BasicBlock{cBlk1, cBlk2}
+
+	ret1 := &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 105, Typ: ir.TypeWord}, Val: paramA}
+	cBlk1.Instructions = []ir.Instruction{}
+	cBlk1.Terminator = ret1
+	cBlk1.Predecessors = []*ir.BasicBlock{cBlk0}
+
+	ret2 := &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 106, Typ: ir.TypeWord}, Val: paramB}
+	cBlk2.Instructions = []ir.Instruction{}
+	cBlk2.Terminator = ret2
+	cBlk2.Predecessors = []*ir.BasicBlock{cBlk0}
+
+	callee := &ir.Function{
+		Name:       "min_func",
+		Parameters: []*ir.Parameter{paramA, paramB},
+		Blocks:     []*ir.BasicBlock{cBlk0, cBlk1, cBlk2},
+	}
+
+	// Caller has 2 calls to min_func (so not single call site)
+	callerParamX := &ir.Parameter{ID: 200, Name: "x", Typ: ir.TypeWord}
+	callerParamY := &ir.Parameter{ID: 201, Name: "y", Typ: ir.TypeWord}
+
+	call1 := &ir.Call{
+		BaseInstruction: ir.BaseInstruction{ID: 202, Typ: ir.TypeWord},
+		Func:            callee,
+		Args:            []ir.Value{callerParamX, callerParamY},
+	}
+	callerBlk1 := &ir.BasicBlock{
+		ID:           203,
+		Instructions: []ir.Instruction{call1},
+		Terminator:   &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 204, Typ: ir.TypeWord}, Val: call1},
+	}
+	caller1 := &ir.Function{
+		Name:       "caller1",
+		Parameters: []*ir.Parameter{callerParamX, callerParamY},
+		Blocks:     []*ir.BasicBlock{callerBlk1},
+	}
+
+	call2 := &ir.Call{
+		BaseInstruction: ir.BaseInstruction{ID: 205, Typ: ir.TypeWord},
+		Func:            callee,
+		Args:            []ir.Value{callerParamX, callerParamY},
+	}
+	callerBlk2 := &ir.BasicBlock{
+		ID:           206,
+		Instructions: []ir.Instruction{call2},
+		Terminator:   &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 207, Typ: ir.TypeWord}, Val: call2},
+	}
+	caller2 := &ir.Function{
+		Name:       "caller2",
+		Parameters: []*ir.Parameter{callerParamX, callerParamY},
+		Blocks:     []*ir.BasicBlock{callerBlk2},
+	}
+
+	prog := &ir.Program{
+		Functions: []*ir.Function{caller1, caller2, callee},
+	}
+
+	changed := InlinePass(prog, InlineOptions{
+		EnableTiny:           true,
+		EnableSingleCall:     false,
+		MaxTinyInstructions: 8,
+		MaxInlineRounds:      10,
+	})
+
+	if !changed {
+		t.Fatalf("Expected diamond CFG inlining to succeed")
+	}
+
+	// Verify call1 is removed from caller1
+	for _, b := range caller1.Blocks {
+		for _, instr := range b.Instructions {
+			if _, isCall := instr.(*ir.Call); isCall {
+				t.Errorf("Expected call to be inlined, found remaining call in caller1 block %d", b.ID)
+			}
+		}
+	}
+
+	// Verify that a Phi node was created at the join point
+	foundPhi := false
+	for _, b := range caller1.Blocks {
+		for _, instr := range b.Instructions {
+			if phi, isPhi := instr.(*ir.Phi); isPhi {
+				foundPhi = true
+				if len(phi.Edges) != 2 {
+					t.Errorf("Expected join Phi to have 2 edges, got %d", len(phi.Edges))
+				}
+			}
+		}
+	}
+	if !foundPhi {
+		t.Errorf("Expected Phi instruction at join block after diamond inlining")
+	}
+}
+
+func TestInlineDiamondFoldConstant(t *testing.T) {
+	// Callee: min(a, b) -> if a < b return a else return b
+	paramA := &ir.Parameter{ID: 1, Name: "a", Typ: ir.TypeWord}
+	paramB := &ir.Parameter{ID: 2, Name: "b", Typ: ir.TypeWord}
+
+	cBlk0 := &ir.BasicBlock{ID: 100}
+	cBlk1 := &ir.BasicBlock{ID: 101}
+	cBlk2 := &ir.BasicBlock{ID: 102}
+
+	cmp := &ir.Compare{
+		BaseInstruction: ir.BaseInstruction{ID: 103, Typ: ir.TypeByte},
+		Op:              "lt",
+		Left:            paramA,
+		Right:           paramB,
+	}
+	br := &ir.Branch{
+		BaseInstruction: ir.BaseInstruction{ID: 104, Typ: ir.TypeVoid},
+		Condition:       cmp,
+		TrueBlock:       cBlk1,
+		FalseBlock:      cBlk2,
+	}
+	cBlk0.Instructions = []ir.Instruction{cmp}
+	cBlk0.Terminator = br
+	cBlk0.Successors = []*ir.BasicBlock{cBlk1, cBlk2}
+
+	ret1 := &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 105, Typ: ir.TypeWord}, Val: paramA}
+	cBlk1.Instructions = []ir.Instruction{}
+	cBlk1.Terminator = ret1
+	cBlk1.Predecessors = []*ir.BasicBlock{cBlk0}
+
+	ret2 := &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 106, Typ: ir.TypeWord}, Val: paramB}
+	cBlk2.Instructions = []ir.Instruction{}
+	cBlk2.Terminator = ret2
+	cBlk2.Predecessors = []*ir.BasicBlock{cBlk0}
+
+	callee := &ir.Function{
+		Name:       "min_const",
+		Parameters: []*ir.Parameter{paramA, paramB},
+		Blocks:     []*ir.BasicBlock{cBlk0, cBlk1, cBlk2},
+	}
+
+	// Caller calls min_const(10, 20) with constants
+	c10 := &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 200, Typ: ir.TypeWord}, Val: 10}
+	c20 := &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 201, Typ: ir.TypeWord}, Val: 20}
+	call := &ir.Call{
+		BaseInstruction: ir.BaseInstruction{ID: 202, Typ: ir.TypeWord},
+		Func:            callee,
+		Args:            []ir.Value{c10, c20},
+	}
+	callerBlk := &ir.BasicBlock{
+		ID:           203,
+		Instructions: []ir.Instruction{c10, c20, call},
+		Terminator:   &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 204, Typ: ir.TypeWord}, Val: call},
+	}
+	caller := &ir.Function{
+		Name:   "caller_const",
+		Blocks: []*ir.BasicBlock{callerBlk},
+	}
+
+	prog := &ir.Program{
+		Functions: []*ir.Function{caller, callee},
+	}
+
+	changed := InlinePass(prog, InlineOptions{
+		EnableTiny:           true,
+		EnableSingleCall:     true,
+		MaxTinyInstructions: 8,
+		MaxInlineRounds:      10,
+		WordSize:             8,
+	})
+
+	if !changed {
+		t.Fatalf("Expected inlining to succeed")
+	}
+
+	// Find return block
+	var retVal ir.Value
+	for _, b := range caller.Blocks {
+		if ret, ok := b.Terminator.(*ir.Return); ok {
+			retVal = ret.Val
+			break
+		}
+	}
+	if retVal == nil {
+		t.Fatalf("Expected caller to return directly")
+	}
+	cw, isConst := retVal.(*ir.ConstWord)
+	if !isConst || cw.Val != 10 {
+		t.Errorf("Expected caller return value to fold to ConstWord 10, got %v", retVal)
+	}
+}
+
+func TestInlinePopularityWeighting(t *testing.T) {
+	// Callee has 12 instructions (above base budget of 8)
+	paramA := &ir.Parameter{ID: 1, Name: "a", Typ: ir.TypeWord}
+	var instrs []ir.Instruction
+	curr := ir.Value(paramA)
+	c1 := &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 2, Typ: ir.TypeWord}, Val: 1}
+	instrs = append(instrs, c1)
+	for i := 0; i < 11; i++ {
+		add := &ir.BinaryOp{
+			BaseInstruction: ir.BaseInstruction{ID: 10 + i, Typ: ir.TypeWord},
+			Op:              "add",
+			Left:            curr,
+			Right:           c1,
+		}
+		instrs = append(instrs, add)
+		curr = add
+	}
+	calleeBlk := &ir.BasicBlock{
+		ID:           0,
+		Instructions: instrs,
+		Terminator:   &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 50, Typ: ir.TypeWord}, Val: curr},
+	}
+	callee := &ir.Function{
+		Name:       "medium_func",
+		Parameters: []*ir.Parameter{paramA},
+		Blocks:     []*ir.BasicBlock{calleeBlk},
+	}
+
+	buildProg := func(callerPop int) (*ir.Program, *ir.Function) {
+		call1 := &ir.Call{
+			BaseInstruction: ir.BaseInstruction{ID: 60, Typ: ir.TypeWord},
+			Func:            callee,
+			Args:            []ir.Value{&ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 61, Typ: ir.TypeWord}, Val: 42}},
+		}
+		call2 := &ir.Call{
+			BaseInstruction: ir.BaseInstruction{ID: 62, Typ: ir.TypeWord},
+			Func:            callee,
+			Args:            []ir.Value{&ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 63, Typ: ir.TypeWord}, Val: 99}},
+		}
+		callerBlk := &ir.BasicBlock{
+			ID:           0,
+			Instructions: []ir.Instruction{call1, call2},
+			Terminator:   &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 64, Typ: ir.TypeWord}, Val: call2},
+		}
+		caller := &ir.Function{
+			Name:       "caller_pop",
+			Popularity: callerPop,
+			Blocks:     []*ir.BasicBlock{callerBlk},
+		}
+		prog := &ir.Program{
+			Functions: []*ir.Function{caller, callee},
+		}
+		return prog, caller
+	}
+
+	// Case 1: Caller has Popularity = 1 (cold code).
+	// Base budget is 8. Callee has 12 instructions.
+	// Should NOT inline.
+	prog1, caller1 := buildProg(1)
+	changed1 := InlinePass(prog1, InlineOptions{
+		EnableTiny:           true,
+		EnableSingleCall:     false,
+		MaxTinyInstructions: 8,
+		MaxInlineRounds:      10,
+	})
+	if changed1 {
+		t.Errorf("Expected cold caller (Popularity=1) NOT to inline 12-instruction function with budget 8")
+	}
+	if _, isCall := caller1.Blocks[0].Instructions[0].(*ir.Call); !isCall {
+		t.Errorf("Expected call to remain in caller1")
+	}
+
+	// Case 2: Caller has Popularity = 20 (hot loop path).
+	// Effective budget scales to 8 * 2 = 16. Callee has 12 instructions <= 16.
+	// SHOULD inline!
+	prog2, caller2 := buildProg(20)
+	changed2 := InlinePass(prog2, InlineOptions{
+		EnableTiny:           true,
+		EnableSingleCall:     false,
+		MaxTinyInstructions: 8,
+		MaxInlineRounds:      10,
+	})
+	if !changed2 {
+		t.Errorf("Expected hot caller (Popularity=20) TO inline 12-instruction function under scaled budget 16")
+	}
+	for _, instr := range caller2.Blocks[0].Instructions {
+		if _, isCall := instr.(*ir.Call); isCall {
+			t.Errorf("Expected calls to be inlined in hot caller2")
+		}
+	}
+}
+

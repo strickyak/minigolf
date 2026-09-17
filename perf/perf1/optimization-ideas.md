@@ -463,12 +463,25 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 2. Inlining Enhancements (Cross-Backend)
-* **Goal**: Expand whole-program inlining beyond single basic blocks and purely straight-line execution.
-* **Key Tasks**:
-  - **Diamond / Conditional Branch Inlining**: Allow functions with simple conditional branches (e.g. `min(a,b)`, `max(a,b)`, `abs(x)`, and ternary operators) to be inlined into callers.
-  - **Popularity-Weighted Inlining Budget**: Use the `Popularity` signal to permit larger functions to be inlined when they appear inside hot loops, while restricting inlining in cold initialization code.
-  - **Leaf Function Promotion**: Aggressively inline functions that convert a Level 2 caller into a Level 1 leaf function, unlocking leaf frame omission in backends.
+#### 2. Inlining Enhancements (Cross-Backend) (COMPLETED)
+* **Status**: **Completed** ([`opt/inline.go`](file:///home/strick/github.com/strickyak/minigolf/opt/inline.go), [`opt/inline_test.go`](file:///home/strick/github.com/strickyak/minigolf/opt/inline_test.go), [`opt/constfold.go`](file:///home/strick/github.com/strickyak/minigolf/opt/constfold.go)).
+* **Implementation Details**:
+  - **Multi-Block / Diamond CFG Inlining**:
+    - Added `isAcyclic(f)` using 3-color DFS to detect and verify DAG control flow graphs.
+    - Added `topologicalSort(blocks)` to guarantee dominators and definition blocks are processed before uses.
+    - Implemented `inlineCFG`: splits the caller block into head and tail blocks, clones callee blocks with unique block IDs, rewires incoming/outgoing edges and existing Phi references, converts callee returns into jumps to the tail block, and joins multiple return values with a `*ir.Phi` node at the head of the tail block.
+    - Enhanced `cloneInstruction` to clone `*ir.Phi`, `*ir.ConstStruct`, `*ir.ConstArray`, and `*ir.IndirectCall`.
+  - **Popularity-Weighted Inlining Budget**:
+    - Leveraged `caller.Popularity` and `callee.Popularity`: scaled tiny instruction budget $3\times$ (to 24 inst / 8 blocks) in deep loops ($\ge 100$) and $2\times$ (to 16 inst / 6 blocks) in loop bodies ($\ge 10$), while preserving strict budgets in cold initialization code.
+    - Added Leaf Function Promotion bonus (+4 inst) when caller is LeafLevel 2 and callee is LeafLevel 1.
+    - Expanded single-call site inlining budget to 64 instructions / 16 blocks (128 instructions / 24 blocks for trunk callers).
+  - **Signed Comparison Folding Fix**:
+    - Fixed `foldCompare` in `opt/constfold.go` to evaluate signed comparisons (`int64(cLeftW.Val) < int64(cRightW.Val)`) when operand types are `TypeInt`, correctly folding inlined `abs_int(-42)` to 42.
+* **Empirical Results**:
+  - `08_bubble_sort`: Cycles dropped from **72,137 to 53,773** (**-18,364 cycles, -25.5%!**); ratio vs GCC narrowed to **1.27x** (down from 1.75x).
+  - `05_array_sum`: Cycles dropped from **15,433 to 14,244**; payload dropped from **1,226 B to 807 B** (**-419 bytes, -34.2%!**).
+  - `06_string_ops`: Cycles dropped from **18,710 to 17,485**; payload dropped from **1,728 B to 1,309 B** (**-419 bytes, -24.2%!**).
+  - `10_switch_case`: Cycles dropped from **11,041 to 9,313** (**-1,728 cycles!**).
 
 ---
 

@@ -125,3 +125,34 @@ func TestStrengthReductionPowerOf2(t *testing.T) {
 		t.Errorf("Expected right operand to be ConstWord(1), got %#v", binMul2.Right)
 	}
 }
+
+func TestConstFoldSignedCompare(t *testing.T) {
+	// 64-bit word size
+	cf64 := &ConstFoldPass{WordSize: 8}
+	var neg42 int64 = -42
+	cNeg42 := &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 1, Typ: ir.TypeInt}, Val: uint64(neg42)}
+	cZero := &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 2, Typ: ir.TypeInt}, Val: 0}
+
+	cmpLt := &ir.Compare{BaseInstruction: ir.BaseInstruction{ID: 3, Typ: ir.TypeByte}, Op: "lt", Left: cNeg42, Right: cZero}
+	f1 := cf64.foldCompare(cmpLt)
+	if cb, ok := f1.(*ir.ConstByte); !ok || cb.Val != 1 {
+		t.Errorf("Expected -42 < 0 to fold to 1 (true) on 64-bit, got %#v", f1)
+	}
+
+	cmpGt := &ir.Compare{BaseInstruction: ir.BaseInstruction{ID: 4, Typ: ir.TypeByte}, Op: "gt", Left: cNeg42, Right: cZero}
+	f2 := cf64.foldCompare(cmpGt)
+	if cb, ok := f2.(*ir.ConstByte); !ok || cb.Val != 0 {
+		t.Errorf("Expected -42 > 0 to fold to 0 (false) on 64-bit, got %#v", f2)
+	}
+
+	// 16-bit word size (M6809)
+	cf16 := &ConstFoldPass{WordSize: 2}
+	var neg42_16 int16 = -42
+	cNeg42_16 := &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 5, Typ: ir.TypeInt}, Val: uint64(uint16(neg42_16))}
+	cmpLt16 := &ir.Compare{BaseInstruction: ir.BaseInstruction{ID: 6, Typ: ir.TypeByte}, Op: "lt", Left: cNeg42_16, Right: cZero}
+	f3 := cf16.foldCompare(cmpLt16)
+	if cb, ok := f3.(*ir.ConstByte); !ok || cb.Val != 1 {
+		t.Errorf("Expected -42 < 0 to fold to 1 (true) on 16-bit, got %#v", f3)
+	}
+}
+

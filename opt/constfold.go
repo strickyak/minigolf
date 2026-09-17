@@ -265,22 +265,50 @@ func (p *ConstFoldPass) foldCompare(i *ir.Compare) ir.Instruction {
 	cRightW, isRightConstW := i.Right.(*ir.ConstWord)
 
 	if isLeftConstW && isRightConstW {
+		isInt := i.Left.Type().Equals(ir.TypeInt) || i.Left.Type().IsInt()
 		var result bool
-		switch i.Op {
-		case "eq":
-			result = cLeftW.Val == cRightW.Val
-		case "neq":
-			result = cLeftW.Val != cRightW.Val
-		case "lt":
-			result = cLeftW.Val < cRightW.Val
-		case "lte":
-			result = cLeftW.Val <= cRightW.Val
-		case "gt":
-			result = cLeftW.Val > cRightW.Val
-		case "gte":
-			result = cLeftW.Val >= cRightW.Val
-		default:
-			return nil
+		if isInt {
+			var l, r int64
+			if p.WordSize == 2 {
+				l = int64(int16(cLeftW.Val))
+				r = int64(int16(cRightW.Val))
+			} else {
+				l = int64(cLeftW.Val)
+				r = int64(cRightW.Val)
+			}
+			switch i.Op {
+			case "eq":
+				result = l == r
+			case "neq":
+				result = l != r
+			case "lt":
+				result = l < r
+			case "lte":
+				result = l <= r
+			case "gt":
+				result = l > r
+			case "gte":
+				result = l >= r
+			default:
+				return nil
+			}
+		} else {
+			switch i.Op {
+			case "eq":
+				result = cLeftW.Val == cRightW.Val
+			case "neq":
+				result = cLeftW.Val != cRightW.Val
+			case "lt":
+				result = cLeftW.Val < cRightW.Val
+			case "lte":
+				result = cLeftW.Val <= cRightW.Val
+			case "gt":
+				result = cLeftW.Val > cRightW.Val
+			case "gte":
+				result = cLeftW.Val >= cRightW.Val
+			default:
+				return nil
+			}
 		}
 		var val uint8 = 0
 		if result {

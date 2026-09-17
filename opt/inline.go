@@ -48,15 +48,27 @@ func cleanupFunction(f *ir.Function, wordSize int) {
 	cf := &ConstFoldPass{WordSize: wordSize}
 	cp := &CopyPropPass{}
 	dce := &DCEPass{}
+	dbe := &DBEPass{}
+	ps := &PhiSimpPass{}
+	bf := &BranchFoldPass{}
 	for i := 0; i < 3; i++ {
 		ch := false
 		if cf.Run(f) {
 			ch = true
 		}
+		if dbe.Run(f) {
+			ch = true
+		}
 		if cp.Run(f) {
 			ch = true
 		}
+		if ps.Run(f) {
+			ch = true
+		}
 		if dce.Run(f) {
+			ch = true
+		}
+		if bf.Run(f) {
 			ch = true
 		}
 		if !ch {
@@ -80,18 +92,29 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 
 	// Find the current maximum instruction ID and block ID
 	maxID := 0
+	maxBlockID := 0
 	for _, f := range p.Functions {
 		for _, b := range f.Blocks {
+			if b.ID > maxBlockID {
+				maxBlockID = b.ID
+			}
 			for _, instr := range b.Instructions {
 				if instr.GetID() > maxID {
 					maxID = instr.GetID()
 				}
+			}
+			if b.Terminator != nil && b.Terminator.GetID() > maxID {
+				maxID = b.Terminator.GetID()
 			}
 		}
 	}
 	nextID := func() int {
 		maxID++
 		return maxID
+	}
+	nextBlockID := func() int {
+		maxBlockID++
+		return maxBlockID
 	}
 
 	maxRounds := opts.MaxInlineRounds
@@ -127,7 +150,9 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 		}
 
 		for _, caller := range p.Functions {
-			for _, b := range caller.Blocks {
+			inlinesThisCaller := 0
+			for bIdx := 0; bIdx < len(caller.Blocks); bIdx++ {
+				b := caller.Blocks[bIdx]
 				for j := 0; j < len(b.Instructions); j++ {
 					call, isCall := b.Instructions[j].(*ir.Call)
 					if !isCall || call.Func == nil {
@@ -141,18 +166,76 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 						continue
 					}
 
-					isTiny := opts.EnableTiny && isTinyFunction(callee, maxTiny)
-					isSingle := opts.EnableSingleCall && callCounts[callee] == 1 && !addrTaken[callee]
+					callCount := callCounts[callee]
+					isAddrTaken := addrTaken[callee]
 
-					if isTiny || isSingle {
-						if isStraightLine(callee) {
-							inlineStraightLine(caller, b, j, call, callee, nextID)
-							cleanupFunction(caller, opts.WordSize)
-							roundChanged = true
-							overallChanged = true
-							break // Restart scan of this block
-						}
+					baseTiny := maxTiny
+					effectiveMaxTiny := baseTiny
+					effectiveMaxBlocks := 4
+
+					maxPop := caller.Popularity
+					if callee.Popularity > maxPop {
+						maxPop = callee.Popularity
 					}
+					if maxPop >= 100 {
+						effectiveMaxTiny = baseTiny * 3
+						effectiveMaxBlocks = 8
+					} else if maxPop >= 10 {
+						effectiveMaxTiny = baseTiny * 2
+						effectiveMaxBlocks = 6
+					}
+
+					if caller.LeafLevel == 2 && callee.LeafLevel == 1 {
+						effectiveMaxTiny += 4
+					}
+
+					isSingle := opts.EnableSingleCall && callCount == 1 && !isAddrTaken
+					singleBudgetInst := 64
+					singleBudgetBlocks := 16
+					if caller.TrunkLevel > 0 {
+						singleBudgetInst = 128
+						singleBudgetBlocks = 24
+					}
+
+					calleeIsStraight := isStraightLine(callee)
+					calleeIsAcyclic := !calleeIsStraight && isAcyclic(callee)
+
+					canInlineStraight := calleeIsStraight && (
+						(opts.EnableTiny && isTinyFunction(callee, effectiveMaxTiny)) ||
+						isSingle)
+
+					canInlineMultiBlock := calleeIsAcyclic && (
+						(opts.EnableTiny && canInlineCFG(callee, effectiveMaxTiny, effectiveMaxBlocks, false /* no calls */)) ||
+						(isSingle && canInlineCFG(callee, singleBudgetInst, singleBudgetBlocks, true /* allow calls */)))
+
+					if canInlineStraight {
+						inlineStraightLine(caller, b, j, call, callee, nextID)
+						cleanupFunction(caller, opts.WordSize)
+						callCounts[callee]--
+						inlinesThisCaller++
+						roundChanged = true
+						overallChanged = true
+						if inlinesThisCaller >= 10 {
+							break
+						}
+						bIdx = -1
+						break
+					} else if canInlineMultiBlock {
+						inlineCFG(caller, b, j, call, callee, nextID, nextBlockID)
+						cleanupFunction(caller, opts.WordSize)
+						callCounts[callee]--
+						inlinesThisCaller++
+						roundChanged = true
+						overallChanged = true
+						if inlinesThisCaller >= 10 {
+							break
+						}
+						bIdx = -1
+						break
+					}
+				}
+				if inlinesThisCaller >= 10 {
+					break
 				}
 			}
 		}
@@ -238,6 +321,121 @@ func isStraightLine(f *ir.Function) bool {
 	return false
 }
 
+// isAcyclic checks if the function's control flow graph contains no back-edges / cycles.
+func isAcyclic(f *ir.Function) bool {
+	if len(f.Blocks) == 0 {
+		return false
+	}
+	const (
+		white = 0 // unvisited
+		gray  = 1 // currently visiting (on DFS recursion stack)
+		black = 2 // finished
+	)
+	color := make(map[*ir.BasicBlock]int, len(f.Blocks))
+	var dfs func(b *ir.BasicBlock) bool
+	dfs = func(b *ir.BasicBlock) bool {
+		color[b] = gray
+		var succs []*ir.BasicBlock
+		switch t := b.Terminator.(type) {
+		case *ir.Jump:
+			if t.Target != nil {
+				succs = append(succs, t.Target)
+			}
+		case *ir.Branch:
+			if t.TrueBlock != nil {
+				succs = append(succs, t.TrueBlock)
+			}
+			if t.FalseBlock != nil {
+				succs = append(succs, t.FalseBlock)
+			}
+		case *ir.Return:
+			// Leaf terminator
+		default:
+			return false // Unknown terminator, reject
+		}
+
+		for _, s := range succs {
+			c := color[s]
+			if c == gray {
+				return false // Cycle detected!
+			}
+			if c == white {
+				if !dfs(s) {
+					return false
+				}
+			}
+		}
+		color[b] = black
+		return true
+	}
+
+	return dfs(f.Blocks[0])
+}
+
+// topologicalSort returns the reachable blocks of f in topological order (definitions before uses).
+func topologicalSort(blocks []*ir.BasicBlock) []*ir.BasicBlock {
+	if len(blocks) == 0 {
+		return nil
+	}
+	visited := make(map[*ir.BasicBlock]bool, len(blocks))
+	var order []*ir.BasicBlock
+	var visit func(b *ir.BasicBlock)
+	visit = func(b *ir.BasicBlock) {
+		if visited[b] {
+			return
+		}
+		visited[b] = true
+		switch t := b.Terminator.(type) {
+		case *ir.Jump:
+			if t.Target != nil {
+				visit(t.Target)
+			}
+		case *ir.Branch:
+			if t.TrueBlock != nil {
+				visit(t.TrueBlock)
+			}
+			if t.FalseBlock != nil {
+				visit(t.FalseBlock)
+			}
+		}
+		order = append(order, b)
+	}
+	visit(blocks[0])
+
+	// Reverse order for topological sort
+	for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
+		order[i], order[j] = order[j], order[i]
+	}
+	return order
+}
+
+// canInlineCFG checks if an acyclic multi-block function fits within block and instruction budgets.
+func canInlineCFG(f *ir.Function, maxInst int, maxBlocks int, allowCalls bool) bool {
+	if len(f.Blocks) == 0 || len(f.Blocks) > maxBlocks {
+		return false
+	}
+	if !isAcyclic(f) {
+		return false
+	}
+	instrCount := 0
+	for _, b := range f.Blocks {
+		for _, instr := range b.Instructions {
+			switch instr.(type) {
+			case *ir.SourceMarker, ir.Terminator, *ir.Phi:
+				continue
+			case *ir.Call, *ir.IndirectCall:
+				if !allowCalls {
+					return false
+				}
+				instrCount += 3
+			default:
+				instrCount++
+			}
+		}
+	}
+	return instrCount <= maxInst
+}
+
 // isTinyFunction checks if a function is small enough to inline unconditionally everywhere.
 func isTinyFunction(f *ir.Function, maxTiny int) bool {
 	if !isStraightLine(f) {
@@ -285,7 +483,7 @@ func inlineStraightLine(caller *ir.Function, b *ir.BasicBlock, callIdx int, call
 					continue
 				}
 			}
-			cloned := cloneInstruction(instr, nextID(), valMap)
+			cloned := cloneInstruction(instr, nextID(), valMap, nil)
 			valMap[instr] = cloned
 			clonedInstrs = append(clonedInstrs, cloned)
 		}
@@ -307,6 +505,206 @@ func inlineStraightLine(caller *ir.Function, b *ir.BasicBlock, callIdx int, call
 	b.Instructions = newInstructions
 }
 
+// inlineCFG inlines an acyclic multi-block callee into caller block b at callIdx.
+func inlineCFG(
+	caller *ir.Function,
+	bCaller *ir.BasicBlock,
+	callIdx int,
+	call *ir.Call,
+	callee *ir.Function,
+	nextID func() int,
+	nextBlockID func() int,
+) {
+	valMap := make(map[ir.Value]ir.Value)
+	for i, param := range callee.Parameters {
+		if i < len(call.Args) {
+			valMap[param] = call.Args[i]
+		}
+	}
+
+	sortedCalleeBlocks := topologicalSort(callee.Blocks)
+	if len(sortedCalleeBlocks) == 0 {
+		return
+	}
+
+	blockMap := make(map[*ir.BasicBlock]*ir.BasicBlock, len(sortedCalleeBlocks))
+	for _, cBlk := range sortedCalleeBlocks {
+		blockMap[cBlk] = &ir.BasicBlock{
+			ID: nextBlockID(),
+		}
+	}
+
+	tailBlk := &ir.BasicBlock{
+		ID:           nextBlockID(),
+		Instructions: bCaller.Instructions[callIdx+1:],
+		Terminator:   bCaller.Terminator,
+		Successors:   bCaller.Successors,
+	}
+
+	for _, succ := range bCaller.Successors {
+		for idx, pred := range succ.Predecessors {
+			if pred == bCaller {
+				succ.Predecessors[idx] = tailBlk
+			}
+		}
+		for _, instr := range succ.Instructions {
+			if phi, ok := instr.(*ir.Phi); ok {
+				for idx, edge := range phi.Edges {
+					if edge.Block == bCaller {
+						phi.Edges[idx].Block = tailBlk
+					}
+				}
+			}
+		}
+	}
+
+	entryPrime := blockMap[sortedCalleeBlocks[0]]
+	bCaller.Instructions = bCaller.Instructions[:callIdx]
+	bCaller.Terminator = &ir.Jump{
+		BaseInstruction: ir.BaseInstruction{
+			ID:      nextID(),
+			Typ:     ir.TypeVoid,
+			Comment: "inline entry",
+		},
+		Target: entryPrime,
+	}
+	bCaller.Successors = []*ir.BasicBlock{entryPrime}
+	entryPrime.Predecessors = []*ir.BasicBlock{bCaller}
+
+	type retEdge struct {
+		block *ir.BasicBlock
+		val   ir.Value
+	}
+	var retEdges []retEdge
+
+	for _, cBlk := range sortedCalleeBlocks {
+		bPrime := blockMap[cBlk]
+
+		for _, instr := range cBlk.Instructions {
+			if _, isMarker := instr.(*ir.SourceMarker); isMarker {
+				continue
+			}
+			if _, isTerm := instr.(ir.Terminator); isTerm {
+				continue
+			}
+			cloned := cloneInstruction(instr, nextID(), valMap, blockMap)
+			valMap[instr] = cloned
+			bPrime.Instructions = append(bPrime.Instructions, cloned)
+		}
+
+		switch t := cBlk.Terminator.(type) {
+		case *ir.Jump:
+			target := blockMap[t.Target]
+			bPrime.Terminator = &ir.Jump{
+				BaseInstruction: ir.BaseInstruction{
+					ID:  nextID(),
+					Typ: ir.TypeVoid,
+				},
+				Target: target,
+			}
+			bPrime.Successors = []*ir.BasicBlock{target}
+			target.Predecessors = append(target.Predecessors, bPrime)
+
+		case *ir.Branch:
+			trueBlk := blockMap[t.TrueBlock]
+			falseBlk := blockMap[t.FalseBlock]
+			bPrime.Terminator = &ir.Branch{
+				BaseInstruction: ir.BaseInstruction{
+					ID:  nextID(),
+					Typ: ir.TypeVoid,
+				},
+				Condition:  mapVal(t.Condition, valMap),
+				TrueBlock:  trueBlk,
+				FalseBlock: falseBlk,
+			}
+			bPrime.Successors = []*ir.BasicBlock{trueBlk, falseBlk}
+			trueBlk.Predecessors = append(trueBlk.Predecessors, bPrime)
+			falseBlk.Predecessors = append(falseBlk.Predecessors, bPrime)
+
+		case *ir.Return:
+			bPrime.Terminator = &ir.Jump{
+				BaseInstruction: ir.BaseInstruction{
+					ID:      nextID(),
+					Typ:     ir.TypeVoid,
+					Comment: "inline ret to tail",
+				},
+				Target: tailBlk,
+			}
+			bPrime.Successors = []*ir.BasicBlock{tailBlk}
+			tailBlk.Predecessors = append(tailBlk.Predecessors, bPrime)
+
+			var rVal ir.Value
+			if t.Val != nil {
+				rVal = mapVal(t.Val, valMap)
+			}
+			retEdges = append(retEdges, retEdge{block: bPrime, val: rVal})
+
+		default:
+			log.Panicf("inlineCFG: unhandled terminator type %T", cBlk.Terminator)
+		}
+	}
+
+	// Splice cloned blocks and tailBlk into caller.Blocks
+	bIdx := -1
+	for idx, blk := range caller.Blocks {
+		if blk == bCaller {
+			bIdx = idx
+			break
+		}
+	}
+	if bIdx == -1 {
+		log.Panicf("inlineCFG: bCaller block %d not found in caller %s", bCaller.ID, caller.Name)
+	}
+
+	newBlocks := make([]*ir.BasicBlock, 0, len(caller.Blocks)+len(sortedCalleeBlocks)+1)
+	newBlocks = append(newBlocks, caller.Blocks[:bIdx+1]...)
+	for _, cBlk := range sortedCalleeBlocks {
+		newBlocks = append(newBlocks, blockMap[cBlk])
+	}
+	newBlocks = append(newBlocks, tailBlk)
+	newBlocks = append(newBlocks, caller.Blocks[bIdx+1:]...)
+	caller.Blocks = newBlocks
+
+	// Handle return value
+	if !call.Type().IsVoid() && len(retEdges) > 0 {
+		if len(retEdges) == 1 {
+			if retEdges[0].val != nil {
+				ReplaceUsesOf(caller, call, retEdges[0].val)
+			}
+		} else {
+			allSame := true
+			firstVal := retEdges[0].val
+			for _, re := range retEdges[1:] {
+				if re.val != firstVal {
+					allSame = false
+					break
+				}
+			}
+			if allSame && firstVal != nil {
+				ReplaceUsesOf(caller, call, firstVal)
+			} else {
+				phiEdges := make([]ir.PhiEdge, len(retEdges))
+				for i, re := range retEdges {
+					phiEdges[i] = ir.PhiEdge{
+						Block: re.block,
+						Value: re.val,
+					}
+				}
+				phi := &ir.Phi{
+					BaseInstruction: ir.BaseInstruction{
+						ID:      nextID(),
+						Typ:     call.Type(),
+						Comment: "inlined return join",
+					},
+					Edges: phiEdges,
+				}
+				tailBlk.Instructions = append([]ir.Instruction{phi}, tailBlk.Instructions...)
+				ReplaceUsesOf(caller, call, phi)
+			}
+		}
+	}
+}
+
 func mapVal(v ir.Value, valMap map[ir.Value]ir.Value) ir.Value {
 	if v == nil {
 		return nil
@@ -317,7 +715,7 @@ func mapVal(v ir.Value, valMap map[ir.Value]ir.Value) ir.Value {
 	return v
 }
 
-func cloneInstruction(instr ir.Instruction, newID int, valMap map[ir.Value]ir.Value) ir.Instruction {
+func cloneInstruction(instr ir.Instruction, newID int, valMap map[ir.Value]ir.Value, blockMap map[*ir.BasicBlock]*ir.BasicBlock) ir.Instruction {
 	base := ir.BaseInstruction{
 		ID:      newID,
 		Typ:     instr.Type(),
@@ -332,6 +730,18 @@ func cloneInstruction(instr ir.Instruction, newID int, valMap map[ir.Value]ir.Va
 		return &ir.ConstWord{BaseInstruction: base, Val: i.Val}
 	case *ir.Sizeof:
 		return &ir.Sizeof{BaseInstruction: base, TargetTyp: i.TargetTyp}
+	case *ir.ConstStruct:
+		newFields := make([]ir.Value, len(i.Fields))
+		for idx, f := range i.Fields {
+			newFields[idx] = mapVal(f, valMap)
+		}
+		return &ir.ConstStruct{BaseInstruction: base, Fields: newFields}
+	case *ir.ConstArray:
+		newElts := make([]ir.Value, len(i.Elements))
+		for idx, e := range i.Elements {
+			newElts[idx] = mapVal(e, valMap)
+		}
+		return &ir.ConstArray{BaseInstruction: base, Elements: newElts}
 	case *ir.Load:
 		return &ir.Load{BaseInstruction: base, Global: i.Global}
 	case *ir.Store:
@@ -376,12 +786,31 @@ func cloneInstruction(instr ir.Instruction, newID int, valMap map[ir.Value]ir.Va
 			newArgs[idx] = mapVal(a, valMap)
 		}
 		return &ir.Call{BaseInstruction: base, Func: i.Func, Args: newArgs}
+	case *ir.IndirectCall:
+		newArgs := make([]ir.Value, len(i.Args))
+		for idx, a := range i.Args {
+			newArgs[idx] = mapVal(a, valMap)
+		}
+		return &ir.IndirectCall{BaseInstruction: base, FuncPtr: mapVal(i.FuncPtr, valMap), Args: newArgs}
 	case *ir.BuiltinCall:
 		newArgs := make([]ir.Value, len(i.Args))
 		for idx, a := range i.Args {
 			newArgs[idx] = mapVal(a, valMap)
 		}
 		return &ir.BuiltinCall{BaseInstruction: base, Name: i.Name, Args: newArgs}
+	case *ir.Phi:
+		newEdges := make([]ir.PhiEdge, len(i.Edges))
+		for idx, e := range i.Edges {
+			targetBlk := e.Block
+			if blockMap != nil && blockMap[e.Block] != nil {
+				targetBlk = blockMap[e.Block]
+			}
+			newEdges[idx] = ir.PhiEdge{
+				Block: targetBlk,
+				Value: mapVal(e.Value, valMap),
+			}
+		}
+		return &ir.Phi{BaseInstruction: base, Edges: newEdges}
 	default:
 		log.Panicf("cloneInstruction: unhandled instruction type %T", instr)
 		return nil

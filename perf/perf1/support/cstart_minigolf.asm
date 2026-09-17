@@ -15,5 +15,9 @@ __exit:
 	stb $FF05
 stuck:
 	bra stuck
+putchar:
+	stb $FF00
+	rts
 _printf:
 	rts
+
