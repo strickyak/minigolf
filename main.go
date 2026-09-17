@@ -309,6 +309,8 @@ func main() {
 	noLocalRegAlloc6809 := flag.Bool("no-local-regalloc6809", false, "Disable M6809 local basic-block register allocation")
 	noCSSALowering6809 := flag.Bool("no-cssa-lowering6809", false, "Disable M6809 CSSA parallel copy resolution")
 	noGlobalRegAlloc6809 := flag.Bool("no-global-regalloc6809", false, "Disable M6809 global SSA register allocation")
+	noFastcall6809 := flag.Bool("no-fastcall6809", false, "Disable M6809 register passing (fastcall)")
+	callConventionFlag := flag.String("call-convention", "fastcall", "M6809 calling convention (fastcall, stack, gcc)")
 	debugOpt := flag.Bool("debug_opt", false, "Enable debug output for optimizations like leaf level")
 	checkBoundsFlag := flag.Bool("check-bounds", false, "Enable bounds checking for slices and arrays")
 	checkNilFlag := flag.Bool("check-nil", false, "Enable nil pointer checks for pointers, method receivers, and function references")
@@ -856,6 +858,13 @@ func main() {
 		}
 		if *noGlobalRegAlloc6809 {
 			backend.NoGlobalRegAlloc = true
+		}
+		if *noFastcall6809 || *callConventionFlag == "stack" {
+			backend.SetConventionPolicy(&m6809.StackPolicy{})
+		} else if *callConventionFlag == "gcc" {
+			backend.SetConventionPolicy(&m6809.GCCPolicy{})
+		} else {
+			backend.SetConventionPolicy(&m6809.FastcallPolicy{})
 		}
 		if *inlineMul16 {
 			backend.InlineMul16 = true

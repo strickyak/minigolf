@@ -154,6 +154,12 @@ type Backend struct {
 	slots             map[int]int    // SSA value ID -> byte offset in local frame (0 <= offset < stackSize)
 	slotSizes         map[int]int    // SSA value ID -> size in bytes
 	paramOffsets      map[string]int // param name -> byte offset in arguments block (0 for arg0)
+	paramRawOffsets   map[string]int // param name -> byte offset in local frame (for register params)
+	paramSizes        map[string]int // param name -> size in bytes
+	conventions       map[string]*FunctionConvention
+	funcAddressTaken  map[string]bool
+	policy            ConventionPolicy
+	NoFastcall        bool
 	jmpSlots          map[int]int    // setjmp slot -> byte offset in local frame
 	globalOffsets     map[string]int // global name -> offset from Y (when globalsAtY is true)
 	fmtCount          int
@@ -206,6 +212,11 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		slots:                 make(map[int]int),
 		slotSizes:             make(map[int]int),
 		paramOffsets:          make(map[string]int),
+		paramRawOffsets:       make(map[string]int),
+		paramSizes:            make(map[string]int),
+		conventions:           make(map[string]*FunctionConvention),
+		funcAddressTaken:      make(map[string]bool),
+		NoFastcall:            os.Getenv("NO_FASTCALL6809") != "" || os.Getenv("CALL_CONVENTION") == "stack",
 		jmpSlots:              make(map[int]int),
 		globalOffsets:         make(map[string]int),
 		helpersEmitted:        make(map[string]bool),
@@ -224,6 +235,13 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		MemsetUnrollThreshold: 2,
 		ShiftUnrollThreshold:  4,
 	}
+	if b.NoFastcall {
+		b.policy = &StackPolicy{}
+	} else if os.Getenv("CALL_CONVENTION") == "gcc" {
+		b.policy = &GCCPolicy{}
+	} else {
+		b.policy = &FastcallPolicy{}
+	}
 	if v := os.Getenv("MEMCPY_UNROLL_THRESHOLD"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			b.MemcpyUnrollThreshold = n
@@ -240,6 +258,63 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		}
 	}
 	return b
+}
+
+func (b *Backend) SetConventionPolicy(p ConventionPolicy) {
+	b.policy = p
+	b.NoFastcall = (p.Name() == "stack")
+}
+
+func (b *Backend) getFunctionConvention(f *ir.Function) *FunctionConvention {
+	if f == nil {
+		return &FunctionConvention{}
+	}
+	if b.conventions != nil {
+		if conv, ok := b.conventions[f.Name]; ok {
+			return conv
+		}
+		if conv, ok := b.conventions[f.EmitName()]; ok {
+			return conv
+		}
+	}
+	if b.policy == nil {
+		if b.NoFastcall {
+			b.policy = &StackPolicy{}
+		} else {
+			b.policy = &FastcallPolicy{}
+		}
+	}
+	conv := b.policy.GetConvention(f, b)
+	if b.conventions != nil {
+		b.conventions[f.Name] = conv
+		b.conventions[f.EmitName()] = conv
+	}
+	return conv
+}
+
+func (b *Backend) initConventions(program *ir.Program) {
+	b.funcAddressTaken = make(map[string]bool)
+	for _, f := range program.Functions {
+		for _, blk := range f.Blocks {
+			for _, instr := range blk.Instructions {
+				if aof, ok := instr.(*ir.AddressOfFunc); ok {
+					b.funcAddressTaken[aof.Func.Name] = true
+				}
+			}
+		}
+	}
+	if b.policy == nil {
+		if b.NoFastcall {
+			b.policy = &StackPolicy{}
+		} else {
+			b.policy = &FastcallPolicy{}
+		}
+	}
+	for _, f := range program.Functions {
+		conv := b.policy.GetConvention(f, b)
+		b.conventions[f.Name] = conv
+		b.conventions[f.EmitName()] = conv
+	}
 }
 
 func (b *Backend) canTrack(val ir.Value) bool {
@@ -354,6 +429,10 @@ func (b *Backend) localAddr(slotId int) string {
 }
 
 func (b *Backend) paramAddr(paramName string) string {
+	if off, ok := b.paramRawOffsets[paramName]; ok {
+		sz := b.paramSizes[paramName]
+		return b.offsetAddr(off, sz)
+	}
 	off, ok := b.paramOffsets[paramName]
 	if !ok {
 		log.Panicf("paramAddr: param not found %q", paramName)
@@ -521,10 +600,15 @@ func (b *Backend) emitFunctionHeader(f *ir.Function) {
 	b.buf.WriteString("\n")
 
 	if len(f.Parameters) > 0 {
+		conv := b.getFunctionConvention(f)
 		b.buf.WriteString("; Parameters:\n")
-		for _, p := range f.Parameters {
+		for idx, p := range f.Parameters {
 			addr := b.paramAddr(p.Name)
-			b.buf.WriteString(fmt.Sprintf(";   %-8s : %s (%s)\n", addr, p.Name, p.Typ.Name))
+			locStr := "stack"
+			if idx < len(conv.Params) && conv.Params[idx].Kind == LocReg {
+				locStr = fmt.Sprintf("in %s", strings.ToUpper(conv.Params[idx].Reg))
+			}
+			b.buf.WriteString(fmt.Sprintf(";   %-8s : %s (%s) [%s]\n", addr, p.Name, p.Typ.Name, locStr))
 		}
 	}
 
@@ -859,6 +943,14 @@ func (b *Backend) countUses(f *ir.Function) map[int]int {
 }
 
 func (b *Backend) emitLoadAddr(reg string, addrStr string) {
+	if reg == "d" {
+		if strings.HasPrefix(addrStr, "v_") && !strings.Contains(addrStr, ",") {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", addrStr))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tleax %s\n\ttfr x,d\n", addrStr))
+		}
+		return
+	}
 	if strings.HasPrefix(addrStr, "v_") && !strings.Contains(addrStr, ",") {
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%s\n", reg, addrStr))
 	} else {
@@ -1076,7 +1168,11 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		b.emitLoadAddr(reg, b.getAddrStr(v.Local))
 	case *ir.AddressOfFunc:
 		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tlea%s %s,pcr\t; &func '%s'\n", reg, v.Func.EmitName(), v.Func.Name))
+			if reg == "d" {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\t; &func '%s'\n\ttfr x,d\n", v.Func.EmitName(), v.Func.Name))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tlea%s %s,pcr\t; &func '%s'\n", reg, v.Func.EmitName(), v.Func.Name))
+			}
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tld%s #%s\t; &func '%s'\n", reg, v.Func.EmitName(), v.Func.Name))
 		}
@@ -1949,6 +2045,7 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 }
 
 func (b *Backend) emitCallInstr(i *ir.Call) {
+	conv := b.getFunctionConvention(i.Func)
 	retSize := b.getTypeSizeByType(i.Typ)
 
 	if retSize > 2 {
@@ -1958,7 +2055,17 @@ func (b *Backend) emitCallInstr(i *ir.Call) {
 	}
 
 	totalArgBytes := 0
+	// 1. Push stack arguments right-to-left
 	for idx := len(i.Args) - 1; idx >= 0; idx-- {
+		var loc ParamLocation
+		if idx < len(conv.Params) {
+			loc = conv.Params[idx]
+		} else {
+			loc = ParamLocation{Kind: LocStack, Size: b.getTypeSizeByType(i.Args[idx].Type())}
+		}
+		if loc.Kind != LocStack {
+			continue
+		}
 		arg := i.Args[idx]
 		sz := b.getTypeSizeByType(arg.Type())
 		aligned := align(sz)
@@ -1992,6 +2099,27 @@ func (b *Backend) emitCallInstr(i *ir.Call) {
 			b.emitLoadAddr("y", b.getAddrStr(arg))
 			b.buf.WriteString("\tleax ,s\n")
 			b.emitCopy("x", "y", sz)
+		}
+	}
+
+	// 2. Load register arguments: D / B first, then X
+	for idx, loc := range conv.Params {
+		if idx < len(i.Args) && loc.Kind == LocReg && (loc.Reg == "d" || loc.Reg == "b") {
+			arg := i.Args[idx]
+			if loc.Reg == "b" {
+				b.loadVal(arg)
+				b.buf.WriteString(fmt.Sprintf("\t; arg %d in B (%s)\n", idx, b.describeVal(arg)))
+			} else {
+				b.loadVal16("d", arg)
+				b.buf.WriteString(fmt.Sprintf("\t; arg %d in D (%s)\n", idx, b.describeVal(arg)))
+			}
+		}
+	}
+	for idx, loc := range conv.Params {
+		if idx < len(i.Args) && loc.Kind == LocReg && loc.Reg == "x" {
+			arg := i.Args[idx]
+			b.loadVal16("x", arg)
+			b.buf.WriteString(fmt.Sprintf("\t; arg %d in X (%s)\n", idx, b.describeVal(arg)))
 		}
 	}
 
@@ -3380,6 +3508,8 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.slots = make(map[int]int)
 	b.slotSizes = make(map[int]int)
 	b.paramOffsets = make(map[string]int)
+	b.paramRawOffsets = make(map[string]int)
+	b.paramSizes = make(map[string]int)
 	b.jmpSlots = make(map[int]int)
 	b.fusedCompares = make(map[int]bool)
 	b.escapeRes = opt.AnalyzeEscape(f)
@@ -3451,18 +3581,27 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 	}
 
-	paramOffset := 0
-	for _, p := range f.Parameters {
-		sz := b.getTypeSizeByType(p.Typ)
-		b.paramOffsets[p.Name] = paramOffset
-		paramOffset += align(sz)
+	conv := b.getFunctionConvention(f)
+	for idx, p := range f.Parameters {
+		var loc ParamLocation
+		if idx < len(conv.Params) {
+			loc = conv.Params[idx]
+		} else {
+			loc = ParamLocation{Kind: LocStack, Size: b.getTypeSizeByType(p.Typ)}
+		}
+		if loc.Kind == LocReg {
+			off := b.allocateRawSlot(loc.Size)
+			b.paramRawOffsets[p.Name] = off
+			b.paramSizes[p.Name] = loc.Size
+		} else {
+			b.paramOffsets[p.Name] = loc.Offset
+		}
 	}
 
 	retSize := b.getTypeSizeByType(f.ReturnType)
 	b.retSlot = -1
 	if retSize > 2 {
-		b.retSlot = paramOffset
-		paramOffset += align(retSize)
+		b.retSlot = conv.TotalStackArgBytes
 	}
 
 	for _, blk := range f.Blocks {
@@ -3557,7 +3696,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	if b.NoLeafOpt {
 		b.needsFP = b.useFramePointer
 	} else {
-		b.needsFP = b.useFramePointer && (b.stackSize > 0 || len(f.Parameters) > 0 || saveY)
+		b.needsFP = b.useFramePointer && (b.stackSize > 0 || conv.TotalStackArgBytes > 0 || saveY)
 	}
 
 	b.saveYFP = saveY && b.needsFP
@@ -3584,6 +3723,26 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 	if b.stackSize > 0 {
 		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\t; allocate %d bytes local frame\n", b.stackSize, b.stackSize))
+	}
+
+	for idx, p := range f.Parameters {
+		if idx >= len(conv.Params) {
+			break
+		}
+		loc := conv.Params[idx]
+		if loc.Kind == LocReg {
+			off := b.paramRawOffsets[p.Name]
+			sz := b.paramSizes[p.Name]
+			addr := b.offsetAddr(off, sz)
+			switch loc.Reg {
+			case "d":
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\t; save param '%s'\n", addr, p.Name))
+			case "b":
+				b.buf.WriteString(fmt.Sprintf("\tstb %s\t; save param '%s'\n", addr, p.Name))
+			case "x":
+				b.buf.WriteString(fmt.Sprintf("\tstx %s\t; save param '%s'\n", addr, p.Name))
+			}
+		}
 	}
 
 	for idx, blk := range f.Blocks {
@@ -3989,6 +4148,8 @@ func (b *Backend) Generate(program *ir.Program) string {
 		b.buf.WriteString("\tleas 10,s\n")
 	}
 	b.buf.WriteString("\tldd #0\n\tldx #0\n\trts\n")
+
+	b.initConventions(program)
 
 	for _, f := range program.Functions {
 		b.emitFunc(f)

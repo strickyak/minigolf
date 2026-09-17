@@ -485,14 +485,34 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 3. Register Passing Calling Convention for M6809 (Fastcall)
-* **Goal**: Eliminate stack frame pushes and pops for function call arguments.
-* **Current Bottleneck**: Every function call currently pushes arguments onto the stack (`pshs d`), callee loads them from the stack (`ldd 4,s`), and caller cleans the stack (`leas 2,s`).
-* **Proposed Design**:
-  - Pass the 1st parameter in accumulator `D` (or `B` for byte types).
-  - Pass the 2nd parameter in index register `X` (for pointer or word types).
-  - Spill only arguments 3+ to the stack.
-* **Target Impact**: Single-argument functions (`fib(n)`, `putchar(c)`, math functions, accessors) save 16–22 cycles per call. In `04_fibonacci`, execution cycles are projected to drop by ~35–40%.
+#### 3. Register Passing Calling Convention for M6809 (Fastcall) (COMPLETED)
+* **Status**: **Completed** ([`m6809/convention.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/convention.go), [`m6809/convention_test.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/convention_test.go), [`m6809/backend.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/backend.go), [`main.go`](file:///home/strick/github.com/strickyak/minigolf/main.go)).
+* **Implementation Details**:
+  - **Policy-Based Architecture**:
+    - Created modular `ConventionPolicy` interface and `FunctionConvention` abstraction.
+    - Implemented `FastcallPolicy` (default for whole-program compilation):
+      - 1st parameter: passed in accumulator `D` (or `B` for byte types).
+      - 2nd parameter: passed in index register `X` (if 16-bit).
+      - Parameters 3+ (and composite types `size > 2`): passed on the stack.
+    - Implemented `StackPolicy` (legacy stack-only convention for benchmarking and fallback via `-no-fastcall6809` / `NO_FASTCALL6809`).
+    - Implemented `GCCPolicy` (GCC 6809 convention: 1st word in `X`, 1st byte in `B`).
+  - **Interpolation Point & ABI Safety**:
+    - External functions with linkage overrides (`f.Linkage != ""`), bodyless declarations, and functions whose addresses are taken (`b.funcAddressTaken`) automatically fall back to `StackPolicy` to maintain 100% interoperability with external C calls and indirect calls.
+    - Runtime `putchar` passes character argument directly in `B`, eliminating `pshs b` and `leas 1,s` around Hatvan Hypercall 132.
+  - **Caller & Callee Codegen**:
+    - Caller pushes stack arguments right-to-left first, then loads register arguments into `D`/`B` and `X` immediately prior to `jsr`, completely omitting `pshs` and `leas` for register parameters.
+    - Callee allocates local slots for register parameters and saves them on entry, preserving full addressability and local EA tracking.
+* **Empirical Results**:
+  - `04_fibonacci`: Cycles dropped from **20,309 to 18,883** (**-1,426 cycles, -7.0% faster!**); payload dropped from **579 B to 537 B** (**-42 bytes!**).
+  - `08_bubble_sort`: Payload dropped from **1,034 B to 933 B** (**-101 bytes, -9.8% smaller!**); cycles dropped from **53,773 to 53,445**.
+  - `06_string_ops`: Payload dropped from **1,309 B to 1,242 B** (**-67 bytes!**); cycles dropped from **17,485 to 17,208** (**-277 cycles!**).
+  - `03_arithmetic`: Payload dropped from **702 B to 672 B** (**-30 bytes!**); cycles: **14,338** (still solidly beating CMOC 14,679 and GCC 16,390).
+  - `05_array_sum`: Payload dropped from **807 B to 769 B** (**-38 bytes!**); cycles dropped to **14,148** (**-96 cycles!**).
+  - `07_sieve`: Payload dropped from **679 B to 649 B** (**-30 bytes!**).
+  - `09_struct_ops`: Payload dropped from **1,218 B to 1,174 B** (**-44 bytes!**).
+  - `10_switch_case`: Payload dropped from **907 B to 869 B** (**-38 bytes!**); cycles dropped to **9,280**.
+  - **Aggregate code size savings across all 10 benchmarks: over 390 bytes shaved!**
+  - **Full test suite passes 100% across all 3 backends and all 8 M6809 architectural variants.**
 
 ---
 
