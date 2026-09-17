@@ -516,7 +516,28 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 4. 8-Bit / Byte Register Allocation (`A` and `B` Accumulators)
+#### 4. Pointer Arithmetic Scaling & Native Statement Idioms (COMPLETED)
+* **Status**: **Completed** ([`ir/builder.go`](file:///home/strick/github.com/strickyak/minigolf/ir/builder.go), [`cbe/cbe.go`](file:///home/strick/github.com/strickyak/minigolf/cbe/cbe.go), [`ctranslator/translator.go`](file:///home/strick/github.com/strickyak/minigolf/ctranslator/translator.go), [`tests/pointer_inc.golf`](file:///home/strick/github.com/strickyak/minigolf/tests/pointer_inc.golf)).
+* **Implementation Details**:
+  - **IR Pointer Arithmetic Scaling**:
+    - Fixed `ir/builder.go` for `ast.IncDecStatement` (`p++`, `p--`) and `ast.OpAssignStatement` (`p += n`, `p -= n`) to scale pointer offsets by element size `sizeof(T)` instead of literal 1 byte.
+    - Updated `cbe/cbe.go` to emit pointer `BinaryOp` as integer address arithmetic cast back to pointer type `((T*)((word)(p) + (word)(offset)))`, maintaining identical byte-offset semantics across CBE, AMD64, and M6809.
+  - **Idiomatic Non-Escaping C Translation**:
+    - Updated `ctranslator/translator.go` to recognize statement-level pointer increments and copy idioms:
+      - `*dst++ = *src++` -> `*dst = *src; dst++; src++`
+      - `*dst++ = rhs` -> `*dst = rhs; dst++`
+      - `lhs = *src++` -> `lhs = *src; src++`
+      - `fn(*p++)` / `fn(p++)` -> `fn(*p); p++` / `fn(p); p++`
+    - Eliminated generic prelude helper calls (`pointer_post_increment(&p)`), preventing pointers from escaping (`&p`).
+    - With pointers no longer escaping, SSA register allocation places pointer variables (`dst`, `src`) into 16-bit index registers `X`, `Y`, and `U` across entire loop lifespans.
+* **Empirical Results**:
+  - `06_string_ops`: Cycles dropped from **17,208 to 13,540** (**-3,668 cycles, -21.3% faster!**); payload dropped from **1,280 B to 1,178 B** (**-102 bytes, -8.0% smaller!**).
+  - Ratio vs GCCMax narrowed from **3.24x down to 2.55x**.
+  - Verified across all 3 backends and all 8 M6809 architectural variants with 100% test pass.
+
+---
+
+#### 5. 8-Bit / Byte Register Allocation (`A` and `B` Accumulators)
 * **Goal**: Prevent continuous stack spilling for 8-bit types.
 * **Current Bottleneck**: [`AllocateRegisters`](file:///home/strick/github.com/strickyak/minigolf/m6809/regalloc.go) explicitly ignores types with `size != 2`. Byte variables (`uint8`, `char`, `bool`) are always stored to and loaded from stack slots (`stb 0,s; ldb 0,s`).
 * **Proposed Design**:
@@ -526,7 +547,7 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 5. Native Autoincrement / Autodecrement Addressing
+#### 6. Native Autoincrement / Autodecrement Addressing
 * **Goal**: Directly exploit 6809 hardware addressing modes `,x+`, `,x++`, `,-x`, `,--x` during code generation.
 * **Current Bottleneck**: Pointer increment loops (`while (*s) { ... s++; }`) often emit separate pointer adjustments (`addd #1`, `std ptr`) and reloads instead of combining memory load/store with pointer advancement.
 * **Proposed Design**: Pattern-match memory load/store and pointer update pairs in `emitInstr` or expand peephole recognition across intermediate register moves.
@@ -534,7 +555,7 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 6. Jump Tables for Dense `switch` Statements
+#### 7. Jump Tables for Dense `switch` Statements
 * **Goal**: Transform $O(N)$ sequential comparisons into $O(1)$ constant-time dispatch.
 * **Current Bottleneck**: [`ctranslator`](file:///home/strick/github.com/strickyak/minigolf/ctranslator) compiles `switch` statements into cascaded `if-else` chains, requiring up to $N$ compare-and-branch instructions.
 * **Proposed Design**:
