@@ -1,0 +1,81 @@
+package fft
+
+import "floating"
+import "math"
+import "complex"
+
+type C = complex.Complex
+type F = floating.FloatingPoint
+
+func isPowerOfTwo(n word) bool {
+	return n > 0 && (n&(n-1)) == 0
+}
+
+func bitReverse(x word, bits word) word {
+	var res word
+	for k := word(0); k < bits; k++ {
+		res = (res << 1) | (x & 1)
+		x = x >> 1
+	}
+	return res
+}
+
+func transform(in slice[C], isReverse bool) slice[C] {
+	n := in.Len
+	if !isPowerOfTwo(n) {
+		panic("fft: input length must be a power of 2")
+	}
+
+	bits := word(0)
+	for (word(1) << bits) < n {
+		bits++
+	}
+
+	var out slice[C]
+	for i := word(0); i < n; i++ {
+		rev := bitReverse(i, bits)
+		out.Append(in[rev])
+	}
+
+	tau := math.Tau()
+
+	for length := word(2); length <= n; length = length << 1 {
+		halfLen := length >> 1
+		angle := floating.Div(tau, floating.FromWord(length))
+		if !isReverse {
+			angle = floating.Neg(angle)
+		}
+		wm := complex.Rect(floating.FromWord(1), angle)
+
+		for i := word(0); i < n; i += length {
+			w := complex.New(floating.FromWord(1), floating.FromWord(0))
+			for j := word(0); j < halfLen; j++ {
+				u := out[i+j]
+				v := complex.Mul(out[i+j+halfLen], w)
+				out[i+j] = complex.Add(u, v)
+				out[i+j+halfLen] = complex.Sub(u, v)
+				w = complex.Mul(w, wm)
+			}
+		}
+	}
+
+	if isReverse {
+		scale := floating.Div(floating.FromWord(1), floating.FromWord(n))
+		for i := word(0); i < n; i++ {
+			c := out[i]
+			c.Re = floating.Mul(c.Re, scale)
+			c.Im = floating.Mul(c.Im, scale)
+			out[i] = c
+		}
+	}
+
+	return out
+}
+
+func Forward(in slice[C]) slice[C] {
+	return transform(in, false)
+}
+
+func Reverse(in slice[C]) slice[C] {
+	return transform(in, true)
+}

@@ -1,0 +1,57 @@
+package main
+
+import "floating"
+import "complex"
+import "fft"
+
+type C = complex.Complex
+
+func makeReal(re word) C {
+	return complex.New(floating.FromWord(re), floating.FromWord(0))
+}
+
+func printVector(label string, v slice[C]) {
+	println(label)
+	for i := range v.Len {
+		println(i, complex.Format(v[i]))
+	}
+}
+
+func main() {
+	println("--- Test 1: Impulse (N=4) ---")
+	var impulse slice[C]
+	impulse.Append(makeReal(1))
+	impulse.Append(makeReal(0))
+	impulse.Append(makeReal(0))
+	impulse.Append(makeReal(0))
+
+	fImpulse := fft.Forward(impulse)
+	printVector("forward(impulse):", fImpulse)
+
+	rImpulse := fft.Reverse(fImpulse)
+	printVector("reverse(fImpulse):", rImpulse)
+
+	println("--- Test 2: Sequence [1, 2, 3, 4] ---")
+	var seq slice[C]
+	seq.Append(makeReal(1))
+	seq.Append(makeReal(2))
+	seq.Append(makeReal(3))
+	seq.Append(makeReal(4))
+
+	fSeq := fft.Forward(seq)
+	printVector("forward(seq):", fSeq)
+
+	rSeq := fft.Reverse(fSeq)
+	printVector("reverse(fSeq):", rSeq)
+
+	println("--- Test 3: Constant (N=8) ---")
+	var constSig slice[C]
+	for i := range 8 {
+		constSig.Append(makeReal(1))
+	}
+	fConst := fft.Forward(constSig)
+	printVector("forward(const):", fConst)
+
+	rConst := fft.Reverse(fConst)
+	printVector("reverse(fConst):", rConst)
+}
