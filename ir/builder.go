@@ -1099,13 +1099,20 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		if s.Token.Literal == "--" {
 			op = "sub"
 		}
-		var one Value
-		if typ.Equals(TypeByte) {
-			one = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, s)
+		var delta Value
+		if typ.IsAPointer() {
+			eltTyp := typ.PointedType()
+			eltSize := b.tm.getTypeSize(eltTyp)
+			if eltSize <= 0 {
+				eltSize = 1
+			}
+			delta = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(eltSize)}, s)
+		} else if typ.Equals(TypeByte) {
+			delta = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 1}, s)
 		} else {
-			one = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1}, s)
+			delta = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 1}, s)
 		}
-		newVal := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: op, Left: oldVal, Right: one}, s)
+		newVal := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: op, Left: oldVal, Right: delta}, s)
 
 		if isIdent {
 			b.assignToExpr(s.Name, newVal)
@@ -1132,7 +1139,6 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		}
 
 		rightVal := b.buildExpr(s.Value)
-		rightVal = b.coerceType(rightVal, typ)
 
 		op := s.Operator
 		switch op {
@@ -1160,6 +1166,22 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			op = "andnot"
 		}
 
+		if typ.IsAPointer() {
+			eltTyp := typ.PointedType()
+			eltSize := b.tm.getTypeSize(eltTyp)
+			if eltSize <= 0 {
+				eltSize = 1
+			}
+			rightWord := b.coerceType(rightVal, TypeWord)
+			if eltSize > 1 {
+				sizeVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(eltSize)}, s)
+				rightVal = b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "mul", Left: rightWord, Right: sizeVal}, s)
+			} else {
+				rightVal = rightWord
+			}
+		} else {
+			rightVal = b.coerceType(rightVal, typ)
+		}
 
 		newVal := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: op, Left: oldVal, Right: rightVal}, s)
 		if isIdent {

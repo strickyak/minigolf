@@ -549,6 +549,9 @@ func (c *CBE) emitInstrExpr(instr ir.Instruction) string {
 		default:
 			opStr = "UNKNOWN_BINARY_OP(" + i.Op + ")"
 		}
+		if i.Typ.IsAPointer() {
+			return fmt.Sprintf("((%s)((word)(%s) %s (word)(%s)))", c.mapIRType(i.Typ), c.formatVal(i.Left), opStr, c.formatVal(i.Right))
+		}
 		return fmt.Sprintf("(%s %s %s)", c.formatVal(i.Left), opStr, c.formatVal(i.Right))
 	case *ir.Compare:
 		var opStr string
