@@ -56,9 +56,43 @@ MiniGolf gathers several static analysis metrics across the AST and IR before co
 * **Metrics**: Instruction count, basic block count, presence of nested calls.
 * **Tunable**: `opts.MaxTinyInstructions` (default 8, configurable via `-inline-max-tiny`).
 
+## 2. Priority Working Stack (Optimization Execution Queue)
+
+This working stack tracks the compiler optimization pipeline's active and queued execution priorities. Tasks at the top of the stack are currently under active development. Pushed tasks are suspended with their design preserved and ready to resume immediately upon completion of the top frame.
+
+```
++========================================================================================================+
+| TOP [ACTIVE]    : Whole-Program Interprocedural Clobber Sets & Custom Calling Conventions (IPRA)       |
+|                 : -> Step 1: Baseline Callee-Save Correctness [DONE]                                   |
+|                 : -> Step 2: Explicit Backend Instruction & Helper Clobber Sets [NEXT]                 |
+|                 : -> Step 3: Call-Graph Clobber Propagation (Direct + Transitive Sets)                 |
+|                 : -> Step 4: Regalloc Exploitation (Free Cross-Call Preservation, Zero Defensive Save) |
++--------------------------------------------------------------------------------------------------------+
+| DEPTH 1 [PAUSED]: Struct & Composite Copy Inlining / Scalar Replacement of Aggregates (SROA)          |
+|                 : Target: 09_struct_ops (close 3.83x code size gap vs GCC)                             |
++--------------------------------------------------------------------------------------------------------+
+| DEPTH 2 [PAUSED]: Dense Switch Jump Tables                                                             |
+|                 : Target: 10_switch_case (O(1) table dispatch subd #min; rola; jmp [d,x])             |
++--------------------------------------------------------------------------------------------------------+
+| DEPTH 3 [PAUSED]: Loop Induction Variable Pinning & ABX Byte Indexing                                  |
+|                 : Target: 02_count_loop, 07_sieve, 08_bubble_sort                                      |
++--------------------------------------------------------------------------------------------------------+
+| DEPTH 4 [PAUSED]: Non-Reentrant Static Frame Overlays & Direct Page (DP) Allocation                    |
+|                 : Target: Call-tree mutual exclusion (TrunkLevel/LeafLevel global/DP overlays)         |
++========================================================================================================+
+```
+
+| Stack Level | Task / Optimization | Status | Focus / Description |
+| :--- | :--- | :--- | :--- |
+| **TOP (Active)** | **Interprocedural Clobber Sets & Custom Call Conventions (IPRA)** | **In Progress** (Step 1 Complete, Step 2 Active) | Replace rigid separate-compilation ABI with whole-program exact clobber sets on the call graph. Eliminates defensive `pshs y` / `puls y` callee saves; allows callers to keep live variables in `X`/`Y` across leaf/helper calls with zero stack spills. |
+| **Depth 1 [Suspended]** | **Struct Copy Inlining & SROA (`09_struct_ops`)** | Ready to Resume | Inline 2/4/6-byte struct copies with accumulator pairs (`ldd`/`std`); scalarize non-escaping struct fields to SSA virtual registers. |
+| **Depth 2 [Suspended]** | **Dense Switch Jump Tables (`10_switch_case`)** | Queued | Replace $O(N)$ if-else ladder with $O(1)$ indexed dispatch `jmp [d,x]` for dense integer case ranges. |
+| **Depth 3 [Suspended]** | **Loop Induction Pinning & Byte Indexing (`02_count_loop`, `07_sieve`, `08_bubble_sort`)** | Queued | Pin induction variables in index registers across loop headers; leverage `ABX` and autoincrement for array strides. |
+| **Depth 4 [Suspended]** | **Non-Reentrant Static Frame Overlays & Direct Page Allocation** | Queued | Map mutually exclusive TrunkLevel and LeafLevel frames to shared global/DP memory blocks, removing `leas -N,s` and `leas N,s`. |
+
 ---
 
-## 2. Optimization Areas & Concrete Tasks
+## 3. Optimization Areas & Concrete Tasks
 
 ### Area 1: Inlining Policies Tuned by Heuristics
 
@@ -187,7 +221,7 @@ When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF`
 
 ---
 
-## 3. Progress, Key Observations & Parity Analysis (Benchmarks 01–03)
+## 4. Progress, Key Observations & Parity Analysis (Benchmarks 01–03)
 
 ### Current Benchmark Status
 
@@ -618,4 +652,27 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
   - **Loaded Payload**: Dropped from **1,401 B to 890 B** (**-511 bytes, -36.5% smaller!**).
   - **Performance Ratio vs GCC**: Narrowed from **4.70x down to 1.80x**!
   - **Verification**: 100% pass across all unit tests and all 8 M6809 architectural variants (`ALL_VARIANTS=1 time go test ./...`).
+
+---
+
+#### 9. Interprocedural Register Clobber Sets & Custom Calling Conventions (IPRA) [ACTIVE]
+* **Goal**: Eliminate defensive callee-save overhead (`pshs y` / `puls y`) and eliminate unnecessary caller register spills across calls to internal leaf and helper functions.
+* **Core Philosophy**:
+  In whole-program compilation, rigid standard ABI boundaries (static caller-saved vs callee-saved classifications) are an artificial tax:
+  - **Callees** are forced to defensively save registers (like `Y`) even when no caller has a live value in that register.
+  - **Callers** are forced to spill live variables in `X` and `D` across calls even when the target callee is a leaf utility that never touches them.
+  - *Interpolation points* (`extern` functions, OS9 traps, C-library entry points) remain strictly bound to the standard ABI. All internal functions negotiate exact clobbers and custom register passing.
+* **Execution Plan**:
+  1. **Step 1: Baseline Callee-Save Correctness [COMPLETED]**:
+     - Fixed `m6809/backend.go:3702` via `b.functionClobbersY(f)` so functions doing multi-byte copies properly save/restore `Y` under the current ABI. All tests green.
+  2. **Step 2: Explicit Backend Instruction & Helper Clobber Sets [NEXT]**:
+     - Formalize instruction/helper scratch register usage into declarative clobber queries in `m6809/backend.go` (e.g., `emitCopy` clobbers `{X, Y}`, `emitMul` clobbers `{D}`, etc.).
+  3. **Step 3: Call-Graph Clobber Propagation (IPRA)**:
+     - Compute $\text{DirectClobbers}(F)$ and transitive $\text{TotalClobbers}(F) = \text{DirectClobbers}(F) \cup \bigcup_{G \in \text{Callees}(F)} \text{TotalClobbers}(G)$ bottom-up on the call graph using `AnnotateLeafLevels`.
+  4. **Step 4: Regalloc Exploitation & Zero-Save Prologues**:
+     - Caller SSA regalloc treats registers $\notin \text{TotalClobbers}(G)$ as surviving `jsr G` without spills.
+     - Internal callees omit `pshs y` / `puls y` if no active caller holds a live variable in `Y` across that call site.
+* **Target Impact**:
+  - Removes 14–20 cycles per call for leaf/helper subroutines on M6809.
+  - Keeps high-frequency variables pinned in index registers `X` and `Y` across calls throughout entire loops.
 
