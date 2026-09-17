@@ -1,6 +1,7 @@
 package main
 
 import "btree"
+import "rbtree"
 
 var hamlet string = `O that this too too solid flesh would melt,
 Thaw, and resolve itself into a dew!
@@ -55,8 +56,8 @@ func toLower(b byte) byte {
 	return b
 }
 
-func main() {
-	tree := btree.New[int]()
+func testTree[TREE any](tree *TREE, name string) {
+	println("---", name, "---")
 
 	text := hamlet
 	n := text.Len
@@ -94,4 +95,12 @@ func main() {
 	}
 
 	tree.Print()
+}
+
+func main() {
+	b := btree.New[int]()
+	testTree(&b, "B-Tree")
+
+	rb := rbtree.New[int]()
+	testTree(&rb, "Red-Black Tree")
 }
