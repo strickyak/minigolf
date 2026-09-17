@@ -14,5 +14,10 @@ z1 * z2 = (11.0+2.0i)
 z1 * z3 = (-5.0+10.0i)
 --- Div ---
 zMul2 / z3 = (1.0+2.0i)
---- AbsSq ---
+--- AbsSq and Abs ---
 |z3|^2 = 25.0
+|z3| = 5.0
+--- Rect and Polar ---
+rect(2, 0) = (2.0+0.0i)
+rect(2, pi/2) = (0.0+2.0i)
+polar(zRect2): r = 2.0 theta = 1.570796

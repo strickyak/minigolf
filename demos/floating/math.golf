@@ -2,6 +2,43 @@ package math
 
 import "floating"
 
+func Pi() floating.FloatingPoint {
+	var p floating.FloatingPoint
+	p.SetSignExp(0, 1)
+	p.Mantissa[0] = 0xC9
+	p.Mantissa[1] = 0x0F
+	p.Mantissa[2] = 0xDA
+	p.Mantissa[3] = 0xA2
+	return p
+}
+
+func PiOverTwo() floating.FloatingPoint {
+	var p floating.FloatingPoint
+	p.SetSignExp(0, 0)
+	p.Mantissa[0] = 0xC9
+	p.Mantissa[1] = 0x0F
+	p.Mantissa[2] = 0xDA
+	p.Mantissa[3] = 0xA2
+	return p
+}
+
+func Tau() floating.FloatingPoint {
+	var p floating.FloatingPoint
+	p.SetSignExp(0, 2)
+	p.Mantissa[0] = 0xC9
+	p.Mantissa[1] = 0x0F
+	p.Mantissa[2] = 0xDA
+	p.Mantissa[3] = 0xA2
+	return p
+}
+
+func Abs(x floating.FloatingPoint) floating.FloatingPoint {
+	if x.Sign() != 0 {
+		return floating.Neg(x)
+	}
+	return x
+}
+
 func Sqrt(x floating.FloatingPoint) floating.FloatingPoint {
 	if x.Sign() != 0 && !x.IsZero() {
 		panic("math.Sqrt: negative input")
@@ -44,15 +81,209 @@ func Sqrt(x floating.FloatingPoint) floating.FloatingPoint {
 	return y
 }
 
-func Abs(x floating.FloatingPoint) floating.FloatingPoint {
-	if x.Sign() != 0 {
-		return floating.Neg(x)
-	}
-	return x
-}
-
 func Hypot(p floating.FloatingPoint, q floating.FloatingPoint) floating.FloatingPoint {
 	p2 := floating.Mul(p, p)
 	q2 := floating.Mul(q, q)
 	return Sqrt(floating.Add(p2, q2))
+}
+
+func sinCore(z floating.FloatingPoint) floating.FloatingPoint {
+	one := floating.FromWord(1)
+	c6 := floating.Div(one, floating.FromWord(6))
+	c120 := floating.Div(one, floating.FromWord(120))
+	c5040 := floating.Div(one, floating.FromWord(5040))
+	fact9 := floating.Mul(floating.FromWord(5040), floating.FromWord(72))
+	c362880 := floating.Div(one, fact9)
+
+	z2 := floating.Mul(z, z)
+	t := floating.Sub(c5040, floating.Mul(z2, c362880))
+	t = floating.Sub(c120, floating.Mul(z2, t))
+	t = floating.Sub(c6, floating.Mul(z2, t))
+	poly := floating.Sub(one, floating.Mul(z2, t))
+	return floating.Mul(z, poly)
+}
+
+func cosCore(z floating.FloatingPoint) floating.FloatingPoint {
+	one := floating.FromWord(1)
+	var c2 floating.FloatingPoint
+	c2.SetSignExp(0, -1)
+	c2.Mantissa[0] = 0x80
+
+	c24 := floating.Div(one, floating.FromWord(24))
+	c720 := floating.Div(one, floating.FromWord(720))
+	c40320 := floating.Div(one, floating.FromWord(40320))
+
+	z2 := floating.Mul(z, z)
+	t := floating.Sub(c720, floating.Mul(z2, c40320))
+	t = floating.Sub(c24, floating.Mul(z2, t))
+	t = floating.Sub(c2, floating.Mul(z2, t))
+	return floating.Sub(one, floating.Mul(z2, t))
+}
+
+func Sincos(x floating.FloatingPoint) (sin floating.FloatingPoint, cos floating.FloatingPoint) {
+	if x.IsZero() {
+		sin = floating.FromWord(0)
+		cos = floating.FromWord(1)
+		return
+	}
+
+	negSin := false
+	if x.Sign() != 0 {
+		negSin = true
+		x = floating.Neg(x)
+	}
+
+	tau := Tau()
+	pi2 := PiOverTwo()
+	pi4 := PiOverTwo()
+	pi4.SetSignExp(0, -1)
+
+	if floating.Cmp(x, tau) >= 0 {
+		k := floating.ToWord(floating.Div(x, tau))
+		x = floating.Sub(x, floating.Mul(floating.FromWord(k), tau))
+		if floating.Cmp(x, tau) >= 0 {
+			x = floating.Sub(x, tau)
+		}
+	}
+
+	q := 0
+	if floating.Cmp(x, pi2) >= 0 {
+		q = int(floating.ToWord(floating.Div(x, pi2)))
+		if q > 3 {
+			q = 3
+		}
+		x = floating.Sub(x, floating.Mul(floating.FromWord(word(q)), pi2))
+	}
+
+	var s floating.FloatingPoint
+	var c floating.FloatingPoint
+	if floating.Cmp(x, pi4) > 0 {
+		d := floating.Sub(pi2, x)
+		s = cosCore(d)
+		c = sinCore(d)
+	} else {
+		s = sinCore(x)
+		c = cosCore(x)
+	}
+
+	if q == 0 {
+		sin = s
+		cos = c
+	} else if q == 1 {
+		sin = c
+		cos = floating.Neg(s)
+	} else if q == 2 {
+		sin = floating.Neg(s)
+		cos = floating.Neg(c)
+	} else {
+		sin = floating.Neg(c)
+		cos = s
+	}
+
+	if negSin {
+		sin = floating.Neg(sin)
+	}
+	return
+}
+
+func Sin(x floating.FloatingPoint) floating.FloatingPoint {
+	s, _ := Sincos(x)
+	return s
+}
+
+func Cos(x floating.FloatingPoint) floating.FloatingPoint {
+	_, c := Sincos(x)
+	return c
+}
+
+func atanCore(z floating.FloatingPoint) floating.FloatingPoint {
+	one := floating.FromWord(1)
+	u := floating.Mul(z, z)
+
+	c15 := floating.Div(one, floating.FromWord(15))
+	c13 := floating.Div(one, floating.FromWord(13))
+	c11 := floating.Div(one, floating.FromWord(11))
+	c9 := floating.Div(one, floating.FromWord(9))
+	c7 := floating.Div(one, floating.FromWord(7))
+	c5 := floating.Div(one, floating.FromWord(5))
+	c3 := floating.Div(one, floating.FromWord(3))
+
+	t := floating.Sub(c13, floating.Mul(u, c15))
+	t = floating.Sub(c11, floating.Mul(u, t))
+	t = floating.Sub(c9, floating.Mul(u, t))
+	t = floating.Sub(c7, floating.Mul(u, t))
+	t = floating.Sub(c5, floating.Mul(u, t))
+	t = floating.Sub(c3, floating.Mul(u, t))
+	poly := floating.Sub(one, floating.Mul(u, t))
+	return floating.Mul(z, poly)
+}
+
+func Atan(x floating.FloatingPoint) floating.FloatingPoint {
+	if x.IsZero() {
+		return x
+	}
+	isNeg := false
+	if x.Sign() != 0 {
+		isNeg = true
+		x = floating.Neg(x)
+	}
+
+	one := floating.FromWord(1)
+	pi2 := PiOverTwo()
+	pi4 := PiOverTwo()
+	pi4.SetSignExp(0, -1)
+
+	two := floating.FromWord(2)
+	tanPi8 := floating.Sub(Sqrt(two), one)
+
+	var res floating.FloatingPoint
+	if floating.Cmp(x, one) > 0 {
+		invX := floating.Div(one, x)
+		if floating.Cmp(invX, tanPi8) > 0 {
+			num := floating.Sub(invX, one)
+			den := floating.Add(invX, one)
+			red := floating.Div(num, den)
+			negRed := floating.Neg(red)
+			subAtan := floating.Neg(atanCore(negRed))
+			res = floating.Sub(pi2, floating.Add(pi4, subAtan))
+		} else {
+			res = floating.Sub(pi2, atanCore(invX))
+		}
+	} else if floating.Cmp(x, tanPi8) > 0 {
+		num := floating.Sub(x, one)
+		den := floating.Add(x, one)
+		red := floating.Div(num, den)
+		negRed := floating.Neg(red)
+		subAtan := floating.Neg(atanCore(negRed))
+		res = floating.Add(pi4, subAtan)
+	} else {
+		res = atanCore(x)
+	}
+
+	if isNeg {
+		res = floating.Neg(res)
+	}
+	return res
+}
+
+func Atan2(y floating.FloatingPoint, x floating.FloatingPoint) floating.FloatingPoint {
+	if x.IsZero() {
+		if y.IsZero() {
+			return floating.FromWord(0)
+		}
+		if y.Sign() != 0 {
+			return floating.Neg(PiOverTwo())
+		}
+		return PiOverTwo()
+	}
+
+	if x.Sign() == 0 {
+		return Atan(floating.Div(y, x))
+	}
+
+	atanYX := Atan(floating.Div(y, x))
+	if y.Sign() == 0 {
+		return floating.Add(atanYX, Pi())
+	}
+	return floating.Sub(atanYX, Pi())
 }
