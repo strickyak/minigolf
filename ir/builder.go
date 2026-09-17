@@ -1826,6 +1826,13 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 		}
 		// It's a pointer type cast: (*TypeName)(expr)
 		targetTyp := b.tm.astToIRType(ptrType)
+		if targetTyp.Name == "*byte" {
+			if strLit, ok := e.Arguments[0].(*ast.StringLiteral); ok {
+				g := b.addStringConstant(strLit.Value)
+				globalAddr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: targetTyp}, Global: g}, e)
+				return ExprResult{IsLValue: false, Value: globalAddr, Typ: targetTyp}
+			}
+		}
 		val := b.buildExpr(e.Arguments[0])
 		// Special case: (*byte)(sliceExpr) where sliceExpr is a slice[byte] / string.
 		// Extract the base pointer from field 0 of the slice struct rather than

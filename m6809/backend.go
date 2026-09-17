@@ -1229,6 +1229,14 @@ func (b *Backend) storeResult(id int) {
 	canon := b.resolveSlot(id)
 	if _, ok := b.slots[canon]; !ok {
 		if _, ok := b.slots[id]; !ok {
+			if !b.NoLocalRegAlloc && b.curInstr != nil && b.curInstr.GetID() == id {
+				sz := b.getTypeSizeByType(b.curInstr.Type())
+				if sz == 1 {
+					b.setB(b.curInstr)
+				} else if sz == 2 {
+					b.setD(b.curInstr)
+				}
+			}
 			return
 		}
 	}
