@@ -1,0 +1,16 @@
+package main
+
+import "floating"
+import "complex"
+import "fft"
+
+type C = complex.Complex
+
+func main() {
+	var in slice[C]
+	in.Append(complex.New(floating.FromWord(1), floating.FromWord(0)))
+	in.Append(complex.New(floating.FromWord(2), floating.FromWord(0)))
+	in.Append(complex.New(floating.FromWord(3), floating.FromWord(0)))
+	// Length is 3 (not a power of 2) -> must panic
+	fft.Forward(in)
+}
