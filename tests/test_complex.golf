@@ -1,6 +1,7 @@
 package main
 
 import "floating"
+import "math"
 import "complex"
 
 func main() {
@@ -42,7 +43,21 @@ func main() {
 	zDiv := complex.Div(zMul2, z3)
 	println("zMul2 / z3 =", zDiv.Format())
 
-	println("--- AbsSq ---")
+	println("--- AbsSq and Abs ---")
 	absSq := complex.AbsSq(z3)
 	println("|z3|^2 =", absSq.Format())
+	println("|z3| =", floating.Format(complex.Abs(z3)))
+
+	println("--- Rect and Polar ---")
+	r2 := floating.FromWord(2)
+	zero := floating.FromWord(0)
+	zRect1 := complex.Rect(r2, zero)
+	println("rect(2, 0) =", zRect1.Format())
+
+	pi2 := math.PiOverTwo()
+	zRect2 := complex.Rect(r2, pi2)
+	println("rect(2, pi/2) =", zRect2.Format())
+
+	rPol, thPol := complex.Polar(zRect2)
+	println("polar(zRect2): r =", floating.Format(rPol), "theta =", floating.Format(thPol))
 }

@@ -4,6 +4,11 @@ import "floating"
 import "math"
 
 func main() {
+	println("--- Constants ---")
+	println("Pi:", floating.Format(math.Pi()))
+	println("PiOverTwo:", floating.Format(math.PiOverTwo()))
+	println("Tau:", floating.Format(math.Tau()))
+
 	println("--- Sqrt Zero and One ---")
 	zero := floating.FromWord(0)
 	println("sqrt(0) =", floating.Format(math.Sqrt(zero)))
@@ -41,4 +46,25 @@ func main() {
 	println("--- Hypot ---")
 	three := floating.FromWord(3)
 	println("hypot(3, 4) =", floating.Format(math.Hypot(three, four)))
+
+	println("--- Trigonometry ---")
+	s0, c0 := math.Sincos(zero)
+	println("sin(0) =", floating.Format(s0), "cos(0) =", floating.Format(c0))
+
+	pi2 := math.PiOverTwo()
+	sPi2, cPi2 := math.Sincos(pi2)
+	println("sin(pi/2) =", floating.Format(sPi2), "cos(pi/2) =", floating.Format(cPi2))
+
+	pi := math.Pi()
+	sPi, cPi := math.Sincos(pi)
+	println("sin(pi) =", floating.Format(sPi), "cos(pi) =", floating.Format(cPi))
+
+	println("--- Atan and Atan2 ---")
+	println("atan(0) =", floating.Format(math.Atan(zero)))
+	println("atan(1) =", floating.Format(math.Atan(one)))
+	println("atan2(0, 1) =", floating.Format(math.Atan2(zero, one)))
+	println("atan2(1, 0) =", floating.Format(math.Atan2(one, zero)))
+	negOne := floating.FromInt(-1)
+	println("atan2(0, -1) =", floating.Format(math.Atan2(zero, negOne)))
+	println("atan2(-1, 0) =", floating.Format(math.Atan2(negOne, zero)))
 }
