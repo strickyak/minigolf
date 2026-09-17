@@ -33,8 +33,8 @@ MiniGolf gathers several static analysis metrics across the AST and IR before co
   - Level 1 is `main.main`.
   - Level $N$ is assigned if a function is called from **exactly one call site**, which is in a Level $N-1$ function, **outside of any loop**, with no dynamic address taken.
 * **Usage in Decisions**:
-  - Functions with `TrunkLevel > 0` are guaranteed to run at most once.
-  - Inlining a trunk function is a **win for both time AND space**: the original function body can be eliminated completely by Dead Function Elimination (DFE), eliminating `jsr`/`rts` and stack frame overhead with zero net code growth.
+  - **Inlining**: Functions with `TrunkLevel > 0` are guaranteed to run at most once. Inlining a trunk function is a **win for both time AND space**: the original function body can be eliminated completely by Dead Function Elimination (DFE), eliminating `jsr`/`rts` and stack frame overhead with zero net code growth.
+  - **Static Frame Sharing**: **No two functions with `TrunkLevel == N` (for $N > 0$) can ever exist on the call stack simultaneously.** They are non-reentrant with respect to each other, meaning their activation records (parameters, local variables, temporaries) can share a single statically allocated global memory block rather than consuming stack frames.
 
 ---
 
@@ -46,8 +46,8 @@ MiniGolf gathers several static analysis metrics across the AST and IR before co
   - **Level 2**: Calls only Level 1 leaf functions.
   - **Level $K$**: Calls at most Level $K-1$ functions.
 * **Usage in Decisions**:
-  - Inlining Level 1 leaves is safe and never increases caller call-tree depth.
-  - Inlining a Level 1 leaf into a Level 2 caller can promote the caller to a Level 1 leaf, unlocking leaf-frame optimizations (`NoLeafOpt6809` in backend) which omit stack frame creation and register saves entirely.
+  - **Inlining**: Inlining Level 1 leaves is safe and never increases caller call-tree depth. Inlining a Level 1 leaf into a Level 2 caller can promote the caller to a Level 1 leaf, unlocking leaf-frame optimizations (`NoLeafOpt6809` in backend) which omit stack frame creation and register saves entirely.
+  - **Static Frame Sharing**: **No two functions with `LeafLevel == N` (for $N > 0$) can ever exist on the call stack simultaneously** (a level $N$ function only calls levels $< N$, so level $N$ functions are strictly non-ancestral to each other). Their activation records can safely overlay the same global/Direct Page memory block.
 
 ---
 
@@ -140,3 +140,41 @@ MiniGolf gathers several static analysis metrics across the AST and IR before co
   - `ShiftUnrollThreshold` (default 4 bits)
 - [ ] **Automatic Single-Call Helper Inlining**:
   If `__mul16` or `__div16` is used at only 1 site in the entire program, inline it automatically so the subroutine body and symbol do not need to be emitted into the final binary.
+
+---
+
+### Area 5: Non-Reentrant Static Frame Overlays & Direct Page Allocation
+
+#### The Core Insight: Call-Stack Mutual Exclusion
+* **TrunkLevel Property**: No two functions with `TrunkLevel == N` ($N > 0$) can ever exist on the call stack at the same time. Since every trunk function has exactly one call site in a level $N-1$ caller outside loops, they are non-reentrant and strictly mutually exclusive.
+* **LeafLevel Property**: No two functions with `LeafLevel == N` ($N > 0$) can ever exist on the call stack at the same time, because a level $N$ function only calls levels $< N$. No level $N$ function can ever be an ancestor of another level $N$ function.
+
+#### Statically Allocated Frame Overlays
+Because functions at the same level have non-overlapping lifetimes:
+1. **Shared Activation Blocks**: Instead of dynamically carving frames out of the hardware stack (`leas -N,s`), all functions at level $N$ can share a single statically allocated global memory block:
+   $$\text{BlockSize}(\text{Level } N) = \max_{f \in \text{Level } N}(\text{FrameSize}(f))$$
+2. **Elimination of Frame Setup & Teardown**:
+   - Omits `leas -N,s` on entry (4–5 cycles saved).
+   - Omits `leas N,s` on exit (4–5 cycles saved).
+   - Entirely removes stack-depth growth for non-recursive portions of the program.
+
+#### Direct Page (DP) Addressing Speedup (M6809)
+When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF` or a page selected via the `DP` register):
+* **Direct Addressing (`<offset`)**:
+  - Instruction size: **2 bytes** (opcode + 8-bit address).
+  - Cycle count: **4 cycles** (e.g. `ldd <dp_var`, `std <dp_var`).
+* **Indexed Stack Addressing (`n,s` or `n,u`)**:
+  - Instruction size: **3 to 4 bytes** (opcode + post-byte + offset).
+  - Cycle count: **5 to 6 cycles** (5 cycles for 5-bit offset, 6 cycles for 8-bit offset).
+* **Net Advantage**: **1 to 2 cycles faster and 1 to 2 bytes smaller on every local variable read and write!**
+* **Direct Parameter Passing**: Callers can store arguments directly into the callee's fixed parameter addresses (`std <callee_arg0`), eliminating `pshs` and subsequent caller stack cleanup (`leas 2,s`).
+
+#### Deployment Scenarios & Tradeoffs
+* **User-Space Programs / Games / CoCo Applications**: Global RAM is readily available, and programs are typically single-threaded and non-reentrant. Static frame overlaying yields dramatic speedups and size reductions.
+* **Device Drivers / Interrupt Handlers / ROM Libraries**: Re-entrancy and stack independence may be required, or global RAM may be severely constrained.
+* **Actionable Next Steps**:
+  - [ ] Add compiler flag `-static-frames` (env `STATIC_FRAMES`) to enable static frame overlaying.
+  - [ ] Add compiler flag `-direct-page-frames` (env `DIRECT_PAGE_FRAMES`) to locate level-1 leaf or trunk frames in the Direct Page.
+  - [ ] Compute `maxTrunkSize[level]` and `maxLeafSize[level]` and allocate overlay symbols (`v__trunk_level_N_frame`, `v__leaf_level_N_frame`) in the data section.
+  - [ ] Update M6809 backend `getSlot()` to generate direct/global addressing for functions qualifying for static overlay.
+
