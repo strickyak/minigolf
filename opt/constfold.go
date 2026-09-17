@@ -1,10 +1,14 @@
 package opt
 
 import (
+	"fmt"
+
 	"github.com/strickyak/minigolf/ir"
 )
 
-type ConstFoldPass struct{}
+type ConstFoldPass struct {
+	WordSize int
+}
 
 func (p *ConstFoldPass) Name() string { return "ConstFold" }
 
@@ -50,6 +54,42 @@ func (p *ConstFoldPass) foldInstruction(instr ir.Instruction, f *ir.Function) ir
 		return p.foldUnaryOp(i)
 	case *ir.Cast:
 		return p.foldCast(i)
+	case *ir.Sizeof:
+		return p.foldSizeof(i)
+	}
+	return nil
+}
+
+func (p *ConstFoldPass) foldSizeof(i *ir.Sizeof) ir.Instruction {
+	typ := i.TargetTyp
+	if typ.IsByte() || typ.IsBool() || typ.Name == "byte" || typ.Name == "bool" {
+		return &ir.ConstWord{
+			BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded sizeof(byte)"},
+			Val:             1,
+		}
+	}
+	if p.WordSize > 0 {
+		if typ.IsWord() || typ.IsInt() || typ.Name == "word" || typ.Name == "int" || typ.IsAPointer() || typ.IsAFuncPtr() {
+			return &ir.ConstWord{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: fmt.Sprintf("Folded sizeof(%s)", typ.Name)},
+				Val:             uint64(p.WordSize),
+			}
+		}
+		if typ.IsAnArray() && typ.ArrayLen > 0 {
+			elt := typ.ArrayElementType()
+			if elt.IsByte() || elt.IsBool() || elt.Name == "byte" || elt.Name == "bool" {
+				return &ir.ConstWord{
+					BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: fmt.Sprintf("Folded sizeof(%s)", typ.Name)},
+					Val:             uint64(typ.ArrayLen),
+				}
+			}
+			if elt.IsWord() || elt.IsInt() || elt.Name == "word" || elt.Name == "int" || elt.IsAPointer() || elt.IsAFuncPtr() {
+				return &ir.ConstWord{
+					BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: fmt.Sprintf("Folded sizeof(%s)", typ.Name)},
+					Val:             uint64(typ.ArrayLen * p.WordSize),
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -63,11 +103,23 @@ func (p *ConstFoldPass) foldCast(i *ir.Cast) ir.Instruction {
 				Val:             uint8(cW.Val),
 			}
 		}
+		if cB, ok := i.Operand.(*ir.ConstByte); ok {
+			return &ir.ConstByte{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: ir.TypeByte, Comment: "Folded trunc"},
+				Val:             cB.Val,
+			}
+		}
 	case "zero_ext":
 		if cB, ok := i.Operand.(*ir.ConstByte); ok {
 			return &ir.ConstWord{
 				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: ir.TypeWord, Comment: "Folded zero_ext"},
 				Val:             uint64(cB.Val),
+			}
+		}
+		if cW, ok := i.Operand.(*ir.ConstWord); ok {
+			return &ir.ConstWord{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: ir.TypeWord, Comment: "Folded zero_ext"},
+				Val:             cW.Val,
 			}
 		}
 	case "word_to_ptr", "ptr_to_word", "bitcast":
@@ -128,6 +180,83 @@ func (p *ConstFoldPass) foldBinaryOp(i *ir.BinaryOp) ir.Instruction {
 			Val:             result,
 		}
 	}
+
+	cLeftB, isLeftConstB := i.Left.(*ir.ConstByte)
+	cRightB, isRightConstB := i.Right.(*ir.ConstByte)
+
+	if isLeftConstB && isRightConstB {
+		var result uint8
+		switch i.Op {
+		case "add":
+			result = cLeftB.Val + cRightB.Val
+		case "sub":
+			result = cLeftB.Val - cRightB.Val
+		case "mul":
+			result = cLeftB.Val * cRightB.Val
+		case "div":
+			if cRightB.Val == 0 {
+				return nil
+			}
+			result = cLeftB.Val / cRightB.Val
+		case "mod":
+			if cRightB.Val == 0 {
+				return nil
+			}
+			result = cLeftB.Val % cRightB.Val
+		case "and":
+			result = cLeftB.Val & cRightB.Val
+		case "or":
+			result = cLeftB.Val | cRightB.Val
+		case "xor":
+			result = cLeftB.Val ^ cRightB.Val
+		case "shl":
+			result = cLeftB.Val << cRightB.Val
+		case "shr":
+			result = cLeftB.Val >> cRightB.Val
+		default:
+			return nil
+		}
+		return &ir.ConstByte{
+			BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded " + i.Op},
+			Val:             result,
+		}
+	}
+
+	// Constant-producing algebraic identities:
+	// x * 0 = 0, 0 * x = 0
+	// x & 0 = 0, 0 & x = 0
+	if i.Op == "mul" || i.Op == "and" {
+		if (isRightConstW && cRightW.Val == 0) || (isLeftConstW && cLeftW.Val == 0) {
+			return &ir.ConstWord{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded " + i.Op + " by 0"},
+				Val:             0,
+			}
+		}
+		if (isRightConstB && cRightB.Val == 0) || (isLeftConstB && cLeftB.Val == 0) {
+			return &ir.ConstByte{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded " + i.Op + " by 0"},
+				Val:             0,
+			}
+		}
+	}
+
+	// x - x = 0
+	// x ^ x = 0
+	if i.Left == i.Right {
+		if i.Op == "sub" || i.Op == "xor" {
+			if i.Typ.IsByte() {
+				return &ir.ConstByte{
+					BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded " + i.Op + " self"},
+					Val:             0,
+				}
+			}
+			return &ir.ConstWord{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded " + i.Op + " self"},
+				Val:             0,
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -162,6 +291,53 @@ func (p *ConstFoldPass) foldCompare(i *ir.Compare) ir.Instruction {
 			Val:             val,
 		}
 	}
+
+	cLeftB, isLeftConstB := i.Left.(*ir.ConstByte)
+	cRightB, isRightConstB := i.Right.(*ir.ConstByte)
+
+	if isLeftConstB && isRightConstB {
+		var result bool
+		switch i.Op {
+		case "eq":
+			result = cLeftB.Val == cRightB.Val
+		case "neq":
+			result = cLeftB.Val != cRightB.Val
+		case "lt":
+			result = cLeftB.Val < cRightB.Val
+		case "lte":
+			result = cLeftB.Val <= cRightB.Val
+		case "gt":
+			result = cLeftB.Val > cRightB.Val
+		case "gte":
+			result = cLeftB.Val >= cRightB.Val
+		default:
+			return nil
+		}
+		var val uint8 = 0
+		if result {
+			val = 1
+		}
+		return &ir.ConstByte{
+			BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded compare " + i.Op},
+			Val:             val,
+		}
+	}
+
+	if i.Left == i.Right {
+		switch i.Op {
+		case "eq", "lte", "gte":
+			return &ir.ConstByte{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded compare self true"},
+				Val:             1,
+			}
+		case "neq", "lt", "gt":
+			return &ir.ConstByte{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded compare self false"},
+				Val:             0,
+			}
+		}
+	}
+
 	return nil
 }
 

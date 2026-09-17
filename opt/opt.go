@@ -27,6 +27,7 @@ type Config struct {
 	MaxLoopUnrollCount        int
 	MaxLoopUnrollInstructions int
 	EnableDebugOpt            bool
+	WordSize                  int
 }
 
 type Pass interface {
@@ -49,6 +50,7 @@ func OptimizeProgram(p *ir.Program, config Config) {
 			EnableSingleCall:     config.EnableInlineSingleCall,
 			MaxTinyInstructions: maxTiny,
 			MaxInlineRounds:      maxRounds,
+			WordSize:             config.WordSize,
 		})
 	}
 
@@ -61,7 +63,7 @@ func OptimizeProgram(p *ir.Program, config Config) {
 		passes = append(passes, &LICMPass{})
 	}
 	if config.EnableConstFold {
-		passes = append(passes, &ConstFoldPass{})
+		passes = append(passes, &ConstFoldPass{WordSize: config.WordSize})
 	}
 	if config.EnableDBE {
 		passes = append(passes, &DBEPass{})

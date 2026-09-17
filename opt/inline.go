@@ -17,6 +17,7 @@ type InlineOptions struct {
 	EnableSingleCall     bool
 	MaxTinyInstructions int // Maximum instructions for a tiny function (default: 8)
 	MaxInlineRounds      int // Maximum inlining passes (default: 10)
+	WordSize             int
 }
 
 func DefaultInlineOptions() InlineOptions {
@@ -43,6 +44,27 @@ func DefaultInlineOptions() InlineOptions {
 	}
 }
 
+func cleanupFunction(f *ir.Function, wordSize int) {
+	cf := &ConstFoldPass{WordSize: wordSize}
+	cp := &CopyPropPass{}
+	dce := &DCEPass{}
+	for i := 0; i < 3; i++ {
+		ch := false
+		if cf.Run(f) {
+			ch = true
+		}
+		if cp.Run(f) {
+			ch = true
+		}
+		if dce.Run(f) {
+			ch = true
+		}
+		if !ch {
+			break
+		}
+	}
+}
+
 // InlinePass runs function inlining across the entire whole-program IR.
 func InlinePass(p *ir.Program, opts InlineOptions) bool {
 	if !opts.EnableTiny && !opts.EnableSingleCall {
@@ -50,6 +72,11 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 	}
 
 	overallChanged := false
+
+	// Pre-inlining cleanup: fold constants and simplify before inspecting instruction counts
+	for _, f := range p.Functions {
+		cleanupFunction(f, opts.WordSize)
+	}
 
 	// Find the current maximum instruction ID and block ID
 	maxID := 0
@@ -120,6 +147,7 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 					if isTiny || isSingle {
 						if isStraightLine(callee) {
 							inlineStraightLine(caller, b, j, call, callee, nextID)
+							cleanupFunction(caller, opts.WordSize)
 							roundChanged = true
 							overallChanged = true
 							break // Restart scan of this block

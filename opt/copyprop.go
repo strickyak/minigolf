@@ -43,30 +43,60 @@ func (p *CopyPropPass) Run(f *ir.Function) bool {
 func (p *CopyPropPass) simplifyBinaryOp(i *ir.BinaryOp) ir.Value {
 	cLeftW, isLeftConstW := i.Left.(*ir.ConstWord)
 	cRightW, isRightConstW := i.Right.(*ir.ConstWord)
+	cLeftB, isLeftConstB := i.Left.(*ir.ConstByte)
+	cRightB, isRightConstB := i.Right.(*ir.ConstByte)
 
+	var rightVal uint64
+	hasRightConst := false
 	if isRightConstW {
+		rightVal = cRightW.Val
+		hasRightConst = true
+	} else if isRightConstB {
+		rightVal = uint64(cRightB.Val)
+		hasRightConst = true
+	}
+
+	var leftVal uint64
+	hasLeftConst := false
+	if isLeftConstW {
+		leftVal = cLeftW.Val
+		hasLeftConst = true
+	} else if isLeftConstB {
+		leftVal = uint64(cLeftB.Val)
+		hasLeftConst = true
+	}
+
+	if hasRightConst {
 		switch i.Op {
-		case "add", "sub":
-			if cRightW.Val == 0 {
+		case "add", "sub", "or", "xor", "shl", "shr":
+			if rightVal == 0 {
 				return i.Left
 			}
 		case "mul", "div":
-			if cRightW.Val == 1 {
+			if rightVal == 1 {
 				return i.Left
 			}
 		}
 	}
 
-	if isLeftConstW {
+	if hasLeftConst {
 		switch i.Op {
-		case "add":
-			if cLeftW.Val == 0 {
+		case "add", "or", "xor":
+			if leftVal == 0 {
 				return i.Right
 			}
 		case "mul":
-			if cLeftW.Val == 1 {
+			if leftVal == 1 {
 				return i.Right
 			}
+		}
+	}
+
+	// Idempotent operations on same value: x & x -> x, x | x -> x
+	if i.Left == i.Right {
+		switch i.Op {
+		case "and", "or":
+			return i.Left
 		}
 	}
 

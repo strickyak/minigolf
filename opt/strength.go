@@ -32,10 +32,10 @@ func (p *StrengthReductionPass) reduce(i *ir.BinaryOp) bool {
 	cLeftW, isLeftConst := i.Left.(*ir.ConstWord)
 	cRightW, isRightConst := i.Right.(*ir.ConstWord)
 
-	// Check x OP C
+	// Check x OP C (ConstWord)
 	if isRightConst {
 		ok, log2 := p.isPowerOf2(cRightW.Val)
-		if ok {
+		if ok && log2 > 0 {
 			switch i.Op {
 			case "mul":
 				// x * 2^N -> x << N
@@ -56,10 +56,10 @@ func (p *StrengthReductionPass) reduce(i *ir.BinaryOp) bool {
 		}
 	}
 
-	// Check C OP x
+	// Check C OP x (ConstWord)
 	if isLeftConst {
 		ok, log2 := p.isPowerOf2(cLeftW.Val)
-		if ok {
+		if ok && log2 > 0 {
 			switch i.Op {
 			case "mul":
 				// 2^N * x -> x << N
@@ -67,6 +67,44 @@ func (p *StrengthReductionPass) reduce(i *ir.BinaryOp) bool {
 				// Swap Left and Right
 				i.Left = i.Right
 				i.Right = &ir.ConstWord{BaseInstruction: ir.BaseInstruction{Typ: i.Left.Type()}, Val: log2}
+				return true
+			}
+		}
+	}
+
+	cLeftB, isLeftConstB := i.Left.(*ir.ConstByte)
+	cRightB, isRightConstB := i.Right.(*ir.ConstByte)
+
+	// Check x OP C (ConstByte)
+	if isRightConstB {
+		ok, log2 := p.isPowerOf2(uint64(cRightB.Val))
+		if ok && log2 > 0 {
+			switch i.Op {
+			case "mul":
+				i.Op = "shl"
+				i.Right = &ir.ConstByte{BaseInstruction: ir.BaseInstruction{Typ: i.Right.Type()}, Val: uint8(log2)}
+				return true
+			case "div":
+				i.Op = "shr"
+				i.Right = &ir.ConstByte{BaseInstruction: ir.BaseInstruction{Typ: i.Right.Type()}, Val: uint8(log2)}
+				return true
+			case "mod":
+				i.Op = "and"
+				i.Right = &ir.ConstByte{BaseInstruction: ir.BaseInstruction{Typ: i.Right.Type()}, Val: cRightB.Val - 1}
+				return true
+			}
+		}
+	}
+
+	// Check C OP x (ConstByte)
+	if isLeftConstB {
+		ok, log2 := p.isPowerOf2(uint64(cLeftB.Val))
+		if ok && log2 > 0 {
+			switch i.Op {
+			case "mul":
+				i.Op = "shl"
+				i.Left = i.Right
+				i.Right = &ir.ConstByte{BaseInstruction: ir.BaseInstruction{Typ: i.Left.Type()}, Val: uint8(log2)}
 				return true
 			}
 		}

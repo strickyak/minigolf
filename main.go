@@ -679,10 +679,16 @@ func main() {
 			EnablePhiSimp:     !*noPhisimp,
 			EnableStackAlloc:  !*noStackAlloc,
 			EnableBranchFold:  !*noBranchFold,
-			EnableStoreLoad:   !*noStoreLoad,
-			EnableLICM:        !*noLicm,
-			EnableDFE:         !*noDfe,
-			EnableDebugOpt:    *debugOpt,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:   *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
+			EnableDebugOpt:         *debugOpt,
+			WordSize:               8,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -728,6 +734,7 @@ func main() {
 			MaxTinyInstructions:   *inlineMaxTiny,
 			MaxInlineRounds:        *inlineMaxRounds,
 			EnableDebugOpt:         *debugOpt,
+			WordSize:               8,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -775,6 +782,7 @@ func main() {
 			MaxTinyInstructions:   *inlineMaxTiny,
 			MaxInlineRounds:        *inlineMaxRounds,
 			EnableDebugOpt:         *debugOpt,
+			WordSize:               8,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
@@ -808,6 +816,7 @@ func main() {
 			EnableDBE:              !*noDbe,
 			EnableDCE:              !*noDce,
 			EnableCopyProp:         !*noCopyProp,
+			EnableStrengthRed:      !*noStrengthRed,
 			EnablePhiSimp:          !*noPhisimp,
 			EnableStackAlloc:       !*noStackAlloc,
 			EnableBranchFold:       !*noBranchFold,
@@ -820,6 +829,7 @@ func main() {
 			MaxTinyInstructions:   *inlineMaxTiny,
 			MaxInlineRounds:        *inlineMaxRounds,
 			EnableDebugOpt:         *debugOpt,
+			WordSize:               2,
 		}
 		builder.AnnotateLeafLevels(*debugOpt)
 		opt.OptimizeProgram(irProg, optConfig)
