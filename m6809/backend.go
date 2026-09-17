@@ -2139,7 +2139,7 @@ func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
 		}
 		b.buf.WriteString("\tpshs x\n")
 		b.emitCall("_printf")
-		b.buf.WriteString("\tleas 2,s\n\tldx #1\n\tjmp __exit\n")
+		b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
 
 	case "_unlink_jmp_":
 		b.buf.WriteString(fmt.Sprintf("\tldx %s\n", b.jmpChainAddr()))
@@ -2175,7 +2175,7 @@ func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
 		}
 		b.buf.WriteString("\tpshs x\n")
 		b.emitCall("_printf")
-		b.buf.WriteString("\tleas 2,s\n\tldx #1\n\tjmp __exit\n")
+		b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext3))
 	}
 }
@@ -3798,7 +3798,7 @@ __div0_error:
 			loadAbortMsg+
 			"\tpshs x\n"+
 			callPrintf+
-			"\tleas 2,s\n\tldx #1\n\tjmp __exit\n"+
+			"\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n"+
 			`
 __div16:
 	lbsr __divmod16
@@ -3978,7 +3978,7 @@ func (b *Backend) Generate(program *ir.Program) string {
 		b.buf.WriteString("\tleas 4,s\n")
 
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblAbort))
-		b.buf.WriteString("\tldx #1\n\tjmp __exit\n")
+		b.buf.WriteString("\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
 
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblCallMain))
 	}

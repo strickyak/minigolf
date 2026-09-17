@@ -49,6 +49,7 @@ __exit0:
     tfr d,x
 
 __exit:
+    tfr  x,d          ; ensure D and B reflect exit status in X
     fcb  $12,$21,107  ; 1. Hyper Exit (with status in X)
     stb  $FF05        ; 2. Hatvan Exit port ($FF05)
 stuck:
