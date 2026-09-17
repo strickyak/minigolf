@@ -1,0 +1,262 @@
+package btree
+
+type Node[T any] struct {
+	NumKeys word
+	IsLeaf  bool
+	Key0    string
+	Key1    string
+	Key2    string
+	Val0    T
+	Val1    T
+	Val2    T
+	Child0  *Node[T]
+	Child1  *Node[T]
+	Child2  *Node[T]
+	Child3  *Node[T]
+}
+
+func allocNode[T any](isLeaf bool) *Node[T] {
+	p := (*Node[T])(zalloc(sizeof[Node[T]]()))
+	p.IsLeaf = isLeaf
+	return p
+}
+
+func (n *Node[T]) GetKey(i word) string {
+	if i == 0 { return n.Key0 }
+	if i == 1 { return n.Key1 }
+	return n.Key2
+}
+
+func (n *Node[T]) SetKey(i word, k string) {
+	if i == 0 { n.Key0 = k; return }
+	if i == 1 { n.Key1 = k; return }
+	n.Key2 = k
+}
+
+func (n *Node[T]) GetVal(i word) T {
+	if i == 0 { return n.Val0 }
+	if i == 1 { return n.Val1 }
+	return n.Val2
+}
+
+func (n *Node[T]) GetValPtr(i word) *T {
+	if i == 0 { return &n.Val0 }
+	if i == 1 { return &n.Val1 }
+	return &n.Val2
+}
+
+func (n *Node[T]) SetVal(i word, v T) {
+	if i == 0 { n.Val0 = v; return }
+	if i == 1 { n.Val1 = v; return }
+	n.Val2 = v
+}
+
+func (n *Node[T]) GetChild(i word) *Node[T] {
+	if i == 0 { return n.Child0 }
+	if i == 1 { return n.Child1 }
+	if i == 2 { return n.Child2 }
+	return n.Child3
+}
+
+func (n *Node[T]) SetChild(i word, c *Node[T]) {
+	if i == 0 { n.Child0 = c; return }
+	if i == 1 { n.Child1 = c; return }
+	if i == 2 { n.Child2 = c; return }
+	n.Child3 = c
+}
+
+type BTree[T any] struct {
+	Root *Node[T]
+	Len  word
+}
+
+func New[T any]() BTree[T] {
+	var t BTree[T]
+	return t
+}
+
+func (b *BTree[T]) Size() word {
+	return b.Len
+}
+
+func (b *BTree[T]) Contains(key string) bool {
+	return b.GetPtr(key) != nil
+}
+
+func (b *BTree[T]) GetPtr(key string) *T {
+	node := b.Root
+	for node != nil {
+		i := word(0)
+		for i < node.NumKeys && key > node.GetKey(i) {
+			i++
+		}
+		if i < node.NumKeys && key == node.GetKey(i) {
+			return node.GetValPtr(i)
+		}
+		if node.IsLeaf {
+			return nil
+		}
+		node = node.GetChild(i)
+	}
+	return nil
+}
+
+func (b *BTree[T]) Get(key string) (T, bool) {
+	p := b.GetPtr(key)
+	if p != nil {
+		return *p, true
+	}
+	var zero T
+	return zero, false
+}
+
+func splitChild[T any](parent *Node[T], i word) {
+	y := parent.GetChild(i)
+	z := allocNode[T](y.IsLeaf)
+	z.NumKeys = 1
+	z.SetKey(0, y.GetKey(2))
+	z.SetVal(0, y.GetVal(2))
+
+	if !y.IsLeaf {
+		z.SetChild(0, y.GetChild(2))
+		z.SetChild(1, y.GetChild(3))
+		y.SetChild(2, nil)
+		y.SetChild(3, nil)
+	}
+
+	medKey := y.GetKey(1)
+	medVal := y.GetVal(1)
+
+	y.NumKeys = 1
+
+	// Shift children in parent
+	j := parent.NumKeys
+	for j > i {
+		parent.SetChild(j + 1, parent.GetChild(j))
+		j--
+	}
+	parent.SetChild(i + 1, z)
+
+	// Shift keys in parent
+	j = parent.NumKeys
+	for j > i {
+		parent.SetKey(j, parent.GetKey(j - 1))
+		parent.SetVal(j, parent.GetVal(j - 1))
+		j--
+	}
+	parent.SetKey(i, medKey)
+	parent.SetVal(i, medVal)
+	parent.NumKeys++
+}
+
+func insertNonFull[T any](node *Node[T], key string, val T) {
+	if node.IsLeaf {
+		i := node.NumKeys
+		for i > 0 && key < node.GetKey(i - 1) {
+			node.SetKey(i, node.GetKey(i - 1))
+			node.SetVal(i, node.GetVal(i - 1))
+			i--
+		}
+		node.SetKey(i, key)
+		node.SetVal(i, val)
+		node.NumKeys++
+		return
+	}
+
+	i := node.NumKeys
+	for i > 0 && key < node.GetKey(i - 1) {
+		i--
+	}
+	child := node.GetChild(i)
+	if child.NumKeys == 3 {
+		splitChild[T](node, i)
+		if key > node.GetKey(i) {
+			i++
+		}
+	}
+	insertNonFull[T](node.GetChild(i), key, val)
+}
+
+func (b *BTree[T]) Put(key string, val T) {
+	p := b.GetPtr(key)
+	if p != nil {
+		*p = val
+		return
+	}
+
+	b.Len++
+	if b.Root == nil {
+		b.Root = allocNode[T](true)
+		b.Root.NumKeys = 1
+		b.Root.SetKey(0, key)
+		b.Root.SetVal(0, val)
+		return
+	}
+
+	if b.Root.NumKeys == 3 {
+		s := allocNode[T](false)
+		s.SetChild(0, b.Root)
+		splitChild[T](s, 0)
+		b.Root = s
+	}
+	insertNonFull[T](b.Root, key, val)
+}
+
+func (n *Node[T]) collectKeys(out *slice[string]) {
+	if n == nil { return }
+	for i := word(0); i < n.NumKeys; i++ {
+		if !n.IsLeaf {
+			n.GetChild(i).collectKeys(out)
+		}
+		out.Append(n.GetKey(i))
+	}
+	if !n.IsLeaf {
+		n.GetChild(n.NumKeys).collectKeys(out)
+	}
+}
+
+func (b *BTree[T]) Keys() slice[string] {
+	var s slice[string]
+	if b.Root != nil {
+		b.Root.collectKeys(&s)
+	}
+	return s
+}
+
+func (n *Node[T]) inOrder(visit func(string, T)) {
+	if n == nil { return }
+	for i := word(0); i < n.NumKeys; i++ {
+		if !n.IsLeaf {
+			n.GetChild(i).inOrder(visit)
+		}
+		visit(n.GetKey(i), n.GetVal(i))
+	}
+	if !n.IsLeaf {
+		n.GetChild(n.NumKeys).inOrder(visit)
+	}
+}
+
+func (b *BTree[T]) InOrder(visit func(string, T)) {
+	if b.Root != nil {
+		b.Root.inOrder(visit)
+	}
+}
+
+func (n *Node[T]) printInOrder() {
+	if n == nil { return }
+	for i := word(0); i < n.NumKeys; i++ {
+		if !n.IsLeaf {
+			n.GetChild(i).printInOrder()
+		}
+		println(n.GetKey(i), n.GetVal(i))
+	}
+	if !n.IsLeaf {
+		n.GetChild(n.NumKeys).printInOrder()
+	}
+}
+
+func (b *BTree[T]) Print() {
+	if b.Root != nil {
+		b.Root.printInOrder()
+	}
+}
