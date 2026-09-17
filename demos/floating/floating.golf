@@ -31,7 +31,7 @@ func (f *FloatingPoint) SetSignExp(sign byte, exp int) {
 		return
 	}
 	if exp > 63 {
-		exp = 63
+		panic("floating: exponent overflow")
 	}
 	e := byte(exp & 0x7F)
 	if sign != 0 {
@@ -371,7 +371,7 @@ func Mul(a FloatingPoint, b FloatingPoint) FloatingPoint {
 		return res
 	}
 	if exp > 63 {
-		exp = 63
+		panic("floating: exponent overflow")
 	}
 	res.Mantissa = acc
 	res.SetSignExp(sign, exp)
@@ -441,7 +441,7 @@ func Div(a FloatingPoint, b FloatingPoint) FloatingPoint {
 		return z
 	}
 	if expQ > 63 {
-		expQ = 63
+		panic("floating: exponent overflow")
 	}
 	res.SetSignExp(resSign, expQ)
 	return res
