@@ -1,0 +1,52 @@
+package main
+
+import "floating"
+import "math"
+import "complex"
+import "fft"
+
+type C = complex.Complex
+type F = floating.FloatingPoint
+
+func main() {
+	var in slice[C]
+	tau := math.Tau()
+	n64 := floating.FromWord(64)
+	zero := floating.FromWord(0)
+
+	for i := range 64 {
+		fi := floating.FromWord(i)
+		theta := floating.Div(floating.Mul(fi, tau), n64)
+		s := math.Sin(theta)
+		in.Append(complex.New(s, zero))
+	}
+
+	fwd := fft.Forward(in)
+	println("--- Forward FFT (64 points) ---")
+	for i := range fwd.Len {
+		println(i, complex.Format(fwd[i]))
+	}
+
+	inv := fft.Reverse(fwd)
+	println("--- Inverse FFT (64 points) ---")
+	for i := range inv.Len {
+		println(i, complex.Format(inv[i]))
+	}
+
+	println("--- Checking difference ---")
+	maxDiff := zero
+	for i := range 64 {
+		diff := complex.Sub(inv[i], in[i])
+		err := complex.Abs(diff)
+		if floating.Cmp(err, maxDiff) > 0 {
+			maxDiff = err
+		}
+	}
+
+	println("max error:", floating.Format(maxDiff))
+	thresh := floating.Scan("0.001")
+	if floating.Cmp(maxDiff, thresh) > 0 {
+		panic("error exceeds threshold")
+	}
+	println("PASS: Inverse is very close to original input")
+}
