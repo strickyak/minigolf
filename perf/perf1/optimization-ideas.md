@@ -562,3 +562,32 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
   - Detect dense integer case ranges ($[\text{min}, \text{max}]$).
   - Emit M6809 indirect indexed jumps: `subd #min; aslb; rola; ldx #table; jmp [d,x]`.
 * **Target Impact**: In `10_switch_case`, dispatch overhead becomes constant time regardless of case count, closing the gap with GCC and CMOC.
+
+---
+
+### Progress Update: String Operations & Tight Loop Optimization Milestone
+
+* **Completed Phases**:
+  1. **String Literal Direct Address Cast ([`ir/builder.go`](file:///home/strick/github.com/strickyak/minigolf/ir/builder.go))**:
+     - `(*byte)(stringLiteral)` now evaluates directly to `&AddressOfGlobal{Global: g}` rather than constructing a temporary 6-byte slice struct on the stack, zeroing it with `__memset0`, and extracting field 0.
+     - Eliminated all string literal slice initialization overhead and temporary allocations.
+  2. **Scalar `ZeroInit` Constant Folding ([`opt/constfold.go`](file:///home/strick/github.com/strickyak/minigolf/opt/constfold.go))**:
+     - Folded `ZeroInit` of byte, bool, word, int, and pointers to `ConstByte{Val: 0}` or `ConstWord{Val: 0}`.
+     - Eliminated unnecessary stack slot allocations and `clr N,s` instructions across loops checking values against zero.
+  3. **Zero-Store Redundant Load Elimination ([`opt/store_load.go`](file:///home/strick/github.com/strickyak/minigolf/opt/store_load.go))**:
+     - Propagates available loads across single-predecessor basic blocks (`len(b.Predecessors) == 1`) as long as zero stores or function calls have occurred.
+     - Automatically invalidates available loads on any `StorePtr`, `Store`, `InsertFieldPtr`, or function call.
+     - Successfully eliminated redundant reload of `*src` in `my_strcpy` loop body.
+  4. **Comparison Narrowing on Zero-Extended Operands ([`opt/constfold.go`](file:///home/strick/github.com/strickyak/minigolf/opt/constfold.go))**:
+     - `zero_ext(b1) op zero_ext(b2)` narrowed directly to `b1 op b2`, eliminating 16-bit extension overhead when comparing bytes.
+  5. **M6809 Backend Peephole Optimizations ([`m6809/peephole.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/peephole.go))**:
+     - Extended autoincrement/autodecrement addressing to register `U` (`leau 1,u` / `leau 2,u` -> `,u+` / `,u++`, and `leau -1,u` / `leau -2,u` -> `,-u` / `,--u`).
+     - Added redundant `tstb` / `tsta` elimination when preceded by instructions that already set condition codes (`ldb`, `stb`, `addb`, `subb`, `andb`, `orb`, `eorb`, `negb`, `clrb`).
+     - Added redundant load after store elimination across non-modifying conditional branches.
+
+* **Benchmark Results (`06_string_ops`)**:
+  - **CPU Cycles**: Dropped from **24,984 to 10,182** (**-59.2% reduction, -14,802 cycles!**).
+  - **Loaded Payload**: Dropped from **1,401 B to 890 B** (**-511 bytes, -36.5% smaller!**).
+  - **Performance Ratio vs GCC**: Narrowed from **4.70x down to 1.80x**!
+  - **Verification**: 100% pass across all unit tests and all 8 M6809 architectural variants (`ALL_VARIANTS=1 time go test ./...`).
+
