@@ -159,12 +159,28 @@ func (b *Backend) AllocateRegisters(f *ir.Function) map[int]string {
 				continue
 			}
 
-			sz := b.safeTypeSize(instr.Type())
-			if sz == 2 && scores[id] >= 4 && isPointer[id] {
+			// Do not allocate physical registers to non-escaping AddressOfLocal
+			// (they are synthetic addresses and will not be materialized).
+			if aol, ok := instr.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
+				continue
+			}
+
+			typ := instr.Type()
+			if b.program != nil {
+				if _, isTypeDef := b.program.TypeDefs[typ.Name]; isTypeDef {
+					continue
+				}
+			}
+			if typ.Bits&(ir.TypeBitStruct|ir.TypeBitArray|ir.TypeBitSlice) != 0 || len(typ.FieldNamesAndTypes) > 0 || typ.ArrayLen > 0 {
+				continue
+			}
+
+			sz := b.safeTypeSize(typ)
+			if sz == 2 && scores[id] >= 4 {
 				candidates = append(candidates, candidate{
 					id:    id,
 					score: scores[id],
-					isPtr: true,
+					isPtr: isPointer[id],
 				})
 			}
 		}

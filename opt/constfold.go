@@ -48,6 +48,28 @@ func (p *ConstFoldPass) foldInstruction(instr ir.Instruction, f *ir.Function) ir
 		return p.foldCompare(i)
 	case *ir.UnaryOp:
 		return p.foldUnaryOp(i)
+	case *ir.Cast:
+		return p.foldCast(i)
+	}
+	return nil
+}
+
+func (p *ConstFoldPass) foldCast(i *ir.Cast) ir.Instruction {
+	switch i.Op {
+	case "trunc":
+		if cW, ok := i.Operand.(*ir.ConstWord); ok {
+			return &ir.ConstByte{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: ir.TypeByte, Comment: "Folded trunc"},
+				Val:             uint8(cW.Val),
+			}
+		}
+	case "zero_ext":
+		if cB, ok := i.Operand.(*ir.ConstByte); ok {
+			return &ir.ConstWord{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: ir.TypeWord, Comment: "Folded zero_ext"},
+				Val:             uint64(cB.Val),
+			}
+		}
 	}
 	return nil
 }

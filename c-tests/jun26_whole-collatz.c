@@ -333,6 +333,10 @@ int Traverse(Bin q, Bin one) {
     uint steps = 0;
     while (! EqSmall(&a, 1)) {
         steps++;
+        if (steps > 117) {
+            assert_6809(0, "exceeded 117 steps", steps);
+            exit(1);
+        }
 
         if (IsEven(&a)) {
             Halve(&temp, &a);
@@ -351,6 +355,10 @@ int Traverse(Bin q, Bin one) {
             Jprintf(" biggest  ");
         }
 
+    }
+    if (steps != 117) {
+        assert_6809(0, "stopped too soon at 1", steps);
+        exit(1);
     }
     if (0 && steps > max_steps) {
         max_steps = steps;

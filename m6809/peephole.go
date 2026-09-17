@@ -145,6 +145,14 @@ func peepholeOptimize(asm string) string {
 				// Redundant TST
 
 
+				// Redundant Store
+				if strings.HasPrefix(codePart, "std ") || strings.HasPrefix(codePart, "stb ") || strings.HasPrefix(codePart, "sta ") || strings.HasPrefix(codePart, "stx ") || strings.HasPrefix(codePart, "sty ") || strings.HasPrefix(codePart, "stu ") {
+					if codePart == prevCode {
+						changed = true
+						continue // redundant store to same address
+					}
+				}
+
 				// Redundant Load/Store
 				if strings.HasPrefix(codePart, "ldd ") && strings.HasPrefix(prevCode, "std ") {
 					if codePart[4:] == prevCode[4:] {
@@ -159,6 +167,20 @@ func peepholeOptimize(asm string) string {
 						continue
 					}
 				}
+				if strings.HasPrefix(codePart, "ldy ") && strings.HasPrefix(prevCode, "std ") {
+					if codePart[4:] == prevCode[4:] {
+						out = append(out, "\ttfr d,y\t; peephole: std+ldy -> tfr d,y")
+						changed = true
+						continue
+					}
+				}
+				if strings.HasPrefix(codePart, "ldu ") && strings.HasPrefix(prevCode, "std ") {
+					if codePart[4:] == prevCode[4:] {
+						out = append(out, "\ttfr d,u\t; peephole: std+ldu -> tfr d,u")
+						changed = true
+						continue
+					}
+				}
 				if strings.HasPrefix(codePart, "ldd ") && strings.HasPrefix(prevCode, "stx ") {
 					if codePart[4:] == prevCode[4:] {
 						out = append(out, "\ttfr x,d\t; peephole: stx+ldd -> tfr x,d")
@@ -166,7 +188,33 @@ func peepholeOptimize(asm string) string {
 						continue
 					}
 				}
+				if strings.HasPrefix(codePart, "ldd ") && strings.HasPrefix(prevCode, "sty ") {
+					if codePart[4:] == prevCode[4:] {
+						out = append(out, "\ttfr y,d\t; peephole: sty+ldd -> tfr y,d")
+						changed = true
+						continue
+					}
+				}
+				if strings.HasPrefix(codePart, "ldd ") && strings.HasPrefix(prevCode, "stu ") {
+					if codePart[4:] == prevCode[4:] {
+						out = append(out, "\ttfr u,d\t; peephole: stu+ldd -> tfr u,d")
+						changed = true
+						continue
+					}
+				}
 				if strings.HasPrefix(codePart, "ldx ") && strings.HasPrefix(prevCode, "stx ") {
+					if codePart[4:] == prevCode[4:] {
+						changed = true
+						continue // redundant load
+					}
+				}
+				if strings.HasPrefix(codePart, "ldy ") && strings.HasPrefix(prevCode, "sty ") {
+					if codePart[4:] == prevCode[4:] {
+						changed = true
+						continue // redundant load
+					}
+				}
+				if strings.HasPrefix(codePart, "ldu ") && strings.HasPrefix(prevCode, "stu ") {
 					if codePart[4:] == prevCode[4:] {
 						changed = true
 						continue // redundant load
@@ -182,6 +230,68 @@ func peepholeOptimize(asm string) string {
 					if codePart[4:] == prevCode[4:] {
 						changed = true
 						continue // redundant load
+					}
+				}
+
+				// Autoincrement / Autodecrement Addressing
+				if codePart == "leax 1,x" {
+					if prevCode == "ldb ,x" || prevCode == "stb ,x" || prevCode == "lda ,x" || prevCode == "sta ,x" {
+						out[prevIdx] = "\t" + prevCode[:3] + " ,x+\t; peephole: auto-increment"
+						changed = true
+						continue
+					}
+				}
+				if codePart == "leax 2,x" {
+					if prevCode == "ldd ,x" || prevCode == "std ,x" {
+						out[prevIdx] = "\t" + prevCode[:3] + " ,x++\t; peephole: auto-increment"
+						changed = true
+						continue
+					}
+				}
+				if codePart == "leay 1,y" {
+					if prevCode == "ldb ,y" || prevCode == "stb ,y" || prevCode == "lda ,y" || prevCode == "sta ,y" {
+						out[prevIdx] = "\t" + prevCode[:3] + " ,y+\t; peephole: auto-increment"
+						changed = true
+						continue
+					}
+				}
+				if codePart == "leay 2,y" {
+					if prevCode == "ldd ,y" || prevCode == "std ,y" {
+						out[prevIdx] = "\t" + prevCode[:3] + " ,y++\t; peephole: auto-increment"
+						changed = true
+						continue
+					}
+				}
+				if prevCode == "leax -1,x" {
+					if codePart == "ldb ,x" || codePart == "stb ,x" || codePart == "lda ,x" || codePart == "sta ,x" {
+						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leax
+						out = append(out, "\t"+codePart[:3]+" ,-x\t; peephole: auto-decrement")
+						changed = true
+						continue
+					}
+				}
+				if prevCode == "leax -2,x" {
+					if codePart == "ldd ,x" || codePart == "std ,x" {
+						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leax
+						out = append(out, "\t"+codePart[:3]+" ,--x\t; peephole: auto-decrement")
+						changed = true
+						continue
+					}
+				}
+				if prevCode == "leay -1,y" {
+					if codePart == "ldb ,y" || codePart == "stb ,y" || codePart == "lda ,y" || codePart == "sta ,y" {
+						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leay
+						out = append(out, "\t"+codePart[:3]+" ,-y\t; peephole: auto-decrement")
+						changed = true
+						continue
+					}
+				}
+				if prevCode == "leay -2,y" {
+					if codePart == "ldd ,y" || codePart == "std ,y" {
+						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leay
+						out = append(out, "\t"+codePart[:3]+" ,--y\t; peephole: auto-decrement")
+						changed = true
+						continue
 					}
 				}
 

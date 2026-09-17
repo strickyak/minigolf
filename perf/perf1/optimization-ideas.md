@@ -88,15 +88,16 @@ MiniGolf gathers several static analysis metrics across the AST and IR before co
 
 ### Area 3: 6809 Backend Code Generation & Addressing Modes
 
-- [ ] **Redundant Spill/Reload Elimination**:
+- [x] **Redundant Spill/Reload Elimination**:
   Detect and eliminate back-to-back operations:
   ```asm
   ; Redundant:
   std 2,s
-  ldd 2,s   ; <-- Remove: value already in D
+  ldd 2,s   ; <-- Removed: value already in D
   ```
-- [ ] **Direct Stack Addressing**:
-  Replace two-instruction indirect patterns:
+  Implemented in peephole optimizer (`m6809/peephole.go`).
+- [x] **Direct Stack & Synthetic EA Addressing**:
+  Replace two-instruction indirect patterns with direct indexed addressing:
   ```asm
   ; Current:
   leax 4,s
@@ -104,7 +105,8 @@ MiniGolf gathers several static analysis metrics across the AST and IR before co
   ; Optimized:
   ldd 4,s
   ```
-- [ ] **Hardware Autoincrement / Autodecrement Addressing**:
+  Implemented via `canDirectEA` / `getDirectEA` in `m6809/backend.go` and escape analysis in `opt/escape.go`.
+- [x] **Hardware Autoincrement / Autodecrement Addressing**:
   For pointer traversals (e.g. `*p++` in `05_array_sum.c` and `06_string_ops.c`):
   ```asm
   ; Current (explicit pointer update):
@@ -115,7 +117,12 @@ MiniGolf gathers several static analysis metrics across the AST and IR before co
   ; Optimized:
   ldb ,x+
   ```
-- [ ] **Dense Switch Jump Tables**:
+  Implemented in peephole optimizer for `X` and `Y` (`ldb/stb/ldd/std ,x+`, `,x++`, `,-x`, `,--x`).
+- [x] **16-bit Non-Pointer Register Candidates**:
+  Enabled 16-bit scalars (non-pointers and loop variables) to be allocated to `U` and `Y` in `m6809/regalloc.go`. Excluded composite types (structs, arrays, slices, and `TypeDefs`) to guarantee memory addressability.
+- [x] **Commutative Operand Reordering**:
+  Reorders commutative binary operations (`add`, `mul`, `and`, `or`, `xor`) to place immediates or direct EA operands on the right (`addd #48` instead of `pshs; addd ,s++`), and uses `leax d,reg; tfr x,d` when operands are in registers.
+- [ ] **Dense Switch Jump Tables** *(Postponed pending Go-style switch syntax)*:
   In `10_switch_case.c`, MiniGolf currently emits an $O(N)$ if-else comparison chain.
   * *Concrete change*: When case values form a dense integer range ($[\text{min}, \text{max}]$ with density $> 0.6$), emit a jump table:
     ```asm
@@ -177,4 +184,97 @@ When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF`
   - [ ] Add compiler flag `-direct-page-frames` (env `DIRECT_PAGE_FRAMES`) to locate level-1 leaf or trunk frames in the Direct Page.
   - [ ] Compute `maxTrunkSize[level]` and `maxLeafSize[level]` and allocate overlay symbols (`v__trunk_level_N_frame`, `v__leaf_level_N_frame`) in the data section.
   - [ ] Update M6809 backend `getSlot()` to generate direct/global addressing for functions qualifying for static overlay.
+
+---
+
+## 3. Progress, Key Observations & Parity Analysis (Benchmarks 01–03)
+
+### Current Benchmark Status
+
+| Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCCMax | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `01_putchar` | **124** (68 B) | 122 (204 B) | 75 (92 B) | **66** (87 B) | 1.88x | Smallest payload (68 B); 58 cycles from GCCMax |
+| `02_count_loop` | **1,303** (179 B) | 895 (251 B) | 542 (139 B) | **531** (133 B) | 2.45x | Down from 1,620; loop counter `i` still spilled |
+| `03_arithmetic` | **14,619** (921 B) | 14,679 (659 B) | 16,390 (586 B) | **16,409** (548 B) | **0.89x** | **Beats both CMOC & GCCMax in cycle speed!** |
+
+---
+
+### Key Observations by Benchmark
+
+#### `01_putchar`
+* **Cycles**: MiniGolf **124** | GCCMax **66**
+* **Code Size**: MiniGolf **68 B** (beats GCCMax at 87 B)
+* **What MiniGolf Currently Generates**:
+  ```asm
+  _main:
+      jsr f_main__main
+      ldd #0
+      ldx #0
+      rts
+
+  f_main__main:
+      leas -5,s
+      ldb #64
+      stb 0,s         ; Dead store to stack
+      ldd #65280
+      std 1,s         ; Dead store to stack
+      tfr d,u
+      ldb #64
+      stb ,u
+      ldb #10
+      stb 0,s         ; Dead store to stack
+      ldd #65280
+      std 1,s         ; Dead store to stack
+      tfr d,u
+      ldb #10
+      stb ,u
+      leas 5,s
+      rts
+  ```
+* **GCCMax (66 cycles)**:
+  ```asm
+  _main:
+      ldx #-256       ; $FF00 - Hatvan output port
+      ldb #64
+      stb ,x
+      ldb #10
+      stb ,x
+      ldx #0
+      rts
+  ```
+* **Findings**:
+  1. **Dead stack stores**: MiniGolf allocates 5 bytes on stack (`leas -5,s`) and stores constants into `0,s` and `1,s`. Those stack slots are never read. Eliminating dead stores eliminates the stack frame entirely.
+  2. **Direct port addressing**: Writing to constant pointer `65280` (`$FF00`) can emit direct store `stb $FF00` or reuse `X`/`U` without reloading D and transferring to U twice.
+  3. **Trampoline elimination**: `_main` just calls `f_main__main` and returns. Inlining `main` or direct entry eliminates 16 cycles of `jsr`/`rts`.
+
+#### `02_count_loop`
+* **Cycles**: MiniGolf **1,303** | GCCMax **531**
+* **Findings**:
+  1. **Why `i` is spilled to stack**: In [`m6809/regalloc.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/regalloc.go), if a function contains *any* call, `hasCalls = true` causes `AllocateRegisters` to bail out (`return nil`). Because `putchar` is called in the loop, global register allocation was completely disabled for the entire function!
+  2. **Callee-saved registers across calls**: If `U` (or `Y`) is preserved in prologue/epilogue (`pshs u` ... `puls u,pc`), `i` can stay pinned in `U` across the loop (`leau 1,u`).
+  3. **Recognizing non-clobbering leaf calls**: Inlined Hatvan `putchar` only writes to port `$FF00`, touching only `B` and `X`. Recognizing that `putchar` does not clobber `U` or `Y` allows keeping loop induction variables in registers without spilling.
+
+#### `03_arithmetic`
+* **Cycles**: MiniGolf **14,619** | CMOC 14,679 | GCCMax 16,409
+* **Findings**:
+  1. MiniGolf's runtime wins because our 16-bit division and multiplication routines and direct operand peepholes are significantly faster than GCC's 6809 runtime library calls.
+  2. The static helper function `compute(a, b, c, d)` has only 1 callsite. Inlining `compute` will eliminate 8 bytes of stack parameter pushes (`pshs`) and `jsr`/`rts` per iteration, saving ~250 cycles and trimming codesize.
+
+---
+
+## 4. Immediate Action Plan: Path to GCC/CMOC Parity
+
+### Step 1: Dead Stack Slot & Dead Store Elimination (Targets `01_putchar` and `02_count_loop`)
+* In [`m6809/backend.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/backend.go), track uses of SSA instructions across the function. If an instruction's result is never read by any other instruction (e.g. constant loaded only to be passed to an inlined call or dead temp), omit storing it to stack slots.
+* If no stack slots are used in a function, eliminate `leas -N,s` and `leas N,s` completely.
+* Directly emit constant port stores (`stb $FF00`) when the pointer operand is a known constant word.
+
+### Step 2: Callee-Saved Registers (`U`/`Y`) & Leaf-Call Awareness (Targets `02_count_loop`)
+* Allow register allocation when calls do not clobber the candidate register (e.g. inlined `putchar` or leaf hypercalls).
+* Add standard callee-save prologue/epilogue (`pshs u` / `puls u`) for functions using `U`/`Y` across call sites.
+* Pin `i` into `U`, replacing 3 memory loads/stores per iteration with `leau 1,u`, dropping `02_count_loop` from 1,303 cycles down to ~600 cycles.
+
+### Step 3: Single-Callsite Inlining for Static Functions (Targets `03_arithmetic`)
+* In [`opt/`](file:///home/strick/github.com/strickyak/minigolf/opt), check popularity/call counts: if a private function has exactly 1 callsite (like `compute` in `03_arithmetic`), inline it into the caller to eliminate stack parameter passing and function call overhead.
+
 

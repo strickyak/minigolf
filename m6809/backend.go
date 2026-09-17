@@ -161,6 +161,7 @@ type Backend struct {
 	f               *ir.Function
 	fusedCompares   map[int]bool
 	addressTaken    map[int]bool
+	escapeRes       opt.EscapeAnalysisResult
 	needsFP         bool
 
 	curInstr ir.Instruction
@@ -425,6 +426,30 @@ func offsetAddrStr(valStr string, offset int) string {
 		return fmt.Sprintf("%d%s", baseNum+offset, regPart)
 	}
 	return fmt.Sprintf("%s+%d", valStr, offset)
+}
+
+func (b *Backend) getDirectEA(ptrVal ir.Value) (string, bool) {
+	ptrVal = b.resolveVal(ptrVal)
+	switch v := ptrVal.(type) {
+	case *ir.AddressOfLocal:
+		if b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[v.GetID()] {
+			if locInst, ok := v.Local.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+				if _, inReg := b.globalRegs[locInst.GetID()]; inReg {
+					return "", false // Value is in a physical register, not memory!
+				}
+			}
+			return b.getAddrStr(v.Local), true
+		}
+	case *ir.AddressOfGlobal:
+		return b.getAddrStr(v.Global), true
+	case *ir.AddressOfField:
+		if baseEA, ok := b.getDirectEA(v.Ptr); ok {
+			structType := v.Ptr.Type().PointedType()
+			byteOffset, _ := b.getFieldOffsetAndSize(structType, v.FieldIndex)
+			return offsetAddrStr(baseEA, byteOffset), true
+		}
+	}
+	return "", false
 }
 
 func (b *Backend) canDirectEA(val ir.Value, opSize int) bool {
@@ -700,6 +725,23 @@ func (b *Backend) loadVal(val ir.Value) {
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", addr))
 		}
+	case *ir.AddressOfLocal:
+		b.emitLoadAddr("x", b.getAddrStr(v.Local))
+		b.buf.WriteString("\ttfr x,d\n")
+	case *ir.AddressOfGlobal:
+		if b.globalsAtY {
+			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[v.Global.Name]))
+		} else if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", v.Global.Name))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", v.Global.Name))
+		}
+	case *ir.AddressOfFunc:
+		if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", v.Func.EmitName()))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", v.Func.EmitName()))
+		}
 	case ir.Instruction:
 		sz := b.getTypeSizeByType(v.Type())
 		addr := b.localAddr(v.GetID())
@@ -715,20 +757,6 @@ func (b *Backend) loadVal(val ir.Value) {
 			b.buf.WriteString(fmt.Sprintf("\tldb %s\n", addr))
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", addr))
-		}
-	case *ir.AddressOfGlobal:
-		if b.globalsAtY {
-			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[v.Global.Name]))
-		} else if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", v.Global.Name))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", v.Global.Name))
-		}
-	case *ir.AddressOfFunc:
-		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", v.Func.EmitName()))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", v.Func.EmitName()))
 		}
 	default:
 		log.Panicf("loadVal: unhandled %T (%v)", val, val)
@@ -785,6 +813,16 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.paramAddr(v.Name)))
 		}
+	case *ir.AddressOfGlobal:
+		b.emitLoadAddr(reg, b.getAddrStr(v.Global))
+	case *ir.AddressOfLocal:
+		b.emitLoadAddr(reg, b.getAddrStr(v.Local))
+	case *ir.AddressOfFunc:
+		if b.picMode {
+			b.buf.WriteString(fmt.Sprintf("\tlea%s %s,pcr\n", reg, v.Func.EmitName()))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tld%s #%s\n", reg, v.Func.EmitName()))
+		}
 	case ir.Instruction:
 		if b.getValSize(v) == 1 {
 			b.loadVal(v)
@@ -806,14 +844,6 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 			}
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.getAddrStr(v)))
-		}
-	case *ir.AddressOfGlobal:
-		b.emitLoadAddr(reg, b.getAddrStr(v.Global))
-	case *ir.AddressOfFunc:
-		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tlea%s %s,pcr\n", reg, v.Func.EmitName()))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tld%s #%s\n", reg, v.Func.EmitName()))
 		}
 	default:
 		b.loadVal(val)
@@ -979,11 +1009,22 @@ func (b *Backend) computeElementAddr(destReg string, arrayVal ir.Value, indexVal
 
 func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 	sz := b.getTypeSizeByType(i.Typ)
+	leftVal := i.Left
 	rightVal := b.resolveVal(i.Right)
 	if sz == 1 {
+		if i.Op == "add" || i.Op == "mul" || i.Op == "and" || i.Op == "or" || i.Op == "xor" {
+			_, leftConst := b.asConstByte(leftVal)
+			_, rightConst := b.asConstByte(rightVal)
+			if leftConst && !rightConst {
+				leftVal, rightVal = rightVal, leftVal
+			} else if !b.canDirectEA(rightVal, 1) && b.canDirectEA(leftVal, 1) {
+				leftVal, rightVal = rightVal, leftVal
+			}
+		}
+
 		switch i.Op {
 		case "add":
-			b.loadVal(i.Left)
+			b.loadVal(leftVal)
 			if c, ok := b.asConstByte(rightVal); ok {
 				if c == 1 {
 					b.buf.WriteString("\tincb\n")
@@ -995,9 +1036,9 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			} else if b.canDirectEA(rightVal, 1) {
 				b.buf.WriteString(fmt.Sprintf("\taddb %s\n", b.getRightEA(rightVal, 1)))
 			} else {
-				b.loadVal(i.Right)
+				b.loadVal(rightVal)
 				b.buf.WriteString("\tpshs b\n")
-				b.loadVal(i.Left)
+				b.loadVal(leftVal)
 				b.buf.WriteString("\taddb ,s+\n")
 			}
 		case "sub":
@@ -1019,7 +1060,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				b.buf.WriteString("\tsubb ,s+\n")
 			}
 		case "and":
-			b.loadVal(i.Left)
+			b.loadVal(leftVal)
 			if c, ok := b.asConstByte(rightVal); ok {
 				if c == 0 {
 					b.buf.WriteString("\tclrb\n")
@@ -1029,13 +1070,13 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			} else if b.canDirectEA(rightVal, 1) {
 				b.buf.WriteString(fmt.Sprintf("\tandb %s\n", b.getRightEA(rightVal, 1)))
 			} else {
-				b.loadVal(i.Right)
+				b.loadVal(rightVal)
 				b.buf.WriteString("\tpshs b\n")
-				b.loadVal(i.Left)
+				b.loadVal(leftVal)
 				b.buf.WriteString("\tandb ,s+\n")
 			}
 		case "or":
-			b.loadVal(i.Left)
+			b.loadVal(leftVal)
 			if c, ok := b.asConstByte(rightVal); ok {
 				if c != 0 {
 					b.buf.WriteString(fmt.Sprintf("\torb #%d\n", c))
@@ -1043,13 +1084,13 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			} else if b.canDirectEA(rightVal, 1) {
 				b.buf.WriteString(fmt.Sprintf("\torb %s\n", b.getRightEA(rightVal, 1)))
 			} else {
-				b.loadVal(i.Right)
+				b.loadVal(rightVal)
 				b.buf.WriteString("\tpshs b\n")
-				b.loadVal(i.Left)
+				b.loadVal(leftVal)
 				b.buf.WriteString("\torb ,s+\n")
 			}
 		case "xor":
-			b.loadVal(i.Left)
+			b.loadVal(leftVal)
 			if c, ok := b.asConstByte(rightVal); ok {
 				if c == 255 {
 					b.buf.WriteString("\tcomb\n")
@@ -1059,9 +1100,9 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			} else if b.canDirectEA(rightVal, 1) {
 				b.buf.WriteString(fmt.Sprintf("\teorb %s\n", b.getRightEA(rightVal, 1)))
 			} else {
-				b.loadVal(i.Right)
+				b.loadVal(rightVal)
 				b.buf.WriteString("\tpshs b\n")
-				b.loadVal(i.Left)
+				b.loadVal(leftVal)
 				b.buf.WriteString("\teorb ,s+\n")
 			}
 		case "andnot":
@@ -1087,13 +1128,13 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				}
 			}
 		case "mul":
-			b.loadVal(i.Left)
+			b.loadVal(leftVal)
 			if b.canDirectEA(rightVal, 1) {
 				b.buf.WriteString(fmt.Sprintf("\tlda %s\n\tmul\n", b.getRightEA(rightVal, 1)))
 			} else {
-				b.loadVal(i.Right)
+				b.loadVal(rightVal)
 				b.buf.WriteString("\tpshs b\n")
-				b.loadVal(i.Left)
+				b.loadVal(leftVal)
 				b.buf.WriteString("\tlda ,s+\n\tmul\n")
 			}
 		case "div":
@@ -1189,10 +1230,20 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 	}
 
 	// 2-byte binary operation
+	if i.Op == "add" || i.Op == "mul" || i.Op == "and" || i.Op == "or" || i.Op == "xor" {
+		_, leftConst := b.asConstWord(leftVal)
+		_, rightConst := b.asConstWord(rightVal)
+		if leftConst && !rightConst {
+			leftVal, rightVal = rightVal, leftVal
+		} else if !b.canDirectEA(rightVal, 2) && b.canDirectEA(leftVal, 2) {
+			leftVal, rightVal = rightVal, leftVal
+		}
+	}
+
 	switch i.Op {
 	case "add":
-		b.loadVal(i.Left)
-		if b.getValSize(i.Left) == 1 {
+		b.loadVal(leftVal)
+		if b.getValSize(leftVal) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
 		if c, ok := b.asConstWord(rightVal); ok {
@@ -1201,8 +1252,11 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			}
 		} else if b.canDirectEA(rightVal, 2) {
 			b.buf.WriteString(fmt.Sprintf("\taddd %s\n", b.getRightEA(rightVal, 2)))
+		} else if rightInst, ok := rightVal.(ir.Instruction); ok && len(b.globalRegs) > 0 && b.globalRegs[rightInst.GetID()] != "" {
+			srcReg := b.globalRegs[rightInst.GetID()]
+			b.buf.WriteString(fmt.Sprintf("\tleax d,%s\n\ttfr x,d\n", srcReg))
 		} else {
-			b.loadVal16("x", i.Right)
+			b.loadVal16("x", rightVal)
 			b.buf.WriteString("\tpshs x\n\taddd ,s++\n")
 		}
 	case "sub":
@@ -1221,8 +1275,8 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			b.buf.WriteString("\tpshs x\n\tsubd ,s++\n")
 		}
 	case "and":
-		b.loadVal(i.Left)
-		if b.getValSize(i.Left) == 1 {
+		b.loadVal(leftVal)
+		if b.getValSize(leftVal) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
 		if c, ok := b.asConstWord(rightVal); ok {
@@ -1242,12 +1296,12 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			addr := b.getRightEA(rightVal, 2)
 			b.buf.WriteString(fmt.Sprintf("\tanda %s\n\tandb %s\n", addr, offsetAddrStr(addr, 1)))
 		} else {
-			b.loadVal16("x", i.Right)
+			b.loadVal16("x", rightVal)
 			b.buf.WriteString("\tpshs x\n\tanda 0,s\n\tandb 1,s\n\tleas 2,s\n")
 		}
 	case "or":
-		b.loadVal(i.Left)
-		if b.getValSize(i.Left) == 1 {
+		b.loadVal(leftVal)
+		if b.getValSize(leftVal) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
 		if c, ok := b.asConstWord(rightVal); ok {
@@ -1263,12 +1317,12 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			addr := b.getRightEA(rightVal, 2)
 			b.buf.WriteString(fmt.Sprintf("\tora %s\n\torb %s\n", addr, offsetAddrStr(addr, 1)))
 		} else {
-			b.loadVal16("x", i.Right)
+			b.loadVal16("x", rightVal)
 			b.buf.WriteString("\tpshs x\n\tora 0,s\n\torb 1,s\n\tleas 2,s\n")
 		}
 	case "xor":
-		b.loadVal(i.Left)
-		if b.getValSize(i.Left) == 1 {
+		b.loadVal(leftVal)
+		if b.getValSize(leftVal) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
 		if c, ok := b.asConstWord(rightVal); ok {
@@ -1288,7 +1342,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			addr := b.getRightEA(rightVal, 2)
 			b.buf.WriteString(fmt.Sprintf("\teora %s\n\teorb %s\n", addr, offsetAddrStr(addr, 1)))
 		} else {
-			b.loadVal16("x", i.Right)
+			b.loadVal16("x", rightVal)
 			b.buf.WriteString("\tpshs x\n\teora 0,s\n\teorb 1,s\n\tleas 2,s\n")
 		}
 	case "andnot":
@@ -1338,11 +1392,11 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			}
 		}
 	case "mul":
-		b.loadVal(i.Left)
-		if b.getValSize(i.Left) == 1 {
+		b.loadVal(leftVal)
+		if b.getValSize(leftVal) == 1 {
 			b.buf.WriteString("\tclra\n")
 		}
-		b.loadVal16("x", i.Right)
+		b.loadVal16("x", rightVal)
 		if b.InlineMul16 {
 			b.emitInlineMul16()
 		} else {
@@ -2629,6 +2683,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.storeResult(id)
 
 	case *ir.AddressOfLocal:
+		if b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[id] {
+			break // Synthetic address: never materialized in machine code!
+		}
 		targetStr := b.getAddrStr(i.Local)
 		b.emitLoadAddr("x", targetStr)
 		b.buf.WriteString("\ttfr x,d\n")
@@ -2724,6 +2781,31 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.LoadPtr:
 		sz := b.getTypeSizeByType(i.Typ)
 		if sz <= 2 {
+			ptrVal := b.resolveVal(i.Ptr)
+			// Check if pointer is a non-escaping local held in a physical register
+			if aol, ok := ptrVal.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
+				if locInst, ok := aol.Local.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+					if srcReg, ok := b.globalRegs[locInst.GetID()]; ok {
+						if srcReg != "d" {
+							b.buf.WriteString(fmt.Sprintf("\ttfr %s,d\n", srcReg))
+						}
+						b.storeResult(id)
+						break
+					}
+				}
+			}
+
+			// Check if pointer has a direct effective address (stack slot or global)
+			if directEA, ok := b.getDirectEA(ptrVal); ok {
+				if sz == 1 {
+					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", directEA))
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tldd %s\n", directEA))
+				}
+				b.storeResult(id)
+				break
+			}
+
 			ptrReg := "x"
 			if ptrInst, ok := i.Ptr.(ir.Instruction); ok && len(b.globalRegs) > 0 {
 				if r, ok := b.globalRegs[ptrInst.GetID()]; ok {
@@ -2751,6 +2833,31 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.StorePtr:
 		sz := b.getTypeSizeByType(i.Val.Type())
 		if sz <= 2 {
+			ptrVal := b.resolveVal(i.Ptr)
+			// Check if pointer is a non-escaping local held in a physical register
+			if aol, ok := ptrVal.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
+				if locInst, ok := aol.Local.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+					if destReg, ok := b.globalRegs[locInst.GetID()]; ok {
+						b.loadVal16(destReg, i.Val)
+						break
+					}
+				}
+			}
+
+			// Check if pointer has a direct effective address (stack slot or global)
+			if directEA, ok := b.getDirectEA(ptrVal); ok {
+				b.loadVal(i.Val)
+				if sz == 1 {
+					b.buf.WriteString(fmt.Sprintf("\tstb %s\n", directEA))
+				} else {
+					if b.getValSize(i.Val) == 1 {
+						b.buf.WriteString("\tclra\n")
+					}
+					b.buf.WriteString(fmt.Sprintf("\tstd %s\n", directEA))
+				}
+				break
+			}
+
 			ptrReg := "x"
 			if ptrInst, ok := i.Ptr.(ir.Instruction); ok && len(b.globalRegs) > 0 {
 				if r, ok := b.globalRegs[ptrInst.GetID()]; ok {
@@ -2817,17 +2924,8 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.paramOffsets = make(map[string]int)
 	b.jmpSlots = make(map[int]int)
 	b.fusedCompares = make(map[int]bool)
-	b.addressTaken = make(map[int]bool)
-
-	for _, blk := range f.Blocks {
-		for _, instr := range blk.Instructions {
-			if aol, ok := instr.(*ir.AddressOfLocal); ok {
-				if locInst, ok := aol.Local.(ir.Instruction); ok {
-					b.addressTaken[locInst.GetID()] = true
-				}
-			}
-		}
-	}
+	b.escapeRes = opt.AnalyzeEscape(f)
+	b.addressTaken = b.escapeRes.EscapingLocals
 
 	b.globalRegs = b.AllocateRegisters(f)
 
@@ -2901,6 +2999,9 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 			if setjmp, ok := instr.(*ir.SetJmp); ok {
 				b.jmpSlots[setjmp.GetID()] = b.allocateRawSlot(10)
+			}
+			if aol, ok := instr.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
+				continue
 			}
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				sz := b.getTypeSizeByType(instr.Type())

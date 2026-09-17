@@ -12,49 +12,30 @@ func (p *StoreLoadForwardingPass) Name() string {
 	return "StoreLoadForwardingPass"
 }
 
+func getRootLocalAOL(ptr ir.Value) *ir.AddressOfLocal {
+	for ptr != nil {
+		switch p := ptr.(type) {
+		case *ir.AddressOfLocal:
+			return p
+		case *ir.AddressOfField:
+			ptr = p.Ptr
+		case *ir.AddressOfElement:
+			ptr = p.ArrayPtr
+		case *ir.ExtractFieldPtr:
+			ptr = p.Ptr
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
 func (p *StoreLoadForwardingPass) Run(f *ir.Function) bool {
 	changed := false
 
 	// Step 1: Escape analysis for AddressOfLocal
-	escaping := make(map[int]bool)
-	locals := make(map[int]*ir.AddressOfLocal)
-
-	for _, b := range f.Blocks {
-		for _, instr := range b.Instructions {
-			if aol, ok := instr.(*ir.AddressOfLocal); ok {
-				locals[aol.GetID()] = aol
-			}
-		}
-	}
-
-	for _, b := range f.Blocks {
-		for _, instr := range b.Instructions {
-			switch inst := instr.(type) {
-			case *ir.LoadPtr:
-				// inst.Ptr is allowed to be AddressOfLocal
-			case *ir.StorePtr:
-				// inst.Ptr is allowed to be AddressOfLocal
-				// If inst.Val is AddressOfLocal, it escapes into memory
-				if aol, ok := inst.Val.(*ir.AddressOfLocal); ok {
-					escaping[aol.GetID()] = true
-				}
-			default:
-				// Any other use (call argument, return, pointer arithmetic, cast, etc.) escapes
-				for _, op := range OperandsOf(instr) {
-					if aol, ok := op.(*ir.AddressOfLocal); ok {
-						escaping[aol.GetID()] = true
-					}
-				}
-			}
-		}
-		if b.Terminator != nil {
-			for _, op := range OperandsOf(b.Terminator) {
-				if aol, ok := op.(*ir.AddressOfLocal); ok {
-					escaping[aol.GetID()] = true
-				}
-			}
-		}
-	}
+	escapeRes := AnalyzeEscape(f)
+	escaping := escapeRes.EscapingAOL
 
 	// Step 2: Forward stores to loads within each basic block
 	for _, b := range f.Blocks {
@@ -68,6 +49,9 @@ func (p *StoreLoadForwardingPass) Run(f *ir.Function) bool {
 				if aol, ok := inst.Ptr.(*ir.AddressOfLocal); ok && !escaping[aol.GetID()] {
 					knownStore[aol.GetID()] = inst.Val
 				} else {
+					if rootAOL := getRootLocalAOL(inst.Ptr); rootAOL != nil {
+						delete(knownStore, rootAOL.GetID())
+					}
 					// An indirect store to an unknown pointer might alias escaping locals
 					for id := range knownStore {
 						if escaping[id] {
