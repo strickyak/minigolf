@@ -1,0 +1,23 @@
+--- Sizeof ---
+sizeof Complex: 10
+--- New and Format ---
+z1: (1.0+2.0i)
+z2: (3.0-4.0i)
+--- Add and Sub ---
+z1 + z2 = (4.0-2.0i)
+z1 - z2 = (-2.0+6.0i)
+--- Neg and Conj ---
+-z1 = (-1.0-2.0i)
+conj(z2) = (3.0+4.0i)
+--- Mul ---
+z1 * z2 = (11.0+2.0i)
+z1 * z3 = (-5.0+10.0i)
+--- Div ---
+zMul2 / z3 = (1.0+2.0i)
+--- AbsSq and Abs ---
+|z3|^2 = 25.0
+|z3| = 5.0
+--- Rect and Polar ---
+rect(2, 0) = (2.0+0.0i)
+rect(2, pi/2) = (0.0+2.0i)
+polar(zRect2): r = 2.0 theta = 1.570796
