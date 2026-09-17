@@ -179,6 +179,9 @@ type Backend struct {
 	NoGlobalRegAlloc  bool
 	globalRegs        map[int]string
 	cssaScratchOffset int
+	calleeSaveRegs    []string
+	savedRegBytes     int
+	saveYFP           bool
 
 	// Tunable optimization and code-generation thresholds (time vs space)
 	InlineMul16           bool // Inline 16-bit multiplication instead of calling __mul16 helper
@@ -349,19 +352,19 @@ func (b *Backend) paramAddr(paramName string) string {
 	if !ok {
 		log.Panicf("paramAddr: param not found %q", paramName)
 	}
-	if b.useFramePointer {
+	if b.needsFP {
 		// With FP: 0,u=saved U, 2,u=return PC, 4,u=arg0
 		return fmt.Sprintf("%d,u", 4+off)
 	}
-	// Without FP: stackSize bytes of locals + pushedBytes + 2 bytes return PC + off
-	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+2+off)
+	// Without FP: stackSize bytes of locals + pushedBytes + savedRegBytes + 2 bytes return PC + off
+	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+b.savedRegBytes+2+off)
 }
 
 func (b *Backend) retBufAddr() string {
-	if b.useFramePointer {
+	if b.needsFP {
 		return fmt.Sprintf("%d,u", 4+b.retSlot)
 	}
-	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+2+b.retSlot)
+	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+b.savedRegBytes+2+b.retSlot)
 }
 
 func (b *Backend) jmpChainAddr() string {
@@ -1288,6 +1291,57 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 		}
 	}
 
+	destReg := ""
+	if len(b.globalRegs) > 0 {
+		destReg = b.globalRegs[i.GetID()]
+	}
+
+	if destReg != "" {
+		if i.Op == "add" {
+			if c, ok := b.asConstWord(rightVal); ok {
+				if leftInst, ok := leftVal.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+					if srcReg, ok := b.globalRegs[leftInst.GetID()]; ok && srcReg != "" {
+						if destReg != srcReg || c != 0 {
+							b.buf.WriteString(fmt.Sprintf("\tlea%s %d,%s\n", destReg, c, srcReg))
+						}
+						b.clobberD()
+						return
+					}
+				}
+			}
+			var srcReg string
+			var otherVal ir.Value
+			if rightInst, ok := rightVal.(ir.Instruction); ok && len(b.globalRegs) > 0 && b.globalRegs[rightInst.GetID()] != "" {
+				srcReg = b.globalRegs[rightInst.GetID()]
+				otherVal = leftVal
+			} else if leftInst, ok := leftVal.(ir.Instruction); ok && len(b.globalRegs) > 0 && b.globalRegs[leftInst.GetID()] != "" {
+				srcReg = b.globalRegs[leftInst.GetID()]
+				otherVal = rightVal
+			}
+			if srcReg != "" {
+				b.loadVal(otherVal)
+				if b.getValSize(otherVal) == 1 {
+					b.buf.WriteString("\tclra\n")
+				}
+				b.buf.WriteString(fmt.Sprintf("\tlea%s d,%s\n", destReg, srcReg))
+				b.clobberD()
+				return
+			}
+		} else if i.Op == "sub" {
+			if c, ok := b.asConstWord(i.Right); ok {
+				if leftInst, ok := i.Left.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+					if srcReg, ok := b.globalRegs[leftInst.GetID()]; ok && srcReg != "" {
+						if destReg != srcReg || c != 0 {
+							b.buf.WriteString(fmt.Sprintf("\tlea%s %d,%s\n", destReg, -c, srcReg))
+						}
+						b.clobberD()
+						return
+					}
+				}
+			}
+		}
+	}
+
 	switch i.Op {
 	case "add":
 		b.loadVal(leftVal)
@@ -1305,7 +1359,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			b.buf.WriteString(fmt.Sprintf("\tleax d,%s\n\ttfr x,d\n", srcReg))
 		} else {
 			b.loadVal16("x", rightVal)
-			b.buf.WriteString("\tpshs x\n\taddd ,s++\n")
+			b.buf.WriteString("\tstx ,--s\n\taddd ,s++\n")
 		}
 	case "sub":
 		b.loadVal(i.Left)
@@ -1319,8 +1373,16 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 		} else if b.canDirectEA(rightVal, 2) {
 			b.buf.WriteString(fmt.Sprintf("\tsubd %s\n", b.getRightEA(rightVal, 2)))
 		} else {
-			b.loadVal16("x", i.Right)
-			b.buf.WriteString("\tpshs x\n\tsubd ,s++\n")
+			rightReg := ""
+			if rightInst, ok := i.Right.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+				rightReg = b.globalRegs[rightInst.GetID()]
+			}
+			if rightReg != "" {
+				b.buf.WriteString(fmt.Sprintf("\tst%s ,--s\n\tsubd ,s++\n", rightReg))
+			} else {
+				b.loadVal16("x", i.Right)
+				b.buf.WriteString("\tstx ,--s\n\tsubd ,s++\n")
+			}
 		}
 	case "and":
 		b.loadVal(leftVal)
@@ -1547,6 +1609,47 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 	b.storeResult(i.GetID())
 }
 
+func (b *Backend) emitCompare16(leftVal ir.Value, rightVal ir.Value) {
+	leftVal = b.resolveVal(leftVal)
+	rightVal = b.resolveVal(rightVal)
+	leftSize := b.getValSize(leftVal)
+
+	leftReg := ""
+	if leftInst, ok := leftVal.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+		leftReg = b.globalRegs[leftInst.GetID()]
+	}
+	rightReg := ""
+	if rightInst, ok := rightVal.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+		rightReg = b.globalRegs[rightInst.GetID()]
+	}
+
+	if leftReg != "" && rightReg != "" {
+		b.buf.WriteString(fmt.Sprintf("\tst%s ,--s\n\tcmp%s ,s++\n", rightReg, leftReg))
+	} else if leftReg != "" && b.canDirectEA(rightVal, 2) {
+		b.buf.WriteString(fmt.Sprintf("\tcmp%s %s\n", leftReg, b.getRightEA(rightVal, 2)))
+	} else if leftReg != "" {
+		b.loadVal16("x", rightVal)
+		b.buf.WriteString(fmt.Sprintf("\tstx ,--s\n\tcmp%s ,s++\n", leftReg))
+	} else if rightReg != "" {
+		b.loadVal(leftVal)
+		if leftSize == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		b.buf.WriteString(fmt.Sprintf("\tst%s ,--s\n\tcmpd ,s++\n", rightReg))
+	} else {
+		b.loadVal(leftVal)
+		if leftSize == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if b.canDirectEA(rightVal, 2) {
+			b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
+		} else {
+			b.loadVal16("x", rightVal)
+			b.buf.WriteString("\tstx ,--s\n\tcmpd ,s++\n")
+		}
+	}
+}
+
 func (b *Backend) emitCompare(i *ir.Compare) {
 	if b.fusedCompares[i.GetID()] {
 		return
@@ -1569,16 +1672,7 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 			b.buf.WriteString("\tcmpb ,s+\n")
 		}
 	} else {
-		b.loadVal(i.Left)
-		if leftSize == 1 {
-			b.buf.WriteString("\tclra\n")
-		}
-		if b.canDirectEA(rightVal, 2) {
-			b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
-		} else {
-			b.loadVal16("x", i.Right)
-			b.buf.WriteString("\tpshs x\n\tcmpd ,s++\n")
-		}
+		b.emitCompare16(i.Left, i.Right)
 	}
 
 	lblTrue := b.nextLabel()
@@ -2467,16 +2561,7 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 					b.buf.WriteString("\tcmpb ,s+\n")
 				}
 			} else {
-				b.loadVal(cmp.Left)
-				if leftSize == 1 {
-					b.buf.WriteString("\tclra\n")
-				}
-				if b.canDirectEA(rightVal, 2) {
-					b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
-				} else {
-					b.loadVal16("x", cmp.Right)
-					b.buf.WriteString("\tpshs x\n\tcmpd ,s++\n")
-				}
+				b.emitCompare16(cmp.Left, cmp.Right)
 			}
 
 			isInt := cmp.Left.Type().Equals(ir.TypeInt) || cmp.Right.Type().Equals(ir.TypeInt)
@@ -2556,12 +2641,20 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 			}
 		}
 		if b.needsFP {
-			b.buf.WriteString("\tleas 0,u\n\tpuls u,pc\n")
+			if b.saveYFP {
+				b.buf.WriteString("\tleas -2,u\n\tpuls y\n\tpuls u,pc\n")
+			} else {
+				b.buf.WriteString("\tleas 0,u\n\tpuls u,pc\n")
+			}
 		} else {
 			if b.stackSize > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", b.stackSize))
 			}
-			b.buf.WriteString("\trts\n")
+			if len(b.calleeSaveRegs) > 0 {
+				b.buf.WriteString(fmt.Sprintf("\tpuls %s,pc\n", strings.Join(b.calleeSaveRegs, ",")))
+			} else {
+				b.buf.WriteString("\trts\n")
+			}
 		}
 	default:
 		log.Panicf("emitTerminator: unhandled %T", term)
@@ -3188,13 +3281,36 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	b.buf.WriteString(fmt.Sprintf("\n%s:\n", f.EmitName()))
 
+	usedRegs := make(map[string]bool)
+	for _, reg := range b.globalRegs {
+		usedRegs[reg] = true
+	}
+	saveU := usedRegs["u"] && !b.useFramePointer
+	saveY := usedRegs["y"] && !b.globalsAtY
+
 	if b.NoLeafOpt {
 		b.needsFP = b.useFramePointer
 	} else {
-		b.needsFP = b.useFramePointer && (b.stackSize > 0 || len(f.Parameters) > 0)
+		b.needsFP = b.useFramePointer && (b.stackSize > 0 || len(f.Parameters) > 0 || saveY)
 	}
+
+	b.saveYFP = saveY && b.needsFP
+	b.calleeSaveRegs = nil
+	if saveU && !b.needsFP {
+		b.calleeSaveRegs = append(b.calleeSaveRegs, "u")
+	}
+	if saveY && !b.needsFP {
+		b.calleeSaveRegs = append(b.calleeSaveRegs, "y")
+	}
+	b.savedRegBytes = len(b.calleeSaveRegs) * 2
+
 	if b.needsFP {
 		b.buf.WriteString("\tpshs u\n\ttfr s,u\n")
+		if b.saveYFP {
+			b.buf.WriteString("\tpshs y\n")
+		}
+	} else if len(b.calleeSaveRegs) > 0 {
+		b.buf.WriteString(fmt.Sprintf("\tpshs %s\n", strings.Join(b.calleeSaveRegs, ",")))
 	}
 	if b.stackSize > 0 {
 		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", b.stackSize))

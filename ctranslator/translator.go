@@ -683,6 +683,13 @@ func (t *translator) translateExprStmtOne(e cc.Expression) {
 			}
 			return
 		}
+		base := t.xExpr(postfix.Expr)
+		if postfix.Dec {
+			t.line("%s--", base)
+		} else {
+			t.line("%s++", base)
+		}
+		return
 	}
 	// Pattern: ++p  or  --p  where p is a pointer type
 	if prefix, ok := e.(*cc.PrefixExpr); ok {
@@ -696,6 +703,13 @@ func (t *translator) translateExprStmtOne(e cc.Expression) {
 			}
 			return
 		}
+		base := t.xExpr(prefix.Expr)
+		if prefix.Dec {
+			t.line("%s--", base)
+		} else {
+			t.line("%s++", base)
+		}
+		return
 	}
 	result := t.xExpr(e)
 	if result != "" {
@@ -833,7 +847,7 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			if stmts := t.ptrPostExprStmts(s.ExpressionList3); len(stmts) > 0 {
 				postPtrStmts = stmts
 			} else {
-				postStr = t.xExpr(s.ExpressionList3)
+				postStr = t.forPostExpr(s.ExpressionList3)
 			}
 		}
 		if initStr == "" && condStr == "" && postStr == "" && len(postPtrStmts) == 0 {
@@ -869,7 +883,7 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 			if stmts := t.ptrPostExprStmts(s.ExpressionList2); len(stmts) > 0 {
 				postPtrStmts = stmts
 			} else {
-				postStr = t.xExpr(s.ExpressionList2)
+				postStr = t.forPostExpr(s.ExpressionList2)
 			}
 		}
 		if len(postPtrStmts) > 0 {
@@ -885,6 +899,31 @@ func (t *translator) translateIteration(s *cc.IterationStatement) {
 		t.depth--
 		t.line("}")
 	}
+}
+
+func (t *translator) forPostExpr(e cc.Expression) string {
+	if el, ok := e.(*cc.ExpressionList); ok && len(el.List) == 1 {
+		e = el.List[0]
+	}
+	switch x := e.(type) {
+	case *cc.PostfixExpr:
+		if x.Expr.Type().Kind() != cc.Ptr {
+			base := t.xExpr(x.Expr)
+			if x.Dec {
+				return base + "--"
+			}
+			return base + "++"
+		}
+	case *cc.PrefixExpr:
+		if x.Expr.Type().Kind() != cc.Ptr {
+			base := t.xExpr(x.Expr)
+			if x.Dec {
+				return base + "--"
+			}
+			return base + "++"
+		}
+	}
+	return t.xExpr(e)
 }
 
 // ptrPostExprStmts checks if a for-loop post-expression contains pointer
