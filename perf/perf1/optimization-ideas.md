@@ -341,6 +341,24 @@ ldb ,x
 ldb d,y     ; 1 instruction, 2 bytes, 7 cycles!
 ```
 
+#### 5. Pre-Decrement Stores (`stu ,--s`, `stx ,--s`, `std ,--s`) Beat `PSHS`
+When pushing a single 16-bit register to the hardware stack, pre-decrement store addressing is **the exact same code size (2 bytes) but faster than `PSHS`**:
+* **`pshs u`**: Opcode `$34` + postbyte `$40` = **2 bytes**, **7 cycles** (5 base + 2 bytes pushed).
+* **`stu ,--s`**: Opcode `$EF` + postbyte `$A3` = **2 bytes**, **6 cycles** (4 base + 2 pre-dec penalty).
+  * **Result**: **1 cycle faster**, exact same byte size!
+* **`stx ,--s` vs `pshs x`**: Same win! `stx ,--s` is **6 cycles, 2 bytes** vs `pshs x` at **7 cycles, 2 bytes**.
+* **`std ,--s` vs `pshs d`**: `std ,--s` is **6 cycles, 2 bytes** vs `pshs d` at **7 cycles, 2 bytes**.
+* **Complementary Pull (`ldd ,s++` vs `puls d`)**:
+  * `puls d` takes **7 cycles, 2 bytes** (5 base + 2 bytes pulled).
+  * `ldd ,s++` takes **5 cycles, 2 bytes** (4 base + 1 post-inc).
+  * **Net Pair Savings**:
+    - `pshs d; puls d` = **14 cycles, 4 bytes**.
+    - `std ,--s; ldd ,s++` = **11 cycles, 4 bytes** (**3 cycles faster!**).
+* **Flag Differences**:
+  - `PSHS` preserves all condition flags.
+  - `STU`, `STX`, `STD` set $N$ and $Z$, and clear $V$ ($V=0$), leaving Carry ($C$) untouched.
+  - In expression evaluation pipelines (e.g. `stu ,--s; addd ,s++`), the subsequent arithmetic (`addd`) overwrites $N, Z, V, C$ anyway, making the flag side-effects completely harmless!
+
 ---
 
 ### C. Blueprint: Multi-Alternative Emission Rules for MiniGolf
@@ -361,8 +379,9 @@ Rank 3 (4–6 cycles, 2–3 bytes):
   - Accumulator D + immediate:           addd #c (4 cycles, 3 bytes)
   - Accumulator D + Direct EA memory:    addd <ea> (5–6 cycles, 2–3 bytes)
 
-Rank 4 (Spill fallback, 16+ cycles, 4+ bytes):
-  - Spilling to stack and pulling:       pshs x; addd ,s++ (16 cycles, 4 bytes)
+Rank 4 (Stack temporary fallback, 15 cycles, 4 bytes):
+  - Pre-decrement push + pulling add:    stu ,--s; addd ,s++ (15 cycles, 4 bytes)
+    (Faster than legacy: pshs u; addd ,s++ at 16 cycles)
 ```
 By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate tens of cycles per loop iteration across all benchmarks.
 
