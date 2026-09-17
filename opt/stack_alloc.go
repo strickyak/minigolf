@@ -70,6 +70,10 @@ func (p *StackAllocPass) Run(f *ir.Function) bool {
 		endIdx := make(map[ir.Value]int)
 
 		for i, inst := range b.Instructions {
+			switch inst.(type) {
+			case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
+				continue
+			}
 			if !inst.Type().Equals(ir.TypeVoid) && !inst.Type().Equals(ir.TypeUnknown) && !crossBlock[inst] && !escapes[inst] {
 				locals = append(locals, inst)
 				startIdx[inst] = i

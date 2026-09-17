@@ -162,7 +162,9 @@ type Backend struct {
 	fusedCompares   map[int]bool
 	addressTaken    map[int]bool
 	escapeRes       opt.EscapeAnalysisResult
-	needsFP         bool
+	needsFP           bool
+	uses              map[int]int
+	localAddressTaken map[int]bool
 
 	curInstr ir.Instruction
 	valInD   ir.Value
@@ -177,6 +179,9 @@ type Backend struct {
 	NoGlobalRegAlloc  bool
 	globalRegs        map[int]string
 	cssaScratchOffset int
+	calleeSaveRegs    []string
+	savedRegBytes     int
+	saveYFP           bool
 
 	// Tunable optimization and code-generation thresholds (time vs space)
 	InlineMul16           bool // Inline 16-bit multiplication instead of calling __mul16 helper
@@ -347,19 +352,19 @@ func (b *Backend) paramAddr(paramName string) string {
 	if !ok {
 		log.Panicf("paramAddr: param not found %q", paramName)
 	}
-	if b.useFramePointer {
+	if b.needsFP {
 		// With FP: 0,u=saved U, 2,u=return PC, 4,u=arg0
 		return fmt.Sprintf("%d,u", 4+off)
 	}
-	// Without FP: stackSize bytes of locals + pushedBytes + 2 bytes return PC + off
-	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+2+off)
+	// Without FP: stackSize bytes of locals + pushedBytes + savedRegBytes + 2 bytes return PC + off
+	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+b.savedRegBytes+2+off)
 }
 
 func (b *Backend) retBufAddr() string {
-	if b.useFramePointer {
+	if b.needsFP {
 		return fmt.Sprintf("%d,u", 4+b.retSlot)
 	}
-	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+2+b.retSlot)
+	return fmt.Sprintf("%d,s", b.stackSize+b.pushedBytes+b.savedRegBytes+2+b.retSlot)
 }
 
 func (b *Backend) jmpChainAddr() string {
@@ -414,6 +419,12 @@ func offsetAddrStr(valStr string, offset int) string {
 	if offset == 0 {
 		return valStr
 	}
+	if strings.HasPrefix(valStr, "$") && !strings.Contains(valStr, ",") {
+		var hexVal uint32
+		if _, err := fmt.Sscanf(valStr, "$%x", &hexVal); err == nil {
+			return fmt.Sprintf("$%04X", uint16(int(hexVal)+offset))
+		}
+	}
 	if strings.HasSuffix(valStr, ",pcr") {
 		base := strings.TrimSuffix(valStr, ",pcr")
 		return fmt.Sprintf("%s+%d,pcr", base, offset)
@@ -448,6 +459,10 @@ func (b *Backend) getDirectEA(ptrVal ir.Value) (string, bool) {
 			byteOffset, _ := b.getFieldOffsetAndSize(structType, v.FieldIndex)
 			return offsetAddrStr(baseEA, byteOffset), true
 		}
+	default:
+		if c, ok := b.asConstWord(ptrVal); ok {
+			return fmt.Sprintf("$%04X", c), true
+		}
 	}
 	return "", false
 }
@@ -459,11 +474,20 @@ func (b *Backend) canDirectEA(val ir.Value, opSize int) bool {
 		return true
 	case *ir.ConstWord:
 		return opSize == 2 || (v.Val >= 0 && v.Val <= 255)
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		return opSize == 2 || (sz >= 0 && sz <= 255)
 	case *ir.Parameter:
 		return b.getValSize(v) == opSize
 	case ir.Instruction:
 		if len(b.globalRegs) > 0 {
 			if _, ok := b.globalRegs[v.GetID()]; ok {
+				return false
+			}
+		}
+		canon := b.resolveSlot(v.GetID())
+		if _, ok := b.slots[canon]; !ok {
+			if _, ok := b.slots[v.GetID()]; !ok {
 				return false
 			}
 		}
@@ -488,6 +512,12 @@ func (b *Backend) getRightEA(val ir.Value, opSize int) string {
 			return fmt.Sprintf("#%d", uint8(v.Val))
 		}
 		return fmt.Sprintf("#%d", v.Val)
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		if opSize == 1 {
+			return fmt.Sprintf("#%d", uint8(sz))
+		}
+		return fmt.Sprintf("#%d", sz)
 	case *ir.Parameter, ir.Instruction, *ir.Global:
 		return b.getAddrStr(v)
 	default:
@@ -504,6 +534,12 @@ func (b *Backend) asConstByte(val ir.Value) (byte, bool) {
 	if c, ok := val.(*ir.ConstWord); ok && c.Val <= 255 {
 		return byte(c.Val), true
 	}
+	if sz, ok := val.(*ir.Sizeof); ok {
+		s := b.getTypeSizeByType(sz.TargetTyp)
+		if s <= 255 {
+			return byte(s), true
+		}
+	}
 	return 0, false
 }
 
@@ -514,6 +550,9 @@ func (b *Backend) asConstWord(val ir.Value) (uint16, bool) {
 	}
 	if c, ok := val.(*ir.ConstByte); ok {
 		return uint16(c.Val), true
+	}
+	if sz, ok := val.(*ir.Sizeof); ok {
+		return uint16(b.getTypeSizeByType(sz.TargetTyp)), true
 	}
 	return 0, false
 }
@@ -717,6 +756,9 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", v.Val))
 	case *ir.ConstWord:
 		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", v.Val))
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
 	case *ir.Parameter:
 		sz := b.getTypeSizeByType(v.Typ)
 		addr := b.paramAddr(v.Name)
@@ -802,6 +844,9 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, uint8(v.Val)))
 	case *ir.ConstWord:
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, v.Val))
+	case *ir.Sizeof:
+		sz := b.getTypeSizeByType(v.TargetTyp)
+		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, sz))
 	case *ir.Parameter:
 		if b.getValSize(v) == 1 {
 			b.loadVal(v)
@@ -869,6 +914,12 @@ func (b *Backend) storeResult(id int) {
 					b.clobberD()
 				}
 			}
+			return
+		}
+	}
+	canon := b.resolveSlot(id)
+	if _, ok := b.slots[canon]; !ok {
+		if _, ok := b.slots[id]; !ok {
 			return
 		}
 	}
@@ -1240,6 +1291,57 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 		}
 	}
 
+	destReg := ""
+	if len(b.globalRegs) > 0 {
+		destReg = b.globalRegs[i.GetID()]
+	}
+
+	if destReg != "" {
+		if i.Op == "add" {
+			if c, ok := b.asConstWord(rightVal); ok {
+				if leftInst, ok := leftVal.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+					if srcReg, ok := b.globalRegs[leftInst.GetID()]; ok && srcReg != "" {
+						if destReg != srcReg || c != 0 {
+							b.buf.WriteString(fmt.Sprintf("\tlea%s %d,%s\n", destReg, c, srcReg))
+						}
+						b.clobberD()
+						return
+					}
+				}
+			}
+			var srcReg string
+			var otherVal ir.Value
+			if rightInst, ok := rightVal.(ir.Instruction); ok && len(b.globalRegs) > 0 && b.globalRegs[rightInst.GetID()] != "" {
+				srcReg = b.globalRegs[rightInst.GetID()]
+				otherVal = leftVal
+			} else if leftInst, ok := leftVal.(ir.Instruction); ok && len(b.globalRegs) > 0 && b.globalRegs[leftInst.GetID()] != "" {
+				srcReg = b.globalRegs[leftInst.GetID()]
+				otherVal = rightVal
+			}
+			if srcReg != "" {
+				b.loadVal(otherVal)
+				if b.getValSize(otherVal) == 1 {
+					b.buf.WriteString("\tclra\n")
+				}
+				b.buf.WriteString(fmt.Sprintf("\tlea%s d,%s\n", destReg, srcReg))
+				b.clobberD()
+				return
+			}
+		} else if i.Op == "sub" {
+			if c, ok := b.asConstWord(i.Right); ok {
+				if leftInst, ok := i.Left.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+					if srcReg, ok := b.globalRegs[leftInst.GetID()]; ok && srcReg != "" {
+						if destReg != srcReg || c != 0 {
+							b.buf.WriteString(fmt.Sprintf("\tlea%s %d,%s\n", destReg, -c, srcReg))
+						}
+						b.clobberD()
+						return
+					}
+				}
+			}
+		}
+	}
+
 	switch i.Op {
 	case "add":
 		b.loadVal(leftVal)
@@ -1257,7 +1359,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			b.buf.WriteString(fmt.Sprintf("\tleax d,%s\n\ttfr x,d\n", srcReg))
 		} else {
 			b.loadVal16("x", rightVal)
-			b.buf.WriteString("\tpshs x\n\taddd ,s++\n")
+			b.buf.WriteString("\tstx ,--s\n\taddd ,s++\n")
 		}
 	case "sub":
 		b.loadVal(i.Left)
@@ -1271,8 +1373,16 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 		} else if b.canDirectEA(rightVal, 2) {
 			b.buf.WriteString(fmt.Sprintf("\tsubd %s\n", b.getRightEA(rightVal, 2)))
 		} else {
-			b.loadVal16("x", i.Right)
-			b.buf.WriteString("\tpshs x\n\tsubd ,s++\n")
+			rightReg := ""
+			if rightInst, ok := i.Right.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+				rightReg = b.globalRegs[rightInst.GetID()]
+			}
+			if rightReg != "" {
+				b.buf.WriteString(fmt.Sprintf("\tst%s ,--s\n\tsubd ,s++\n", rightReg))
+			} else {
+				b.loadVal16("x", i.Right)
+				b.buf.WriteString("\tstx ,--s\n\tsubd ,s++\n")
+			}
 		}
 	case "and":
 		b.loadVal(leftVal)
@@ -1499,6 +1609,47 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 	b.storeResult(i.GetID())
 }
 
+func (b *Backend) emitCompare16(leftVal ir.Value, rightVal ir.Value) {
+	leftVal = b.resolveVal(leftVal)
+	rightVal = b.resolveVal(rightVal)
+	leftSize := b.getValSize(leftVal)
+
+	leftReg := ""
+	if leftInst, ok := leftVal.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+		leftReg = b.globalRegs[leftInst.GetID()]
+	}
+	rightReg := ""
+	if rightInst, ok := rightVal.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+		rightReg = b.globalRegs[rightInst.GetID()]
+	}
+
+	if leftReg != "" && rightReg != "" {
+		b.buf.WriteString(fmt.Sprintf("\tst%s ,--s\n\tcmp%s ,s++\n", rightReg, leftReg))
+	} else if leftReg != "" && b.canDirectEA(rightVal, 2) {
+		b.buf.WriteString(fmt.Sprintf("\tcmp%s %s\n", leftReg, b.getRightEA(rightVal, 2)))
+	} else if leftReg != "" {
+		b.loadVal16("x", rightVal)
+		b.buf.WriteString(fmt.Sprintf("\tstx ,--s\n\tcmp%s ,s++\n", leftReg))
+	} else if rightReg != "" {
+		b.loadVal(leftVal)
+		if leftSize == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		b.buf.WriteString(fmt.Sprintf("\tst%s ,--s\n\tcmpd ,s++\n", rightReg))
+	} else {
+		b.loadVal(leftVal)
+		if leftSize == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if b.canDirectEA(rightVal, 2) {
+			b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
+		} else {
+			b.loadVal16("x", rightVal)
+			b.buf.WriteString("\tstx ,--s\n\tcmpd ,s++\n")
+		}
+	}
+}
+
 func (b *Backend) emitCompare(i *ir.Compare) {
 	if b.fusedCompares[i.GetID()] {
 		return
@@ -1521,16 +1672,7 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 			b.buf.WriteString("\tcmpb ,s+\n")
 		}
 	} else {
-		b.loadVal(i.Left)
-		if leftSize == 1 {
-			b.buf.WriteString("\tclra\n")
-		}
-		if b.canDirectEA(rightVal, 2) {
-			b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
-		} else {
-			b.loadVal16("x", i.Right)
-			b.buf.WriteString("\tpshs x\n\tcmpd ,s++\n")
-		}
+		b.emitCompare16(i.Left, i.Right)
 	}
 
 	lblTrue := b.nextLabel()
@@ -2001,11 +2143,20 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 				for _, edge := range phi.Edges {
 					if edge.Block == from {
 						sz := b.getTypeSizeByType(phi.Typ)
-						destAddr := b.localAddr(phi.GetID())
+						var destAddr string
 						if len(b.globalRegs) > 0 {
 							if reg, ok := b.globalRegs[phi.GetID()]; ok {
 								destAddr = reg
 							}
+						}
+						if destAddr == "" {
+							canon := b.resolveSlot(phi.GetID())
+							if _, ok := b.slots[canon]; !ok {
+								if _, ok := b.slots[phi.GetID()]; !ok {
+									continue
+								}
+							}
+							destAddr = b.localAddr(phi.GetID())
 						}
 						if isReg(destAddr) {
 							b.loadVal16(destAddr, edge.Value)
@@ -2046,11 +2197,20 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
 					sz := b.getTypeSizeByType(phi.Typ)
-					destAddr := b.localAddr(phi.GetID())
+					var destAddr string
 					if len(b.globalRegs) > 0 {
 						if reg, ok := b.globalRegs[phi.GetID()]; ok {
 							destAddr = reg
 						}
+					}
+					if destAddr == "" {
+						canon := b.resolveSlot(phi.GetID())
+						if _, ok := b.slots[canon]; !ok {
+							if _, ok := b.slots[phi.GetID()]; !ok {
+								continue
+							}
+						}
+						destAddr = b.localAddr(phi.GetID())
 					}
 					srcAddr := b.getPhiSrcLoc(edge.Value)
 					assignments = append(assignments, phiAssignment{
@@ -2417,16 +2577,7 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 					b.buf.WriteString("\tcmpb ,s+\n")
 				}
 			} else {
-				b.loadVal(cmp.Left)
-				if leftSize == 1 {
-					b.buf.WriteString("\tclra\n")
-				}
-				if b.canDirectEA(rightVal, 2) {
-					b.buf.WriteString(fmt.Sprintf("\tcmpd %s\n", b.getRightEA(rightVal, 2)))
-				} else {
-					b.loadVal16("x", cmp.Right)
-					b.buf.WriteString("\tpshs x\n\tcmpd ,s++\n")
-				}
+				b.emitCompare16(cmp.Left, cmp.Right)
 			}
 
 			isInt := cmp.Left.Type().Equals(ir.TypeInt) || cmp.Right.Type().Equals(ir.TypeInt)
@@ -2518,12 +2669,20 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 			}
 		}
 		if b.needsFP {
-			b.buf.WriteString("\tleas 0,u\n\tpuls u,pc\n")
+			if b.saveYFP {
+				b.buf.WriteString("\tleas -2,u\n\tpuls y\n\tpuls u,pc\n")
+			} else {
+				b.buf.WriteString("\tleas 0,u\n\tpuls u,pc\n")
+			}
 		} else {
 			if b.stackSize > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", b.stackSize))
 			}
-			b.buf.WriteString("\trts\n")
+			if len(b.calleeSaveRegs) > 0 {
+				b.buf.WriteString(fmt.Sprintf("\tpuls %s,pc\n", strings.Join(b.calleeSaveRegs, ",")))
+			} else {
+				b.buf.WriteString("\trts\n")
+			}
 		}
 	default:
 		log.Panicf("emitTerminator: unhandled %T", term)
@@ -2537,17 +2696,33 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\t; %s\n", i.Comment))
 
 	case *ir.ConstByte:
-		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", i.Val))
-		b.storeResult(id)
+		if _, inReg := b.globalRegs[id]; inReg {
+			b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", i.Val))
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			b.buf.WriteString(fmt.Sprintf("\tldb #%d\n", i.Val))
+			b.storeResult(id)
+		}
 
 	case *ir.ConstWord:
-		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", i.Val))
-		b.storeResult(id)
+		if _, inReg := b.globalRegs[id]; inReg {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", i.Val))
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", i.Val))
+			b.storeResult(id)
+		}
 
 	case *ir.Sizeof:
-		sz := b.getTypeSizeByType(i.TargetTyp)
-		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
-		b.storeResult(id)
+		if _, inReg := b.globalRegs[id]; inReg {
+			sz := b.getTypeSizeByType(i.TargetTyp)
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			sz := b.getTypeSizeByType(i.TargetTyp)
+			b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
+			b.storeResult(id)
+		}
 
 	case *ir.Load:
 		sz := b.getTypeSizeByType(i.Global.Typ)
@@ -2693,22 +2868,42 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 
 	case *ir.AddressOfGlobal:
-		if b.globalsAtY {
-			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
-		} else if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+		if _, inReg := b.globalRegs[id]; inReg {
+			if b.globalsAtY {
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
+			} else if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+			}
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			if b.globalsAtY {
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
+			} else if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+			}
+			b.storeResult(id)
 		}
-		b.storeResult(id)
 
 	case *ir.AddressOfFunc:
-		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", i.Func.EmitName()))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
+		if _, inReg := b.globalRegs[id]; inReg {
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", i.Func.EmitName()))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
+			}
+			b.storeResult(id)
+		} else if b.localAddressTaken[id] {
+			if b.picMode {
+				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", i.Func.EmitName()))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", i.Func.EmitName()))
+			}
+			b.storeResult(id)
 		}
-		b.storeResult(id)
 
 	case *ir.AddressOfLocal:
 		if b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[id] {
@@ -2954,11 +3149,22 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.fusedCompares = make(map[int]bool)
 	b.escapeRes = opt.AnalyzeEscape(f)
 	b.addressTaken = b.escapeRes.EscapingLocals
+	b.uses = b.countUses(f)
+	b.localAddressTaken = make(map[int]bool)
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			if aol, ok := instr.(*ir.AddressOfLocal); ok {
+				if loc, ok := aol.Local.(ir.Instruction); ok {
+					b.localAddressTaken[loc.GetID()] = true
+				}
+			}
+		}
+	}
 
 	b.globalRegs = b.AllocateRegisters(f)
 
 	if !b.NoFusedCompares {
-		uses := b.countUses(f)
+		uses := b.uses
 		for _, blk := range f.Blocks {
 			if br, ok := blk.Terminator.(*ir.Branch); ok {
 				condVal := br.Condition
@@ -3031,6 +3237,12 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if aol, ok := instr.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
 				continue
 			}
+			if !b.localAddressTaken[instr.GetID()] {
+				switch instr.(type) {
+				case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
+					continue
+				}
+			}
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				sz := b.getTypeSizeByType(instr.Type())
 				b.allocateSlot(sz, instr.GetID())
@@ -3047,11 +3259,20 @@ func (b *Backend) emitFunc(f *ir.Function) {
 					for _, edge := range phi.Edges {
 						if edge.Block == blk {
 							sz := b.getTypeSizeByType(phi.Typ)
-							destAddr := b.localAddr(phi.GetID())
+							var destAddr string
 							if len(b.globalRegs) > 0 {
 								if reg, ok := b.globalRegs[phi.GetID()]; ok {
 									destAddr = reg
 								}
+							}
+							if destAddr == "" {
+								canon := b.resolveSlot(phi.GetID())
+								if _, ok := b.slots[canon]; !ok {
+									if _, ok := b.slots[phi.GetID()]; !ok {
+										continue
+									}
+								}
+								destAddr = b.localAddr(phi.GetID())
 							}
 							srcAddr := b.getPhiSrcLoc(edge.Value)
 							moves = append(moves, opt.ParallelMove{
@@ -3088,13 +3309,36 @@ func (b *Backend) emitFunc(f *ir.Function) {
 
 	b.buf.WriteString(fmt.Sprintf("\n%s:\n", f.EmitName()))
 
+	usedRegs := make(map[string]bool)
+	for _, reg := range b.globalRegs {
+		usedRegs[reg] = true
+	}
+	saveU := usedRegs["u"] && !b.useFramePointer
+	saveY := usedRegs["y"] && !b.globalsAtY
+
 	if b.NoLeafOpt {
 		b.needsFP = b.useFramePointer
 	} else {
-		b.needsFP = b.useFramePointer && (b.stackSize > 0 || len(f.Parameters) > 0)
+		b.needsFP = b.useFramePointer && (b.stackSize > 0 || len(f.Parameters) > 0 || saveY)
 	}
+
+	b.saveYFP = saveY && b.needsFP
+	b.calleeSaveRegs = nil
+	if saveU && !b.needsFP {
+		b.calleeSaveRegs = append(b.calleeSaveRegs, "u")
+	}
+	if saveY && !b.needsFP {
+		b.calleeSaveRegs = append(b.calleeSaveRegs, "y")
+	}
+	b.savedRegBytes = len(b.calleeSaveRegs) * 2
+
 	if b.needsFP {
 		b.buf.WriteString("\tpshs u\n\ttfr s,u\n")
+		if b.saveYFP {
+			b.buf.WriteString("\tpshs y\n")
+		}
+	} else if len(b.calleeSaveRegs) > 0 {
+		b.buf.WriteString(fmt.Sprintf("\tpshs %s\n", strings.Join(b.calleeSaveRegs, ",")))
 	}
 	if b.stackSize > 0 {
 		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", b.stackSize))

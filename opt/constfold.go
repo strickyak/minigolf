@@ -70,6 +70,19 @@ func (p *ConstFoldPass) foldCast(i *ir.Cast) ir.Instruction {
 				Val:             uint64(cB.Val),
 			}
 		}
+	case "word_to_ptr", "ptr_to_word", "bitcast":
+		if cW, ok := i.Operand.(*ir.ConstWord); ok {
+			return &ir.ConstWord{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded " + i.Op},
+				Val:             cW.Val,
+			}
+		}
+		if cB, ok := i.Operand.(*ir.ConstByte); ok {
+			return &ir.ConstByte{
+				BaseInstruction: ir.BaseInstruction{ID: i.ID, Typ: i.Typ, Comment: "Folded " + i.Op},
+				Val:             cB.Val,
+			}
+		}
 	}
 	return nil
 }

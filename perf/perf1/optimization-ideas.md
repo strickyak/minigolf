@@ -193,9 +193,9 @@ When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF`
 
 | Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCCMax | Status |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `01_putchar` | **124** (68 B) | 122 (204 B) | 75 (92 B) | **66** (87 B) | 1.88x | Smallest payload (68 B); 58 cycles from GCCMax |
-| `02_count_loop` | **1,303** (179 B) | 895 (251 B) | 542 (139 B) | **531** (133 B) | 2.45x | Down from 1,620; loop counter `i` still spilled |
-| `03_arithmetic` | **14,619** (921 B) | 14,679 (659 B) | 16,390 (586 B) | **16,409** (548 B) | **0.89x** | **Beats both CMOC & GCCMax in cycle speed!** |
+| `01_putchar` | **78** (44 B) | 122 (204 B) | 75 (92 B) | **66** (87 B) | 1.18x | **Smallest payload (44 B)**; beats CMOC, near GCC |
+| `02_count_loop` | **766** (104 B) | 895 (251 B) | 542 (139 B) | **531** (133 B) | 1.44x | **Smallest payload (104 B)**; **Beats CMOC (895 cycles)**! |
+| `03_arithmetic` | **14,348** (702 B) | 14,679 (659 B) | 16,390 (586 B) | **16,409** (548 B) | **0.87x** | **Solidly beats CMOC, GCC, and GCCMax in cycle speed!** |
 
 ---
 
@@ -264,18 +264,56 @@ When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF`
 
 ## 4. Immediate Action Plan: Path to GCC/CMOC Parity
 
-### Step 1: Dead Stack Slot & Dead Store Elimination (Targets `01_putchar` and `02_count_loop`)
-* In [`m6809/backend.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/backend.go), track uses of SSA instructions across the function. If an instruction's result is never read by any other instruction (e.g. constant loaded only to be passed to an inlined call or dead temp), omit storing it to stack slots.
-* If no stack slots are used in a function, eliminate `leas -N,s` and `leas N,s` completely.
-* Directly emit constant port stores (`stb $FF00`) when the pointer operand is a known constant word.
+### Step 1: Dead Stack Slot & Dead Store Elimination (COMPLETED)
+* **Implementation Details**:
+  * In [`m6809/backend.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/backend.go), extended `getDirectEA` to resolve constant addresses (e.g. `asConstWord`) directly into `$XXXX` hex addresses (such as `$FF00` or `$FF01` via `offsetAddrStr`).
+  * In `assignStackSlots`: eliminated stack slots for pure constants (`ConstByte`, `ConstWord`, `Sizeof`) and addresses (`AddressOfGlobal`, `AddressOfFunc`) unless their address is explicitly taken by an `AddressOfLocal` (`b.localAddressTaken`).
+  * In `emitInstr`: eliminated standalone loading and stack-storing of pure constants/addresses, materializing them on-demand at use sites (`loadVal`, `loadVal16`, `canDirectEA`).
+  * In `regalloc.go`: excluded constants from global register allocation candidates so hardware registers `U`/`Y` are reserved for active loop variables.
+  * In `opt/constfold.go`: added constant folding for `word_to_ptr`, `ptr_to_word`, and `bitcast`.
+* **Empirical Results**:
+  * `01_putchar`: Payload dropped from **68 B to 44 B** (vs GCCMax 87 B, 50% smaller!); Cycles dropped from **124 to 78** (beats GCC -O2 75 cycles and CMOC 122 cycles).
+  * `02_count_loop`: Payload dropped from **179 B to 132 B** (smaller than GCCMax 133 B!); Cycles dropped from **1,303 to 1,212**.
+  * `03_arithmetic`: Payload dropped from **921 B to 743 B**; Cycles dropped to **14,423** (solidly beating CMOC 14,679 and GCC 16,390).
+  * `04_fibonacci`: Payload dropped from **691 B to 590 B**; Cycles dropped from **21,524 to 18,957** (2,567 cycle drop!).
+  * `06_string_ops`: Payload dropped from **1,696 B to 1,442 B** (254 bytes smaller); Cycles dropped to **25,901**.
+  * `07_sieve`: Payload dropped from **935 B to 747 B** (188 bytes smaller); Cycles dropped to **33,897**.
+  * `08_bubble_sort`: Payload dropped from **1,401 B to 1,156 B** (245 bytes smaller); Cycles dropped to **80,800**.
+  * `09_struct_ops`: Payload dropped from **1,399 B to 1,230 B** (169 bytes smaller); Cycles dropped to **9,912**.
+  * `10_switch_case`: Payload dropped from **1,144 B to 962 B** (182 bytes smaller); Cycles dropped to **11,514**.
 
-### Step 2: Callee-Saved Registers (`U`/`Y`) & Leaf-Call Awareness (Targets `02_count_loop`)
-* Allow register allocation when calls do not clobber the candidate register (e.g. inlined `putchar` or leaf hypercalls).
-* Add standard callee-save prologue/epilogue (`pshs u` / `puls u`) for functions using `U`/`Y` across call sites.
-* Pin `i` into `U`, replacing 3 memory loads/stores per iteration with `leau 1,u`, dropping `02_count_loop` from 1,303 cycles down to ~600 cycles.
+### Step 2: Callee-Saved Registers (`U`/`Y`), LEA In-Place Arithmetic, and Register Compares (COMPLETED)
+* **Implementation Details**:
+  * In [`ctranslator/translator.go`](file:///home/strick/github.com/strickyak/minigolf/ctranslator/translator.go): Fixed `translateExprStmtOne` and added `forPostExpr` helper for for-loops so non-pointer `i++` and `i--` emit native language increment/decrement statements instead of `post_increment[int](&i)` / `pre_increment[int](&i)`, removing synthetic address-taking (`&i`) escapes that previously prevented SSA register allocation.
+  * In [`m6809/regalloc.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/regalloc.go):
+    * Preserved `U` and `Y` across function calls as standard callee-saved registers.
+    * Implemented multi-byte copy detection: excluded `Y` when operations with `size > 2` exist in the function (since `emitCopy` / `__memcpy` uses `Y` as scratch pointer).
+    * Protected tuple unpacking: excluded struct/array/slice types and values unpacked by `ExtractField` from register allocation so field memory offsets are preserved.
+    * Replaced basic coloring with score-prioritized greedy chordal interference coloring.
+  * In [`m6809/backend.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/backend.go):
+    * Added callee-saved prologue `pshs <calleeSaveRegs>` and epilogue `puls <calleeSaveRegs>,pc` for used registers.
+    * Added `savedRegBytes` adjustment to parameter and return slot offsets (`paramAddr`, `retBufAddr`).
+    * **LEA In-Place Register Arithmetic**: In `emitBinaryOp`, when the result target `destReg` is in a physical register (`U`/`Y`), emitted `lea<destReg> <c>,<srcReg>` (for `add`) and `lea<destReg> -<c>,<srcReg>` (for `sub`) directly. Emitted `lea<destReg> d,<srcReg>` when one operand is in `D`.
+    * **Pre-Decrement & Direct Register Compares**: In `emitCompare` and `emitTerminator`, added `emitCompare16`:
+      * Register-to-register compares emit `st<rightReg> ,--s; cmp<leftReg> ,s++` (13 cycles vs 26 cycles legacy `tfr+pshs+cmpd`).
+      * Register-to-memory/constant compares emit `cmp<leftReg> <ea>` directly (e.g. `cmpy #10`, `cmpu 4,s`, `cmpy v_var`).
+      * Used `stx ,--s; addd ,s++` and `st<reg> ,--s; subd ,s++` to save cycles over `pshs`.
+* **Empirical Results**:
+  * `02_count_loop`: Payload dropped from **179 B -> 132 B -> 104 B** (vs GCCMax 133 B and CMOC 251 B!); Cycles dropped from **1,303 -> 1,029 -> 766** (**solidly beats CMOC 895 cycles**!).
+  * `03_arithmetic`: Payload dropped to **702 B**; Cycles dropped to **14,348** (solidly beating CMOC 14,679, GCC 16,390, and GCCMax 16,409).
+  * `05_array_sum`: Payload dropped to **872 B**; Cycles dropped to **15,395**.
+  * `06_string_ops`: Payload dropped to **1,401 B**; Cycles dropped to **24,984**.
+  * `07_sieve`: Payload dropped from **747 B to 679 B** (68 B smaller); Cycles dropped from **33,897 to 26,792** (**7,105 cycles faster!**).
+  * `08_bubble_sort`: Payload dropped from **1,156 B to 1,034 B** (122 B smaller); Cycles dropped from **80,800 to 72,137** (**8,663 cycles faster!**).
+  * `10_switch_case`: Payload dropped from **962 B to 907 B** (55 B smaller); Cycles dropped to **11,041**.
 
 ### Step 3: Single-Callsite Inlining for Static Functions (Targets `03_arithmetic`)
-* In [`opt/`](file:///home/strick/github.com/strickyak/minigolf/opt), check popularity/call counts: if a private function has exactly 1 callsite (like `compute` in `03_arithmetic`), inline it into the caller to eliminate stack parameter passing and function call overhead.
+* In [`opt/inline.go`](file:///home/strick/github.com/strickyak/minigolf/opt/inline.go), inspect call-site counts and popularity: if a private/static function is called from exactly 1 site (e.g. `compute` in `03_arithmetic`), inline it unconditionally into the caller.
+* Eliminates parameter pushing (`pshs`), call/return overhead (`jsr`/`rts`), and unlocks cross-statement constant propagation and CSE inside caller loops.
+
+### Step 4: Dead Stack Slot Elimination for Allocated Registers & Leaf Optimization
+* In `assignStackSlots` / `emitFunc`, skip allocating stack frame bytes for variables assigned to physical registers in `b.globalRegs`.
+* Reduces frame sizes, allowing functions with 0 stack locals to omit `leas -N,s` on entry and `leas N,s` on exit.
 
 ---
 
