@@ -1,0 +1,174 @@
+package rbtree
+
+const RED = 1
+const BLACK = 0
+
+type Node[T any] struct {
+	Key   string
+	Val   T
+	Color byte
+	Left  *Node[T]
+	Right *Node[T]
+}
+
+func allocNode[T any](key string, val T, color byte) *Node[T] {
+	p := (*Node[T])(zalloc(sizeof[Node[T]]()))
+	p.Key = key
+	p.Val = val
+	p.Color = color
+	return p
+}
+
+func isRed[T any](h *Node[T]) bool {
+	if h == nil {
+		return false
+	}
+	return h.Color == RED
+}
+
+func rotateLeft[T any](h *Node[T]) *Node[T] {
+	x := h.Right
+	h.Right = x.Left
+	x.Left = h
+	x.Color = h.Color
+	h.Color = RED
+	return x
+}
+
+func rotateRight[T any](h *Node[T]) *Node[T] {
+	x := h.Left
+	h.Left = x.Right
+	x.Right = h
+	x.Color = h.Color
+	h.Color = RED
+	return x
+}
+
+func flipColors[T any](h *Node[T]) {
+	h.Color ^= 1
+	if h.Left != nil {
+		h.Left.Color ^= 1
+	}
+	if h.Right != nil {
+		h.Right.Color ^= 1
+	}
+}
+
+func insertNode[T any](h *Node[T], key string, val T, isNew *byte) *Node[T] {
+	if h == nil {
+		*isNew = 1
+		return allocNode[T](key, val, RED)
+	}
+
+	if key < h.Key {
+		h.Left = insertNode[T](h.Left, key, val, isNew)
+	} else if key > h.Key {
+		h.Right = insertNode[T](h.Right, key, val, isNew)
+	} else {
+		h.Val = val
+		return h
+	}
+
+	if isRed[T](h.Right) && !isRed[T](h.Left) {
+		h = rotateLeft[T](h)
+	}
+	if isRed[T](h.Left) && isRed[T](h.Left.Left) {
+		h = rotateRight[T](h)
+	}
+	if isRed[T](h.Left) && isRed[T](h.Right) {
+		flipColors[T](h)
+	}
+
+	return h
+}
+
+type RBTree[T any] struct {
+	Root *Node[T]
+	Len  word
+}
+
+func New[T any]() RBTree[T] {
+	var t RBTree[T]
+	return t
+}
+
+func (t *RBTree[T]) Size() word {
+	return t.Len
+}
+
+func (t *RBTree[T]) Contains(key string) bool {
+	return t.GetPtr(key) != nil
+}
+
+func (t *RBTree[T]) GetPtr(key string) *T {
+	curr := t.Root
+	for curr != nil {
+		if key < curr.Key {
+			curr = curr.Left
+		} else if key > curr.Key {
+			curr = curr.Right
+		} else {
+			return &curr.Val
+		}
+	}
+	return nil
+}
+
+func (t *RBTree[T]) Get(key string) (T, bool) {
+	p := t.GetPtr(key)
+	if p != nil {
+		return *p, true
+	}
+	var zero T
+	return zero, false
+}
+
+func (t *RBTree[T]) Put(key string, val T) {
+	var isNew byte = 0
+	t.Root = insertNode[T](t.Root, key, val, &isNew)
+	t.Root.Color = BLACK
+	if isNew != 0 {
+		t.Len++
+	}
+}
+
+func (n *Node[T]) collectKeys(out *slice[string]) {
+	if n == nil { return }
+	n.Left.collectKeys(out)
+	out.Append(n.Key)
+	n.Right.collectKeys(out)
+}
+
+func (t *RBTree[T]) Keys() slice[string] {
+	var s slice[string]
+	if t.Root != nil {
+		t.Root.collectKeys(&s)
+	}
+	return s
+}
+
+func (n *Node[T]) inOrder(visit func(string, T)) {
+	if n == nil { return }
+	n.Left.inOrder(visit)
+	visit(n.Key, n.Val)
+	n.Right.inOrder(visit)
+}
+
+func (t *RBTree[T]) InOrder(visit func(string, T)) {
+	if t.Root != nil {
+		t.Root.inOrder(visit)
+	}
+}
+
+func (n *Node[T]) printInOrder() {
+	if n == nil { return }
+	n.Left.printInOrder()
+	println(n.Key, n.Val)
+	n.Right.printInOrder()
+}
+
+func (t *RBTree[T]) Print() {
+	if t.Root != nil {
+		t.Root.printInOrder()
+	}
+}

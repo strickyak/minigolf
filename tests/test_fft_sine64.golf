@@ -9,6 +9,7 @@ type C = complex.Complex
 type F = floating.FloatingPoint
 
 func main() {
+	var table slice[F]
 	var in slice[C]
 	tau := math.Tau()
 	n64 := floating.FromWord(64)
@@ -18,7 +19,13 @@ func main() {
 		fi := floating.FromWord(i)
 		theta := floating.Div(floating.Mul(fi, tau), n64)
 		s := math.Sin(theta)
+		table.Append(s)
 		in.Append(complex.New(s, zero))
+	}
+
+	println("--- Wave Table ---")
+	for i := range table.Len {
+		println(i, floating.Format(table[i]))
 	}
 
 	fwd := fft.Forward(in)
