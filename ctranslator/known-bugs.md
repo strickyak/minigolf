@@ -141,3 +141,16 @@ This document catalogs all known bugs, translation quirks, and architectural lim
   extern void free(void* p);
   extern void putchar(char ch);
   ```
+
+
+
+# FIXED?
+
+ M6809 Backend Register Y Callee-Save Fix
+
+  • Root Cause: In backend.go and regalloc.go, when a function performed multi-byte copies (emitCopy / __memcpy / InsertField /
+  InsertElement), physical register Y was used as a scratch register. The register allocator excluded Y from SSA allocation in such
+  functions, but backend.go only checked usedRegs["y"] when deciding whether to save Y in the function prologue. Consequently,
+  functions like lexer_next clobbered the caller's live value in Y (e.g. left in parse_expr).
+  • Fix: Added regalloc.go:29 and updated saveY in backend.go:3702 to save Y whenever (usedRegs["y"] || b.functionClobbersY(f)) &&
+  !b.globalsAtY.
