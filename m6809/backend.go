@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -138,30 +139,30 @@ func (b *Backend) getFieldOffsetAndSize(structTyp ir.Type, fieldIndex int) (int,
 }
 
 type Backend struct {
-	program         *ir.Program
-	useFramePointer bool
-	globalsAtY      bool
-	picMode         bool
-	frameOffset     int
-	buf             bytes.Buffer
-	dataBuf         bytes.Buffer
-	rodataBuf       bytes.Buffer
-	helpersBuf      bytes.Buffer
-	helpersEmitted  map[string]bool
-	stackSize       int
-	pushedBytes     int
-	slots           map[int]int    // SSA value ID -> byte offset in local frame (0 <= offset < stackSize)
-	slotSizes       map[int]int    // SSA value ID -> size in bytes
-	paramOffsets    map[string]int // param name -> byte offset in arguments block (0 for arg0)
-	jmpSlots        map[int]int    // setjmp slot -> byte offset in local frame
-	globalOffsets   map[string]int // global name -> offset from Y (when globalsAtY is true)
-	fmtCount        int
-	lblCount        int
-	retSlot         int // byte offset in arguments block where return buffer is located (if retSize > 2)
-	f               *ir.Function
-	fusedCompares   map[int]bool
-	addressTaken    map[int]bool
-	escapeRes       opt.EscapeAnalysisResult
+	program           *ir.Program
+	useFramePointer   bool
+	globalsAtY        bool
+	picMode           bool
+	frameOffset       int
+	buf               bytes.Buffer
+	dataBuf           bytes.Buffer
+	rodataBuf         bytes.Buffer
+	helpersBuf        bytes.Buffer
+	helpersEmitted    map[string]bool
+	stackSize         int
+	pushedBytes       int
+	slots             map[int]int    // SSA value ID -> byte offset in local frame (0 <= offset < stackSize)
+	slotSizes         map[int]int    // SSA value ID -> size in bytes
+	paramOffsets      map[string]int // param name -> byte offset in arguments block (0 for arg0)
+	jmpSlots          map[int]int    // setjmp slot -> byte offset in local frame
+	globalOffsets     map[string]int // global name -> offset from Y (when globalsAtY is true)
+	fmtCount          int
+	lblCount          int
+	retSlot           int // byte offset in arguments block where return buffer is located (if retSize > 2)
+	f                 *ir.Function
+	fusedCompares     map[int]bool
+	addressTaken      map[int]bool
+	escapeRes         opt.EscapeAnalysisResult
 	needsFP           bool
 	uses              map[int]int
 	localAddressTaken map[int]bool
@@ -169,11 +170,12 @@ type Backend struct {
 	curInstr ir.Instruction
 	valInD   ir.Value
 	valInB   ir.Value
+	instrs   map[int]ir.Instruction
 
-	NoBranchLayout  bool
-	NoFusedCompares bool
-	NoLeafOpt       bool
-	NoSlotSharing   bool
+	NoBranchLayout    bool
+	NoFusedCompares   bool
+	NoLeafOpt         bool
+	NoSlotSharing     bool
 	NoLocalRegAlloc   bool
 	NoCSSALowering    bool
 	NoGlobalRegAlloc  bool
@@ -397,7 +399,6 @@ func (b *Backend) panicAddr() string {
 	return "v_prelude._panic_"
 }
 
-
 func (b *Backend) getAddrStr(val ir.Value) string {
 	val = b.resolveVal(val)
 	switch v := val.(type) {
@@ -417,6 +418,188 @@ func (b *Backend) getAddrStr(val ir.Value) string {
 		log.Panicf("getAddrStr: unhandled type %T (%v)", val, val)
 	}
 	return ""
+}
+
+func cleanName(name string) string {
+	if idx := strings.Index(name, "$"); idx != -1 {
+		return name[:idx]
+	}
+	return name
+}
+
+func (b *Backend) getValName(id int) string {
+	if b.instrs != nil {
+		if instr, ok := b.instrs[id]; ok {
+			if n := instr.GetName(); n != "" {
+				return cleanName(n)
+			}
+		}
+	}
+	if b.f != nil && b.f.SlotAlias != nil {
+		if canon, ok := b.f.SlotAlias[id]; ok && canon != id {
+			if instr, ok := b.instrs[canon]; ok {
+				if n := instr.GetName(); n != "" {
+					return cleanName(n)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func (b *Backend) describeSlot(id int) string {
+	name := b.getValName(id)
+	if name != "" {
+		return fmt.Sprintf("'%s' (v%d)", name, id)
+	}
+	return fmt.Sprintf("v%d", id)
+}
+
+func (b *Backend) describeVal(val ir.Value) string {
+	if val == nil {
+		return "nil"
+	}
+	val = b.resolveVal(val)
+	switch v := val.(type) {
+	case *ir.ConstByte:
+		return fmt.Sprintf("#%d", v.Val)
+	case *ir.ConstWord:
+		return fmt.Sprintf("#%d", v.Val)
+	case *ir.Parameter:
+		return fmt.Sprintf("param '%s'", v.Name)
+	case *ir.Global:
+		return fmt.Sprintf("global '%s'", v.Name)
+	case *ir.Sizeof:
+		return fmt.Sprintf("sizeof(%s)", v.TargetTyp.Name)
+	case *ir.AddressOfGlobal:
+		return fmt.Sprintf("&global '%s'", v.Global.Name)
+	case *ir.AddressOfLocal:
+		if loc, ok := v.Local.(ir.Instruction); ok {
+			return fmt.Sprintf("&local %s", b.describeSlot(loc.GetID()))
+		}
+		return "&local"
+	case *ir.AddressOfFunc:
+		return fmt.Sprintf("&func '%s'", v.Func.Name)
+	case ir.Instruction:
+		id := v.GetID()
+		name := b.getValName(id)
+		if len(b.globalRegs) > 0 {
+			if reg, ok := b.globalRegs[id]; ok {
+				if name != "" {
+					return fmt.Sprintf("%s (%s)", strings.ToUpper(reg), name)
+				}
+				return fmt.Sprintf("%s (v%d)", strings.ToUpper(reg), id)
+			}
+		}
+		if name != "" {
+			return fmt.Sprintf("'%s' (v%d)", name, id)
+		}
+		return fmt.Sprintf("v%d", id)
+	default:
+		return val.String()
+	}
+}
+
+func (b *Backend) emitFunctionHeader(f *ir.Function) {
+	b.buf.WriteString("; " + strings.Repeat("=", 76) + "\n")
+	var paramStrs []string
+	for _, p := range f.Parameters {
+		paramStrs = append(paramStrs, fmt.Sprintf("%s: %s", p.Name, p.Typ.Name))
+	}
+	retType := f.ReturnType.Name
+	if retType == "" {
+		retType = "void"
+	}
+	b.buf.WriteString(fmt.Sprintf("; func %s(%s) %s\n", f.Name, strings.Join(paramStrs, ", "), retType))
+	b.buf.WriteString(fmt.Sprintf("; Frame: %d bytes locals", b.stackSize))
+	if len(b.calleeSaveRegs) > 0 {
+		b.buf.WriteString(fmt.Sprintf(", saved regs: [%s]", strings.Join(b.calleeSaveRegs, ", ")))
+	}
+	if b.needsFP {
+		b.buf.WriteString(", frame pointer: U")
+	}
+	b.buf.WriteString("\n")
+
+	if len(f.Parameters) > 0 {
+		b.buf.WriteString("; Parameters:\n")
+		for _, p := range f.Parameters {
+			addr := b.paramAddr(p.Name)
+			b.buf.WriteString(fmt.Sprintf(";   %-8s : %s (%s)\n", addr, p.Name, p.Typ.Name))
+		}
+	}
+
+	type slotGroup struct {
+		addr  string
+		names []string
+	}
+	slotMap := make(map[int]*slotGroup)
+	var slotOrder []int
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			id := instr.GetID()
+			canon := b.resolveSlot(id)
+			if off, ok := b.slots[canon]; ok {
+				sz := b.slotSizes[canon]
+				if sz == 0 {
+					sz = b.slotSizes[id]
+				}
+				addr := b.offsetAddr(off, sz)
+				grp, exists := slotMap[off]
+				if !exists {
+					grp = &slotGroup{addr: addr}
+					slotMap[off] = grp
+					slotOrder = append(slotOrder, off)
+				}
+				name := b.describeSlot(id)
+				found := false
+				for _, n := range grp.names {
+					if n == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					grp.names = append(grp.names, name)
+				}
+			}
+		}
+	}
+	if len(slotOrder) > 0 {
+		sort.Ints(slotOrder)
+		b.buf.WriteString("; Locals:\n")
+		for _, off := range slotOrder {
+			grp := slotMap[off]
+			b.buf.WriteString(fmt.Sprintf(";   %-8s : %s\n", grp.addr, strings.Join(grp.names, ", ")))
+		}
+	}
+
+	if len(b.globalRegs) > 0 {
+		b.buf.WriteString("; Register Allocations:\n")
+		regGroups := make(map[string][]string)
+		var regNames []string
+		for id, reg := range b.globalRegs {
+			regUpper := strings.ToUpper(reg)
+			if _, exists := regGroups[regUpper]; !exists {
+				regNames = append(regNames, regUpper)
+			}
+			desc := b.describeSlot(id)
+			found := false
+			for _, d := range regGroups[regUpper] {
+				if d == desc {
+					found = true
+					break
+				}
+			}
+			if !found {
+				regGroups[regUpper] = append(regGroups[regUpper], desc)
+			}
+		}
+		sort.Strings(regNames)
+		for _, r := range regNames {
+			b.buf.WriteString(fmt.Sprintf(";   %-8s : %s\n", r, strings.Join(regGroups[r], ", ")))
+		}
+	}
+	b.buf.WriteString("; " + strings.Repeat("=", 76) + "\n")
 }
 
 func offsetAddrStr(valStr string, offset int) string {
@@ -697,7 +880,27 @@ func (b *Backend) callHelper(name string) {
 		b.helpersEmitted = make(map[string]bool)
 	}
 	b.helpersEmitted[name] = true
-	b.emitCall(name)
+	b.clobberAllRegs()
+	var comment string
+	switch name {
+	case "__mul16":
+		comment = "\t; D = D * X"
+	case "__div16":
+		comment = "\t; D = D / X"
+	case "__mod16":
+		comment = "\t; D = D % X"
+	case "__divmod16":
+		comment = "\t; D = D / X, X = D % X"
+	case "__memcpy":
+		comment = "\t; copy D bytes from X to Y"
+	case "__memset0":
+		comment = "\t; zero D bytes at X"
+	}
+	if b.picMode {
+		b.buf.WriteString(fmt.Sprintf("\tlbsr %s%s\n", name, comment))
+	} else {
+		b.buf.WriteString(fmt.Sprintf("\tjsr %s%s\n", name, comment))
+	}
 }
 
 func (b *Backend) resolveVal(val ir.Value) ir.Value {
@@ -734,7 +937,6 @@ func (b *Backend) getValSize(val ir.Value) int {
 	}
 }
 
-
 func (b *Backend) loadVal(val ir.Value) {
 	val = b.resolveVal(val)
 	if !b.NoLocalRegAlloc && b.canTrack(val) {
@@ -748,7 +950,7 @@ func (b *Backend) loadVal(val ir.Value) {
 	}
 	if inst, ok := val.(ir.Instruction); ok && len(b.globalRegs) > 0 {
 		if reg, ok := b.globalRegs[inst.GetID()]; ok {
-			b.buf.WriteString(fmt.Sprintf("\ttfr %s,d\n", reg))
+			b.buf.WriteString(fmt.Sprintf("\ttfr %s,d\t; D = %s\n", reg, b.describeVal(val)))
 			if !b.NoLocalRegAlloc {
 				b.setD(val)
 			}
@@ -762,14 +964,14 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", v.Val))
 	case *ir.Sizeof:
 		sz := b.getTypeSizeByType(v.TargetTyp)
-		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n", sz))
+		b.buf.WriteString(fmt.Sprintf("\tldd #%d\t; sizeof(%s)\n", sz, v.TargetTyp.Name))
 	case *ir.Parameter:
 		sz := b.getTypeSizeByType(v.Typ)
 		addr := b.paramAddr(v.Name)
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb %s\n", addr))
+			b.buf.WriteString(fmt.Sprintf("\tldb %s\t; param '%s'\n", addr, v.Name))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", addr))
+			b.buf.WriteString(fmt.Sprintf("\tldd %s\t; param '%s'\n", addr, v.Name))
 		}
 	case *ir.AddressOfLocal:
 		b.emitLoadAddr("x", b.getAddrStr(v.Local))
@@ -778,36 +980,37 @@ func (b *Backend) loadVal(val ir.Value) {
 		if b.globalsAtY {
 			offset := b.globalOffsets[v.Global.Name]
 			if offset == 0 {
-				b.buf.WriteString("\ttfr y,d\n")
+				b.buf.WriteString(fmt.Sprintf("\ttfr y,d\t; &global '%s'\n", v.Global.Name))
 			} else {
-				b.buf.WriteString(fmt.Sprintf("\ttfr y,d\n\taddd #%d\n", offset))
+				b.buf.WriteString(fmt.Sprintf("\ttfr y,d\n\taddd #%d\t; &global '%s'\n", offset, v.Global.Name))
 			}
 		} else if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", v.Global.Name))
+			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\t; &global '%s'\n", v.Global.Name, v.Global.Name))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", v.Global.Name))
+			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\t; &global '%s'\n", v.Global.Name, v.Global.Name))
 		}
 	case *ir.AddressOfFunc:
 		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\n", v.Func.EmitName()))
+			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\t; &func '%s'\n", v.Func.EmitName(), v.Func.Name))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", v.Func.EmitName()))
+			b.buf.WriteString(fmt.Sprintf("\tldd #%s\t; &func '%s'\n", v.Func.EmitName(), v.Func.Name))
 		}
 	case ir.Instruction:
 		sz := b.getTypeSizeByType(v.Type())
 		addr := b.localAddr(v.GetID())
+		desc := b.describeSlot(v.GetID())
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb %s\n", addr))
+			b.buf.WriteString(fmt.Sprintf("\tldb %s\t; %s\n", addr, desc))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", addr))
+			b.buf.WriteString(fmt.Sprintf("\tldd %s\t; %s\n", addr, desc))
 		}
 	case *ir.Global:
 		sz := b.getTypeSizeByType(v.Typ)
 		addr := b.getAddrStr(v)
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tldb %s\n", addr))
+			b.buf.WriteString(fmt.Sprintf("\tldb %s\t; global '%s'\n", addr, v.Name))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tldd %s\n", addr))
+			b.buf.WriteString(fmt.Sprintf("\tldd %s\t; global '%s'\n", addr, v.Name))
 		}
 	default:
 		log.Panicf("loadVal: unhandled %T (%v)", val, val)
@@ -841,7 +1044,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 			if srcReg == reg {
 				return
 			}
-			b.buf.WriteString(fmt.Sprintf("\ttfr %s,%s\n", srcReg, reg))
+			b.buf.WriteString(fmt.Sprintf("\ttfr %s,%s\t; %s = %s\n", srcReg, reg, strings.ToUpper(reg), b.describeVal(val)))
 			if !b.NoLocalRegAlloc && reg == "d" {
 				b.setD(val)
 			}
@@ -855,7 +1058,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, v.Val))
 	case *ir.Sizeof:
 		sz := b.getTypeSizeByType(v.TargetTyp)
-		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\n", reg, sz))
+		b.buf.WriteString(fmt.Sprintf("\tld%s #%d\t; sizeof(%s)\n", reg, sz, v.TargetTyp.Name))
 	case *ir.Parameter:
 		if b.getValSize(v) == 1 {
 			b.loadVal(v)
@@ -865,7 +1068,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 			}
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.paramAddr(v.Name)))
+			b.buf.WriteString(fmt.Sprintf("\tld%s %s\t; param '%s'\n", reg, b.paramAddr(v.Name), v.Name))
 		}
 	case *ir.AddressOfGlobal:
 		b.emitLoadAddr(reg, b.getAddrStr(v.Global))
@@ -873,9 +1076,9 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		b.emitLoadAddr(reg, b.getAddrStr(v.Local))
 	case *ir.AddressOfFunc:
 		if b.picMode {
-			b.buf.WriteString(fmt.Sprintf("\tlea%s %s,pcr\n", reg, v.Func.EmitName()))
+			b.buf.WriteString(fmt.Sprintf("\tlea%s %s,pcr\t; &func '%s'\n", reg, v.Func.EmitName(), v.Func.Name))
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tld%s #%s\n", reg, v.Func.EmitName()))
+			b.buf.WriteString(fmt.Sprintf("\tld%s #%s\t; &func '%s'\n", reg, v.Func.EmitName(), v.Func.Name))
 		}
 	case ir.Instruction:
 		if b.getValSize(v) == 1 {
@@ -886,7 +1089,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 			}
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.localAddr(v.GetID())))
+			b.buf.WriteString(fmt.Sprintf("\tld%s %s\t; %s\n", reg, b.localAddr(v.GetID()), b.describeSlot(v.GetID())))
 		}
 	case *ir.Global:
 		if b.getValSize(v) == 1 {
@@ -897,7 +1100,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 			}
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tld%s %s\n", reg, b.getAddrStr(v)))
+			b.buf.WriteString(fmt.Sprintf("\tld%s %s\t; global '%s'\n", reg, b.getAddrStr(v), v.Name))
 		}
 	default:
 		b.loadVal(val)
@@ -913,9 +1116,10 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 }
 
 func (b *Backend) storeResult(id int) {
+	desc := b.describeSlot(id)
 	if len(b.globalRegs) > 0 {
 		if reg, ok := b.globalRegs[id]; ok {
-			b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
+			b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\t; %s = %s\n", reg, strings.ToUpper(reg), desc))
 			if !b.NoLocalRegAlloc {
 				if b.curInstr != nil && b.curInstr.GetID() == id {
 					b.setD(b.curInstr)
@@ -935,7 +1139,7 @@ func (b *Backend) storeResult(id int) {
 	sz := b.slotSizes[id]
 	addr := b.localAddr(id)
 	if sz == 1 {
-		b.buf.WriteString(fmt.Sprintf("\tstb %s\n", addr))
+		b.buf.WriteString(fmt.Sprintf("\tstb %s\t; store %s\n", addr, desc))
 		if !b.NoLocalRegAlloc {
 			if b.curInstr != nil && b.curInstr.GetID() == id {
 				b.setB(b.curInstr)
@@ -944,7 +1148,7 @@ func (b *Backend) storeResult(id int) {
 			}
 		}
 	} else {
-		b.buf.WriteString(fmt.Sprintf("\tstd %s\n", addr))
+		b.buf.WriteString(fmt.Sprintf("\tstd %s\t; store %s\n", addr, desc))
 		if !b.NoLocalRegAlloc {
 			if b.curInstr != nil && b.curInstr.GetID() == id {
 				b.setD(b.curInstr)
@@ -1068,6 +1272,7 @@ func (b *Backend) computeElementAddr(destReg string, arrayVal ir.Value, indexVal
 }
 
 func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
+	b.buf.WriteString(fmt.Sprintf("\t; %s = %s %s %s\n", b.describeSlot(i.GetID()), b.describeVal(i.Left), i.Op, b.describeVal(i.Right)))
 	sz := b.getTypeSizeByType(i.Typ)
 	leftVal := i.Left
 	rightVal := b.resolveVal(i.Right)
@@ -1748,7 +1953,7 @@ func (b *Backend) emitCallInstr(i *ir.Call) {
 
 	if retSize > 2 {
 		alignedRet := align(retSize)
-		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", alignedRet))
+		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\t; reserve %d bytes for return buffer\n", alignedRet, alignedRet))
 		b.pushBytes(alignedRet)
 	}
 
@@ -1758,19 +1963,31 @@ func (b *Backend) emitCallInstr(i *ir.Call) {
 		sz := b.getTypeSizeByType(arg.Type())
 		aligned := align(sz)
 		totalArgBytes += aligned
+		argDesc := b.describeVal(arg)
+		paramName := ""
+		if idx < len(i.Func.Parameters) {
+			paramName = i.Func.Parameters[idx].Name
+		}
+		var comment string
+		if paramName != "" {
+			comment = fmt.Sprintf("push arg %d '%s' (%s)", idx, paramName, argDesc)
+		} else {
+			comment = fmt.Sprintf("push arg %d (%s)", idx, argDesc)
+		}
+
 		if sz == 1 {
 			b.loadVal(arg)
-			b.buf.WriteString("\tpshs b\n")
+			b.buf.WriteString(fmt.Sprintf("\tpshs b\t; %s\n", comment))
 			b.pushBytes(1)
 		} else if sz == 2 {
 			b.loadVal(arg)
 			if b.getValSize(arg) == 1 {
 				b.buf.WriteString("\tclra\n")
 			}
-			b.buf.WriteString("\tpshs d\n")
+			b.buf.WriteString(fmt.Sprintf("\tpshs d\t; %s\n", comment))
 			b.pushBytes(2)
 		} else {
-			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", aligned))
+			b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\t; %s\n", aligned, comment))
 			b.pushBytes(aligned)
 			b.emitLoadAddr("y", b.getAddrStr(arg))
 			b.buf.WriteString("\tleax ,s\n")
@@ -1778,10 +1995,11 @@ func (b *Backend) emitCallInstr(i *ir.Call) {
 		}
 	}
 
+	b.buf.WriteString(fmt.Sprintf("\t; call %s\n", i.Func.Name))
 	b.emitCall(i.Func.EmitName())
 
 	if totalArgBytes > 0 {
-		b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", totalArgBytes))
+		b.buf.WriteString(fmt.Sprintf("\tleas %d,s\t; pop %d bytes args\n", totalArgBytes, totalArgBytes))
 		b.popBytes(totalArgBytes)
 	}
 
@@ -2662,6 +2880,7 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 
 	case *ir.Return:
 		if t.Val != nil {
+			b.buf.WriteString(fmt.Sprintf("\t; return %s\n", b.describeVal(t.Val)))
 			retSize := b.getTypeSizeByType(t.Val.Type())
 			if retSize == 1 {
 				b.loadVal(t.Val)
@@ -2679,18 +2898,18 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 		}
 		if b.needsFP {
 			if b.saveYFP {
-				b.buf.WriteString("\tleas -2,u\n\tpuls y\n\tpuls u,pc\n")
+				b.buf.WriteString("\tleas -2,u\t; restore frame and return\n\tpuls y\n\tpuls u,pc\n")
 			} else {
-				b.buf.WriteString("\tleas 0,u\n\tpuls u,pc\n")
+				b.buf.WriteString("\tleas 0,u\t; restore frame and return\n\tpuls u,pc\n")
 			}
 		} else {
 			if b.stackSize > 0 {
-				b.buf.WriteString(fmt.Sprintf("\tleas %d,s\n", b.stackSize))
+				b.buf.WriteString(fmt.Sprintf("\tleas %d,s\t; free local frame\n", b.stackSize))
 			}
 			if len(b.calleeSaveRegs) > 0 {
-				b.buf.WriteString(fmt.Sprintf("\tpuls %s,pc\n", strings.Join(b.calleeSaveRegs, ",")))
+				b.buf.WriteString(fmt.Sprintf("\tpuls %s,pc\t; restore regs and return\n", strings.Join(b.calleeSaveRegs, ",")))
 			} else {
-				b.buf.WriteString("\trts\n")
+				b.buf.WriteString("\trts\t; return\n")
 			}
 		}
 	default:
@@ -3167,13 +3386,18 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	b.addressTaken = b.escapeRes.EscapingLocals
 	b.uses = b.countUses(f)
 	b.localAddressTaken = make(map[int]bool)
+	b.instrs = make(map[int]ir.Instruction)
 	for _, blk := range f.Blocks {
 		for _, instr := range blk.Instructions {
+			b.instrs[instr.GetID()] = instr
 			if aol, ok := instr.(*ir.AddressOfLocal); ok {
 				if loc, ok := aol.Local.(ir.Instruction); ok {
 					b.localAddressTaken[loc.GetID()] = true
 				}
 			}
+		}
+		if blk.Terminator != nil {
+			b.instrs[blk.Terminator.GetID()] = blk.Terminator
 		}
 	}
 
@@ -3323,8 +3547,6 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		b.cssaScratchOffset = -1
 	}
 
-	b.buf.WriteString(fmt.Sprintf("\n%s:\n", f.EmitName()))
-
 	usedRegs := make(map[string]bool)
 	for _, reg := range b.globalRegs {
 		usedRegs[reg] = true
@@ -3348,6 +3570,10 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	}
 	b.savedRegBytes = len(b.calleeSaveRegs) * 2
 
+	b.buf.WriteString("\n")
+	b.emitFunctionHeader(f)
+	b.buf.WriteString(fmt.Sprintf("%s:\n", f.EmitName()))
+
 	if b.needsFP {
 		b.buf.WriteString("\tpshs u\n\ttfr s,u\n")
 		if b.saveYFP {
@@ -3357,7 +3583,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		b.buf.WriteString(fmt.Sprintf("\tpshs %s\n", strings.Join(b.calleeSaveRegs, ",")))
 	}
 	if b.stackSize > 0 {
-		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\n", b.stackSize))
+		b.buf.WriteString(fmt.Sprintf("\tleas -%d,s\t; allocate %d bytes local frame\n", b.stackSize, b.stackSize))
 	}
 
 	for idx, blk := range f.Blocks {

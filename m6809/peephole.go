@@ -33,6 +33,33 @@ var condInverses = map[string]string{
 	"lbhs": "lblo",
 }
 
+func getComment(line string) string {
+	if idx := strings.Index(line, ";"); idx != -1 {
+		return strings.TrimSpace(line[idx+1:])
+	}
+	return ""
+}
+
+func combineComments(c1, c2 string) string {
+	c1 = strings.TrimSpace(c1)
+	c2 = strings.TrimSpace(c2)
+	if c1 == "" {
+		return c2
+	}
+	if c2 == "" || c1 == c2 {
+		return c1
+	}
+	return c1 + " | " + c2
+}
+
+func withComment(code, comment string) string {
+	comment = strings.TrimSpace(comment)
+	if comment == "" {
+		return code
+	}
+	return code + "\t; " + comment
+}
+
 func peepholeOptimize(asm string) string {
 	if os.Getenv("NO_PEEPHOLE6809") != "" {
 		*noPeephole6809 = true
@@ -98,7 +125,8 @@ func peepholeOptimize(asm string) string {
 					continue
 				}
 				if codePart == "puls x" && prevCode == "pshs d" {
-					out[prevIdx] = "\ttfr d,x\t; peephole: pshs d + puls x"
+					c := combineComments(getComment(out[prevIdx]), getComment(line))
+					out[prevIdx] = withComment("\ttfr d,x", combineComments(c, "peephole: pshs d + puls x"))
 					changed = true
 					continue
 				}
@@ -115,7 +143,8 @@ func peepholeOptimize(asm string) string {
 									changed = true
 									continue
 								} else {
-									out[prevIdx] = fmt.Sprintf("\tleas %d,s", sum)
+									c := combineComments(getComment(out[prevIdx]), getComment(line))
+									out[prevIdx] = withComment(fmt.Sprintf("\tleas %d,s", sum), c)
 									changed = true
 									continue
 								}
@@ -143,7 +172,6 @@ func peepholeOptimize(asm string) string {
 				}
 
 				// Redundant TST
-
 
 				// Redundant Store
 				if strings.HasPrefix(codePart, "std ") || strings.HasPrefix(codePart, "stb ") || strings.HasPrefix(codePart, "sta ") || strings.HasPrefix(codePart, "stx ") || strings.HasPrefix(codePart, "sty ") || strings.HasPrefix(codePart, "stu ") {
@@ -236,36 +264,41 @@ func peepholeOptimize(asm string) string {
 				// Autoincrement / Autodecrement Addressing
 				if codePart == "leax 1,x" {
 					if prevCode == "ldb ,x" || prevCode == "stb ,x" || prevCode == "lda ,x" || prevCode == "sta ,x" {
-						out[prevIdx] = "\t" + prevCode[:3] + " ,x+\t; peephole: auto-increment"
+						c := combineComments(getComment(out[prevIdx]), "peephole: auto-increment")
+						out[prevIdx] = withComment("\t"+prevCode[:3]+" ,x+", c)
 						changed = true
 						continue
 					}
 				}
 				if codePart == "leax 2,x" {
 					if prevCode == "ldd ,x" || prevCode == "std ,x" {
-						out[prevIdx] = "\t" + prevCode[:3] + " ,x++\t; peephole: auto-increment"
+						c := combineComments(getComment(out[prevIdx]), "peephole: auto-increment")
+						out[prevIdx] = withComment("\t"+prevCode[:3]+" ,x++", c)
 						changed = true
 						continue
 					}
 				}
 				if codePart == "leay 1,y" {
 					if prevCode == "ldb ,y" || prevCode == "stb ,y" || prevCode == "lda ,y" || prevCode == "sta ,y" {
-						out[prevIdx] = "\t" + prevCode[:3] + " ,y+\t; peephole: auto-increment"
+						c := combineComments(getComment(out[prevIdx]), "peephole: auto-increment")
+						out[prevIdx] = withComment("\t"+prevCode[:3]+" ,y+", c)
 						changed = true
 						continue
 					}
 				}
 				if codePart == "leay 2,y" {
 					if prevCode == "ldd ,y" || prevCode == "std ,y" {
-						out[prevIdx] = "\t" + prevCode[:3] + " ,y++\t; peephole: auto-increment"
+						c := combineComments(getComment(out[prevIdx]), "peephole: auto-increment")
+						out[prevIdx] = withComment("\t"+prevCode[:3]+" ,y++", c)
 						changed = true
 						continue
 					}
 				}
 				if prevCode == "leax -1,x" {
 					if codePart == "ldb ,x" || codePart == "stb ,x" || codePart == "lda ,x" || codePart == "sta ,x" {
+						c := combineComments(getComment(line), "peephole: auto-decrement")
 						out = append(out[:prevIdx], out[prevIdx+1:]...) // remove leax
-						out = append(out, "\t"+codePart[:3]+" ,-x\t; peephole: auto-decrement")
+						out = append(out, withComment("\t"+codePart[:3]+" ,-x", c))
 						changed = true
 						continue
 					}
@@ -324,7 +357,8 @@ func peepholeOptimize(asm string) string {
 							target1 := prev2Fields[1]
 							if target1 == label {
 								if invOp, ok := condInverses[condOp]; ok {
-									out[prev2Idx] = fmt.Sprintf("\t%s %s\t; peephole: inverted branch over jump", invOp, target2)
+									c := combineComments(getComment(out[prev2Idx]), "peephole: inverted branch over jump")
+									out[prev2Idx] = withComment(fmt.Sprintf("\t%s %s", invOp, target2), c)
 									out = append(out[:prevIdx], out[prevIdx+1:]...) // remove prevCode (lbra/bra)
 									changed = true
 								}
