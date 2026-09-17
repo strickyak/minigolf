@@ -3699,7 +3699,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		usedRegs[reg] = true
 	}
 	saveU := usedRegs["u"] && !b.useFramePointer
-	saveY := usedRegs["y"] && !b.globalsAtY
+	saveY := (usedRegs["y"] || b.functionClobbersY(f)) && !b.globalsAtY
 
 	if b.NoLeafOpt {
 		b.needsFP = b.useFramePointer

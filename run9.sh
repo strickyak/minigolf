@@ -11,10 +11,10 @@ shift
 
 case "$P" in 
     *.c )
-        go run main.go -m M6809 -o _tmp/main.asm  "$@"  -I=tests -I=c-tests -I=c-demos -I=c-demos/floating -I=demos -I=demos/floating -I=golflib "$P" >&2
+        go run main.go -m M6809 -o _tmp/main.asm  "$@"  -I=tests -I=c-tests -I=c-demos -I=c-demos/floating -I=c-demos/pythonsub -I=demos -I=demos/floating -I=golflib "$P" >&2
         ;;
     *.golf )
-        go run main.go -m M6809 -o _tmp/main.asm  "$@"  -I=tests -I=c-tests -I=c-demos -I=c-demos/floating -I=demos -I=demos/floating -I=golflib "$P" >&2
+        go run main.go -m M6809 -o _tmp/main.asm  "$@"  -I=tests -I=c-tests -I=c-demos -I=c-demos/floating -I=c-demos/pythonsub -I=demos -I=demos/floating -I=golflib "$P" >&2
         ;;
     *.s | *.asm )
         cp -fv "$P" _tmp/main.asm >&2

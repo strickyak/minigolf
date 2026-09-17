@@ -66,7 +66,7 @@ func TestAllCFiles(t *testing.T) {
 
 		// Load extra include paths from a sidecar <stem>.ipath file, if present.
 		// Each non-empty, non-comment line is an include path (relative to the
-		includePaths := []string{"c-demos", "c-demos/floating", "c-tests", "golflib"}
+		includePaths := []string{"c-demos", "c-demos/floating", "c-demos/pythonsub", "c-tests", "golflib"}
 		iPaths, err2 := os.ReadFile(filepath.Join("c-tests", stem+".ipath"))
 		if err2 == nil {
 			for _, line := range strings.Split(strings.TrimSpace(string(iPaths)), "\n") {
