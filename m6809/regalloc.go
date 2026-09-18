@@ -27,30 +27,7 @@ func (b *Backend) safeTypeSize(t ir.Type) int {
 // functionClobbersY checks whether the function contains instructions that use
 // physical register Y as a scratch register (e.g. for multi-byte struct/array copies).
 func (b *Backend) functionClobbersY(f *ir.Function) bool {
-	for _, blk := range f.Blocks {
-		for _, instr := range blk.Instructions {
-			switch instr.(type) {
-			case *ir.InsertField, *ir.InsertElement:
-				return true
-			}
-			if b.safeTypeSize(instr.Type()) > 2 {
-				return true
-			}
-			for _, op := range opt.OperandsOf(instr) {
-				if b.safeTypeSize(op.Type()) > 2 {
-					return true
-				}
-			}
-		}
-		if blk.Terminator != nil {
-			for _, op := range opt.OperandsOf(blk.Terminator) {
-				if b.safeTypeSize(op.Type()) > 2 {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return b.FunctionDirectClobbers(f).Contains(RegY)
 }
 
 // AllocateRegisters performs global SSA register allocation for function f.
