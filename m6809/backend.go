@@ -3700,7 +3700,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		usedRegs[reg] = true
 	}
 	saveU := usedRegs["u"] && !b.useFramePointer
-	saveY := (usedRegs["y"] || b.functionClobbersY(f)) && !b.globalsAtY
+	callerAvoidsY := false
+	if b.clobberAnalysis != nil && !b.funcAddressTaken[f.Name] && f.Linkage == "" {
+		callerAvoidsY = true
+	}
+	saveY := (usedRegs["y"] || (!callerAvoidsY && b.functionClobbersY(f))) && !b.globalsAtY
 
 	if b.NoLeafOpt {
 		b.needsFP = b.useFramePointer

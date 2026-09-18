@@ -12,7 +12,7 @@ type ParamLocationKind int
 
 const (
 	LocStack ParamLocationKind = iota // Parameter is passed on the stack
-	LocReg                             // Parameter is passed in a hardware register
+	LocReg                            // Parameter is passed in a hardware register
 )
 
 func (k ParamLocationKind) String() string {

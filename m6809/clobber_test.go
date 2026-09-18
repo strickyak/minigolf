@@ -276,4 +276,3 @@ func TestProgramClobberPropagation(t *testing.T) {
 		t.Errorf("caller_copy must transitively inherit Y clobber from leaf_copy, got %s", callerCopyTotal.String())
 	}
 }
-

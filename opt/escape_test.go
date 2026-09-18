@@ -110,4 +110,3 @@ func TestConstFoldCast(t *testing.T) {
 		t.Fatalf("expected ConstByte(64), got %v", b.Instructions[0])
 	}
 }
-

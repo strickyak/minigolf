@@ -165,14 +165,14 @@ type InductionVar struct {
 
 // Loop represents a natural loop in the control flow graph.
 type Loop struct {
-	Header    *ir.BasicBlock
-	Preheader *ir.BasicBlock // Pred of Header outside loop, if unique
-	Latches   []*ir.BasicBlock
-	Blocks    map[*ir.BasicBlock]bool
-	Exits     []*ir.BasicBlock
-	IndVars   []*InductionVar
+	Header     *ir.BasicBlock
+	Preheader  *ir.BasicBlock // Pred of Header outside loop, if unique
+	Latches    []*ir.BasicBlock
+	Blocks     map[*ir.BasicBlock]bool
+	Exits      []*ir.BasicBlock
+	IndVars    []*InductionVar
 	Invariants []ir.Value
-	SubLoops  []*Loop
+	SubLoops   []*Loop
 }
 
 // Contains returns true if block b is part of this loop.

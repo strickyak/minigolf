@@ -210,6 +210,9 @@ func (b *Backend) AllocateRegisters(f *ir.Function) map[int]string {
 		}
 	}
 
+	// Compute physical register interferences (cross-call and scratch clobbers)
+	interferesWithReg := b.computeRegisterInterferences(f)
+
 	// Register preferencing:
 	// Pointers prefer index register 0 ("u"), non-pointers prefer register 1 ("y") if available
 	preferences := make(map[int][]int)
@@ -234,6 +237,16 @@ func (b *Backend) AllocateRegisters(f *ir.Function) map[int]string {
 		for neighbor := range candIG.Edges[cand.id] {
 			if col, ok := assignedColor[neighbor]; ok {
 				usedColors[col] = true
+			}
+		}
+
+		// Disallow physical registers that this candidate interferes with
+		for c, regName := range allocatableRegs {
+			if regName == "y" && interferesWithReg[cand.id].Contains(RegY) {
+				usedColors[c] = true
+			}
+			if regName == "u" && interferesWithReg[cand.id].Contains(RegU) {
+				usedColors[c] = true
 			}
 		}
 
@@ -262,4 +275,109 @@ func (b *Backend) AllocateRegisters(f *ir.Function) map[int]string {
 	}
 
 	return allocated
+}
+
+// computeRegisterInterferences calculates which physical registers each SSA value
+// cannot be assigned to, because the value is live across an instruction or call
+// that clobbers that physical register.
+func (b *Backend) computeRegisterInterferences(f *ir.Function) map[int]RegMask {
+	interferes := make(map[int]RegMask)
+	liveness := opt.ComputeLiveness(f)
+
+	for _, blk := range f.Blocks {
+		liveSet := make(map[int]bool)
+		for id := range liveness.LiveOut[blk] {
+			liveSet[id] = true
+		}
+
+		// Process terminator
+		if blk.Terminator != nil {
+			var termClobbers RegMask
+			for _, op := range opt.OperandsOf(blk.Terminator) {
+				if b.safeTypeSize(op.Type()) > 2 {
+					termClobbers |= RegY
+				}
+			}
+			if ret, ok := blk.Terminator.(*ir.Return); ok && ret.Val != nil {
+				if b.safeTypeSize(ret.Val.Type()) > 2 {
+					termClobbers |= RegY
+				}
+			}
+
+			if termClobbers != RegNone {
+				for id := range liveSet {
+					interferes[id] |= termClobbers
+				}
+			}
+
+			for _, op := range opt.OperandsOf(blk.Terminator) {
+				if inst, ok := op.(ir.Instruction); ok {
+					liveSet[inst.GetID()] = true
+				} else if param, ok := op.(*ir.Parameter); ok {
+					liveSet[param.ID] = true
+				}
+			}
+		}
+
+		// Walk instructions backwards
+		for i := len(blk.Instructions) - 1; i >= 0; i-- {
+			instr := blk.Instructions[i]
+			defID := instr.GetID()
+
+			var instrClobbers RegMask
+			switch call := instr.(type) {
+			case *ir.Call:
+				if call.Func != nil {
+					instrClobbers = b.FunctionTotalClobbers(call.Func.Name)
+				} else {
+					instrClobbers = RegD | RegX | RegCC
+				}
+				if b.safeTypeSize(call.Typ) > 2 {
+					instrClobbers |= RegY
+				}
+				for _, arg := range call.Args {
+					if b.safeTypeSize(arg.Type()) > 2 {
+						instrClobbers |= RegY
+					}
+				}
+			case *ir.IndirectCall, *ir.BuiltinCall:
+				instrClobbers = RegD | RegX | RegY | RegCC
+			default:
+				if b.safeTypeSize(instr.Type()) > 2 {
+					instrClobbers |= RegY
+				}
+				for _, op := range opt.OperandsOf(instr) {
+					if b.safeTypeSize(op.Type()) > 2 {
+						instrClobbers |= RegY
+					}
+				}
+				switch instr.(type) {
+				case *ir.InsertField, *ir.InsertElement:
+					instrClobbers |= RegY
+				}
+			}
+
+			if instrClobbers != RegNone {
+				for id := range liveSet {
+					if id != defID {
+						interferes[id] |= instrClobbers
+					}
+				}
+			}
+
+			delete(liveSet, defID)
+
+			if _, isPhi := instr.(*ir.Phi); !isPhi {
+				for _, op := range opt.OperandsOf(instr) {
+					if inst, ok := op.(ir.Instruction); ok {
+						liveSet[inst.GetID()] = true
+					} else if param, ok := op.(*ir.Parameter); ok {
+						liveSet[param.ID] = true
+					}
+				}
+			}
+		}
+	}
+
+	return interferes
 }

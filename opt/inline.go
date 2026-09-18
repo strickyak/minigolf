@@ -13,11 +13,11 @@ import (
 var _ = fmt.Sprintf
 
 type InlineOptions struct {
-	EnableTiny           bool
-	EnableSingleCall     bool
+	EnableTiny          bool
+	EnableSingleCall    bool
 	MaxTinyInstructions int // Maximum instructions for a tiny function (default: 8)
-	MaxInlineRounds      int // Maximum inlining passes (default: 10)
-	WordSize             int
+	MaxInlineRounds     int // Maximum inlining passes (default: 10)
+	WordSize            int
 }
 
 func DefaultInlineOptions() InlineOptions {
@@ -37,10 +37,10 @@ func DefaultInlineOptions() InlineOptions {
 		}
 	}
 	return InlineOptions{
-		EnableTiny:           !noTiny,
-		EnableSingleCall:     !noSingle,
+		EnableTiny:          !noTiny,
+		EnableSingleCall:    !noSingle,
 		MaxTinyInstructions: maxTiny,
-		MaxInlineRounds:      maxRounds,
+		MaxInlineRounds:     maxRounds,
 	}
 }
 
@@ -200,12 +200,10 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 					calleeIsStraight := isStraightLine(callee)
 					calleeIsAcyclic := !calleeIsStraight && isAcyclic(callee)
 
-					canInlineStraight := calleeIsStraight && (
-						(opts.EnableTiny && isTinyFunction(callee, effectiveMaxTiny)) ||
+					canInlineStraight := calleeIsStraight && ((opts.EnableTiny && isTinyFunction(callee, effectiveMaxTiny)) ||
 						isSingle)
 
-					canInlineMultiBlock := calleeIsAcyclic && (
-						(opts.EnableTiny && canInlineCFG(callee, effectiveMaxTiny, effectiveMaxBlocks, false /* no calls */)) ||
+					canInlineMultiBlock := calleeIsAcyclic && ((opts.EnableTiny && canInlineCFG(callee, effectiveMaxTiny, effectiveMaxBlocks, false /* no calls */)) ||
 						(isSingle && canInlineCFG(callee, singleBudgetInst, singleBudgetBlocks, true /* allow calls */)))
 
 					if canInlineStraight {

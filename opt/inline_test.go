@@ -75,10 +75,10 @@ func TestInlineMaxTinyThreshold(t *testing.T) {
 	// Should NOT inline because 3 > 2.
 	prog1, caller1_1, _ := buildProgram()
 	changed1 := InlinePass(prog1, InlineOptions{
-		EnableTiny:           true,
-		EnableSingleCall:     false,
+		EnableTiny:          true,
+		EnableSingleCall:    false,
 		MaxTinyInstructions: 2,
-		MaxInlineRounds:      10,
+		MaxInlineRounds:     10,
 	})
 	if changed1 {
 		t.Errorf("Expected no inlining when MaxTinyInstructions=2 < 3, but changed was true")
@@ -91,10 +91,10 @@ func TestInlineMaxTinyThreshold(t *testing.T) {
 	// SHOULD inline.
 	prog2, caller1_2, _ := buildProgram()
 	changed2 := InlinePass(prog2, InlineOptions{
-		EnableTiny:           true,
-		EnableSingleCall:     false,
+		EnableTiny:          true,
+		EnableSingleCall:    false,
 		MaxTinyInstructions: 5,
-		MaxInlineRounds:      10,
+		MaxInlineRounds:     10,
 	})
 	if !changed2 {
 		t.Errorf("Expected inlining when MaxTinyInstructions=5 >= 3, but changed was false")
@@ -152,10 +152,10 @@ func TestInlineSingleCallsite(t *testing.T) {
 	// When EnableSingleCall is disabled and EnableTiny is disabled -> no inlining
 	prog1, caller1 := buildProgram()
 	changed1 := InlinePass(prog1, InlineOptions{
-		EnableTiny:           false,
-		EnableSingleCall:     false,
+		EnableTiny:          false,
+		EnableSingleCall:    false,
 		MaxTinyInstructions: 8,
-		MaxInlineRounds:      10,
+		MaxInlineRounds:     10,
 	})
 	if changed1 {
 		t.Errorf("Expected no inlining when EnableSingleCall and EnableTiny are false")
@@ -167,10 +167,10 @@ func TestInlineSingleCallsite(t *testing.T) {
 	// When EnableSingleCall is enabled -> callee has 1 call site, inlined!
 	prog2, caller2 := buildProgram()
 	changed2 := InlinePass(prog2, InlineOptions{
-		EnableTiny:           false,
-		EnableSingleCall:     true,
+		EnableTiny:          false,
+		EnableSingleCall:    true,
 		MaxTinyInstructions: 1, // Callee has 4 instructions, so tiny inlining would fail
-		MaxInlineRounds:      10,
+		MaxInlineRounds:     10,
 	})
 	if !changed2 {
 		t.Errorf("Expected inlining when EnableSingleCall=true for single-site function")
@@ -264,10 +264,10 @@ func TestInlineDiamondCFG(t *testing.T) {
 	}
 
 	changed := InlinePass(prog, InlineOptions{
-		EnableTiny:           true,
-		EnableSingleCall:     false,
+		EnableTiny:          true,
+		EnableSingleCall:    false,
 		MaxTinyInstructions: 8,
-		MaxInlineRounds:      10,
+		MaxInlineRounds:     10,
 	})
 
 	if !changed {
@@ -364,11 +364,11 @@ func TestInlineDiamondFoldConstant(t *testing.T) {
 	}
 
 	changed := InlinePass(prog, InlineOptions{
-		EnableTiny:           true,
-		EnableSingleCall:     true,
+		EnableTiny:          true,
+		EnableSingleCall:    true,
 		MaxTinyInstructions: 8,
-		MaxInlineRounds:      10,
-		WordSize:             8,
+		MaxInlineRounds:     10,
+		WordSize:            8,
 	})
 
 	if !changed {
@@ -452,10 +452,10 @@ func TestInlinePopularityWeighting(t *testing.T) {
 	// Should NOT inline.
 	prog1, caller1 := buildProg(1)
 	changed1 := InlinePass(prog1, InlineOptions{
-		EnableTiny:           true,
-		EnableSingleCall:     false,
+		EnableTiny:          true,
+		EnableSingleCall:    false,
 		MaxTinyInstructions: 8,
-		MaxInlineRounds:      10,
+		MaxInlineRounds:     10,
 	})
 	if changed1 {
 		t.Errorf("Expected cold caller (Popularity=1) NOT to inline 12-instruction function with budget 8")
@@ -469,10 +469,10 @@ func TestInlinePopularityWeighting(t *testing.T) {
 	// SHOULD inline!
 	prog2, caller2 := buildProg(20)
 	changed2 := InlinePass(prog2, InlineOptions{
-		EnableTiny:           true,
-		EnableSingleCall:     false,
+		EnableTiny:          true,
+		EnableSingleCall:    false,
 		MaxTinyInstructions: 8,
-		MaxInlineRounds:      10,
+		MaxInlineRounds:     10,
 	})
 	if !changed2 {
 		t.Errorf("Expected hot caller (Popularity=20) TO inline 12-instruction function under scaled budget 16")
@@ -483,4 +483,3 @@ func TestInlinePopularityWeighting(t *testing.T) {
 		}
 	}
 }
-

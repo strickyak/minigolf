@@ -133,7 +133,9 @@ func (t *RBTree[T]) Put(key string, val T) {
 }
 
 func (n *Node[T]) collectKeys(out *slice[string]) {
-	if n == nil { return }
+	if n == nil {
+		return
+	}
 	n.Left.collectKeys(out)
 	out.Append(n.Key)
 	n.Right.collectKeys(out)
@@ -148,7 +150,9 @@ func (t *RBTree[T]) Keys() slice[string] {
 }
 
 func (n *Node[T]) inOrder(visit func(string, T)) {
-	if n == nil { return }
+	if n == nil {
+		return
+	}
 	n.Left.inOrder(visit)
 	visit(n.Key, n.Val)
 	n.Right.inOrder(visit)
@@ -161,7 +165,9 @@ func (t *RBTree[T]) InOrder(visit func(string, T)) {
 }
 
 func (n *Node[T]) printInOrder() {
-	if n == nil { return }
+	if n == nil {
+		return
+	}
 	n.Left.printInOrder()
 	println(n.Key, n.Val)
 	n.Right.printInOrder()

@@ -155,4 +155,3 @@ func TestConstFoldSignedCompare(t *testing.T) {
 		t.Errorf("Expected -42 < 0 to fold to 1 (true) on 16-bit, got %#v", f3)
 	}
 }
-

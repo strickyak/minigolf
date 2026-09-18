@@ -63,9 +63,9 @@ func MaximumCardinalitySearch(ig *InterferenceGraph) []int {
 
 // ChordalColoringResult contains the register assignment for each SSA value.
 type ChordalColoringResult struct {
-	Colors    map[int]int  // Node ID -> assigned color (0, 1, ..., K-1)
-	Spilled   map[int]bool // Node ID -> true if spilled to stack
-	MaxColor  int          // Maximum color index used (chromatic number - 1)
+	Colors   map[int]int  // Node ID -> assigned color (0, 1, ..., K-1)
+	Spilled  map[int]bool // Node ID -> true if spilled to stack
+	MaxColor int          // Maximum color index used (chromatic number - 1)
 }
 
 // ColorChordalGraph greedily colors the interference graph along the

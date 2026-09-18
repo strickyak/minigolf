@@ -11,14 +11,14 @@ type RegMask uint16
 
 const (
 	RegNone RegMask = 0
-	RegA    RegMask = 1 << 0 // High byte accumulator (8-bit)
-	RegB    RegMask = 1 << 1 // Low byte accumulator (8-bit)
+	RegA    RegMask = 1 << 0      // High byte accumulator (8-bit)
+	RegB    RegMask = 1 << 1      // Low byte accumulator (8-bit)
 	RegD    RegMask = RegA | RegB // Composite 16-bit accumulator (A:B)
-	RegX    RegMask = 1 << 2 // Index register X (16-bit)
-	RegY    RegMask = 1 << 3 // Index register Y (16-bit)
-	RegU    RegMask = 1 << 4 // User stack pointer / Index register U (16-bit)
-	RegS    RegMask = 1 << 5 // System stack pointer (16-bit, reserved)
-	RegCC   RegMask = 1 << 6 // Condition Code register (8-bit)
+	RegX    RegMask = 1 << 2      // Index register X (16-bit)
+	RegY    RegMask = 1 << 3      // Index register Y (16-bit)
+	RegU    RegMask = 1 << 4      // User stack pointer / Index register U (16-bit)
+	RegS    RegMask = 1 << 5      // System stack pointer (16-bit, reserved)
+	RegCC   RegMask = 1 << 6      // Condition Code register (8-bit)
 )
 
 const (

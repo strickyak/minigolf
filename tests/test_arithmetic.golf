@@ -21,8 +21,8 @@ func main() {
 	println("=== native word arithmetic ===")
 	var w1 word = 100
 	var w2 word = 7
-	println(w1 / w2, w1 % w2, w1 * w2)
-	println(w1 / 10, w1 % 10, w1 * 10)
+	println(w1/w2, w1%w2, w1*w2)
+	println(w1/10, w1%10, w1*10)
 	w1 /= 3
 	println(w1)
 	w1 %= 7
@@ -33,7 +33,7 @@ func main() {
 	println("=== native byte arithmetic ===")
 	var b1 byte = 200
 	var b2 byte = 13
-	println(b1 / b2, b1 % b2)
+	println(b1/b2, b1%b2)
 	b1 /= byte(2)
 	println(b1)
 	b1 %= byte(7)

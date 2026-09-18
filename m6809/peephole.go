@@ -171,7 +171,6 @@ func peepholeOptimize(asm string) string {
 					continue
 				}
 
-
 				// Redundant TST
 				if codePart == "tstb" {
 					if strings.HasPrefix(prevCode, "ldb ") || strings.HasPrefix(prevCode, "stb ") ||

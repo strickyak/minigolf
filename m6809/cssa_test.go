@@ -162,4 +162,3 @@ func TestEmitPhiAssignmentsThreeCycle(t *testing.T) {
 		t.Fatalf("expected restore from scratch slot 'ldd 6,s', got:\n%s", output)
 	}
 }
-

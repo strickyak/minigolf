@@ -97,7 +97,6 @@ func pointer_pre_decrement[T any](p **T) *T {
 	return *p
 }
 
-
 /////////////////////////////////////////////
 
 func clear[T any](p *T) {

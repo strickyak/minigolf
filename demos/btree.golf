@@ -22,46 +22,85 @@ func allocNode[T any](isLeaf bool) *Node[T] {
 }
 
 func (n *Node[T]) GetKey(i word) string {
-	if i == 0 { return n.Key0 }
-	if i == 1 { return n.Key1 }
+	if i == 0 {
+		return n.Key0
+	}
+	if i == 1 {
+		return n.Key1
+	}
 	return n.Key2
 }
 
 func (n *Node[T]) SetKey(i word, k string) {
-	if i == 0 { n.Key0 = k; return }
-	if i == 1 { n.Key1 = k; return }
+	if i == 0 {
+		n.Key0 = k
+		return
+	}
+	if i == 1 {
+		n.Key1 = k
+		return
+	}
 	n.Key2 = k
 }
 
 func (n *Node[T]) GetVal(i word) T {
-	if i == 0 { return n.Val0 }
-	if i == 1 { return n.Val1 }
+	if i == 0 {
+		return n.Val0
+	}
+	if i == 1 {
+		return n.Val1
+	}
 	return n.Val2
 }
 
 func (n *Node[T]) GetValPtr(i word) *T {
-	if i == 0 { return &n.Val0 }
-	if i == 1 { return &n.Val1 }
+	if i == 0 {
+		return &n.Val0
+	}
+	if i == 1 {
+		return &n.Val1
+	}
 	return &n.Val2
 }
 
 func (n *Node[T]) SetVal(i word, v T) {
-	if i == 0 { n.Val0 = v; return }
-	if i == 1 { n.Val1 = v; return }
+	if i == 0 {
+		n.Val0 = v
+		return
+	}
+	if i == 1 {
+		n.Val1 = v
+		return
+	}
 	n.Val2 = v
 }
 
 func (n *Node[T]) GetChild(i word) *Node[T] {
-	if i == 0 { return n.Child0 }
-	if i == 1 { return n.Child1 }
-	if i == 2 { return n.Child2 }
+	if i == 0 {
+		return n.Child0
+	}
+	if i == 1 {
+		return n.Child1
+	}
+	if i == 2 {
+		return n.Child2
+	}
 	return n.Child3
 }
 
 func (n *Node[T]) SetChild(i word, c *Node[T]) {
-	if i == 0 { n.Child0 = c; return }
-	if i == 1 { n.Child1 = c; return }
-	if i == 2 { n.Child2 = c; return }
+	if i == 0 {
+		n.Child0 = c
+		return
+	}
+	if i == 1 {
+		n.Child1 = c
+		return
+	}
+	if i == 2 {
+		n.Child2 = c
+		return
+	}
 	n.Child3 = c
 }
 
@@ -132,16 +171,16 @@ func splitChild[T any](parent *Node[T], i word) {
 	// Shift children in parent
 	j := parent.NumKeys
 	for j > i {
-		parent.SetChild(j + 1, parent.GetChild(j))
+		parent.SetChild(j+1, parent.GetChild(j))
 		j--
 	}
-	parent.SetChild(i + 1, z)
+	parent.SetChild(i+1, z)
 
 	// Shift keys in parent
 	j = parent.NumKeys
 	for j > i {
-		parent.SetKey(j, parent.GetKey(j - 1))
-		parent.SetVal(j, parent.GetVal(j - 1))
+		parent.SetKey(j, parent.GetKey(j-1))
+		parent.SetVal(j, parent.GetVal(j-1))
 		j--
 	}
 	parent.SetKey(i, medKey)
@@ -152,9 +191,9 @@ func splitChild[T any](parent *Node[T], i word) {
 func insertNonFull[T any](node *Node[T], key string, val T) {
 	if node.IsLeaf {
 		i := node.NumKeys
-		for i > 0 && key < node.GetKey(i - 1) {
-			node.SetKey(i, node.GetKey(i - 1))
-			node.SetVal(i, node.GetVal(i - 1))
+		for i > 0 && key < node.GetKey(i-1) {
+			node.SetKey(i, node.GetKey(i-1))
+			node.SetVal(i, node.GetVal(i-1))
 			i--
 		}
 		node.SetKey(i, key)
@@ -164,7 +203,7 @@ func insertNonFull[T any](node *Node[T], key string, val T) {
 	}
 
 	i := node.NumKeys
-	for i > 0 && key < node.GetKey(i - 1) {
+	for i > 0 && key < node.GetKey(i-1) {
 		i--
 	}
 	child := node.GetChild(i)
@@ -203,7 +242,9 @@ func (b *BTree[T]) Put(key string, val T) {
 }
 
 func (n *Node[T]) collectKeys(out *slice[string]) {
-	if n == nil { return }
+	if n == nil {
+		return
+	}
 	for i := word(0); i < n.NumKeys; i++ {
 		if !n.IsLeaf {
 			n.GetChild(i).collectKeys(out)
@@ -224,7 +265,9 @@ func (b *BTree[T]) Keys() slice[string] {
 }
 
 func (n *Node[T]) inOrder(visit func(string, T)) {
-	if n == nil { return }
+	if n == nil {
+		return
+	}
 	for i := word(0); i < n.NumKeys; i++ {
 		if !n.IsLeaf {
 			n.GetChild(i).inOrder(visit)
@@ -243,7 +286,9 @@ func (b *BTree[T]) InOrder(visit func(string, T)) {
 }
 
 func (n *Node[T]) printInOrder() {
-	if n == nil { return }
+	if n == nil {
+		return
+	}
 	for i := word(0); i < n.NumKeys; i++ {
 		if !n.IsLeaf {
 			n.GetChild(i).printInOrder()

@@ -267,4 +267,3 @@ func (b *Backend) FunctionTotalClobbers(funcName string) RegMask {
 	}
 	return HelperClobbers(funcName)
 }
-

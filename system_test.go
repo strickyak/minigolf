@@ -337,7 +337,6 @@ func TestSystemAllVariants_m6809(t *testing.T) {
 	}
 }
 
-
 func TestSystemAllGolfFiles(t *testing.T) {
 	files, err := filepath.Glob("tests/*.golf")
 	if err != nil {

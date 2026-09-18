@@ -7,22 +7,22 @@ import (
 )
 
 type Config struct {
-	EnableConstFold        bool
-	EnableDBE              bool
-	EnableDCE              bool
-	EnableCopyProp         bool
-	EnableCSE              bool
-	EnableStrengthRed      bool
-	EnablePhiSimp          bool
-	EnableStackAlloc       bool
-	EnableBranchFold       bool
-	EnableStoreLoad        bool
+	EnableConstFold           bool
+	EnableDBE                 bool
+	EnableDCE                 bool
+	EnableCopyProp            bool
+	EnableCSE                 bool
+	EnableStrengthRed         bool
+	EnablePhiSimp             bool
+	EnableStackAlloc          bool
+	EnableBranchFold          bool
+	EnableStoreLoad           bool
 	EnableLICM                bool
 	EnableDFE                 bool
 	EnableInline              bool
 	EnableInlineTiny          bool
 	EnableInlineSingleCall    bool
-	MaxTinyInstructions      int
+	MaxTinyInstructions       int
 	MaxInlineRounds           int
 	MaxLoopUnrollCount        int
 	MaxLoopUnrollInstructions int
@@ -46,11 +46,11 @@ func OptimizeProgram(p *ir.Program, config Config) {
 			maxRounds = 10
 		}
 		InlinePass(p, InlineOptions{
-			EnableTiny:           config.EnableInlineTiny,
-			EnableSingleCall:     config.EnableInlineSingleCall,
+			EnableTiny:          config.EnableInlineTiny,
+			EnableSingleCall:    config.EnableInlineSingleCall,
 			MaxTinyInstructions: maxTiny,
-			MaxInlineRounds:      maxRounds,
-			WordSize:             config.WordSize,
+			MaxInlineRounds:     maxRounds,
+			WordSize:            config.WordSize,
 		})
 	}
 
