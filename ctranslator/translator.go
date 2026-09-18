@@ -1323,6 +1323,11 @@ func (t *translator) xExprNoDecay(n cc.Expression) string {
 			}
 		}
 	}
+	if se, ok := n.(*cc.SelectorExpr); ok {
+		base := t.xExpr(se.Expr)
+		field := se.Sel.SrcStr()
+		return base + "." + field
+	}
 	return t.xExpr(n)
 }
 
