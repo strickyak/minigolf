@@ -1,0 +1,571 @@
+package longlong
+
+import "long"
+
+// LongLong represents a signed 64-bit integer (int64_t) in two's complement.
+// Stored in little-endian order: Bytes[0] is the least significant byte,
+// and Bytes[7] is the most significant byte (holding the sign bit in bit 7).
+type LongLong struct {
+	Bytes [8]byte
+}
+
+type longlong = LongLong
+
+func Zero() LongLong {
+	var l LongLong
+	return l
+}
+
+func One() LongLong {
+	var l LongLong
+	l.Bytes[0] = 1
+	return l
+}
+
+func FromWord(w word) LongLong {
+	var l LongLong
+	l.Bytes[0] = byte(w)
+	l.Bytes[1] = byte(w >> 8)
+	return l
+}
+
+func FromInt(v int) LongLong {
+	var l LongLong
+	l.Bytes[0] = byte(v)
+	l.Bytes[1] = byte(v >> 8)
+	if v < 0 {
+		for i := 2; i < 8; i++ {
+			l.Bytes[i] = 0xFF
+		}
+	} else if v > 32767 {
+		l.Bytes[2] = byte(v >> 16)
+		l.Bytes[3] = byte(v >> 24)
+	}
+	return l
+}
+
+func FromLong(a long.Long) LongLong {
+	var l LongLong
+	l.Bytes[0] = a.Bytes[0]
+	l.Bytes[1] = a.Bytes[1]
+	l.Bytes[2] = a.Bytes[2]
+	l.Bytes[3] = a.Bytes[3]
+	var fill byte = 0
+	if (a.Bytes[3] >> 7) & 1 != 0 {
+		fill = 0xFF
+	}
+	for i := 4; i < 8; i++ {
+		l.Bytes[i] = fill
+	}
+	return l
+}
+
+func (l *LongLong) ToLong() long.Long {
+	var res long.Long
+	res.Bytes[0] = l.Bytes[0]
+	res.Bytes[1] = l.Bytes[1]
+	res.Bytes[2] = l.Bytes[2]
+	res.Bytes[3] = l.Bytes[3]
+	return res
+}
+
+func ToLong(l LongLong) long.Long {
+	return l.ToLong()
+}
+
+func FromBytes(b0 byte, b1 byte, b2 byte, b3 byte, b4 byte, b5 byte, b6 byte, b7 byte) LongLong {
+	var l LongLong
+	l.Bytes[0] = b0
+	l.Bytes[1] = b1
+	l.Bytes[2] = b2
+	l.Bytes[3] = b3
+	l.Bytes[4] = b4
+	l.Bytes[5] = b5
+	l.Bytes[6] = b6
+	l.Bytes[7] = b7
+	return l
+}
+
+func FromWords(w0 word, w1 word, w2 word, w3 word) LongLong {
+	var l LongLong
+	l.Bytes[0] = byte(w0)
+	l.Bytes[1] = byte(w0 >> 8)
+	l.Bytes[2] = byte(w1)
+	l.Bytes[3] = byte(w1 >> 8)
+	l.Bytes[4] = byte(w2)
+	l.Bytes[5] = byte(w2 >> 8)
+	l.Bytes[6] = byte(w3)
+	l.Bytes[7] = byte(w3 >> 8)
+	return l
+}
+
+func (l *LongLong) ToWord() word {
+	return word(l.Bytes[0]) | (word(l.Bytes[1]) << 8)
+}
+
+func (l *LongLong) ToInt() int {
+	w := word(l.Bytes[0]) | (word(l.Bytes[1]) << 8)
+	return int(w)
+}
+
+func (l *LongLong) IsZero() bool {
+	for i := 0; i < 8; i++ {
+		if l.Bytes[i] != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (l *LongLong) IsNeg() bool {
+	return (l.Bytes[7] >> 7) & 1 != 0
+}
+
+func (l *LongLong) Sign() int {
+	if l.IsZero() {
+		return 0
+	}
+	if l.IsNeg() {
+		return -1
+	}
+	return 1
+}
+
+func Neg(a LongLong) LongLong {
+	var res LongLong
+	var carry word = 1
+	for i := 0; i < 8; i++ {
+		inv := word(a.Bytes[i] ^ 0xFF) + carry
+		res.Bytes[i] = byte(inv)
+		carry = inv >> 8
+	}
+	return res
+}
+
+func (a *LongLong) Neg() LongLong {
+	return Neg(*a)
+}
+
+func Abs(a LongLong) LongLong {
+	if a.IsNeg() {
+		return Neg(a)
+	}
+	return a
+}
+
+func (a *LongLong) Abs() LongLong {
+	return Abs(*a)
+}
+
+func Add(a LongLong, b LongLong) LongLong {
+	var res LongLong
+	var carry word = 0
+	for i := 0; i < 8; i++ {
+		sum := word(a.Bytes[i]) + word(b.Bytes[i]) + carry
+		res.Bytes[i] = byte(sum)
+		carry = sum >> 8
+	}
+	return res
+}
+
+func (a *LongLong) Add(b LongLong) LongLong {
+	return Add(*a, b)
+}
+
+func Sub(a LongLong, b LongLong) LongLong {
+	var res LongLong
+	var carry word = 1
+	for i := 0; i < 8; i++ {
+		sum := word(a.Bytes[i]) + word(b.Bytes[i] ^ 0xFF) + carry
+		res.Bytes[i] = byte(sum)
+		carry = sum >> 8
+	}
+	return res
+}
+
+func (a *LongLong) Sub(b LongLong) LongLong {
+	return Sub(*a, b)
+}
+
+func Mul(a LongLong, b LongLong) LongLong {
+	var res LongLong
+	for i := 0; i < 8; i++ {
+		var c word = 0
+		for j := 0; j < 8 - i; j++ {
+			prod := word(a.Bytes[i]) * word(b.Bytes[j]) + word(res.Bytes[i+j]) + c
+			res.Bytes[i+j] = byte(prod)
+			c = prod >> 8
+		}
+	}
+	return res
+}
+
+func (a *LongLong) Mul(b LongLong) LongLong {
+	return Mul(*a, b)
+}
+
+func shiftLeft1(l *LongLong) byte {
+	var carry byte = 0
+	for i := 0; i < 8; i++ {
+		b := l.Bytes[i]
+		nextCarry := (b >> 7) & 1
+		l.Bytes[i] = (b << 1) | carry
+		carry = nextCarry
+	}
+	return carry
+}
+
+func shiftRight1(l *LongLong, carryIn byte) byte {
+	c := carryIn
+	for step := 0; step < 8; step++ {
+		i := 7 - step
+		b := l.Bytes[i]
+		nextCarry := b & 1
+		l.Bytes[i] = (b >> 1) | (c << 7)
+		c = nextCarry
+	}
+	return c
+}
+
+func cmpU(a LongLong, b LongLong) int {
+	for step := 0; step < 8; step++ {
+		i := 7 - step
+		if a.Bytes[i] > b.Bytes[i] {
+			return 1
+		}
+		if a.Bytes[i] < b.Bytes[i] {
+			return -1
+		}
+	}
+	return 0
+}
+
+func Cmp(a LongLong, b LongLong) int {
+	signA := (a.Bytes[7] >> 7) & 1
+	signB := (b.Bytes[7] >> 7) & 1
+	if signA != signB {
+		if signA == 1 {
+			return -1
+		}
+		return 1
+	}
+	return cmpU(a, b)
+}
+
+func (a *LongLong) Cmp(b LongLong) int {
+	return Cmp(*a, b)
+}
+
+func Eq(a LongLong, b LongLong) bool {
+	for i := 0; i < 8; i++ {
+		if a.Bytes[i] != b.Bytes[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (a *LongLong) Eq(b LongLong) bool {
+	return Eq(*a, b)
+}
+
+func Lt(a LongLong, b LongLong) bool {
+	return Cmp(a, b) < 0
+}
+
+func (a *LongLong) Lt(b LongLong) bool {
+	return Lt(*a, b)
+}
+
+func Gt(a LongLong, b LongLong) bool {
+	return Cmp(a, b) > 0
+}
+
+func (a *LongLong) Gt(b LongLong) bool {
+	return Gt(*a, b)
+}
+
+func Le(a LongLong, b LongLong) bool {
+	return Cmp(a, b) <= 0
+}
+
+func (a *LongLong) Le(b LongLong) bool {
+	return Le(*a, b)
+}
+
+func Ge(a LongLong, b LongLong) bool {
+	return Cmp(a, b) >= 0
+}
+
+func (a *LongLong) Ge(b LongLong) bool {
+	return Ge(*a, b)
+}
+
+func divModU(a LongLong, b LongLong, quo *LongLong, rem *LongLong) {
+	*rem = Zero()
+	*quo = Zero()
+	for step := 0; step < 64; step++ {
+		i := 63 - step
+		carryOut := shiftLeft1(rem)
+		byteIdx := i >> 3
+		bitIdx := byte(i & 7)
+		bitVal := (a.Bytes[byteIdx] >> bitIdx) & 1
+		rem.Bytes[0] = rem.Bytes[0] | bitVal
+
+		if carryOut != 0 || cmpU(*rem, b) >= 0 {
+			*rem = Sub(*rem, b)
+			quo.Bytes[byteIdx] = quo.Bytes[byteIdx] | (byte(1) << bitIdx)
+		}
+	}
+}
+
+func divMod(a LongLong, b LongLong, quo *LongLong, rem *LongLong) {
+	if b.IsZero() {
+		panic("division by zero")
+	}
+	negA := a.IsNeg()
+	negB := b.IsNeg()
+
+	uA := a
+	if negA {
+		uA = Neg(a)
+	}
+	uB := b
+	if negB {
+		uB = Neg(b)
+	}
+
+	divModU(uA, uB, quo, rem)
+
+	if negA != negB {
+		*quo = Neg(*quo)
+	}
+	if negA {
+		*rem = Neg(*rem)
+	}
+}
+
+func Div(a LongLong, b LongLong) LongLong {
+	var q LongLong
+	var r LongLong
+	divMod(a, b, &q, &r)
+	return q
+}
+
+func (a *LongLong) Div(b LongLong) LongLong {
+	return Div(*a, b)
+}
+
+func Mod(a LongLong, b LongLong) LongLong {
+	var q LongLong
+	var r LongLong
+	divMod(a, b, &q, &r)
+	return r
+}
+
+func (a *LongLong) Mod(b LongLong) LongLong {
+	return Mod(*a, b)
+}
+
+func And(a LongLong, b LongLong) LongLong {
+	var res LongLong
+	for i := 0; i < 8; i++ {
+		res.Bytes[i] = a.Bytes[i] & b.Bytes[i]
+	}
+	return res
+}
+
+func (a *LongLong) And(b LongLong) LongLong {
+	return And(*a, b)
+}
+
+func Or(a LongLong, b LongLong) LongLong {
+	var res LongLong
+	for i := 0; i < 8; i++ {
+		res.Bytes[i] = a.Bytes[i] | b.Bytes[i]
+	}
+	return res
+}
+
+func (a *LongLong) Or(b LongLong) LongLong {
+	return Or(*a, b)
+}
+
+func Xor(a LongLong, b LongLong) LongLong {
+	var res LongLong
+	for i := 0; i < 8; i++ {
+		res.Bytes[i] = a.Bytes[i] ^ b.Bytes[i]
+	}
+	return res
+}
+
+func (a *LongLong) Xor(b LongLong) LongLong {
+	return Xor(*a, b)
+}
+
+func Not(a LongLong) LongLong {
+	var res LongLong
+	for i := 0; i < 8; i++ {
+		res.Bytes[i] = a.Bytes[i] ^ 0xFF
+	}
+	return res
+}
+
+func (a *LongLong) Not() LongLong {
+	return Not(*a)
+}
+
+func Shl(a LongLong, n word) LongLong {
+	if n >= 64 {
+		return Zero()
+	}
+	res := a
+	for n >= 8 {
+		for j := 7; j >= 1; j-- {
+			res.Bytes[j] = res.Bytes[j-1]
+		}
+		res.Bytes[0] = 0
+		n = n - 8
+	}
+	for n > 0 {
+		shiftLeft1(&res)
+		n--
+	}
+	return res
+}
+
+func (a *LongLong) Shl(n word) LongLong {
+	return Shl(*a, n)
+}
+
+func Shr(a LongLong, n word) LongLong {
+	signBit := (a.Bytes[7] >> 7) & 1
+	var fill byte = 0
+	if signBit != 0 {
+		fill = 0xFF
+	}
+	if n >= 64 {
+		var res LongLong
+		for i := 0; i < 8; i++ {
+			res.Bytes[i] = fill
+		}
+		return res
+	}
+	res := a
+	for n >= 8 {
+		for j := 0; j < 7; j++ {
+			res.Bytes[j] = res.Bytes[j+1]
+		}
+		res.Bytes[7] = fill
+		n = n - 8
+	}
+	for n > 0 {
+		shiftRight1(&res, signBit)
+		n--
+	}
+	return res
+}
+
+func (a *LongLong) Shr(n word) LongLong {
+	return Shr(*a, n)
+}
+
+func ShrU(a LongLong, n word) LongLong {
+	if n >= 64 {
+		return Zero()
+	}
+	res := a
+	for n >= 8 {
+		for j := 0; j < 7; j++ {
+			res.Bytes[j] = res.Bytes[j+1]
+		}
+		res.Bytes[7] = 0
+		n = n - 8
+	}
+	for n > 0 {
+		shiftRight1(&res, 0)
+		n--
+	}
+	return res
+}
+
+func (a *LongLong) ShrU(n word) LongLong {
+	return ShrU(*a, n)
+}
+
+func Format(l LongLong) string {
+	if l.IsZero() {
+		return "0"
+	}
+	var out slice[byte]
+	isNeg := l.IsNeg()
+	u := l
+	if isNeg {
+		out.Append('-')
+		u = Neg(l)
+	}
+	var digits [24]byte
+	dlen := 0
+	ten := FromWord(10)
+	for !u.IsZero() {
+		var q LongLong
+		var r LongLong
+		divModU(u, ten, &q, &r)
+		digits[dlen] = byte('0' + r.Bytes[0])
+		dlen++
+		u = q
+	}
+	for dlen > 0 {
+		dlen--
+		out.Append(digits[dlen])
+	}
+	return out
+}
+
+func (l *LongLong) Format() string {
+	return Format(*l)
+}
+
+func (l *LongLong) String() string {
+	return Format(*l)
+}
+
+func FromString(s string) LongLong {
+	n := s.Len
+	if n == 0 {
+		return Zero()
+	}
+	i := word(0)
+	for i < n && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	if i >= n {
+		return Zero()
+	}
+	isNeg := false
+	if s[i] == '-' {
+		isNeg = true
+		i++
+	} else if s[i] == '+' {
+		i++
+	}
+	val := Zero()
+	ten := FromWord(10)
+	for i < n && s[i] >= '0' && s[i] <= '9' {
+		d := FromWord(word(s[i] - '0'))
+		val = Add(Mul(val, ten), d)
+		i++
+	}
+	if isNeg {
+		val = Neg(val)
+	}
+	return val
+}
+
+func Scan(s string) LongLong {
+	return FromString(s)
+}
+
+func (l *LongLong) Scan(s string) {
+	*l = FromString(s)
+}

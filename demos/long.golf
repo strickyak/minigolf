@@ -1,0 +1,522 @@
+package long
+
+// Long represents a signed 32-bit integer (int32_t) in two's complement.
+// Stored in little-endian order: Bytes[0] is the least significant byte,
+// and Bytes[3] is the most significant byte (holding the sign bit in bit 7).
+type Long struct {
+	Bytes [4]byte
+}
+
+type long = Long
+
+func Zero() Long {
+	var l Long
+	return l
+}
+
+func One() Long {
+	var l Long
+	l.Bytes[0] = 1
+	return l
+}
+
+func FromWord(w word) Long {
+	var l Long
+	l.Bytes[0] = byte(w)
+	l.Bytes[1] = byte(w >> 8)
+	return l
+}
+
+func FromInt(v int) Long {
+	var l Long
+	l.Bytes[0] = byte(v)
+	l.Bytes[1] = byte(v >> 8)
+	if v < 0 {
+		l.Bytes[2] = 0xFF
+		l.Bytes[3] = 0xFF
+	} else if v > 32767 {
+		l.Bytes[2] = byte(v >> 16)
+		l.Bytes[3] = byte(v >> 24)
+	}
+	return l
+}
+
+func FromBytes(b0 byte, b1 byte, b2 byte, b3 byte) Long {
+	var l Long
+	l.Bytes[0] = b0
+	l.Bytes[1] = b1
+	l.Bytes[2] = b2
+	l.Bytes[3] = b3
+	return l
+}
+
+func FromWords(lo word, hi word) Long {
+	var l Long
+	l.Bytes[0] = byte(lo)
+	l.Bytes[1] = byte(lo >> 8)
+	l.Bytes[2] = byte(hi)
+	l.Bytes[3] = byte(hi >> 8)
+	return l
+}
+
+func (l *Long) ToWord() word {
+	return word(l.Bytes[0]) | (word(l.Bytes[1]) << 8)
+}
+
+func (l *Long) ToInt() int {
+	w := word(l.Bytes[0]) | (word(l.Bytes[1]) << 8)
+	return int(w)
+}
+
+func (l *Long) IsZero() bool {
+	return l.Bytes[0] == 0 && l.Bytes[1] == 0 && l.Bytes[2] == 0 && l.Bytes[3] == 0
+}
+
+func (l *Long) IsNeg() bool {
+	return (l.Bytes[3] >> 7) & 1 != 0
+}
+
+func (l *Long) Sign() int {
+	if l.IsZero() {
+		return 0
+	}
+	if l.IsNeg() {
+		return -1
+	}
+	return 1
+}
+
+func Neg(a Long) Long {
+	var res Long
+	var carry word = 1
+	for i := 0; i < 4; i++ {
+		inv := word(a.Bytes[i] ^ 0xFF) + carry
+		res.Bytes[i] = byte(inv)
+		carry = inv >> 8
+	}
+	return res
+}
+
+func (a *Long) Neg() Long {
+	return Neg(*a)
+}
+
+func Abs(a Long) Long {
+	if a.IsNeg() {
+		return Neg(a)
+	}
+	return a
+}
+
+func (a *Long) Abs() Long {
+	return Abs(*a)
+}
+
+func Add(a Long, b Long) Long {
+	var res Long
+	var carry word = 0
+	for i := 0; i < 4; i++ {
+		sum := word(a.Bytes[i]) + word(b.Bytes[i]) + carry
+		res.Bytes[i] = byte(sum)
+		carry = sum >> 8
+	}
+	return res
+}
+
+func (a *Long) Add(b Long) Long {
+	return Add(*a, b)
+}
+
+func Sub(a Long, b Long) Long {
+	var res Long
+	var carry word = 1
+	for i := 0; i < 4; i++ {
+		sum := word(a.Bytes[i]) + word(b.Bytes[i] ^ 0xFF) + carry
+		res.Bytes[i] = byte(sum)
+		carry = sum >> 8
+	}
+	return res
+}
+
+func (a *Long) Sub(b Long) Long {
+	return Sub(*a, b)
+}
+
+func Mul(a Long, b Long) Long {
+	var res Long
+	for i := 0; i < 4; i++ {
+		var c word = 0
+		for j := 0; j < 4 - i; j++ {
+			prod := word(a.Bytes[i]) * word(b.Bytes[j]) + word(res.Bytes[i+j]) + c
+			res.Bytes[i+j] = byte(prod)
+			c = prod >> 8
+		}
+	}
+	return res
+}
+
+func (a *Long) Mul(b Long) Long {
+	return Mul(*a, b)
+}
+
+func shiftLeft1(l *Long) byte {
+	var carry byte = 0
+	for i := 0; i < 4; i++ {
+		b := l.Bytes[i]
+		nextCarry := (b >> 7) & 1
+		l.Bytes[i] = (b << 1) | carry
+		carry = nextCarry
+	}
+	return carry
+}
+
+func shiftRight1(l *Long, carryIn byte) byte {
+	c := carryIn
+	for step := 0; step < 4; step++ {
+		i := 3 - step
+		b := l.Bytes[i]
+		nextCarry := b & 1
+		l.Bytes[i] = (b >> 1) | (c << 7)
+		c = nextCarry
+	}
+	return c
+}
+
+func cmpU(a Long, b Long) int {
+	for step := 0; step < 4; step++ {
+		i := 3 - step
+		if a.Bytes[i] > b.Bytes[i] {
+			return 1
+		}
+		if a.Bytes[i] < b.Bytes[i] {
+			return -1
+		}
+	}
+	return 0
+}
+
+func Cmp(a Long, b Long) int {
+	signA := (a.Bytes[3] >> 7) & 1
+	signB := (b.Bytes[3] >> 7) & 1
+	if signA != signB {
+		if signA == 1 {
+			return -1
+		}
+		return 1
+	}
+	return cmpU(a, b)
+}
+
+func (a *Long) Cmp(b Long) int {
+	return Cmp(*a, b)
+}
+
+func Eq(a Long, b Long) bool {
+	return a.Bytes[0] == b.Bytes[0] && a.Bytes[1] == b.Bytes[1] && a.Bytes[2] == b.Bytes[2] && a.Bytes[3] == b.Bytes[3]
+}
+
+func (a *Long) Eq(b Long) bool {
+	return Eq(*a, b)
+}
+
+func Lt(a Long, b Long) bool {
+	return Cmp(a, b) < 0
+}
+
+func (a *Long) Lt(b Long) bool {
+	return Lt(*a, b)
+}
+
+func Gt(a Long, b Long) bool {
+	return Cmp(a, b) > 0
+}
+
+func (a *Long) Gt(b Long) bool {
+	return Gt(*a, b)
+}
+
+func Le(a Long, b Long) bool {
+	return Cmp(a, b) <= 0
+}
+
+func (a *Long) Le(b Long) bool {
+	return Le(*a, b)
+}
+
+func Ge(a Long, b Long) bool {
+	return Cmp(a, b) >= 0
+}
+
+func (a *Long) Ge(b Long) bool {
+	return Ge(*a, b)
+}
+
+func divModU(a Long, b Long, quo *Long, rem *Long) {
+	*rem = Zero()
+	*quo = Zero()
+	for step := 0; step < 32; step++ {
+		i := 31 - step
+		carryOut := shiftLeft1(rem)
+		byteIdx := i >> 3
+		bitIdx := byte(i & 7)
+		bitVal := (a.Bytes[byteIdx] >> bitIdx) & 1
+		rem.Bytes[0] = rem.Bytes[0] | bitVal
+
+		if carryOut != 0 || cmpU(*rem, b) >= 0 {
+			*rem = Sub(*rem, b)
+			quo.Bytes[byteIdx] = quo.Bytes[byteIdx] | (byte(1) << bitIdx)
+		}
+	}
+}
+
+func divMod(a Long, b Long, quo *Long, rem *Long) {
+	if b.IsZero() {
+		panic("division by zero")
+	}
+	negA := a.IsNeg()
+	negB := b.IsNeg()
+
+	uA := a
+	if negA {
+		uA = Neg(a)
+	}
+	uB := b
+	if negB {
+		uB = Neg(b)
+	}
+
+	divModU(uA, uB, quo, rem)
+
+	if negA != negB {
+		*quo = Neg(*quo)
+	}
+	if negA {
+		*rem = Neg(*rem)
+	}
+}
+
+func Div(a Long, b Long) Long {
+	var q Long
+	var r Long
+	divMod(a, b, &q, &r)
+	return q
+}
+
+func (a *Long) Div(b Long) Long {
+	return Div(*a, b)
+}
+
+func Mod(a Long, b Long) Long {
+	var q Long
+	var r Long
+	divMod(a, b, &q, &r)
+	return r
+}
+
+func (a *Long) Mod(b Long) Long {
+	return Mod(*a, b)
+}
+
+func And(a Long, b Long) Long {
+	var res Long
+	for i := 0; i < 4; i++ {
+		res.Bytes[i] = a.Bytes[i] & b.Bytes[i]
+	}
+	return res
+}
+
+func (a *Long) And(b Long) Long {
+	return And(*a, b)
+}
+
+func Or(a Long, b Long) Long {
+	var res Long
+	for i := 0; i < 4; i++ {
+		res.Bytes[i] = a.Bytes[i] | b.Bytes[i]
+	}
+	return res
+}
+
+func (a *Long) Or(b Long) Long {
+	return Or(*a, b)
+}
+
+func Xor(a Long, b Long) Long {
+	var res Long
+	for i := 0; i < 4; i++ {
+		res.Bytes[i] = a.Bytes[i] ^ b.Bytes[i]
+	}
+	return res
+}
+
+func (a *Long) Xor(b Long) Long {
+	return Xor(*a, b)
+}
+
+func Not(a Long) Long {
+	var res Long
+	for i := 0; i < 4; i++ {
+		res.Bytes[i] = a.Bytes[i] ^ 0xFF
+	}
+	return res
+}
+
+func (a *Long) Not() Long {
+	return Not(*a)
+}
+
+func Shl(a Long, n word) Long {
+	if n >= 32 {
+		return Zero()
+	}
+	res := a
+	for n >= 8 {
+		res.Bytes[3] = res.Bytes[2]
+		res.Bytes[2] = res.Bytes[1]
+		res.Bytes[1] = res.Bytes[0]
+		res.Bytes[0] = 0
+		n = n - 8
+	}
+	for n > 0 {
+		shiftLeft1(&res)
+		n--
+	}
+	return res
+}
+
+func (a *Long) Shl(n word) Long {
+	return Shl(*a, n)
+}
+
+func Shr(a Long, n word) Long {
+	signBit := (a.Bytes[3] >> 7) & 1
+	var fill byte = 0
+	if signBit != 0 {
+		fill = 0xFF
+	}
+	if n >= 32 {
+		var res Long
+		res.Bytes[0] = fill
+		res.Bytes[1] = fill
+		res.Bytes[2] = fill
+		res.Bytes[3] = fill
+		return res
+	}
+	res := a
+	for n >= 8 {
+		res.Bytes[0] = res.Bytes[1]
+		res.Bytes[1] = res.Bytes[2]
+		res.Bytes[2] = res.Bytes[3]
+		res.Bytes[3] = fill
+		n = n - 8
+	}
+	for n > 0 {
+		shiftRight1(&res, signBit)
+		n--
+	}
+	return res
+}
+
+func (a *Long) Shr(n word) Long {
+	return Shr(*a, n)
+}
+
+func ShrU(a Long, n word) Long {
+	if n >= 32 {
+		return Zero()
+	}
+	res := a
+	for n >= 8 {
+		res.Bytes[0] = res.Bytes[1]
+		res.Bytes[1] = res.Bytes[2]
+		res.Bytes[2] = res.Bytes[3]
+		res.Bytes[3] = 0
+		n = n - 8
+	}
+	for n > 0 {
+		shiftRight1(&res, 0)
+		n--
+	}
+	return res
+}
+
+func (a *Long) ShrU(n word) Long {
+	return ShrU(*a, n)
+}
+
+func Format(l Long) string {
+	if l.IsZero() {
+		return "0"
+	}
+	var out slice[byte]
+	isNeg := l.IsNeg()
+	u := l
+	if isNeg {
+		out.Append('-')
+		u = Neg(l)
+	}
+	var digits [12]byte
+	dlen := 0
+	ten := FromWord(10)
+	for !u.IsZero() {
+		var q Long
+		var r Long
+		divModU(u, ten, &q, &r)
+		digits[dlen] = byte('0' + r.Bytes[0])
+		dlen++
+		u = q
+	}
+	for dlen > 0 {
+		dlen--
+		out.Append(digits[dlen])
+	}
+	return out
+}
+
+func (l *Long) Format() string {
+	return Format(*l)
+}
+
+func (l *Long) String() string {
+	return Format(*l)
+}
+
+func FromString(s string) Long {
+	n := s.Len
+	if n == 0 {
+		return Zero()
+	}
+	i := word(0)
+	for i < n && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	if i >= n {
+		return Zero()
+	}
+	isNeg := false
+	if s[i] == '-' {
+		isNeg = true
+		i++
+	} else if s[i] == '+' {
+		i++
+	}
+	val := Zero()
+	ten := FromWord(10)
+	for i < n && s[i] >= '0' && s[i] <= '9' {
+		d := FromWord(word(s[i] - '0'))
+		val = Add(Mul(val, ten), d)
+		i++
+	}
+	if isNeg {
+		val = Neg(val)
+	}
+	return val
+}
+
+func Scan(s string) Long {
+	return FromString(s)
+}
+
+func (l *Long) Scan(s string) {
+	*l = FromString(s)
+}

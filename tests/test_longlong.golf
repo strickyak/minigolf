@@ -1,0 +1,166 @@
+package main
+
+import "long"
+import "longlong"
+
+func main() {
+	println("--- Sizeof ---")
+	println("sizeof:", sizeof[longlong.LongLong]())
+
+	println("--- Constants and Conversions ---")
+	z := longlong.Zero()
+	println("zero:", z.Format(), z.IsZero())
+
+	one := longlong.One()
+	println("one:", one.Format())
+
+	w42 := longlong.FromWord(42)
+	println("w42:", w42.Format(), w42.ToWord())
+
+	wMax := longlong.FromWord(65535)
+	println("wMax:", wMax.Format(), wMax.ToWord())
+
+	iNeg1 := longlong.FromInt(-1)
+	println("iNeg1:", iNeg1.Format())
+
+	iNeg42 := longlong.FromInt(-42)
+	println("iNeg42:", iNeg42.Format())
+
+	lVal := long.FromString("2000000000")
+	llFromL := longlong.FromLong(lVal)
+	println("fromLong:", llFromL.Format())
+
+	lValNeg := long.FromString("-2000000000")
+	llFromLNeg := longlong.FromLong(lValNeg)
+	println("fromLongNeg:", llFromLNeg.Format())
+
+	backToLong := llFromL.ToLong()
+	println("toLong:", backToLong.Format())
+
+	backToLongNeg := llFromLNeg.ToLong()
+	println("toLongNeg:", backToLongNeg.Format())
+
+	println("--- FromString and Format ---")
+	s1 := longlong.FromString("123456789012345678")
+	println("s1:", s1.Format())
+
+	sNeg1 := longlong.FromString("-987654321098765432")
+	println("sNeg1:", sNeg1.Format())
+
+	maxPos := longlong.FromString("9223372036854775807")
+	println("maxPos:", maxPos.Format())
+
+	minNeg := longlong.FromString("-9223372036854775808")
+	println("minNeg:", minNeg.Format())
+
+	println("--- Addition ---")
+	a := longlong.FromString("1000000000000")
+	b := longlong.FromString("2345678000000")
+	println("1000000000000 + 2345678000000 =", longlong.Format(longlong.Add(a, b)))
+
+	pos5 := longlong.FromWord(5)
+	neg3 := longlong.FromInt(-3)
+	println("5 + (-3) =", longlong.Format(longlong.Add(pos5, neg3)))
+
+	neg5 := longlong.FromInt(-5)
+	pos3 := longlong.FromWord(3)
+	println("(-5) + 3 =", longlong.Format(longlong.Add(neg5, pos3)))
+	println("(-5) + (-3) =", longlong.Format(longlong.Add(neg5, neg3)))
+	println("5 + (-5) =", longlong.Format(longlong.Add(pos5, neg5)))
+
+	// Overflow wrap: 9223372036854775807 + 1 = -9223372036854775808
+	println("maxPos + 1 =", longlong.Format(longlong.Add(maxPos, one)))
+
+	// Method call on variable
+	resAdd := a.Add(b)
+	println("method a.Add(b) =", resAdd.Format())
+
+	println("--- Subtraction ---")
+	println("2345678000000 - 1000000000000 =", longlong.Format(longlong.Sub(b, a)))
+	println("1000000000000 - 2345678000000 =", longlong.Format(longlong.Sub(a, b)))
+	println("5 - (-3) =", longlong.Format(longlong.Sub(pos5, neg3)))
+	println("(-5) - 3 =", longlong.Format(longlong.Sub(neg5, pos3)))
+	println("(-5) - (-3) =", longlong.Format(longlong.Sub(neg5, neg3)))
+
+	// Underflow wrap: -9223372036854775808 - 1 = 9223372036854775807
+	println("minNeg - 1 =", longlong.Format(longlong.Sub(minNeg, one)))
+
+	// Method call on variable
+	resSub := b.Sub(a)
+	println("method b.Sub(a) =", resSub.Format())
+
+	println("--- Multiplication ---")
+	n6 := longlong.FromWord(6)
+	n7 := longlong.FromWord(7)
+	println("6 * 7 =", longlong.Format(longlong.Mul(n6, n7)))
+
+	neg6 := longlong.FromInt(-6)
+	println("(-6) * 7 =", longlong.Format(longlong.Mul(neg6, n7)))
+	neg7 := longlong.FromInt(-7)
+	println("(-6) * (-7) =", longlong.Format(longlong.Mul(neg6, neg7)))
+
+	// 1 billion * 3 billion = 3 quintillion (3 * 10^18)
+	bigA := longlong.FromString("1000000000")
+	bigB := longlong.FromString("3000000000")
+	println("1000000000 * 3000000000 =", longlong.Format(longlong.Mul(bigA, bigB)))
+
+	// Method call on variable
+	resMul := n6.Mul(n7)
+	println("method n6.Mul(n7) =", resMul.Format())
+
+	println("--- Division and Modulo ---")
+	n100 := longlong.FromString("100")
+	n7b := longlong.FromString("7")
+	println("100 / 7 =", longlong.Format(longlong.Div(n100, n7b)))
+	println("100 % 7 =", longlong.Format(longlong.Mod(n100, n7b)))
+
+	neg100 := longlong.FromString("-100")
+	println("(-100) / 7 =", longlong.Format(longlong.Div(neg100, n7b)))
+	println("(-100) % 7 =", longlong.Format(longlong.Mod(neg100, n7b)))
+
+	nNeg7 := longlong.FromString("-7")
+	println("100 / (-7) =", longlong.Format(longlong.Div(n100, nNeg7)))
+	println("100 % (-7) =", longlong.Format(longlong.Mod(n100, nNeg7)))
+
+	println("(-100) / (-7) =", longlong.Format(longlong.Div(neg100, nNeg7)))
+	println("(-100) % (-7) =", longlong.Format(longlong.Mod(neg100, nNeg7)))
+
+	threeQuintillion := longlong.FromString("3000000000000000000")
+	oneBillion := longlong.FromString("1000000000")
+	println("3 * 10^18 / 10^9 =", longlong.Format(longlong.Div(threeQuintillion, oneBillion)))
+	println("3 * 10^18 % 10^9 =", longlong.Format(longlong.Mod(threeQuintillion, oneBillion)))
+
+	nTwo := longlong.FromWord(2)
+	println("minNeg / 2 =", longlong.Format(longlong.Div(minNeg, nTwo)))
+
+	// Method calls on variable
+	resDiv := n100.Div(n7b)
+	resMod := n100.Mod(n7b)
+	println("method n100.Div(n7) =", resDiv.Format())
+	println("method n100.Mod(n7) =", resMod.Format())
+
+	println("--- Comparisons ---")
+	println("5 < 7:", longlong.Lt(pos5, n7))
+	println("7 < 5:", longlong.Lt(n7, pos5))
+	println("5 == 5:", longlong.Eq(pos5, longlong.FromWord(5)))
+	println("(-5) < 3:", longlong.Lt(neg5, pos3))
+	println("3 < (-5):", longlong.Lt(pos3, neg5))
+	println("(-5) < (-3):", longlong.Lt(neg5, neg3))
+	println("(-3) < (-5):", longlong.Lt(neg3, neg5))
+	println("minNeg < maxPos:", longlong.Lt(minNeg, maxPos))
+	println("maxPos < minNeg:", longlong.Lt(maxPos, minNeg))
+
+	println("--- Bitwise Ops and Shifts ---")
+	hexA := longlong.FromWords(0x00FF, 0x0F0F, 0x0000, 0x0000)
+	hexB := longlong.FromWords(0x0FF0, 0x00FF, 0x0000, 0x0000)
+	println("and:", longlong.Format(longlong.And(hexA, hexB)))
+	println("or:", longlong.Format(longlong.Or(hexA, hexB)))
+	println("xor:", longlong.Format(longlong.Xor(hexA, hexB)))
+
+	shiftVal := longlong.FromString("1000000000")
+	println("10^9 << 4 =", longlong.Format(longlong.Shl(shiftVal, 4)))
+	println("10^9 >> 4 =", longlong.Format(longlong.Shr(shiftVal, 4)))
+
+	negShift := longlong.FromString("-1000000000")
+	println("(-10^9) >> 4 =", longlong.Format(longlong.Shr(negShift, 4)))
+}
