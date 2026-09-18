@@ -81,7 +81,7 @@ This working stack tracks the compiler optimization pipeline's active and queued
 
 | Stack Level | Task / Optimization | Status | Focus / Description |
 | :--- | :--- | :--- | :--- |
-| **TOP (Active)** | **Struct Copy Inlining & SROA (`09_struct_ops`)** | **Active** | Inline 2/4/6-byte struct copies with accumulator pairs (`ldd`/`std`); scalarize non-escaping struct fields to SSA virtual registers to cut stack frame payload. |
+| **TOP (Active)** | **Struct Copy Inlining & SROA (`09_struct_ops`)** | **Active** | Phase 1 (Direct EA Folding) complete: folded AddressOfField/Element for direct stack/global locations (-1.6KB math, -1.2KB float, 9.7K cycles 09_struct_ops). Phase 2: SROA / aggregate copy inlining. |
 | **Depth 1 [Suspended]** | **Dense Switch Jump Tables (`10_switch_case`)** | Queued | Replace $O(N)$ if-else ladder with $O(1)$ indexed dispatch `jmp [d,x]` for dense integer case ranges. |
 | **Depth 2 [Suspended]** | **Loop Induction Pinning & Byte Indexing (`02_count_loop`, `07_sieve`, `08_bubble_sort`)** | Queued | Pin induction variables in index registers across loop headers; leverage `ABX` and autoincrement for array strides. |
 | **Depth 3 [Suspended]** | **Non-Reentrant Static Frame Overlays & Direct Page Allocation** | Queued | Map mutually exclusive TrunkLevel and LeafLevel frames to shared global/DP memory blocks, removing `leas -N,s` and `leas N,s`. |
