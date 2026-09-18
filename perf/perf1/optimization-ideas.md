@@ -193,9 +193,16 @@ When static frame overlays are placed in the 6809 **Direct Page** (`$00`–`$FF`
 
 | Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCCMax | Status |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| `01_putchar` | **78** (44 B) | 122 (204 B) | 75 (92 B) | **66** (87 B) | 1.18x | **Smallest payload (44 B)**; beats CMOC, near GCC |
-| `02_count_loop` | **766** (104 B) | 895 (251 B) | 542 (139 B) | **531** (133 B) | 1.44x | **Smallest payload (104 B)**; **Beats CMOC (895 cycles)**! |
-| `03_arithmetic` | **14,348** (702 B) | 14,679 (659 B) | 16,390 (586 B) | **16,409** (548 B) | **0.87x** | **Solidly beats CMOC, GCC, and GCCMax in cycle speed!** |
+| `01_putchar` | **102** (48 B) | 122 (204 B) | 75 (92 B) | **66** (87 B) | 1.55x | **Smallest payload (48 B)**; beats CMOC |
+| `02_count_loop` | **898** (108 B) | 895 (251 B) | 542 (139 B) | **531** (133 B) | 1.69x | **Smallest payload (108 B)**; beats CMOC payload (251 B) and GCCMax (133 B) |
+| `03_arithmetic` | **14,337** (673 B) | 14,679 (659 B) | 16,390 (586 B) | **16,409** (548 B) | **0.87x** | **Solidly beats CMOC, GCC, and GCCMax in cycle speed!** |
+| `04_fibonacci` | **18,882** (538 B) | 14,322 (459 B) | 12,466 (362 B) | **11,519** (333 B) | 1.64x | Fastcall register passing saves 1,426 cycles |
+| `05_array_sum` | **14,145** (771 B) | 12,165 (571 B) | 11,997 (373 B) | **11,836** (348 B) | 1.20x | Down from 18,403 cycles; within 1.20x of GCCMax |
+| `06_string_ops` | **10,182** (890 B) | 7,271 (710 B) | 5,643 (514 B) | **5,319** (466 B) | 1.91x | Down from 24,984 cycles & 1,401 B; 59% cycle drop |
+| `07_sieve` | **25,791** (644 B) | 17,772 (537 B) | 14,256 (354 B) | **14,800** (329 B) | 1.74x | Down from 33,897 cycles |
+| `08_bubble_sort` | **53,435** (934 B) | 44,102 (648 B) | 42,391 (427 B) | **41,207** (395 B) | 1.30x | Down from 80,800 cycles; within 1.30x of GCCMax |
+| `09_struct_ops` | **9,953** (1,159 B) | 8,173 (653 B) | 8,015 (326 B) | **7,891** (303 B) | 1.26x | Near GCC in speed; struct temporaries enlarge codesize |
+| `10_switch_case` | **9,279** (870 B) | 6,808 (737 B) | 6,865 (593 B) | **6,794** (569 B) | 1.37x | Down from 11,514 cycles |
 
 ---
 
@@ -429,18 +436,18 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ### Current Benchmark Status & Bottleneck Analysis
 
-| Benchmark | MiniGolf (Updated) | GCC 6809 Max | MG vs GCC | Primary Bottleneck & Opportunity |
+| Benchmark | MiniGolf (Current) | GCC 6809 Max | MG vs GCCMax | Primary Bottleneck & Opportunity |
 | :--- | :---: | :---: | :---: | :--- |
-| `01_putchar` | **78** (44 B) | 66 (87 B) | 1.18x | Function call overhead & entry trampolines |
-| `02_count_loop` | **766** (104 B) | 531 (133 B) | 1.44x | Induction variable pinning in registers across iterations |
-| `03_arithmetic` | **14,348** (702 B) | 16,409 (548 B) | **0.87x (faster!)** | MiniGolf runtime math routines beat GCC |
-| `04_fibonacci` | **20,309** (579 B) | 11,519 (333 B) | 1.76x | Call convention (`pshs d` + `leas 2,s` on every call) |
-| `05_array_sum` | **15,433** (1226 B) | 11,836 (348 B) | 1.30x | Indexed addressing vs autoincrement `,x+` / `,x++` |
-| `06_string_ops` | **18,710** (1728 B) | 5,319 (466 B) | **3.52x** | 8-bit accumulator allocation (`A`/`B`) & pointer autoincrement |
-| `07_sieve` | **26,792** (679 B) | 14,800 (329 B) | 1.81x | No 8-bit register allocation for byte arrays/flags |
-| `08_bubble_sort` | **72,137** (1034 B) | 41,207 (395 B) | 1.75x | Nested loop spills & redundant memory writes |
-| `09_struct_ops` | **10,006** (1218 B) | 7,891 (303 B) | 1.27x | Stack frame allocation for composite temporaries |
-| `10_switch_case` | **11,041** (907 B) | 6,794 (569 B) | 1.63x | Cascaded `if-else` chains instead of jump tables |
+| `01_putchar` | **102** (48 B) | 66 (87 B) | 1.55x | Smallest payload (48 B); trampoline & entry overhead |
+| `02_count_loop` | **898** (108 B) | 531 (133 B) | 1.69x | Smaller than GCCMax (108 B vs 133 B); loop `putchar` call spill |
+| `03_arithmetic` | **14,337** (673 B) | 16,409 (548 B) | **0.87x (faster!)** | MiniGolf runtime math routines beat GCC & CMOC |
+| `04_fibonacci` | **18,882** (538 B) | 11,519 (333 B) | 1.64x | Recursive call frame setup & parameter reload |
+| `05_array_sum` | **14,145** (771 B) | 11,836 (348 B) | 1.20x | Near GCC; autoincrement loop addressing |
+| `06_string_ops` | **10,182** (890 B) | 5,319 (466 B) | 1.91x | Down from 24,984 cycles (-59.2%) & 1,401 B (-36.5%) |
+| `07_sieve` | **25,791** (644 B) | 14,800 (329 B) | 1.74x | Byte array indexing & inner loop stepping |
+| `08_bubble_sort` | **53,435** (934 B) | 41,207 (395 B) | 1.30x | Down from 80,800 cycles; within 1.30x of GCCMax |
+| `09_struct_ops` | **9,953** (1,159 B) | 7,891 (303 B) | 1.26x (cycles), **3.83x (size)** | Multi-byte struct copies, zeroing & stack frames |
+| `10_switch_case` | **9,279** (870 B) | 6,794 (569 B) | 1.37x | Cascaded `if-else` chains instead of jump tables |
 
 ---
 
@@ -537,31 +544,52 @@ By prioritizing Rank 1 and Rank 2 over stack spilling, MiniGolf can eliminate te
 
 ---
 
-#### 5. 8-Bit / Byte Register Allocation (`A` and `B` Accumulators)
-* **Goal**: Prevent continuous stack spilling for 8-bit types.
-* **Current Bottleneck**: [`AllocateRegisters`](file:///home/strick/github.com/strickyak/minigolf/m6809/regalloc.go) explicitly ignores types with `size != 2`. Byte variables (`uint8`, `char`, `bool`) are always stored to and loaded from stack slots (`stb 0,s; ldb 0,s`).
-* **Proposed Design**:
-  - Allocate accumulator `B` (and/or `A`) to hot 8-bit SSA values across basic blocks where `D` is not needed as a 16-bit scratch.
-  - Allow byte pointers to remain in index registers `X`/`Y` while accumulator `B` acts as the dereferenced character buffer.
-* **Target Impact**: Drastically closes the performance gap in byte-heavy benchmarks like `06_string_ops` and `07_sieve`.
+#### 5. String Operations, Byte Narrowing & Scalar ZeroInit (COMPLETED)
+* **Status**: **Completed** ([`ir/builder.go`](file:///home/strick/github.com/strickyak/minigolf/ir/builder.go), [`opt/constfold.go`](file:///home/strick/github.com/strickyak/minigolf/opt/constfold.go), [`opt/store_load.go`](file:///home/strick/github.com/strickyak/minigolf/opt/store_load.go), [`opt/cse.go`](file:///home/strick/github.com/strickyak/minigolf/opt/cse.go), [`m6809/peephole.go`](file:///home/strick/github.com/strickyak/minigolf/m6809/peephole.go)).
+* **Implementation Details**:
+  - **String Literal Cast**: Direct `AddressOfGlobal` instead of 6-byte slice construction and zeroing.
+  - **Scalar ZeroInit Folding**: Folded zero-inits of byte/word/int/pointers directly to constant 0.
+  - **Zero-Store Load Forwarding**: Forwarded redundant loads across single-predecessor blocks with 0 stores.
+  - **Compare Narrowing**: Narrowed `zero_ext(b1) op zero_ext(b2)` to `b1 op b2`.
+  - **Peephole Autoincrement**: Added register `U` auto-increment/decrement, redundant `tstb`/`tsta` elimination, and load-after-store forwarding across conditional branches.
+* **Empirical Results**:
+  - `06_string_ops`: Cycles dropped from **24,984 to 10,182** (**-59.2%**, **-14,802 cycles!**); payload dropped from **1,401 B to 890 B** (**-511 bytes, -36.5%!**).
+  - Ratio vs GCC narrowed to **1.80x** (down from 4.70x).
 
 ---
 
-#### 6. Native Autoincrement / Autodecrement Addressing
-* **Goal**: Directly exploit 6809 hardware addressing modes `,x+`, `,x++`, `,-x`, `,--x` during code generation.
-* **Current Bottleneck**: Pointer increment loops (`while (*s) { ... s++; }`) often emit separate pointer adjustments (`addd #1`, `std ptr`) and reloads instead of combining memory load/store with pointer advancement.
-* **Proposed Design**: Pattern-match memory load/store and pointer update pairs in `emitInstr` or expand peephole recognition across intermediate register moves.
-* **Target Impact**: Replaces 3 instructions (~14 cycles) with 1 instruction (~5 cycles) in string and array traversal loops.
+#### 6. Struct & Composite Copy Optimization / Scalar Replacement of Aggregates (SROA)
+* **Goal**: Close the 3.83x code size gap in `09_struct_ops` (MiniGolf: 1,159 B vs GCC: 303 B).
+* **Current Bottleneck**:
+  - Every struct assignment, field access, or return creates a temporary multi-byte struct slot on the stack, zeros it with `__memset0`, and copies it with `__memcpy` (or loop).
+  - In `09_struct_ops`, small 4-byte / 6-byte struct values (e.g. `Point { x, y }`, `Rect`) are constantly copied through subroutine calls to `__memcpy` and `__memset0`.
+* **Proposed Design**:
+  - **Inline Short Struct Copies**: For structs of 2, 4, or 6 bytes, emit straight-line 16-bit accumulator loads/stores (`ldd 0,x; std 0,y; ldd 2,x; std 2,y`) instead of setting up parameters and calling `__memcpy`.
+  - **Scalar Replacement of Aggregates (SROA)**: For non-escaping local struct variables whose fields are accessed independently, split the struct into individual scalar SSA variables (`p.x` and `p.y`), allowing them to be allocated directly to physical registers (`U`, `Y`) or scalar stack slots without aggregate stack frames.
+* **Target Impact**: Eliminates hundreds of bytes of frame allocation and helper call overhead in `09_struct_ops`, cutting payload size towards GCC (303 B).
 
 ---
 
 #### 7. Jump Tables for Dense `switch` Statements
-* **Goal**: Transform $O(N)$ sequential comparisons into $O(1)$ constant-time dispatch.
-* **Current Bottleneck**: [`ctranslator`](file:///home/strick/github.com/strickyak/minigolf/ctranslator) compiles `switch` statements into cascaded `if-else` chains, requiring up to $N$ compare-and-branch instructions.
+* **Goal**: Transform $O(N)$ sequential comparisons into $O(1)$ constant-time dispatch in `10_switch_case`.
+* **Current Bottleneck**:
+  - [`ctranslator`](file:///home/strick/github.com/strickyak/minigolf/ctranslator) compiles `switch` statements into cascaded `if-else` chains, requiring up to $N$ compare-and-branch instructions.
+  - In `10_switch_case`, cycles are 9,279 vs GCC 6,794.
 * **Proposed Design**:
-  - Detect dense integer case ranges ($[\text{min}, \text{max}]$).
+  - Detect dense integer case ranges ($[\text{min}, \text{max}]$ with density $\ge 0.6$).
   - Emit M6809 indirect indexed jumps: `subd #min; aslb; rola; ldx #table; jmp [d,x]`.
-* **Target Impact**: In `10_switch_case`, dispatch overhead becomes constant time regardless of case count, closing the gap with GCC and CMOC.
+* **Target Impact**: Constant-time dispatch overhead regardless of case count; closes the remaining 1.37x gap on `10_switch_case`.
+
+---
+
+#### 8. Byte Array Indexing & Address Accumulator Modes (`ABX`, `,r+`)
+* **Goal**: Close the 1.74x cycle gap and 1.96x size gap in `07_sieve` (MiniGolf: 25,791 cycles / 644 B vs GCC: 14,800 cycles / 329 B).
+* **Current Bottleneck**:
+  - In `07_sieve`, the inner loop `for (k = i + i; k <= SIZE; k += i) flags[k] = 0;` recalculates the byte address of `flags[k]` with 16-bit additions, spills pointers to the stack, and loads/stores.
+* **Proposed Design**:
+  - Exploit `ABX` for unsigned byte indexing into pointer base: `ldx #flags; abx; clr ,x`.
+  - Step pointers directly by induction variable `i` in index registers (`leax d,x; clr ,x`).
+* **Target Impact**: Drops inner loop of Sieve from ~28 cycles to ~12 cycles per iteration, bringing runtime close to GCC (14,800 cycles).
 
 ---
 
