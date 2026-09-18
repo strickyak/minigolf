@@ -145,9 +145,8 @@ This document catalogs all known bugs, translation quirks, and architectural lim
 
 
 
-# FIXED?
 
- M6809 Backend Register Y Callee-Save Fix
+## M6809 Backend Register Y Callee-Save Bug -- FIXED.
 
   • Root Cause: In backend.go and regalloc.go, when a function performed multi-byte copies (emitCopy / __memcpy / InsertField /
   InsertElement), physical register Y was used as a scratch register. The register allocator excluded Y from SSA allocation in such
@@ -155,3 +154,70 @@ This document catalogs all known bugs, translation quirks, and architectural lim
   functions like lexer_next clobbered the caller's live value in Y (e.g. left in parse_expr).
   • Fix: Added regalloc.go:29 and updated saveY in backend.go:3702 to save Y whenever (usedRegs["y"] || b.functionClobbersY(f)) &&
   !b.globalsAtY.
+
+---
+
+## 4. Triage and Priority Assessment
+
+### Summary List
+
+| Number | Title | Triage |
+| :--- | :--- | :--- |
+| **1.1** | Register `Y` Clobbered by Multi-Byte Copies / `__memcpy` | **Working as intended** *(Resolved / Fixed)* |
+| **1.2** | 16-Bit Integer Semantics on M6809 vs 32-Bit on CBE/AMD64 | **Working as intended** |
+| **2.1** | Keyword Collisions on C Struct Fields and Identifiers | **Medium** |
+| **2.2** | Struct Member Array Decay Generates Bogus Pointer Casts | **Working as intended** *(Resolved / Fixed)* |
+| **2.3** | Single-Quote Character Literal Escape Stripping | **Easy** |
+| **2.4** | Lack of `enum` Support | **Easy** |
+| **2.5** | Function Pointers and Indirect Calls Unsupported | **Medium** |
+| **2.6** | Complex Post-Increment/Decrement Expressions | **Medium** |
+| **2.7** | Comma Expressions in Value Positions | **Easy** |
+| **2.8** | `union` Types Unsupported | **Hard to fix** |
+| **2.9** | `switch` Fall-Through Unsupported | **Medium** |
+| **3.1** | Free-List Coalescing Corruption in `free()` on M6809 | **Medium** *(Serious bug)* |
+| **3.2** | Freestanding Environment Without Standard C Headers | **Working as intended** |
+
+### Triage Rationale & Details
+
+#### Working as Intended
+* **1.1 Register `Y` Clobbered by Multi-Byte Copies**: Already fixed in `m6809/regalloc.go` and `m6809/backend.go` via `functionClobbersY`.
+* **1.2 16-Bit Semantics on M6809 vs 32-Bit on CBE/AMD64**: Intentional architectural divergence allowing large code/data scenarios to run on 32/64-bit host backends while respecting the 64 KB memory limit of the M6809.
+* **2.2 Struct Member Array Decay**: Already fixed in `t.xExprNoDecay` in `ctranslator/translator.go`.
+* **3.2 Freestanding Environment Without Standard Headers**: Intentional retro/embedded design constraint. MiniGolf targets standalone ROM/OS environments via `golflib/prelude.golf` rather than linking glibc.
+
+#### Easy
+* **2.3 Single-Quote Character Literal Escape Stripping**:
+  * **Root Cause**: 1-line string escaping bug in `sanitizeCharLit()` (`ctranslator/translator.go`):
+    ```go
+    if val == '\'' {
+        return "'\\'" // Emits quote, backslash, quote without closing quote escaping!
+    }
+    ```
+  * **Fix**: Returning `"'\\''"` or decimal `"39"` resolves it cleanly.
+* **2.4 Lack of `enum` Support**:
+  * The underlying C parser (`cc_v5`) already parses `*cc.EnumSpecifier` and assigns integer values to `EnumeratorList`.
+  * `ctranslator` only needs to iterate the enumerators in `prescan` and emit MiniGolf `const` declarations.
+* **2.7 Comma Expressions in Value Positions**:
+  * Comma expressions `(a, b)` evaluate `a` for side effects, discard it, and yield `b`.
+  * Can be extracted as a preceding statement or lowered trivially.
+
+#### Medium
+* **2.1 Keyword Collisions (`type`, `var`, `func`, etc.)**:
+  * Requires a keyword sanitization helper (e.g., renaming colliding names to `_type` or `c_var`) applied consistently across declarators, parameter names, struct fields, and identifier/selector expressions in `ctranslator/translator.go`.
+* **2.5 Function Pointers and Indirect Calls**:
+  * MiniGolf's IR and backends already support `IndirectCall` (`indirect_call`).
+  * `ctranslator` maps function pointers to `word`, but needs to emit function address references (`&fn`) and cast calls appropriately.
+* **2.6 Complex Post-Increment/Decrement Expressions**:
+  * Embedded side effects like `buf[i++] = *s++` currently lower to inline calls `pointer_post_increment(&s)`.
+  * Needs an AST pre-pass or statement unroller in `ctranslator` to sequence and preserve pre-increment values without interfering with surrounding operations.
+* **2.9 `switch` Fall-Through**:
+  * C `switch` is currently lowered to `if / else if` ladders, losing fall-through without `break`.
+  * MiniGolf supports `goto` and labels. Can be lowered to a condition dispatch followed by labeled statement blocks.
+* **3.1 Free-List Coalescing Corruption in `free()` on M6809**:
+  * A real runtime bug in `golflib/prelude.golf` where K&R circular free-list coalesce pointer arithmetic fails when merging adjacent blocks in 16-bit unsigned address space.
+  * Localized to ~30 lines in `prelude.golf`, but requires careful edge-case unit testing.
+
+#### Hard to Fix
+* **2.8 `union` Types Unsupported**:
+  * MiniGolf AST and IR have no concept of overlapping memory storage or union types.
+  * Supporting C unions requires either adding native `union` support across the entire MiniGolf frontend, IR builder, and all 3 backends, or synthesizing complex raw byte arrays with unsafe pointer casts in `ctranslator`.
