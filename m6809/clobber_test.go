@@ -170,3 +170,110 @@ func TestFunctionDirectClobbers(t *testing.T) {
 		t.Errorf("functionClobbersY(f2) must return true")
 	}
 }
+
+func TestProgramClobberPropagation(t *testing.T) {
+	b := New(false, false, false)
+
+	// 1. leaf_inc: scalar leaf function (only touches D and CC)
+	leafInc := &ir.Function{
+		Name: "leaf_inc",
+		Blocks: []*ir.BasicBlock{
+			{
+				Instructions: []ir.Instruction{
+					&ir.BinaryOp{
+						BaseInstruction: ir.BaseInstruction{Typ: ir.TypeWord},
+						Op:              "add",
+						Left:            &ir.ConstWord{Val: 1},
+						Right:           &ir.ConstWord{Val: 2},
+					},
+				},
+				Terminator: &ir.Return{Val: &ir.ConstWord{Val: 3}},
+			},
+		},
+	}
+
+	// 2. caller_inc: calls leaf_inc
+	callerInc := &ir.Function{
+		Name: "caller_inc",
+		Blocks: []*ir.BasicBlock{
+			{
+				Instructions: []ir.Instruction{
+					&ir.Call{
+						BaseInstruction: ir.BaseInstruction{Typ: ir.TypeWord},
+						Func:            leafInc,
+						Args:            []ir.Value{&ir.ConstWord{Val: 1}},
+					},
+				},
+				Terminator: &ir.Return{Val: &ir.ConstWord{Val: 4}},
+			},
+		},
+	}
+
+	// 3. leaf_copy: struct copy leaf (touches D, X, Y, CC)
+	structType := ir.Type{
+		Name: "Point",
+		Bits: ir.TypeBitStruct,
+		FieldNamesAndTypes: []ir.NameAndType{
+			{Name: "x", Type: ir.TypeWord},
+			{Name: "y", Type: ir.TypeWord},
+		},
+	}
+	leafCopy := &ir.Function{
+		Name: "leaf_copy",
+		Blocks: []*ir.BasicBlock{
+			{
+				Instructions: []ir.Instruction{
+					&ir.InsertField{
+						BaseInstruction: ir.BaseInstruction{Typ: structType},
+						Struct:          &ir.ConstWord{Val: 0},
+						FieldIndex:      0,
+						Val:             &ir.ConstWord{Val: 10},
+					},
+				},
+				Terminator: &ir.Return{},
+			},
+		},
+	}
+
+	// 4. caller_copy: calls leaf_copy
+	callerCopy := &ir.Function{
+		Name: "caller_copy",
+		Blocks: []*ir.BasicBlock{
+			{
+				Instructions: []ir.Instruction{
+					&ir.Call{
+						BaseInstruction: ir.BaseInstruction{Typ: ir.TypeVoid},
+						Func:            leafCopy,
+						Args:            nil,
+					},
+				},
+				Terminator: &ir.Return{},
+			},
+		},
+	}
+
+	prog := &ir.Program{
+		Functions: []*ir.Function{leafInc, callerInc, leafCopy, callerCopy},
+	}
+
+	analysis := b.AnalyzeProgramClobbers(prog)
+
+	// Verify leafInc: only D and CC
+	leafTotal := analysis.TotalClobbers["leaf_inc"]
+	if !leafTotal.Contains(RegD) || leafTotal.Overlaps(RegY) || leafTotal.Overlaps(RegU) {
+		t.Errorf("leaf_inc total clobbers should be D|CC, got %s", leafTotal.String())
+	}
+
+	// Verify leafCopy: must contain Y
+	leafCopyTotal := analysis.TotalClobbers["leaf_copy"]
+	if !leafCopyTotal.Contains(RegY) {
+		t.Errorf("leaf_copy total clobbers must contain Y, got %s", leafCopyTotal.String())
+	}
+
+	// Verify callerCopy: transitively inherits Y from leafCopy!
+	callerCopyTotal := analysis.TotalClobbers["caller_copy"]
+	if !callerCopyTotal.Contains(RegY) {
+		t.Errorf("caller_copy must transitively inherit Y clobber from leaf_copy, got %s", callerCopyTotal.String())
+	}
+}
+

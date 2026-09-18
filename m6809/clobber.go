@@ -179,3 +179,92 @@ func (b *Backend) FunctionDirectClobbers(f *ir.Function) RegMask {
 
 	return mask
 }
+
+// ProgramClobberAnalysis holds direct and transitive clobber sets for all functions in an ir.Program.
+type ProgramClobberAnalysis struct {
+	DirectClobbers    map[string]RegMask
+	TotalClobbers     map[string]RegMask
+	CalledFuncs       map[string]map[string]bool
+	MakesIndirectCall map[string]bool
+}
+
+// AnalyzeProgramClobbers performs whole-program interprocedural register clobber analysis.
+// It computes direct register modifications for each function, then propagates transitive
+// clobbers bottom-up through the call graph to a fixed point.
+func (b *Backend) AnalyzeProgramClobbers(program *ir.Program) *ProgramClobberAnalysis {
+	analysis := &ProgramClobberAnalysis{
+		DirectClobbers:    make(map[string]RegMask),
+		TotalClobbers:     make(map[string]RegMask),
+		CalledFuncs:       make(map[string]map[string]bool),
+		MakesIndirectCall: make(map[string]bool),
+	}
+
+	if program == nil {
+		return analysis
+	}
+
+	// 1. Compute direct clobbers and collect call graph edges for all functions
+	for _, f := range program.Functions {
+		analysis.CalledFuncs[f.Name] = make(map[string]bool)
+		direct := b.FunctionDirectClobbers(f)
+		analysis.DirectClobbers[f.Name] = direct
+		analysis.TotalClobbers[f.Name] = direct
+
+		for _, blk := range f.Blocks {
+			for _, instr := range blk.Instructions {
+				switch call := instr.(type) {
+				case *ir.Call:
+					if call.Func != nil {
+						analysis.CalledFuncs[f.Name][call.Func.Name] = true
+					}
+				case *ir.IndirectCall:
+					analysis.MakesIndirectCall[f.Name] = true
+				case *ir.BuiltinCall:
+					// Builtin calls like print / println clobber caller-saved registers
+					analysis.TotalClobbers[f.Name] |= RegD | RegX | RegCC
+				}
+			}
+		}
+
+		// If function makes indirect calls, it may invoke anything; conservatively assume caller-saved registers
+		if analysis.MakesIndirectCall[f.Name] {
+			analysis.TotalClobbers[f.Name] |= RegD | RegX | RegCC
+		}
+	}
+
+	// 2. Fixed-point propagation of transitive clobbers along call edges
+	changed := true
+	for changed {
+		changed = false
+		for _, f := range program.Functions {
+			callerName := f.Name
+			for calleeName := range analysis.CalledFuncs[callerName] {
+				var calleeClobbers RegMask
+				if calleeTotal, ok := analysis.TotalClobbers[calleeName]; ok {
+					calleeClobbers = calleeTotal
+				} else {
+					// External function or runtime helper not in program.Functions
+					calleeClobbers = HelperClobbers(calleeName)
+				}
+
+				if (analysis.TotalClobbers[callerName] & calleeClobbers) != calleeClobbers {
+					analysis.TotalClobbers[callerName] |= calleeClobbers
+					changed = true
+				}
+			}
+		}
+	}
+
+	return analysis
+}
+
+// FunctionTotalClobbers returns the transitive physical register clobber mask for funcName.
+func (b *Backend) FunctionTotalClobbers(funcName string) RegMask {
+	if b.clobberAnalysis != nil {
+		if mask, ok := b.clobberAnalysis.TotalClobbers[funcName]; ok {
+			return mask
+		}
+	}
+	return HelperClobbers(funcName)
+}
+

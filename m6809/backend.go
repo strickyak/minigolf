@@ -190,6 +190,7 @@ type Backend struct {
 	calleeSaveRegs    []string
 	savedRegBytes     int
 	saveYFP           bool
+	clobberAnalysis   *ProgramClobberAnalysis
 
 	// Tunable optimization and code-generation thresholds (time vs space)
 	InlineMul16           bool // Inline 16-bit multiplication instead of calling __mul16 helper
@@ -4011,6 +4012,7 @@ __memset0:
 
 func (b *Backend) Generate(program *ir.Program) string {
 	b.program = program
+	b.clobberAnalysis = b.AnalyzeProgramClobbers(program)
 	b.buf.WriteString("\tpragma cescapes\n")
 
 	b.globalOffsets = make(map[string]int)
