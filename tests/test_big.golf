@@ -1,0 +1,226 @@
+package main
+
+import "big"
+
+func main() {
+	var a big.Big
+	var b big.Big
+	var c big.Big
+	var q big.Big
+	var r big.Big
+	var z big.Big
+	var m big.Big
+
+	// 1. Basic SetSmall and queries
+	a.SetSmall(0)
+	println("a=0 IsZero:", a.IsZero())
+	println("a=0 EqSmall 0:", a.EqSmall(0))
+	println("a=0 IsEven:", a.IsEven())
+
+	a.SetSmall(7)
+	println("a=7 IsZero:", a.IsZero())
+	println("a=7 EqSmall 7:", a.EqSmall(7))
+	println("a=7 EqSmall 8:", a.EqSmall(8))
+	println("a=7 IsEven:", a.IsEven())
+
+	a.SetSmall(8)
+	println("a=8 IsEven:", a.IsEven())
+
+	// 2. Addition
+	a.SetSmall(12)
+	b.SetSmall(34)
+	z.Add(&a, &b)
+	print("12 + 34 = ")
+	z.Println()
+
+	a.SetSmall(65535)
+	b.SetSmall(1)
+	z.Add(&a, &b)
+	print("65535 + 1 = ")
+	z.Println()
+	print("65535 + 1 in hex = ")
+	z.PrintlnHex()
+
+	b.SetSmall(65535)
+	z.Add(&a, &b)
+	print("65535 + 65535 = ")
+	z.Println()
+
+	// In-place Add: x = x + x
+	a.SetSmall(1)
+	for i := range 10 {
+		a.Add(&a, &a)
+	}
+	print("2^10 by Add = ")
+	a.Println()
+
+	// 3. Subtraction
+	a.SetSmall(46)
+	b.SetSmall(12)
+	z.Sub(&a, &b)
+	print("46 - 12 = ")
+	z.Println()
+
+	a.SetSmall(65535)
+	b.SetSmall(1)
+	c.Add(&a, &b) // c = 65536
+	z.Sub(&c, &b) // 65536 - 1
+	print("65536 - 1 = ")
+	z.Println()
+
+	z.Sub(&a, &a) // 65535 - 65535 = 0
+	print("65535 - 65535 = ")
+	z.Println()
+
+	// 4. Multiplication
+	a.SetSmall(12)
+	b.SetSmall(12)
+	z.Mul(&a, &b)
+	print("12 * 12 = ")
+	z.Println()
+
+	a.SetSmall(0)
+	b.SetSmall(5)
+	z.Mul(&a, &b)
+	print("0 * 5 = ")
+	z.Println()
+
+	a.SetSmall(255)
+	b.SetSmall(255)
+	z.Mul(&a, &b)
+	print("255 * 255 = ")
+	z.Println()
+
+	a.SetSmall(65535)
+	b.SetSmall(65535)
+	z.Mul(&a, &b)
+	print("65535 * 65535 = ")
+	z.Println()
+	print("65535 * 65535 in hex = ")
+	z.PrintlnHex()
+
+	// 5. DivMod
+	a.SetSmall(255)
+	b.SetSmall(12)
+	big.DivMod(&q, &r, &a, &b)
+	print("255 / 12 = ")
+	q.Println()
+	print("255 % 12 = ")
+	r.Println()
+
+	a.SetSmall(144)
+	b.SetSmall(12)
+	big.DivMod(&q, &r, &a, &b)
+	print("144 / 12 = ")
+	q.Println()
+	print("144 % 12 = ")
+	r.Println()
+
+	// Divide 65536 by 2 = 32768
+	b.SetSmall(2)
+	big.DivMod(&q, &r, &c, &b)
+	print("65536 / 2 = ")
+	q.Println()
+	print("65536 % 2 = ")
+	r.Println()
+
+	// Divide 4294836225 by 65535 = 65535
+	b.SetSmall(65535)
+	big.DivMod(&q, &r, &z, &b)
+	print("4294836225 / 65535 = ")
+	q.Println()
+	print("4294836225 % 65535 = ")
+	r.Println()
+
+	// 6. Div2 and Mul2
+	a.SetSmall(255)
+	big.Div2(&z, &a)
+	print("255 Div2 = ")
+	z.Println()
+	big.Mul2(&z, &z)
+	print("127 Mul2 = ")
+	z.Println()
+
+	// 7. Lsh and Rsh
+	a.SetSmall(1)
+	z.Lsh(&a, 10)
+	print("1 << 10 = ")
+	z.Println()
+
+	z.Rsh(&z, 10)
+	print("1024 >> 10 = ")
+	z.Println()
+
+	a.SetSmall(1)
+	z.Lsh(&a, 64)
+	print("1 << 64 in hex = ")
+	z.PrintlnHex()
+	print("1 << 64 = ")
+	z.Println()
+
+	// 8. Comparisons
+	a.SetSmall(10)
+	b.SetSmall(20)
+	println("10 cmp 20:", a.Cmp(&b))
+	println("20 cmp 20:", b.Cmp(&b))
+	println("20 cmp 10:", b.Cmp(&a))
+	println("10 lt 20:", a.Lt(&b))
+	println("10 gt 20:", a.Gt(&b))
+	println("10 eq 20:", a.Eq(&b))
+
+	// 9. Modular Exponentiation
+	a.SetSmall(2)
+	b.SetSmall(10)
+	m.SetSmall(1000)
+	z.Pow(&a, &b, &m)
+	print("2^10 mod 1000 = ")
+	z.Println()
+
+	m.SetSmall(10000)
+	z.Pow(&a, &b, &m)
+	print("2^10 mod 10000 = ")
+	z.Println()
+
+	// 10. PowSmall
+	a.SetSmall(2)
+	z.PowSmall(&a, 32)
+	print("2^32 = ")
+	z.Println()
+
+	z.PowSmall(&a, 64)
+	print("2^64 = ")
+	z.Println()
+
+	z.PowSmall(&a, 100)
+	print("2^100 = ")
+	z.Println()
+
+	// 11. FromString and FromHex
+	a.FromString("12345678901234567890")
+	print("FromString 12345678901234567890 = ")
+	a.Println()
+	print("in hex = ")
+	a.PrintlnHex()
+
+	b.FromHex("0xAB54A98CEB1F0AD2")
+	print("FromHex 0xAB54A98CEB1F0AD2 = ")
+	b.Println()
+	println("FromString eq FromHex:", a.Eq(&b))
+
+	// 12. Bitwise operations
+	a.SetSmall(0x1234)
+	b.SetSmall(0x5678)
+	z.And(&a, &b)
+	print("0x1234 & 0x5678 in hex = ")
+	z.PrintlnHex()
+
+	z.Or(&a, &b)
+	print("0x1234 | 0x5678 in hex = ")
+	z.PrintlnHex()
+
+	z.Xor(&a, &b)
+	print("0x1234 ^ 0x5678 in hex = ")
+	z.PrintlnHex()
+
+	println("ALL TESTS PASSED")
+}

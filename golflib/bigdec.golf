@@ -1,4 +1,4 @@
-package big
+package bigdec
 
 type Dec struct {
 	Size byte
