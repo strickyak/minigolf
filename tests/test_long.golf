@@ -1,0 +1,150 @@
+package main
+
+import "long"
+
+func main() {
+	println("--- Sizeof ---")
+	println("sizeof:", sizeof[long.Long]())
+
+	println("--- Constants and Conversions ---")
+	z := long.Zero()
+	println("zero:", z.Format(), z.IsZero())
+
+	one := long.One()
+	println("one:", one.Format())
+
+	w42 := long.FromWord(42)
+	println("w42:", w42.Format(), w42.ToWord())
+
+	wMax := long.FromWord(65535)
+	println("wMax:", wMax.Format(), wMax.ToWord())
+
+	iNeg1 := long.FromInt(-1)
+	println("iNeg1:", iNeg1.Format())
+
+	iNeg42 := long.FromInt(-42)
+	println("iNeg42:", iNeg42.Format())
+
+	println("--- FromString and Format ---")
+	s1 := long.FromString("123456789")
+	println("s1:", s1.Format())
+
+	sNeg1 := long.FromString("-987654321")
+	println("sNeg1:", sNeg1.Format())
+
+	maxPos := long.FromString("2147483647")
+	println("maxPos:", maxPos.Format())
+
+	minNeg := long.FromString("-2147483648")
+	println("minNeg:", minNeg.Format())
+
+	println("--- Addition ---")
+	a := long.FromString("1000000")
+	b := long.FromString("2345678")
+	println("1000000 + 2345678 =", long.Format(long.Add(a, b)))
+
+	pos5 := long.FromWord(5)
+	neg3 := long.FromInt(-3)
+	println("5 + (-3) =", long.Format(long.Add(pos5, neg3)))
+
+	neg5 := long.FromInt(-5)
+	pos3 := long.FromWord(3)
+	println("(-5) + 3 =", long.Format(long.Add(neg5, pos3)))
+	println("(-5) + (-3) =", long.Format(long.Add(neg5, neg3)))
+	println("5 + (-5) =", long.Format(long.Add(pos5, neg5)))
+
+	// Overflow wrap: 2147483647 + 1 = -2147483648
+	println("maxPos + 1 =", long.Format(long.Add(maxPos, one)))
+
+	// Method call on variable
+	resAdd := a.Add(b)
+	println("method a.Add(b) =", resAdd.Format())
+
+	println("--- Subtraction ---")
+	println("2345678 - 1000000 =", long.Format(long.Sub(b, a)))
+	println("1000000 - 2345678 =", long.Format(long.Sub(a, b)))
+	println("5 - (-3) =", long.Format(long.Sub(pos5, neg3)))
+	println("(-5) - 3 =", long.Format(long.Sub(neg5, pos3)))
+	println("(-5) - (-3) =", long.Format(long.Sub(neg5, neg3)))
+
+	// Underflow wrap: -2147483648 - 1 = 2147483647
+	println("minNeg - 1 =", long.Format(long.Sub(minNeg, one)))
+
+	// Method call on variable
+	resSub := b.Sub(a)
+	println("method b.Sub(a) =", resSub.Format())
+
+	println("--- Multiplication ---")
+	n6 := long.FromWord(6)
+	n7 := long.FromWord(7)
+	println("6 * 7 =", long.Format(long.Mul(n6, n7)))
+
+	neg6 := long.FromInt(-6)
+	println("(-6) * 7 =", long.Format(long.Mul(neg6, n7)))
+	neg7 := long.FromInt(-7)
+	println("(-6) * (-7) =", long.Format(long.Mul(neg6, neg7)))
+
+	bigA := long.FromString("100000")
+	bigB := long.FromString("20000")
+	println("100000 * 20000 =", long.Format(long.Mul(bigA, bigB)))
+
+	// Method call on variable
+	resMul := n6.Mul(n7)
+	println("method n6.Mul(n7) =", resMul.Format())
+
+	println("--- Division and Modulo ---")
+	n100 := long.FromString("100")
+	n7b := long.FromString("7")
+	println("100 / 7 =", long.Format(long.Div(n100, n7b)))
+	println("100 % 7 =", long.Format(long.Mod(n100, n7b)))
+
+	neg100 := long.FromString("-100")
+	println("(-100) / 7 =", long.Format(long.Div(neg100, n7b)))
+	println("(-100) % 7 =", long.Format(long.Mod(neg100, n7b)))
+
+	nNeg7 := long.FromString("-7")
+	println("100 / (-7) =", long.Format(long.Div(n100, nNeg7)))
+	println("100 % (-7) =", long.Format(long.Mod(n100, nNeg7)))
+
+	println("(-100) / (-7) =", long.Format(long.Div(neg100, nNeg7)))
+	println("(-100) % (-7) =", long.Format(long.Mod(neg100, nNeg7)))
+
+	twoBillion := long.FromString("2000000000")
+	oneHundredK := long.FromString("100000")
+	println("2000000000 / 100000 =", long.Format(long.Div(twoBillion, oneHundredK)))
+	println("2000000000 % 100000 =", long.Format(long.Mod(twoBillion, oneHundredK)))
+
+	nTwo := long.FromWord(2)
+	println("minNeg / 2 =", long.Format(long.Div(minNeg, nTwo)))
+
+	// Method calls on variable
+	resDiv := n100.Div(n7b)
+	resMod := n100.Mod(n7b)
+	println("method n100.Div(n7) =", resDiv.Format())
+	println("method n100.Mod(n7) =", resMod.Format())
+
+	println("--- Comparisons ---")
+	println("5 < 7:", long.Lt(pos5, n7))
+	println("7 < 5:", long.Lt(n7, pos5))
+	println("5 == 5:", long.Eq(pos5, long.FromWord(5)))
+	println("(-5) < 3:", long.Lt(neg5, pos3))
+	println("3 < (-5):", long.Lt(pos3, neg5))
+	println("(-5) < (-3):", long.Lt(neg5, neg3))
+	println("(-3) < (-5):", long.Lt(neg3, neg5))
+	println("minNeg < maxPos:", long.Lt(minNeg, maxPos))
+	println("maxPos < minNeg:", long.Lt(maxPos, minNeg))
+
+	println("--- Bitwise Ops and Shifts ---")
+	hexA := long.FromWords(0x00FF, 0x0F0F)
+	hexB := long.FromWords(0x0FF0, 0x00FF)
+	println("and:", long.Format(long.And(hexA, hexB)))
+	println("or:", long.Format(long.Or(hexA, hexB)))
+	println("xor:", long.Format(long.Xor(hexA, hexB)))
+
+	shiftVal := long.FromString("1000")
+	println("1000 << 3 =", long.Format(long.Shl(shiftVal, 3)))
+	println("1000 >> 3 =", long.Format(long.Shr(shiftVal, 3)))
+
+	negShift := long.FromString("-1000")
+	println("(-1000) >> 3 =", long.Format(long.Shr(negShift, 3)))
+}

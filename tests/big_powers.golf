@@ -1,11 +1,11 @@
 package main
 
-import "big"
+import "bigdec"
 import "bogus"
 
 const LIMIT = 10
 
-var x big.Dec
+var x bigdec.Dec
 
 const LEVEL = bogus.GooseLevel + LIMIT
 

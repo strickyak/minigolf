@@ -42,14 +42,15 @@ This document catalogs all known bugs, translation quirks, and architectural lim
 - **Workaround**:
   Rename C fields and variables so they do not collide with MiniGolf keywords (e.g., `val_type` instead of `type`, `loop_var` instead of `var`).
 
-### 2.2 Struct Member Array Decay Generates Bogus Pointer Casts
+### 2.2 Struct Member Array Decay Generates Bogus Pointer Casts [RESOLVED]
 - **Subsystem**: `ctranslator/translator.go` (`xExprNoDecay` / `IndexExpr`)
 - **Severity**: Critical (Runtime segfault)
+- **Status**: Fixed
 - **Description**:
-  `t.xExprNoDecay` only suppresses array-to-pointer decay for primary variable identifiers (`cc.PrimaryExpressionIdent`). When an array is a member of a struct (e.g., `s->items[i]` or `s.items[i]`), `ctranslator` falls back to `xExpr`, emitting `(*T)(s.items)[i]`.
-  In MiniGolf, `(*T)(s.items)` does not take the address of the array; instead, it casts the *value of the first element* of the array to a pointer `*T`, and then indexes from that bogus pointer address, causing immediate segfaults.
-- **Workaround**:
-  Do not use embedded arrays in structs indexed by variable. Either use dynamically allocated pointer arrays (`T **items` allocated via `zalloc`) or individual named fields (`key0`, `key1`, `key2`).
+  `t.xExprNoDecay` previously only suppressed array-to-pointer decay for primary variable identifiers (`cc.PrimaryExpressionIdent`). When an array was a member of a struct (e.g., `s->items[i]` or `s.items[i]`), `ctranslator` fell back to `xExpr`, emitting `(*T)(s.items)[i]`.
+  In MiniGolf, `(*T)(s.items)` did not take the address of the array; instead, it cast the *value of the first element* of the array to a pointer `*T`, and then indexed from that bogus pointer address, causing immediate segfaults on variable index accesses.
+- **Fix**:
+  Added `*cc.SelectorExpr` handling to `xExprNoDecay` in `ctranslator/translator.go` so that indexing struct array members emits `base.field[index]` directly without inserting the bogus pointer decay cast.
 
 ### 2.3 Single-Quote Character Literal Escape Stripping
 - **Subsystem**: `ctranslator/translator.go`

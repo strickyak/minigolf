@@ -1,14 +1,14 @@
 package main
 
-import "big"
+import "bigdec"
 
 func main() {
-	var a big.Dec
-	var b big.Dec
-	var m big.Dec
-	var q big.Dec
-	var r big.Dec
-	var z big.Dec
+	var a bigdec.Dec
+	var b bigdec.Dec
+	var m bigdec.Dec
+	var q bigdec.Dec
+	var r bigdec.Dec
+	var z bigdec.Dec
 
 	// --- Multiplication Tests ---
 	// Construct 12: 1 * 10 + 2 -> Guts = {2, 1}, Size = 2
@@ -54,13 +54,13 @@ func main() {
 	b.Guts[0] = 2
 	b.Guts[1] = 1
 
-	big.DivMod(&q, &r, &a, &b)
+	bigdec.DivMod(&q, &r, &a, &b)
 	q.Print()
 	r.Print()
 
 	// Div2 test
 	// 255 / 2 = 127
-	big.Div2(&z, &a)
+	bigdec.Div2(&z, &a)
 	z.Print()
 
 	// Pow test

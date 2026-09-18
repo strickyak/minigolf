@@ -1,0 +1,794 @@
+package big
+
+type Big struct {
+	Size byte
+	Guts [255]word
+}
+
+type big = Big
+
+// --- Internal arithmetic helpers for 16-bit word limbs ---
+
+func addCarry(a word, b word, cin *word) word {
+	s0 := (a & 0xFF) + (b & 0xFF) + *cin
+	c := s0 >> 8
+	s1 := ((a >> 8) & 0xFF) + ((b >> 8) & 0xFF) + c
+	*cin = s1 >> 8
+	return (s0 & 0xFF) | (((s1 & 0xFF) << 8) & 0xFFFF)
+}
+
+func subBorrow(a word, b word, bin *word) word {
+	a0 := a & 0xFF
+	b0 := (b & 0xFF) + *bin
+	var borrow0 word = 0
+	if a0 < b0 {
+		a0 += 0x100
+		borrow0 = 1
+	}
+	d0 := a0 - b0
+
+	a1 := (a >> 8) & 0xFF
+	b1 := ((b >> 8) & 0xFF) + borrow0
+	var borrow1 word = 0
+	if a1 < b1 {
+		a1 += 0x100
+		borrow1 = 1
+	}
+	d1 := a1 - b1
+
+	*bin = borrow1
+	return (d0 & 0xFF) | (((d1 & 0xFF) << 8) & 0xFFFF)
+}
+
+func mulWord(u word, v word, hi *word, lo *word) {
+	u0 := u & 0xFF
+	u1 := (u >> 8) & 0xFF
+	v0 := v & 0xFF
+	v1 := (v >> 8) & 0xFF
+
+	p00 := u0 * v0
+	p01 := u0 * v1
+	p10 := u1 * v0
+	p11 := u1 * v1
+
+	mid := (p00 >> 8) + (p01 & 0xFF) + (p10 & 0xFF)
+	*lo = (p00 & 0xFF) | (((mid & 0xFF) << 8) & 0xFFFF)
+	*hi = ((mid >> 8) + (p01 >> 8) + (p10 >> 8) + p11) & 0xFFFF
+}
+
+func div10(q *Big, a *Big) byte {
+	if a.Size == 0 {
+		q.Size = 0
+		return 0
+	}
+	var t Big
+	t.Size = a.Size
+	var rem word = 0
+	for step := range a.Size {
+		i := (a.Size - 1) - step
+		w := a.Guts[i]
+		hi := (w >> 8) & 0xFF
+		lo := w & 0xFF
+
+		d1 := ((rem & 0xFF) << 8) | hi
+		q1 := d1 / 10
+		rem = d1 % 10
+
+		d2 := ((rem & 0xFF) << 8) | lo
+		q2 := d2 / 10
+		rem = d2 % 10
+
+		t.Guts[i] = ((q1 & 0xFF) << 8) | (q2 & 0xFF)
+	}
+	t.Norm()
+	q.Dup(&t)
+	return byte(rem)
+}
+
+// --- Constructors & Setters ---
+
+func Zero() Big {
+	var z Big
+	return z
+}
+
+func FromWord(w word) Big {
+	var z Big
+	z.SetWord(w)
+	return z
+}
+
+func FromInt(v int) Big {
+	var z Big
+	if v < 0 {
+		panic("negative int in big.FromInt")
+	}
+	z.SetWord(word(v))
+	return z
+}
+
+func (z *Big) SetZero() {
+	z.Size = 0
+}
+
+func (z *Big) SetSmall(w word) {
+	w = w & 0xFFFF
+	if w == 0 {
+		z.Size = 0
+	} else {
+		z.Size = 1
+		z.Guts[0] = w
+	}
+}
+
+func (z *Big) SetWord(w word) {
+	z.SetSmall(w)
+}
+
+func (z *Big) SetByte(b byte) {
+	z.SetSmall(word(b))
+}
+
+func (z *Big) Dup(a *Big) {
+	sz := a.Size
+	z.Size = sz
+	for i := range sz {
+		z.Guts[i] = a.Guts[i]
+	}
+}
+
+// --- Query methods ---
+
+func (z *Big) IsZero() bool {
+	return z.Size == 0
+}
+
+func (z *Big) EqSmall(w word) bool {
+	w = w & 0xFFFF
+	if w == 0 {
+		return z.Size == 0
+	}
+	if z.Size != 1 {
+		return false
+	}
+	return z.Guts[0] == w
+}
+
+func (z *Big) IsEven() bool {
+	if z.Size == 0 {
+		return true
+	}
+	return (z.Guts[0] & 1) == 0
+}
+
+func (z *Big) Get(i byte) word {
+	if i < z.Size {
+		return z.Guts[i]
+	}
+	return 0
+}
+
+func (z *Big) Norm() {
+	for z.Size > 0 && z.Guts[z.Size-1] == 0 {
+		z.Size--
+	}
+}
+
+func (a *Big) BitLen() word {
+	if a.Size == 0 {
+		return 0
+	}
+	top := a.Guts[a.Size-1]
+	var bits word = 0
+	for top > 0 {
+		bits++
+		top = top >> 1
+	}
+	return (word(a.Size-1) << 4) + bits
+}
+
+func (a *Big) Bit(n word) byte {
+	widx := byte(n >> 4)
+	if widx >= a.Size {
+		return 0
+	}
+	bidx := n & 15
+	return byte((a.Guts[widx] >> bidx) & 1)
+}
+
+func (z *Big) ToWord() word {
+	if z.Size == 0 {
+		return 0
+	}
+	return z.Guts[0]
+}
+
+func (z *Big) ToByte() byte {
+	if z.Size == 0 {
+		return 0
+	}
+	return byte(z.Guts[0] & 0xFF)
+}
+
+// --- Comparisons ---
+
+func (a *Big) Cmp(b *Big) int {
+	if a.Size > b.Size {
+		return 1
+	}
+	if a.Size < b.Size {
+		return -1
+	}
+	if a.Size == 0 {
+		return 0
+	}
+	for step := range a.Size {
+		i := (a.Size - 1) - step
+		ai := a.Guts[i]
+		bi := b.Guts[i]
+		if ai > bi {
+			return 1
+		}
+		if ai < bi {
+			return -1
+		}
+	}
+	return 0
+}
+
+func (a *Big) Eq(b *Big) bool { return a.Cmp(b) == 0 }
+func (a *Big) Ne(b *Big) bool { return a.Cmp(b) != 0 }
+func (a *Big) Lt(b *Big) bool { return a.Cmp(b) < 0 }
+func (a *Big) Le(b *Big) bool { return a.Cmp(b) <= 0 }
+func (a *Big) Gt(b *Big) bool { return a.Cmp(b) > 0 }
+func (a *Big) Ge(b *Big) bool { return a.Cmp(b) >= 0 }
+
+func Cmp(a *Big, b *Big) int { return a.Cmp(b) }
+func Eq(a *Big, b *Big) bool  { return a.Eq(b) }
+func Ne(a *Big, b *Big) bool  { return a.Ne(b) }
+func Lt(a *Big, b *Big) bool  { return a.Lt(b) }
+func Le(a *Big, b *Big) bool  { return a.Le(b) }
+func Gt(a *Big, b *Big) bool  { return a.Gt(b) }
+func Ge(a *Big, b *Big) bool  { return a.Ge(b) }
+
+// --- Arithmetic ---
+
+func (z *Big) Add(a *Big, b *Big) {
+	sz := a.Size
+	if b.Size > sz {
+		sz = b.Size
+	}
+	var t Big
+	var carry word = 0
+	for i := range sz {
+		wa := a.Get(i)
+		wb := b.Get(i)
+		t.Guts[i] = addCarry(wa, wb, &carry)
+	}
+	t.Size = sz
+	if carry > 0 {
+		if sz >= 255 {
+			panic("overflow")
+		}
+		t.Guts[sz] = 1
+		t.Size++
+	}
+	t.Norm()
+	z.Dup(&t)
+}
+
+func (z *Big) Sub(a *Big, b *Big) {
+	if a.Lt(b) {
+		panic("underflow")
+	}
+	var t Big
+	var borrow word = 0
+	for i := range a.Size {
+		wa := a.Guts[i]
+		wb := b.Get(i)
+		t.Guts[i] = subBorrow(wa, wb, &borrow)
+	}
+	if borrow > 0 {
+		panic("underflow")
+	}
+	t.Size = a.Size
+	t.Norm()
+	z.Dup(&t)
+}
+
+func (z *Big) Mul(a *Big, b *Big) {
+	if a.Size == 0 || b.Size == 0 {
+		z.Size = 0
+		return
+	}
+	var t Big
+	sz := word(a.Size) + word(b.Size)
+	if sz > 255 {
+		panic("overflow")
+	}
+	for i := range sz {
+		t.Guts[i] = 0
+	}
+	t.Size = byte(sz)
+
+	for i := range a.Size {
+		ai := a.Guts[i]
+		if ai != 0 {
+			var carry word = 0
+			for j := range b.Size {
+				k := i + j
+				var p_hi word
+				var p_lo word
+				mulWord(ai, b.Guts[j], &p_hi, &p_lo)
+
+				var c1 word = 0
+				sum1 := addCarry(p_lo, t.Guts[k], &c1)
+				var c2 word = 0
+				sum2 := addCarry(sum1, carry, &c2)
+				t.Guts[k] = sum2
+
+				carry = p_hi + c1 + c2
+			}
+			idx := i + b.Size
+			for carry > 0 {
+				var c3 word = 0
+				t.Guts[idx] = addCarry(t.Guts[idx], carry, &c3)
+				carry = c3
+				idx++
+			}
+		}
+	}
+	t.Norm()
+	z.Dup(&t)
+}
+
+func Div2(z *Big, a *Big) {
+	if a.Size == 0 {
+		z.Size = 0
+		return
+	}
+	var t Big
+	t.Size = a.Size
+	var carry word = 0
+	for step := range a.Size {
+		i := (a.Size - 1) - step
+		w := a.Guts[i]
+		t.Guts[i] = (w >> 1) | ((carry << 15) & 0xFFFF)
+		carry = w & 1
+	}
+	t.Norm()
+	z.Dup(&t)
+}
+
+func Mul2(z *Big, a *Big) {
+	if a.Size == 0 {
+		z.Size = 0
+		return
+	}
+	var t Big
+	var carry word = 0
+	for i := range a.Size {
+		w := a.Guts[i]
+		t.Guts[i] = ((w << 1) & 0xFFFF) | carry
+		carry = (w >> 15) & 1
+	}
+	t.Size = a.Size
+	if carry > 0 {
+		if t.Size >= 255 {
+			panic("overflow")
+		}
+		t.Guts[t.Size] = 1
+		t.Size++
+	}
+	t.Norm()
+	z.Dup(&t)
+}
+
+func (z *Big) Lsh(a *Big, n word) {
+	if a.Size == 0 || n == 0 {
+		z.Dup(a)
+		return
+	}
+	wshift := byte(n >> 4)
+	bshift := n & 15
+
+	var t Big
+	sz := word(a.Size) + word(wshift) + 1
+	if sz > 255 {
+		panic("overflow")
+	}
+	for i := range sz {
+		t.Guts[i] = 0
+	}
+
+	if bshift == 0 {
+		for i := range a.Size {
+			t.Guts[i+wshift] = a.Guts[i]
+		}
+		t.Size = a.Size + wshift
+	} else {
+		var carry word = 0
+		rshift := word(16) - bshift
+		for i := range a.Size {
+			w := a.Guts[i]
+			t.Guts[i+wshift] = (((w << bshift) & 0xFFFF) | carry)
+			carry = w >> rshift
+		}
+		t.Guts[a.Size+wshift] = carry
+		t.Size = a.Size + wshift + 1
+	}
+	t.Norm()
+	z.Dup(&t)
+}
+
+func (z *Big) Rsh(a *Big, n word) {
+	if a.Size == 0 {
+		z.Size = 0
+		return
+	}
+	wshift := byte(n >> 4)
+	if wshift >= a.Size {
+		z.Size = 0
+		return
+	}
+	bshift := n & 15
+	var t Big
+	rem_words := a.Size - wshift
+	if bshift == 0 {
+		for i := range rem_words {
+			t.Guts[i] = a.Guts[i+wshift]
+		}
+		t.Size = rem_words
+	} else {
+		lshift := word(16) - bshift
+		for i := range rem_words {
+			w := a.Guts[i+wshift]
+			var next word = 0
+			if i+1 < rem_words {
+				next = a.Guts[i+1+wshift]
+			}
+			t.Guts[i] = ((w >> bshift) | ((next << lshift) & 0xFFFF)) & 0xFFFF
+		}
+		t.Size = rem_words
+	}
+	t.Norm()
+	z.Dup(&t)
+}
+
+func DivMod(q *Big, r *Big, a *Big, b *Big) {
+	if b.Size == 0 {
+		panic("div by zero")
+	}
+	if a.Lt(b) {
+		q.SetZero()
+		r.Dup(a)
+		return
+	}
+	var rem Big
+	rem.Dup(a)
+
+	var quot Big
+	quot.Size = 0
+
+	var b_shift Big
+	k := a.BitLen() - b.BitLen()
+	b_shift.Lsh(b, k)
+
+	for step := range (k + 1) {
+		shift := k - step
+		if rem.Cmp(&b_shift) >= 0 {
+			rem.Sub(&rem, &b_shift)
+			widx := byte(shift >> 4)
+			bidx := shift & 15
+			if widx >= quot.Size {
+				for i := quot.Size; i <= widx; i++ {
+					quot.Guts[i] = 0
+				}
+				quot.Size = widx + 1
+			}
+			quot.Guts[widx] = quot.Guts[widx] | (word(1) << bidx)
+		}
+		Div2(&b_shift, &b_shift)
+	}
+	quot.Norm()
+	rem.Norm()
+	q.Dup(&quot)
+	r.Dup(&rem)
+}
+
+func (q *Big) Div(a *Big, b *Big) {
+	var r Big
+	DivMod(q, &r, a, b)
+}
+
+func (r *Big) Mod(a *Big, b *Big) {
+	var q Big
+	DivMod(&q, r, a, b)
+}
+
+func (z *Big) Pow(a *Big, b *Big, m *Big) {
+	var res Big
+	res.SetSmall(1)
+
+	var bval Big
+	var q Big
+	DivMod(&q, &bval, a, m)
+
+	var exp Big
+	exp.Dup(b)
+
+	var t Big
+	for exp.Size > 0 {
+		if (exp.Guts[0] & 1) != 0 {
+			t.Mul(&res, &bval)
+			DivMod(&q, &res, &t, m)
+		}
+
+		Div2(&exp, &exp)
+
+		if exp.Size == 0 {
+			break
+		}
+
+		t.Mul(&bval, &bval)
+		DivMod(&q, &bval, &t, m)
+	}
+	z.Dup(&res)
+}
+
+func (z *Big) PowSmall(a *Big, exp word) {
+	var res Big
+	res.SetSmall(1)
+	var bval Big
+	bval.Dup(a)
+	var t Big
+	e := exp
+	for e > 0 {
+		if (e & 1) != 0 {
+			t.Mul(&res, &bval)
+			res.Dup(&t)
+		}
+		e = e >> 1
+		if e == 0 {
+			break
+		}
+		t.Mul(&bval, &bval)
+		bval.Dup(&t)
+	}
+	z.Dup(&res)
+}
+
+// Small helpers
+func (z *Big) AddSmall(a *Big, w word) {
+	var b Big
+	b.SetSmall(w)
+	z.Add(a, &b)
+}
+
+func (z *Big) SubSmall(a *Big, w word) {
+	var b Big
+	b.SetSmall(w)
+	z.Sub(a, &b)
+}
+
+func (z *Big) MulSmall(a *Big, w word) {
+	var b Big
+	b.SetSmall(w)
+	z.Mul(a, &b)
+}
+
+// Package-level functions
+func Add(z *Big, a *Big, b *Big)        { z.Add(a, b) }
+func Sub(z *Big, a *Big, b *Big)        { z.Sub(a, b) }
+func Mul(z *Big, a *Big, b *Big)        { z.Mul(a, b) }
+func Div(q *Big, a *Big, b *Big)        { q.Div(a, b) }
+func Mod(r *Big, a *Big, b *Big)        { r.Mod(a, b) }
+func Lsh(z *Big, a *Big, n word)        { z.Lsh(a, n) }
+func Rsh(z *Big, a *Big, n word)        { z.Rsh(a, n) }
+func Pow(z *Big, a *Big, b *Big, m *Big) { z.Pow(a, b, m) }
+
+// --- Bitwise Operations ---
+
+func (z *Big) And(a *Big, b *Big) {
+	sz := a.Size
+	if b.Size < sz {
+		sz = b.Size
+	}
+	var t Big
+	for i := range sz {
+		t.Guts[i] = a.Guts[i] & b.Guts[i]
+	}
+	t.Size = sz
+	t.Norm()
+	z.Dup(&t)
+}
+
+func (z *Big) Or(a *Big, b *Big) {
+	sz := a.Size
+	if b.Size > sz {
+		sz = b.Size
+	}
+	var t Big
+	for i := range sz {
+		t.Guts[i] = a.Get(i) | b.Get(i)
+	}
+	t.Size = sz
+	t.Norm()
+	z.Dup(&t)
+}
+
+func (z *Big) Xor(a *Big, b *Big) {
+	sz := a.Size
+	if b.Size > sz {
+		sz = b.Size
+	}
+	var t Big
+	for i := range sz {
+		t.Guts[i] = a.Get(i) ^ b.Get(i)
+	}
+	t.Size = sz
+	t.Norm()
+	z.Dup(&t)
+}
+
+func And(z *Big, a *Big, b *Big) { z.And(a, b) }
+func Or(z *Big, a *Big, b *Big)  { z.Or(a, b) }
+func Xor(z *Big, a *Big, b *Big) { z.Xor(a, b) }
+
+// --- Formatting & Parsing ---
+
+func (z *Big) Format() string {
+	if z.Size == 0 {
+		return "0"
+	}
+	var u Big
+	u.Dup(z)
+	var out slice[byte]
+	var digits [1250]byte
+	var dlen word = 0
+	for !u.IsZero() {
+		rem := div10(&u, &u)
+		digits[dlen] = byte('0' + rem)
+		dlen++
+	}
+	for step := range dlen {
+		i := (dlen - 1) - step
+		out.Append(digits[i])
+	}
+	return out
+}
+
+func (z *Big) String() string {
+	return z.Format()
+}
+
+func hexDigit(b byte) byte {
+	if b < 10 {
+		return '0' + b
+	}
+	return 'a' + (b - 10)
+}
+
+func (z *Big) FormatHex() string {
+	if z.Size == 0 {
+		return "0"
+	}
+	var out slice[byte]
+	top := z.Guts[z.Size-1]
+	topNyb3 := byte((top >> 12) & 0x0F)
+	topNyb2 := byte((top >> 8) & 0x0F)
+	topNyb1 := byte((top >> 4) & 0x0F)
+	topNyb0 := byte(top & 0x0F)
+
+	started := false
+	if topNyb3 > 0 {
+		out.Append(hexDigit(topNyb3))
+		started = true
+	}
+	if started || topNyb2 > 0 {
+		out.Append(hexDigit(topNyb2))
+		started = true
+	}
+	if started || topNyb1 > 0 {
+		out.Append(hexDigit(topNyb1))
+		started = true
+	}
+	out.Append(hexDigit(topNyb0))
+
+	if z.Size > 1 {
+		for step := range (z.Size - 1) {
+			i := (z.Size - 2) - step
+			w := z.Guts[i]
+			out.Append(hexDigit(byte((w >> 12) & 0x0F)))
+			out.Append(hexDigit(byte((w >> 8) & 0x0F)))
+			out.Append(hexDigit(byte((w >> 4) & 0x0F)))
+			out.Append(hexDigit(byte(w & 0x0F)))
+		}
+	}
+	return out
+}
+
+func (z *Big) Print() {
+	print(z.Format())
+}
+
+func (z *Big) Println() {
+	println(z.Format())
+}
+
+func (z *Big) PrintHex() {
+	print(z.FormatHex())
+}
+
+func (z *Big) PrintlnHex() {
+	println(z.FormatHex())
+}
+
+func Format(z *Big) string    { return z.Format() }
+func FormatHex(z *Big) string { return z.FormatHex() }
+func Print(z *Big)            { z.Print() }
+func Println(z *Big)          { z.Println() }
+
+func hexVal(c byte) (word, bool) {
+	if c >= '0' && c <= '9' {
+		return word(c - '0'), true
+	}
+	if c >= 'a' && c <= 'f' {
+		return word(c - 'a' + 10), true
+	}
+	if c >= 'A' && c <= 'F' {
+		return word(c - 'A' + 10), true
+	}
+	return 0, false
+}
+
+func (z *Big) FromHex(s string) {
+	z.SetZero()
+	n := s.Len
+	start := word(0)
+	if n >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+		start = 2
+	}
+	for i := start; i < n; i++ {
+		v, ok := hexVal(s[i])
+		if ok {
+			z.Lsh(z, 4)
+			var digit Big
+			digit.SetSmall(v)
+			z.Add(z, &digit)
+		}
+	}
+}
+
+func (z *Big) FromString(s string) {
+	z.SetZero()
+	n := s.Len
+	start := word(0)
+	if n >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+		z.FromHex(s)
+		return
+	}
+	var ten Big
+	ten.SetSmall(10)
+	var digit Big
+	for i := start; i < n; i++ {
+		c := s[i]
+		if c >= '0' && c <= '9' {
+			z.Mul(z, &ten)
+			digit.SetSmall(word(c - '0'))
+			z.Add(z, &digit)
+		}
+	}
+}
+
+func FromString(s string) Big {
+	var z Big
+	z.FromString(s)
+	return z
+}
+
+func FromHex(s string) Big {
+	var z Big
+	z.FromHex(s)
+	return z
+}
