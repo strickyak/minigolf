@@ -167,6 +167,7 @@ type Backend struct {
 	retSlot           int // byte offset in arguments block where return buffer is located (if retSize > 2)
 	f                 *ir.Function
 	fusedCompares     map[int]bool
+	foldedAddrs       map[int]bool
 	addressTaken      map[int]bool
 	escapeRes         opt.EscapeAnalysisResult
 	needsFP           bool
@@ -222,6 +223,7 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		globalOffsets:         make(map[string]int),
 		helpersEmitted:        make(map[string]bool),
 		fusedCompares:         make(map[int]bool),
+		foldedAddrs:           make(map[int]bool),
 		NoBranchLayout:        os.Getenv("NO_BRANCH_LAYOUT6809") != "",
 		NoFusedCompares:       os.Getenv("NO_FUSED_COMPARES6809") != "",
 		NoLeafOpt:             os.Getenv("NO_LEAF_OPT6809") != "",
@@ -715,28 +717,169 @@ func (b *Backend) getDirectEA(ptrVal ir.Value) (string, bool) {
 	ptrVal = b.resolveVal(ptrVal)
 	switch v := ptrVal.(type) {
 	case *ir.AddressOfLocal:
-		if b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[v.GetID()] {
-			if locInst, ok := v.Local.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+		if locInst, ok := v.Local.(ir.Instruction); ok {
+			if len(b.globalRegs) > 0 {
 				if _, inReg := b.globalRegs[locInst.GetID()]; inReg {
 					return "", false // Value is in a physical register, not memory!
 				}
 			}
-			return b.getAddrStr(v.Local), true
+			canon := b.resolveSlot(locInst.GetID())
+			if _, ok := b.slots[canon]; !ok {
+				if _, ok := b.slots[locInst.GetID()]; !ok {
+					return "", false
+				}
+			}
 		}
+		return b.getAddrStr(v.Local), true
+
 	case *ir.AddressOfGlobal:
 		return b.getAddrStr(v.Global), true
+
 	case *ir.AddressOfField:
 		if baseEA, ok := b.getDirectEA(v.Ptr); ok {
 			structType := v.Ptr.Type().PointedType()
 			byteOffset, _ := b.getFieldOffsetAndSize(structType, v.FieldIndex)
 			return offsetAddrStr(baseEA, byteOffset), true
 		}
+
+	case *ir.AddressOfElement:
+		if cIdx, ok := b.asConstWord(v.Index); ok {
+			if baseEA, ok := b.getDirectEA(v.ArrayPtr); ok {
+				eltSize := b.getEltSizeUsingIrt(v.ArrayPtr.Type())
+				return offsetAddrStr(baseEA, int(cIdx)*eltSize), true
+			}
+		}
+
 	default:
 		if c, ok := b.asConstWord(ptrVal); ok {
 			return fmt.Sprintf("$%04X", c), true
 		}
 	}
 	return "", false
+}
+
+func (b *Backend) resolvePointerOffset(ptrVal ir.Value) (ir.Value, int) {
+	ptrVal = b.resolveVal(ptrVal)
+	totalOffset := 0
+	for i := 0; i < 32; i++ {
+		switch v := ptrVal.(type) {
+		case *ir.AddressOfField:
+			structType := v.Ptr.Type().PointedType()
+			fieldOff, _ := b.getFieldOffsetAndSize(structType, v.FieldIndex)
+			totalOffset += fieldOff
+			ptrVal = b.resolveVal(v.Ptr)
+			continue
+		case *ir.AddressOfElement:
+			if cIdx, ok := b.asConstWord(v.Index); ok {
+				eltSize := b.getEltSizeUsingIrt(v.ArrayPtr.Type())
+				totalOffset += int(cIdx) * eltSize
+				ptrVal = b.resolveVal(v.ArrayPtr)
+				continue
+			}
+		}
+		break
+	}
+	return ptrVal, totalOffset
+}
+
+
+func (b *Backend) findFoldedAddrs(f *ir.Function) map[int]bool {
+	usesOf := make(map[int][]ir.Instruction)
+	allAddrs := make(map[int]ir.Instruction)
+
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			switch instr.(type) {
+			case *ir.AddressOfField, *ir.AddressOfElement:
+				allAddrs[instr.GetID()] = instr
+			}
+			visitOperands(instr, func(op ir.Value) {
+				if opInst, ok := op.(ir.Instruction); ok {
+					usesOf[opInst.GetID()] = append(usesOf[opInst.GetID()], instr)
+				}
+				if resolved, ok := b.resolveVal(op).(ir.Instruction); ok && resolved != op {
+					usesOf[resolved.GetID()] = append(usesOf[resolved.GetID()], instr)
+				}
+			})
+		}
+		if blk.Terminator != nil {
+			visitOperands(blk.Terminator, func(op ir.Value) {
+				if opInst, ok := op.(ir.Instruction); ok {
+					usesOf[opInst.GetID()] = append(usesOf[opInst.GetID()], blk.Terminator)
+				}
+				if resolved, ok := b.resolveVal(op).(ir.Instruction); ok && resolved != op {
+					usesOf[resolved.GetID()] = append(usesOf[resolved.GetID()], blk.Terminator)
+				}
+			})
+		}
+	}
+
+	candidates := make(map[int]bool)
+	for id, instr := range allAddrs {
+		if b.localAddressTaken[id] {
+			continue
+		}
+		if aoe, ok := instr.(*ir.AddressOfElement); ok {
+			if _, ok := b.asConstWord(aoe.Index); !ok {
+				continue
+			}
+		}
+		baseVal, _ := b.resolvePointerOffset(instr)
+		if _, ok := b.getDirectEA(baseVal); !ok {
+			continue
+		}
+		candidates[id] = true
+	}
+
+	changed := true
+	for changed {
+		changed = false
+		for id := range candidates {
+			users := usesOf[id]
+			safe := true
+			for _, user := range users {
+				switch u := user.(type) {
+				case *ir.LoadPtr:
+					sz := b.getTypeSizeByType(u.Typ)
+					if sz > 2 || b.resolveVal(u.Ptr) != allAddrs[id] {
+						safe = false
+					}
+				case *ir.StorePtr:
+					sz := b.getTypeSizeByType(u.Val.Type())
+					if sz > 2 || b.resolveVal(u.Ptr) != allAddrs[id] || b.resolveVal(u.Val) == allAddrs[id] {
+						safe = false
+					}
+				case *ir.ExtractFieldPtr:
+					if b.resolveVal(u.Ptr) != allAddrs[id] {
+						safe = false
+					}
+				case *ir.InsertFieldPtr:
+					if b.resolveVal(u.Ptr) != allAddrs[id] || b.resolveVal(u.Val) == allAddrs[id] {
+						safe = false
+					}
+				case *ir.AddressOfField:
+					if b.resolveVal(u.Ptr) != allAddrs[id] || !candidates[u.GetID()] {
+						safe = false
+					}
+				case *ir.AddressOfElement:
+					if b.resolveVal(u.ArrayPtr) != allAddrs[id] || !candidates[u.GetID()] {
+						safe = false
+					}
+				default:
+					safe = false
+				}
+				if !safe {
+					break
+				}
+			}
+			if !safe {
+				delete(candidates, id)
+				changed = true
+			}
+		}
+	}
+
+	return candidates
 }
 
 func (b *Backend) canDirectEA(val ir.Value, opSize int) bool {
@@ -3280,6 +3423,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.storeResult(id)
 
 	case *ir.AddressOfField:
+		if b.foldedAddrs != nil && b.foldedAddrs[id] {
+			break
+		}
 		structType := i.Ptr.Type().PointedType()
 		byteOffset, _ := b.getFieldOffsetAndSize(structType, i.FieldIndex)
 		b.loadVal16("x", i.Ptr)
@@ -3290,37 +3436,48 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.storeResult(id)
 
 	case *ir.AddressOfElement:
+		if b.foldedAddrs != nil && b.foldedAddrs[id] {
+			break
+		}
 		eltSize := b.getEltSizeUsingIrt(i.ArrayPtr.Type())
+		if cIdx, ok := b.asConstWord(i.Index); ok {
+			totalOffset := int(cIdx) * eltSize
+			b.loadVal16("x", i.ArrayPtr)
+			if totalOffset > 0 {
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", totalOffset))
+			}
+			b.buf.WriteString("\ttfr x,d\n")
+			b.storeResult(id)
+			break
+		}
+		if cIdx, ok := i.Index.(*ir.ConstByte); ok {
+			totalOffset := int(cIdx.Val) * eltSize
+			b.loadVal16("x", i.ArrayPtr)
+			if totalOffset > 0 {
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", totalOffset))
+			}
+			b.buf.WriteString("\ttfr x,d\n")
+			b.storeResult(id)
+			break
+		}
 		b.loadVal16("x", i.ArrayPtr)
-		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
-			byteOffset := int(cIdx.Val) * eltSize
-			if byteOffset > 0 {
-				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
-			}
-		} else if cIdx, ok := i.Index.(*ir.ConstByte); ok {
-			byteOffset := int(cIdx.Val) * eltSize
-			if byteOffset > 0 {
-				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
-			}
+		b.loadVal(i.Index) // in D
+		if b.getTypeSizeByType(i.Index.Type()) == 1 {
+			b.buf.WriteString("\tclra\n")
+		}
+		if eltSize == 1 {
+			b.buf.WriteString("\tleax d,x\n")
+		} else if eltSize == 2 {
+			b.buf.WriteString("\taslb\n\trola\n\tleax d,x\n")
 		} else {
-			b.loadVal(i.Index) // in D
-			if b.getTypeSizeByType(i.Index.Type()) == 1 {
-				b.buf.WriteString("\tclra\n")
-			}
-			if eltSize == 1 {
-				b.buf.WriteString("\tleax d,x\n")
-			} else if eltSize == 2 {
-				b.buf.WriteString("\taslb\n\trola\n\tleax d,x\n")
+			b.buf.WriteString("\tpshs x\n")
+			b.buf.WriteString(fmt.Sprintf("\tldx #%d\n", eltSize))
+			if b.InlineMul16 {
+				b.emitInlineMul16()
 			} else {
-				b.buf.WriteString("\tpshs x\n")
-				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n", eltSize))
-				if b.InlineMul16 {
-					b.emitInlineMul16()
-				} else {
-					b.callHelper("__mul16")
-				}
-				b.buf.WriteString("\tpuls x\n\tleax d,x\n")
+				b.callHelper("__mul16")
 			}
+			b.buf.WriteString("\tpuls x\n\tleax d,x\n")
 		}
 		b.buf.WriteString("\ttfr x,d\n")
 		b.storeResult(id)
@@ -3328,6 +3485,25 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.ExtractFieldPtr:
 		structType := i.Ptr.Type().PointedType()
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structType, i.FieldIndex)
+		baseVal, totalOffset := b.resolvePointerOffset(i.Ptr)
+		totalOffset += byteOffset
+		if directEA, ok := b.getDirectEA(baseVal); ok {
+			eaWithOffset := offsetAddrStr(directEA, totalOffset)
+			if fieldSize == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tldb %s\n", eaWithOffset))
+				b.storeResult(id)
+			} else if fieldSize == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tldd %s\n", eaWithOffset))
+				b.storeResult(id)
+			} else {
+				destStr := b.localAddr(id)
+				b.emitLoadAddr("y", eaWithOffset)
+				b.emitLoadAddr("x", destStr)
+				b.emitCopy("x", "y", fieldSize)
+				b.clobberAllRegs()
+			}
+			break
+		}
 		if fieldSize == 1 {
 			b.loadVal16("x", i.Ptr)
 			b.buf.WriteString(fmt.Sprintf("\tldb %d,x\n", byteOffset))
@@ -3350,6 +3526,27 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.InsertFieldPtr:
 		structType := i.Ptr.Type().PointedType()
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(structType, i.FieldIndex)
+		baseVal, totalOffset := b.resolvePointerOffset(i.Ptr)
+		totalOffset += byteOffset
+		if directEA, ok := b.getDirectEA(baseVal); ok {
+			eaWithOffset := offsetAddrStr(directEA, totalOffset)
+			if fieldSize == 1 {
+				b.loadVal(i.Val)
+				b.buf.WriteString(fmt.Sprintf("\tstb %s\n", eaWithOffset))
+			} else if fieldSize == 2 {
+				b.loadVal(i.Val)
+				if b.getValSize(i.Val) == 1 {
+					b.buf.WriteString("\tclra\n")
+				}
+				b.buf.WriteString(fmt.Sprintf("\tstd %s\n", eaWithOffset))
+			} else {
+				b.emitLoadAddr("x", eaWithOffset)
+				b.emitLoadAddr("y", b.getAddrStr(i.Val))
+				b.emitCopy("x", "y", fieldSize)
+			}
+			b.clobberAllRegs()
+			break
+		}
 		if fieldSize == 1 {
 			b.loadVal(i.Val)
 			b.loadVal16("x", i.Ptr)
@@ -3362,6 +3559,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.loadVal16("x", i.Ptr)
 			b.buf.WriteString(fmt.Sprintf("\tstd %d,x\n", byteOffset))
 		} else {
+			b.loadVal16("x", i.Ptr)
 			if byteOffset > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
 			}
@@ -3374,6 +3572,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		sz := b.getTypeSizeByType(i.Typ)
 		if sz <= 2 {
 			ptrVal := b.resolveVal(i.Ptr)
+
 			// Check if pointer is a non-escaping local held in a physical register
 			if aol, ok := ptrVal.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
 				if locInst, ok := aol.Local.(ir.Instruction); ok && len(b.globalRegs) > 0 {
@@ -3393,6 +3592,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", directEA))
 				} else {
 					b.buf.WriteString(fmt.Sprintf("\tldd %s\n", directEA))
+				}
+				b.storeResult(id)
+				break
+			}
+
+			baseVal, totalOffset := b.resolvePointerOffset(ptrVal)
+			if directEA, ok := b.getDirectEA(baseVal); ok {
+				eaWithOffset := offsetAddrStr(directEA, totalOffset)
+				if sz == 1 {
+					b.buf.WriteString(fmt.Sprintf("\tldb %s\n", eaWithOffset))
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tldd %s\n", eaWithOffset))
 				}
 				b.storeResult(id)
 				break
@@ -3426,6 +3637,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		sz := b.getTypeSizeByType(i.Val.Type())
 		if sz <= 2 {
 			ptrVal := b.resolveVal(i.Ptr)
+
 			// Check if pointer is a non-escaping local held in a physical register
 			if aol, ok := ptrVal.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
 				if locInst, ok := aol.Local.(ir.Instruction); ok && len(b.globalRegs) > 0 {
@@ -3450,18 +3662,34 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 				break
 			}
 
-			ptrReg := "x"
-			if ptrInst, ok := i.Ptr.(ir.Instruction); ok && len(b.globalRegs) > 0 {
-				if r, ok := b.globalRegs[ptrInst.GetID()]; ok {
-					ptrReg = r
+			baseVal, totalOffset := b.resolvePointerOffset(ptrVal)
+			if directEA, ok := b.getDirectEA(baseVal); ok {
+				eaWithOffset := offsetAddrStr(directEA, totalOffset)
+				b.loadVal(i.Val)
+				if sz == 1 {
+					b.buf.WriteString(fmt.Sprintf("\tstb %s\n", eaWithOffset))
+				} else {
+					if b.getValSize(i.Val) == 1 {
+						b.buf.WriteString("\tclra\n")
+					}
+					b.buf.WriteString(fmt.Sprintf("\tstd %s\n", eaWithOffset))
 				}
+				break
 			}
+
 			if sz == 1 {
 				b.loadVal(i.Val)
 			} else {
 				b.loadVal(i.Val)
 				if b.getValSize(i.Val) == 1 {
 					b.buf.WriteString("\tclra\n")
+				}
+			}
+
+			ptrReg := "x"
+			if ptrInst, ok := i.Ptr.(ir.Instruction); ok && len(b.globalRegs) > 0 {
+				if r, ok := b.globalRegs[ptrInst.GetID()]; ok {
+					ptrReg = r
 				}
 			}
 			if ptrReg == "x" {
@@ -3477,6 +3705,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitCopy("x", "y", sz)
 		}
+
 
 	case *ir.BinaryOp:
 		b.emitBinaryOp(i)
@@ -3721,6 +3950,7 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		b.calleeSaveRegs = append(b.calleeSaveRegs, "y")
 	}
 	b.savedRegBytes = len(b.calleeSaveRegs) * 2
+	b.foldedAddrs = b.findFoldedAddrs(f)
 
 	b.buf.WriteString("\n")
 	b.emitFunctionHeader(f)
