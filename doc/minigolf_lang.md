@@ -163,8 +163,11 @@ Actually in MiniGolf, *all types* are *copied by value*.  In Go, there are two t
 
 ### 3.3 Pointer Types
 *   `*T` denotes a pointer to type `T`. Pointers hold the absolute memory address of a value. 
-*   Pointer arithmetic is not supported directly; pointers must be cast to `word` if raw address manipulation is required.
-    *  But see `pointer_add` and `pointer_sub` in the prelude, for helper functions.
+*   **Pointer Stepping and Arithmetic:**
+    *   **Statements:** Direct pointer stepping is supported via statements:
+        *   `p++` and `p--` increment or decrement the pointer address, automatically scaled by `sizeof(T)`.
+        *   `p += n` and `p -= n` advance or rewind the pointer by `n` elements, automatically scaled by `sizeof(T)`.
+    *   **Expressions:** Pointer arithmetic is not supported directly in expressions (such as `p + 1` or `p1 - p2`). For expressions, use the prelude helper functions (`pointer_add`, `pointer_sub`, `pointer_diff`), or cast to/from `word` for raw address calculations.
 
 * `func peek[T any](addr word) T` and `func poke[T any](addr word, x T)` are also provided in the Prelude.
     These can be used to manipulate raw memory.
@@ -292,7 +295,7 @@ Expressions compute values. Operands in binary expressions must be of the exact 
 *   **Bitwise:** `&`, `|`, `^`, `&^`, `<<`, `>>`.  The `&^` clears bits specified on the RHS from the LHS.
 *   **Logical / Branching:** `&&` and, `||` or, `!` not.  Short-circuit evaluation is available.
 *   **Logical / Comparison:** `==`, `!=`, `<`, `<=`, `>`, `>=`. Comparisons evaluate conceptually to a boolean, represented internally as a `byte` (0 for false, 1 for true).
-    **Compound assignment operators:** `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `&^=`
+*   **Compound assignment operators:** (See Section 6; compound assignments like `+=`, `-=`, etc. are statements, not expressions).
 *   **Addressing and Dereferencing:** 
     *   `&x` yields a pointer (`*T`) to the operand `x`. The operand must be addressable (an L-value like a variable or struct field).
     *   `*p` yields the value of type `T` pointed to by `p`.
@@ -355,6 +358,11 @@ Statements control execution flow.
         it can be used inside larger expressions.
 
 *   **Increment / Decrement:** `x++` and `x--` are statements, not expressions.
+    *   For integer variables (`byte`, `word`), increments or decrements the value by 1.
+    *   For pointer variables (`*T`), automatically increments or decrements the address by `sizeof(T)` bytes.
+*   **Compound Assignments:** `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `&^=` are statements, not expressions.
+    *   For integer variables, modifies the variable in-place by the evaluated right-hand side.
+    *   For pointer variables (`*T`), `p += n` and `p -= n` advance or rewind the address by `n * sizeof(T)` bytes.
 
 * Familiar C99 or Go statements that are NOT AVAILABLE (yet) in MiniGolf
     * `switch/case`
