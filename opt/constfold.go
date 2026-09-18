@@ -291,6 +291,9 @@ func (p *ConstFoldPass) foldCompare(i *ir.Compare) ir.Instruction {
 			if p.WordSize == 2 {
 				l = int64(int16(cLeftW.Val))
 				r = int64(int16(cRightW.Val))
+			} else if p.WordSize == 4 {
+				l = int64(int32(cLeftW.Val))
+				r = int64(int32(cRightW.Val))
 			} else {
 				l = int64(cLeftW.Val)
 				r = int64(cRightW.Val)

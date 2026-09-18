@@ -150,6 +150,9 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 	if backend == "m6809" {
 		ext = ".asm"
 	}
+	if backend == "m68k" || backend == "k" {
+		ext = ".s"
+	}
 	t.Logf("TempDir is %q", tmpDir)
 	midFile := filepath.Join(tmpDir, "out"+ext)
 	exeFile := filepath.Join(tmpDir, "out.exe")
@@ -182,6 +185,20 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 	switch backend {
 	case "m6809":
 		cmd = exec.Command("sh", "run9.sh", midFile)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		t.Logf("Running: %v", cmd)
+		if err := cmd.Run(); err != nil {
+			if expectRunError {
+				return // Success: execution failed as expected
+			}
+			t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
+		} else if expectRunError {
+			t.Fatalf("Expected run error for backend %s but execution succeeded", backend)
+		}
+
+	case "m68k", "k":
+		cmd = exec.Command("sh", "runk.sh", midFile)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		t.Logf("Running: %v", cmd)
@@ -270,6 +287,14 @@ func TestSystemTrianglesByte_m6809(t *testing.T) {
 	testBackend(t, "m6809", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
 
+func TestSystemTriangles_m68k(t *testing.T) {
+	testBackend(t, "m68k", "demos/triangles.golf", expectedOutput, false, false)
+}
+
+func TestSystemTrianglesByte_m68k(t *testing.T) {
+	testBackend(t, "m68k", "demos/triangles_byte.golf", expectedOutputByte, false, false)
+}
+
 var m6809Variants = []struct {
 	name string
 	args []string
@@ -343,7 +368,7 @@ func TestSystemAllGolfFiles(t *testing.T) {
 		t.Fatalf("Failed to glob tests/*.golf: %v", err)
 	}
 
-	backends := []string{"CBE", "amd64", "m6809"}
+	backends := []string{"CBE", "amd64", "m6809", "m68k"}
 
 	for _, file := range files {
 		if strings.HasSuffix(file, ".bad.golf") {

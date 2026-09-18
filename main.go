@@ -18,6 +18,7 @@ import (
 	"github.com/strickyak/minigolf/ir"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6809"
+	"github.com/strickyak/minigolf/m68k"
 	"github.com/strickyak/minigolf/opt"
 	"github.com/strickyak/minigolf/parser"
 	// "github.com/strickyak/minigolf/prelude"
@@ -274,7 +275,7 @@ MORE:
 
 func main() {
 	// Define command-line flags
-	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, z80, 6502)")
+	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502)")
 	outFlag := flag.String("o", "", "Output object file name")
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
@@ -463,7 +464,8 @@ func main() {
 	}
 
 	archLower := strings.ToLower(*archFlag)
-	if archLower == "m6809" || archLower == "6809" || archLower == "m" {
+	if archLower == "m6809" || archLower == "6809" || archLower == "m" ||
+		archLower == "m68k" || archLower == "68000" || archLower == "k" {
 		if _, ok := cDefines["unix"]; !ok {
 			cDefines["unix"] = "0"
 		}
@@ -892,6 +894,54 @@ func main() {
 			os.Exit(1)
 		}
 		log.Printf("Successfully compiled via 6809 to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=m68k : Generate M68K assembly from IR and exit cleanly
+	if *archFlag == "M68K" || *archFlag == "K" || *archFlag == "68000" {
+		builder := ir.NewBuilder(resolveCallback, 4)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
+		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
+
+		optConfig := opt.Config{
+			EnableConstFold:        !*noConstfold,
+			EnableDBE:              !*noDbe,
+			EnableDCE:              !*noDce,
+			EnableCopyProp:         !*noCopyProp,
+			EnableCSE:              !*noCse,
+			EnableStrengthRed:      !*noStrengthRed,
+			EnablePhiSimp:          !*noPhisimp,
+			EnableStackAlloc:       !*noStackAlloc,
+			EnableBranchFold:       !*noBranchFold,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:    *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
+			EnableDebugOpt:         *debugOpt,
+			WordSize:               4,
+		}
+		builder.AnnotateLeafLevels(*debugOpt)
+		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
+
+		backend := m68k.New()
+		asmCode := backend.Generate(irProg)
+
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 68000 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing M68K output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via M68K to: %s", *outFlag)
 		os.Exit(0)
 	}
 

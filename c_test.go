@@ -32,7 +32,7 @@ func TestAllCFiles(t *testing.T) {
 		t.Skip("No *.c files found in c-tests/")
 	}
 
-	backends := []string{"CBE", "amd64", "m6809"}
+	backends := []string{"CBE", "amd64", "m6809", "m68k"}
 
 	if err := os.MkdirAll("_tmp", 0777); err != nil {
 		t.Fatalf("Failed to create _tmp directory: %v", err)

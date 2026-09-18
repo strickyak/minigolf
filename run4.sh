@@ -15,8 +15,10 @@ echo "[ M6809 ] _tmp/m.s $T.m.out" >&2
 # go run main.go  -I=demos -I=golflib -m=m -o=_tmp/m.s "$@"  &&  sh scripts/run-6809-at-4000.sh _tmp/m.s > $T.m.out
 (set -x; sh run9.sh "$@" > $T.m.out )
 
+echo "[ M68K ] _tmp/k.s $T.k.out" >&2
+(set -x; sh runk.sh "$@" > $T.k.out )
 
-for x in cbe amd64 m
+for x in cbe amd64 m k
 do
     echo ==== $T.$x.out ====
     cat -n $T.$x.out
@@ -26,3 +28,5 @@ echo ========
 echo `grep -v '^#' $T.cbe.out   | md5sum `   `wc $T.cbe.out`   >&2
 echo `grep -v '^#' $T.amd64.out | md5sum `   `wc $T.amd64.out` >&2
 echo `grep -v '^#' $T.m.out     | md5sum `   `wc $T.m.out`     >&2
+echo `grep -v '^#' $T.k.out     | md5sum `   `wc $T.k.out`     >&2
+

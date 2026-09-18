@@ -22,7 +22,7 @@ func main() {
 	} else {
 		println(a)
 	}
-	if b == 2 || b == 8 {
+	if b == 2 || b == 4 || b == 8 {
 		println("ok")
 	} else {
 		println(b)
@@ -32,12 +32,12 @@ func main() {
 	} else {
 		println(c)
 	}
-	if d == 4 || d == 16 {
+	if d == 4 || d == 8 || d == 16 {
 		println("ok")
 	} else {
 		println(d)
 	}
-	if e == 3 || e == 12 || e == 16 {
+	if e == 3 || e == 5 || e == 6 || e == 8 || e == 12 || e == 16 {
 		println("ok")
 	} else {
 		println(e)
