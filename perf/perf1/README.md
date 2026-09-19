@@ -26,6 +26,9 @@ All tests were executed bare-metal on the **Hatvan VM** (`hatvan-vm --hypercalls
 | `08_bubble_sort` | **53,701** | 44,102 | 42,391 | 41,207 | 1.22x | 1.27x | 1.30x |
 | `09_struct_ops` | **9,749** | 8,173 | 8,015 | 7,891 | 1.19x | 1.22x | 1.24x |
 | `10_switch_case` | **9,279** | 6,808 | 6,865 | 6,794 | 1.36x | 1.35x | 1.37x |
+| **Min** | - | - | - | - | 0.84x | 0.87x | 0.87x |
+| **Max** | - | - | - | - | 1.45x | 1.81x | 1.91x |
+| **Mean** | - | - | - | - | 1.19x | 1.40x | 1.45x |
 
 ### Code Size (DECB Loaded Payload Bytes)
 
@@ -41,6 +44,9 @@ All tests were executed bare-metal on the **Hatvan VM** (`hatvan-vm --hypercalls
 | `08_bubble_sort` | **948 B** | 648 B | 427 B | 395 B | 1.46x | 2.22x | 2.40x |
 | `09_struct_ops` | **1075 B** | 653 B | 326 B | 303 B | 1.65x | 3.30x | 3.55x |
 | `10_switch_case` | **870 B** | 737 B | 593 B | 569 B | 1.18x | 1.47x | 1.53x |
+| **Min** | - | - | - | - | 0.24x | 0.52x | 0.55x |
+| **Max** | - | - | - | - | 1.65x | 3.30x | 3.55x |
+| **Mean** | - | - | - | - | 1.09x | 1.65x | 1.77x |
 
 ---
 

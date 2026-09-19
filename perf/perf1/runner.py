@@ -358,6 +358,15 @@ def run_test(test_file, compilers=None, verbose=False):
 
     return results
 
+def compute_stats(ratios):
+    """Compute min, max, and mean string representations for ratio lists."""
+    if not ratios:
+        return "N/A", "N/A", "N/A"
+    r_min = f"{min(ratios):.2f}x"
+    r_max = f"{max(ratios):.2f}x"
+    r_mean = f"{sum(ratios) / len(ratios):.2f}x"
+    return r_min, r_max, r_mean
+
 def format_markdown_table(all_results):
     """Format benchmark results into Markdown tables."""
     lines = []
@@ -366,11 +375,22 @@ def format_markdown_table(all_results):
     lines.append("| Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs CMOC | MG vs GCC | MG vs GCCMax |")
     lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
 
+    cmoc_ratios = []
+    gcc_ratios = []
+    max_ratios = []
+
     for test_name, res in all_results.items():
         c_mg = res.get("minigolf", {}).get("cycles", 0)
         c_cmoc = res.get("cmoc", {}).get("cycles", 0)
         c_gcc = res.get("gcc6809", {}).get("cycles", 0)
         c_max = res.get("gcc6809max", {}).get("cycles", 0)
+
+        if c_cmoc and c_mg:
+            cmoc_ratios.append(c_mg / c_cmoc)
+        if c_gcc and c_mg:
+            gcc_ratios.append(c_mg / c_gcc)
+        if c_max and c_mg:
+            max_ratios.append(c_mg / c_max)
 
         r_cmoc = f"{c_mg / c_cmoc:.2f}x" if c_cmoc else "N/A"
         r_gcc = f"{c_mg / c_gcc:.2f}x" if c_gcc else "N/A"
@@ -380,17 +400,36 @@ def format_markdown_table(all_results):
             f"| `{test_name}` | **{c_mg:,}** | {c_cmoc:,} | {c_gcc:,} | {c_max:,} | {r_cmoc} | {r_gcc} | {r_max} |"
         )
 
+    min_c, max_c, mean_c = compute_stats(cmoc_ratios)
+    min_g, max_g, mean_g = compute_stats(gcc_ratios)
+    min_m, max_m, mean_m = compute_stats(max_ratios)
+
+    lines.append(f"| **Min** | - | - | - | - | {min_c} | {min_g} | {min_m} |")
+    lines.append(f"| **Max** | - | - | - | - | {max_c} | {max_g} | {max_m} |")
+    lines.append(f"| **Mean** | - | - | - | - | {mean_c} | {mean_g} | {mean_m} |")
+
     lines.append("")
     lines.append("### Code Size (DECB Loaded Payload Bytes)")
     lines.append("")
     lines.append("| Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs CMOC | MG vs GCC | MG vs GCCMax |")
     lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
 
+    cmoc_s_ratios = []
+    gcc_s_ratios = []
+    max_s_ratios = []
+
     for test_name, res in all_results.items():
         s_mg = res.get("minigolf", {}).get("payload_size", 0)
         s_cmoc = res.get("cmoc", {}).get("payload_size", 0)
         s_gcc = res.get("gcc6809", {}).get("payload_size", 0)
         s_max = res.get("gcc6809max", {}).get("payload_size", 0)
+
+        if s_cmoc and s_mg:
+            cmoc_s_ratios.append(s_mg / s_cmoc)
+        if s_gcc and s_mg:
+            gcc_s_ratios.append(s_mg / s_gcc)
+        if s_max and s_mg:
+            max_s_ratios.append(s_mg / s_max)
 
         r_cmoc = f"{s_mg / s_cmoc:.2f}x" if s_cmoc else "N/A"
         r_gcc = f"{s_mg / s_gcc:.2f}x" if s_gcc else "N/A"
@@ -399,6 +438,14 @@ def format_markdown_table(all_results):
         lines.append(
             f"| `{test_name}` | **{s_mg} B** | {s_cmoc} B | {s_gcc} B | {s_max} B | {r_cmoc} | {r_gcc} | {r_max} |"
         )
+
+    min_cs, max_cs, mean_cs = compute_stats(cmoc_s_ratios)
+    min_gs, max_gs, mean_gs = compute_stats(gcc_s_ratios)
+    min_ms, max_ms, mean_ms = compute_stats(max_s_ratios)
+
+    lines.append(f"| **Min** | - | - | - | - | {min_cs} | {min_gs} | {min_ms} |")
+    lines.append(f"| **Max** | - | - | - | - | {max_cs} | {max_gs} | {max_ms} |")
+    lines.append(f"| **Mean** | - | - | - | - | {mean_cs} | {mean_gs} | {mean_ms} |")
 
     return "\n".join(lines)
 
