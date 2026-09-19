@@ -246,13 +246,25 @@ func InlinePass(p *ir.Program, opts InlineOptions) bool {
 	return overallChanged
 }
 
+// isInitFunction returns true if the function is an initialization function
+// (such as init__main, prelude.init_0, or any module-level init_N function).
+func isInitFunction(name string) bool {
+	if name == "init" || name == "_init" || name == "init__main" || strings.HasPrefix(name, "init__") {
+		return true
+	}
+	if strings.HasPrefix(name, "init_") || strings.Contains(name, ".init_") {
+		return true
+	}
+	return false
+}
+
 // canInline checks whether a callee is eligible for inlining under any strategy.
 func canInline(f *ir.Function) bool {
 	if f == nil || len(f.Blocks) == 0 {
 		return false
 	}
-	// Never inline entry points or runtime root functions
-	if f.Name == "main.main" || f.Name == "_main" || f.Name == "prelude.init_0" {
+	// Never inline entry points, runtime root functions, or initialization functions
+	if f.Name == "main.main" || f.Name == "_main" || isInitFunction(f.Name) {
 		return false
 	}
 	// Never inline functions with defers, destructors, setjmp, longjmp, or local variable addresses

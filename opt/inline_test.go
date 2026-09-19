@@ -483,3 +483,50 @@ func TestInlinePopularityWeighting(t *testing.T) {
 		}
 	}
 }
+
+func TestInlineNoInitFunctions(t *testing.T) {
+	for _, initName := range []string{"init__main", "prelude.init_0", "main.init_0", "foo.init_1"} {
+		initBlk := &ir.BasicBlock{
+			ID:           0,
+			Instructions: []ir.Instruction{},
+			Terminator:   &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 1, Typ: ir.TypeVoid}},
+		}
+		initFn := &ir.Function{
+			Name:       initName,
+			Blocks:     []*ir.BasicBlock{initBlk},
+			ReturnType: ir.TypeVoid,
+		}
+
+		call := &ir.Call{
+			BaseInstruction: ir.BaseInstruction{ID: 10, Typ: ir.TypeVoid},
+			Func:            initFn,
+		}
+		callerBlk := &ir.BasicBlock{
+			ID:           0,
+			Instructions: []ir.Instruction{call},
+			Terminator:   &ir.Return{BaseInstruction: ir.BaseInstruction{ID: 11, Typ: ir.TypeVoid}},
+		}
+		caller := &ir.Function{
+			Name:       "main.main",
+			Blocks:     []*ir.BasicBlock{callerBlk},
+			ReturnType: ir.TypeVoid,
+		}
+
+		prog := &ir.Program{
+			Functions: []*ir.Function{caller, initFn},
+		}
+
+		changed := InlinePass(prog, InlineOptions{
+			EnableTiny:          true,
+			EnableSingleCall:    true,
+			MaxTinyInstructions: 8,
+			MaxInlineRounds:     10,
+		})
+		if changed {
+			t.Errorf("Expected init function %q NOT to be inlined", initName)
+		}
+		if len(caller.Blocks[0].Instructions) != 1 {
+			t.Errorf("Expected 1 instruction in caller for %q, got %d", initName, len(caller.Blocks[0].Instructions))
+		}
+	}
+}
