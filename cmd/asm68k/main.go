@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -33,6 +34,15 @@ type EA struct {
 	BranchTarget string // for branch instructions
 }
 
+type SourceLine struct {
+	File     string
+	LineNum  int
+	Raw      string
+	PC       uint32
+	HasPC    bool
+	Encoded  []byte
+}
+
 type Statement struct {
 	Label    string
 	Mnemonic string
@@ -42,15 +52,17 @@ type Statement struct {
 	File     string
 	PC       uint32
 	Encoded  []byte
+	SrcLine  *SourceLine
 }
 
 type Assembler struct {
-	symbols    map[string]uint32
-	statements []*Statement
-	currPC     uint32
-	entryPoint uint32
-	hasEntry   bool
-	pass       int
+	symbols     map[string]uint32
+	statements  []*Statement
+	sourceLines []*SourceLine
+	currPC      uint32
+	entryPoint  uint32
+	hasEntry    bool
+	pass        int
 }
 
 func NewAssembler() *Assembler {
@@ -856,6 +868,13 @@ func (a *Assembler) LoadSource(filename string, r io.Reader) error {
 	for scanner.Scan() {
 		lineNum++
 		raw := scanner.Text()
+		srcLine := &SourceLine{
+			File:    filename,
+			LineNum: lineNum,
+			Raw:     raw,
+		}
+		a.sourceLines = append(a.sourceLines, srcLine)
+
 		lbl, mnem, sz, ops := parseLine(raw)
 		if lbl != "" {
 			labels := strings.Split(lbl, "\n")
@@ -864,6 +883,7 @@ func (a *Assembler) LoadSource(filename string, r io.Reader) error {
 					Label:   strings.TrimSpace(l),
 					LineNum: lineNum,
 					File:    filename,
+					SrcLine: srcLine,
 				}
 				a.statements = append(a.statements, st)
 			}
@@ -875,6 +895,7 @@ func (a *Assembler) LoadSource(filename string, r io.Reader) error {
 				OpsStr:   ops,
 				LineNum:  lineNum,
 				File:     filename,
+				SrcLine:  srcLine,
 			}
 			a.statements = append(a.statements, st)
 		}
@@ -898,6 +919,9 @@ func (a *Assembler) Assemble() error {
 				return fmt.Errorf("%s:%d: error in pass 1: %w", st.File, st.LineNum, err)
 			}
 			st.Encoded = bytes
+			if st.Mnemonic == "ORG" {
+				st.PC = a.currPC
+			}
 			a.currPC += uint32(len(bytes))
 		}
 	}
@@ -908,12 +932,26 @@ func (a *Assembler) Assemble() error {
 
 	for _, st := range a.statements {
 		st.PC = a.currPC
+		if st.SrcLine != nil && !st.SrcLine.HasPC {
+			st.SrcLine.PC = a.currPC
+			st.SrcLine.HasPC = true
+		}
 		if st.Mnemonic != "" {
 			bytes, err := a.assembleLine(st)
 			if err != nil {
 				return fmt.Errorf("%s:%d: error in pass 2: %w", st.File, st.LineNum, err)
 			}
 			st.Encoded = bytes
+			if st.Mnemonic == "ORG" {
+				st.PC = a.currPC
+				if st.SrcLine != nil {
+					st.SrcLine.PC = a.currPC
+					st.SrcLine.HasPC = true
+				}
+			}
+			if st.SrcLine != nil && len(bytes) > 0 {
+				st.SrcLine.Encoded = append(st.SrcLine.Encoded, bytes...)
+			}
 			a.currPC += uint32(len(bytes))
 		}
 	}
@@ -991,13 +1029,64 @@ func writeSRecord(w io.Writer, recType byte, addr uint32, data []byte) {
 	fmt.Fprintf(w, "S%c%02X%s%02X\n", recType, count, strings.ToUpper(hex.EncodeToString(payload[1:])), csum)
 }
 
+func (a *Assembler) EmitListing(w io.Writer) error {
+	for _, sl := range a.sourceLines {
+		base := filepath.Base(sl.File)
+		fileLineStr := fmt.Sprintf("(%17s):%05d", base, sl.LineNum)
+
+		var addrStr string
+		if sl.HasPC {
+			// On the M68000, 24-bit addresses will take 6 hex characters in the first column
+			addrStr = fmt.Sprintf("%06X", sl.PC&0xFFFFFF)
+		} else {
+			addrStr = "      "
+		}
+
+		enc := sl.Encoded
+		if len(enc) == 0 {
+			if _, err := fmt.Fprintf(w, "%s                  %s %s\n", addrStr, fileLineStr, sl.Raw); err != nil {
+				return err
+			}
+			continue
+		}
+
+		chunkLen := len(enc)
+		if chunkLen > 8 {
+			chunkLen = 8
+		}
+		hexStr := strings.ToUpper(hex.EncodeToString(enc[:chunkLen]))
+		if _, err := fmt.Fprintf(w, "%s %-16s %s %s\n", addrStr, hexStr, fileLineStr, sl.Raw); err != nil {
+			return err
+		}
+
+		for i := 8; i < len(enc); i += 8 {
+			end := i + 8
+			if end > len(enc) {
+				end = len(enc)
+			}
+			contHex := strings.ToUpper(hex.EncodeToString(enc[i:end]))
+			if _, err := fmt.Fprintf(w, "       %s\n", contHex); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func main() {
 	outFlag := flag.String("o", "", "Output S-Record file path")
+	listFlag := flag.String("l", "", "Assembly listing output file path")
+	listLongFlag := flag.String("list", "", "Assembly listing output file path")
 	flag.Parse()
+
+	actualList := *listFlag
+	if actualList == "" && *listLongFlag != "" {
+		actualList = *listLongFlag
+	}
 
 	files := flag.Args()
 	if len(files) == 0 {
-		fmt.Fprintf(os.Stderr, "Usage: asm68k -o <output.srec> <source.s>...\n")
+		fmt.Fprintf(os.Stderr, "Usage: asm68k -o <output.srec> [-l <output.list>] <source.s>...\n")
 		os.Exit(1)
 	}
 
@@ -1035,5 +1124,18 @@ func main() {
 	if err := asm.EmitSRecords(outWriter); err != nil {
 		fmt.Fprintf(os.Stderr, "Error emitting S-records: %v\n", err)
 		os.Exit(1)
+	}
+
+	if actualList != "" {
+		listFile, err := os.Create(actualList)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating listing file %s: %v\n", actualList, err)
+			os.Exit(1)
+		}
+		defer listFile.Close()
+		if err := asm.EmitListing(listFile); err != nil {
+			fmt.Fprintf(os.Stderr, "Error emitting listing: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }

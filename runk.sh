@@ -36,7 +36,7 @@ case "$P" in
 esac
 
 test -x "$ASM68K" || ( cd "$SCRIPT_DIR" && go build -o asm68k ./cmd/asm68k )
-"$ASM68K" -o _tmp/moto.srec "$SCRIPT_DIR/m68k/cstart.asm" _tmp/main.s >&2
+"$ASM68K" -o _tmp/moto.srec -l _tmp/moto.list "$SCRIPT_DIR/m68k/cstart.asm" _tmp/main.s >&2
 
 if ! test -s "$HATVAN_VMK"; then
     ( cd "$HATVAN_DIR" && (go build -o build/gepk ./cmd/gepk || go build -o hatvan-vmk ./cmd/gepk) )
