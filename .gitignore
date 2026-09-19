@@ -48,3 +48,7 @@ perf/*/disasm/
 *.map
 *.list
 *.o
+/asm6809
+/asm68k
+__pycache__/
+

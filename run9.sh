@@ -117,7 +117,13 @@ HERE
 cat cstart.asm main.asm > moto.asm
 echo "    end cstart" >> moto.asm
 
-time - lwasm --decb --list=moto.list -o moto.decb moto.asm
+if test -x "$SCRIPT_DIR/asm6809"; then
+    time - "$SCRIPT_DIR/asm6809" --decb --list=moto.list -o moto.decb moto.asm
+elif which asm6809 >/dev/null 2>&1; then
+    time - asm6809 --decb --list=moto.list -o moto.decb moto.asm
+else
+    time - lwasm --decb --list=moto.list -o moto.decb moto.asm
+fi
 
 if test -s moto.decb; then
     DECB_SIZE=$(wc -c < moto.decb)

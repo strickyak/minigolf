@@ -142,9 +142,11 @@ def compile_minigolf(test_file, work_dir):
     core_code = core_asm.read_text()
     full_asm.write_text(cstart_code + "\n" + core_code + "\n    end cstart\n")
 
-    # Step 3: lwasm -9 -b -f decb
+    # Step 3: assemble with asm6809 (or fallback to lwasm)
+    asm6809_bin = REPO_ROOT / "asm6809"
+    assembler = str(asm6809_bin) if asm6809_bin.exists() else "lwasm"
     cmd = [
-        "lwasm", "-9", "-b", "-f", "decb",
+        assembler, "-9", "-b", "-f", "decb",
         f"--list={list_file}",
         f"--map={map_file}",
         "-o", str(decb_file),
