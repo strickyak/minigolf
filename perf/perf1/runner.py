@@ -363,8 +363,8 @@ def format_markdown_table(all_results):
     lines = []
     lines.append("### Runtime Performance (CPU Cycles on Hatvan VM)")
     lines.append("")
-    lines.append("| Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCC | MG vs GCCMax |")
-    lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
+    lines.append("| Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs CMOC | MG vs GCC | MG vs GCCMax |")
+    lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
 
     for test_name, res in all_results.items():
         c_mg = res.get("minigolf", {}).get("cycles", 0)
@@ -372,18 +372,19 @@ def format_markdown_table(all_results):
         c_gcc = res.get("gcc6809", {}).get("cycles", 0)
         c_max = res.get("gcc6809max", {}).get("cycles", 0)
 
+        r_cmoc = f"{c_mg / c_cmoc:.2f}x" if c_cmoc else "N/A"
         r_gcc = f"{c_mg / c_gcc:.2f}x" if c_gcc else "N/A"
         r_max = f"{c_mg / c_max:.2f}x" if c_max else "N/A"
 
         lines.append(
-            f"| `{test_name}` | **{c_mg:,}** | {c_cmoc:,} | {c_gcc:,} | {c_max:,} | {r_gcc} | {r_max} |"
+            f"| `{test_name}` | **{c_mg:,}** | {c_cmoc:,} | {c_gcc:,} | {c_max:,} | {r_cmoc} | {r_gcc} | {r_max} |"
         )
 
     lines.append("")
     lines.append("### Code Size (DECB Loaded Payload Bytes)")
     lines.append("")
-    lines.append("| Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs GCC | MG vs GCCMax |")
-    lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
+    lines.append("| Benchmark Test | MiniGolf | CMOC (-O2) | GCC 6809 (-O2) | GCC6809 Max | MG vs CMOC | MG vs GCC | MG vs GCCMax |")
+    lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |")
 
     for test_name, res in all_results.items():
         s_mg = res.get("minigolf", {}).get("payload_size", 0)
@@ -391,11 +392,12 @@ def format_markdown_table(all_results):
         s_gcc = res.get("gcc6809", {}).get("payload_size", 0)
         s_max = res.get("gcc6809max", {}).get("payload_size", 0)
 
+        r_cmoc = f"{s_mg / s_cmoc:.2f}x" if s_cmoc else "N/A"
         r_gcc = f"{s_mg / s_gcc:.2f}x" if s_gcc else "N/A"
         r_max = f"{s_mg / s_max:.2f}x" if s_max else "N/A"
 
         lines.append(
-            f"| `{test_name}` | **{s_mg} B** | {s_cmoc} B | {s_gcc} B | {s_max} B | {r_gcc} | {r_max} |"
+            f"| `{test_name}` | **{s_mg} B** | {s_cmoc} B | {s_gcc} B | {s_max} B | {r_cmoc} | {r_gcc} | {r_max} |"
         )
 
     return "\n".join(lines)
