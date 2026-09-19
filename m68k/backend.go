@@ -1048,7 +1048,6 @@ func (b *Backend) emitData(val ir.Value) {
 	}
 }
 
-
 func (b *Backend) emitHelpers() {
 	b.buf.WriteString(`
 ; ── Software Math Helpers (32-Bit) ───────────────────────────────────────────

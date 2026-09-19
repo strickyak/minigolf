@@ -73,7 +73,7 @@ func (l *Long) IsZero() bool {
 }
 
 func (l *Long) IsNeg() bool {
-	return (l.Bytes[3] >> 7) & 1 != 0
+	return (l.Bytes[3]>>7)&1 != 0
 }
 
 func (l *Long) Sign() int {
@@ -90,7 +90,7 @@ func Neg(a Long) Long {
 	var res Long
 	var carry word = 1
 	for i := 0; i < 4; i++ {
-		inv := word(a.Bytes[i] ^ 0xFF) + carry
+		inv := word(a.Bytes[i]^0xFF) + carry
 		res.Bytes[i] = byte(inv)
 		carry = inv >> 8
 	}
@@ -131,7 +131,7 @@ func Sub(a Long, b Long) Long {
 	var res Long
 	var carry word = 1
 	for i := 0; i < 4; i++ {
-		sum := word(a.Bytes[i]) + word(b.Bytes[i] ^ 0xFF) + carry
+		sum := word(a.Bytes[i]) + word(b.Bytes[i]^0xFF) + carry
 		res.Bytes[i] = byte(sum)
 		carry = sum >> 8
 	}
@@ -146,8 +146,8 @@ func Mul(a Long, b Long) Long {
 	var res Long
 	for i := 0; i < 4; i++ {
 		var c word = 0
-		for j := 0; j < 4 - i; j++ {
-			prod := word(a.Bytes[i]) * word(b.Bytes[j]) + word(res.Bytes[i+j]) + c
+		for j := 0; j < 4-i; j++ {
+			prod := word(a.Bytes[i])*word(b.Bytes[j]) + word(res.Bytes[i+j]) + c
 			res.Bytes[i+j] = byte(prod)
 			c = prod >> 8
 		}

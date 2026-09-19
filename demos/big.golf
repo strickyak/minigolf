@@ -244,12 +244,12 @@ func (a *Big) Gt(b *Big) bool { return a.Cmp(b) > 0 }
 func (a *Big) Ge(b *Big) bool { return a.Cmp(b) >= 0 }
 
 func Cmp(a *Big, b *Big) int { return a.Cmp(b) }
-func Eq(a *Big, b *Big) bool  { return a.Eq(b) }
-func Ne(a *Big, b *Big) bool  { return a.Ne(b) }
-func Lt(a *Big, b *Big) bool  { return a.Lt(b) }
-func Le(a *Big, b *Big) bool  { return a.Le(b) }
-func Gt(a *Big, b *Big) bool  { return a.Gt(b) }
-func Ge(a *Big, b *Big) bool  { return a.Ge(b) }
+func Eq(a *Big, b *Big) bool { return a.Eq(b) }
+func Ne(a *Big, b *Big) bool { return a.Ne(b) }
+func Lt(a *Big, b *Big) bool { return a.Lt(b) }
+func Le(a *Big, b *Big) bool { return a.Le(b) }
+func Gt(a *Big, b *Big) bool { return a.Gt(b) }
+func Ge(a *Big, b *Big) bool { return a.Ge(b) }
 
 // --- Arithmetic ---
 
@@ -474,7 +474,7 @@ func DivMod(q *Big, r *Big, a *Big, b *Big) {
 	k := a.BitLen() - b.BitLen()
 	b_shift.Lsh(b, k)
 
-	for step := range (k + 1) {
+	for step := range k + 1 {
 		shift := k - step
 		if rem.Cmp(&b_shift) >= 0 {
 			rem.Sub(&rem, &b_shift)
@@ -578,13 +578,13 @@ func (z *Big) MulSmall(a *Big, w word) {
 }
 
 // Package-level functions
-func Add(z *Big, a *Big, b *Big)        { z.Add(a, b) }
-func Sub(z *Big, a *Big, b *Big)        { z.Sub(a, b) }
-func Mul(z *Big, a *Big, b *Big)        { z.Mul(a, b) }
-func Div(q *Big, a *Big, b *Big)        { q.Div(a, b) }
-func Mod(r *Big, a *Big, b *Big)        { r.Mod(a, b) }
-func Lsh(z *Big, a *Big, n word)        { z.Lsh(a, n) }
-func Rsh(z *Big, a *Big, n word)        { z.Rsh(a, n) }
+func Add(z *Big, a *Big, b *Big)         { z.Add(a, b) }
+func Sub(z *Big, a *Big, b *Big)         { z.Sub(a, b) }
+func Mul(z *Big, a *Big, b *Big)         { z.Mul(a, b) }
+func Div(q *Big, a *Big, b *Big)         { q.Div(a, b) }
+func Mod(r *Big, a *Big, b *Big)         { r.Mod(a, b) }
+func Lsh(z *Big, a *Big, n word)         { z.Lsh(a, n) }
+func Rsh(z *Big, a *Big, n word)         { z.Rsh(a, n) }
 func Pow(z *Big, a *Big, b *Big, m *Big) { z.Pow(a, b, m) }
 
 // --- Bitwise Operations ---
@@ -696,7 +696,7 @@ func (z *Big) FormatHex() string {
 	out.Append(hexDigit(topNyb0))
 
 	if z.Size > 1 {
-		for step := range (z.Size - 1) {
+		for step := range z.Size - 1 {
 			i := (z.Size - 2) - step
 			w := z.Guts[i]
 			out.Append(hexDigit(byte((w >> 12) & 0x0F)))

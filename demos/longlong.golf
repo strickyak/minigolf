@@ -51,7 +51,7 @@ func FromLong(a long.Long) LongLong {
 	l.Bytes[2] = a.Bytes[2]
 	l.Bytes[3] = a.Bytes[3]
 	var fill byte = 0
-	if (a.Bytes[3] >> 7) & 1 != 0 {
+	if (a.Bytes[3]>>7)&1 != 0 {
 		fill = 0xFF
 	}
 	for i := 4; i < 8; i++ {
@@ -118,7 +118,7 @@ func (l *LongLong) IsZero() bool {
 }
 
 func (l *LongLong) IsNeg() bool {
-	return (l.Bytes[7] >> 7) & 1 != 0
+	return (l.Bytes[7]>>7)&1 != 0
 }
 
 func (l *LongLong) Sign() int {
@@ -135,7 +135,7 @@ func Neg(a LongLong) LongLong {
 	var res LongLong
 	var carry word = 1
 	for i := 0; i < 8; i++ {
-		inv := word(a.Bytes[i] ^ 0xFF) + carry
+		inv := word(a.Bytes[i]^0xFF) + carry
 		res.Bytes[i] = byte(inv)
 		carry = inv >> 8
 	}
@@ -176,7 +176,7 @@ func Sub(a LongLong, b LongLong) LongLong {
 	var res LongLong
 	var carry word = 1
 	for i := 0; i < 8; i++ {
-		sum := word(a.Bytes[i]) + word(b.Bytes[i] ^ 0xFF) + carry
+		sum := word(a.Bytes[i]) + word(b.Bytes[i]^0xFF) + carry
 		res.Bytes[i] = byte(sum)
 		carry = sum >> 8
 	}
@@ -191,8 +191,8 @@ func Mul(a LongLong, b LongLong) LongLong {
 	var res LongLong
 	for i := 0; i < 8; i++ {
 		var c word = 0
-		for j := 0; j < 8 - i; j++ {
-			prod := word(a.Bytes[i]) * word(b.Bytes[j]) + word(res.Bytes[i+j]) + c
+		for j := 0; j < 8-i; j++ {
+			prod := word(a.Bytes[i])*word(b.Bytes[j]) + word(res.Bytes[i+j]) + c
 			res.Bytes[i+j] = byte(prod)
 			c = prod >> 8
 		}

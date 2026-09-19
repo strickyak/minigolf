@@ -782,7 +782,6 @@ func (b *Backend) resolvePointerOffset(ptrVal ir.Value) (ir.Value, int) {
 	return ptrVal, totalOffset
 }
 
-
 func (b *Backend) findFoldedAddrs(f *ir.Function) map[int]bool {
 	usesOf := make(map[int][]ir.Instruction)
 	allAddrs := make(map[int]ir.Instruction)
@@ -3705,7 +3704,6 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.emitLoadAddr("y", b.getAddrStr(i.Val))
 			b.emitCopy("x", "y", sz)
 		}
-
 
 	case *ir.BinaryOp:
 		b.emitBinaryOp(i)
