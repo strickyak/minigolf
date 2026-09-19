@@ -77,7 +77,7 @@ func cleanOutput(out string) []string {
 
 var (
 	reCodeSize = regexp.MustCompile(`\[m6809 codesize:\s*(\d+)\]`)
-	reCycles   = regexp.MustCompile(`\[hatvan-vm finished:\s*(\d+)\s*total cycles executed\]`)
+	reCycles   = regexp.MustCompile(`\[(hatvan-vm|gep9|gepk) finished:\s*(\d+)\s*total cycles executed\]`)
 
 	telemetryMu   sync.Mutex
 	telemetryOnce sync.Once

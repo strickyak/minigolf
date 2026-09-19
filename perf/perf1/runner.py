@@ -29,12 +29,25 @@ DISASM_DIR = PERF_DIR / "disasm"
 MINIMAL_PRELUDE = REPO_ROOT / "c-demos" / "lnbasic" / "minimal"
 
 # Tool paths
-HATVAN_VM = REPO_ROOT.parent / "hatvan-os" / "hatvan-vm"
-if not HATVAN_VM.exists():
-    # Try finding in PATH
-    which_vm = shutil.which("hatvan-vm")
-    if which_vm:
-        HATVAN_VM = Path(which_vm)
+HATVAN_VM = None
+for candidate in [
+    REPO_ROOT.parent / "hatvan-os" / "build" / "gep9",
+    REPO_ROOT.parent / "hatvan-os" / "gep9",
+    REPO_ROOT.parent / "hatvan-os" / "hatvan-vm",
+]:
+    if candidate.exists():
+        HATVAN_VM = candidate
+        break
+
+if not HATVAN_VM:
+    for name in ["gep9", "hatvan-vm"]:
+        which_vm = shutil.which(name)
+        if which_vm:
+            HATVAN_VM = Path(which_vm)
+            break
+
+if not HATVAN_VM:
+    HATVAN_VM = REPO_ROOT.parent / "hatvan-os" / "build" / "gep9"
 
 CMOC_LIB = Path("/home/strick/modoc/coco-shelf/share/cmoc/lib")
 GCC_LIB = Path("/home/strick/modoc/coco-shelf/lib/gcc/m6809-unknown/4.6.4")

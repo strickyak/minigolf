@@ -4,6 +4,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HATVAN_DIR="$(cd "$SCRIPT_DIR/../hatvan-os" && pwd)"
 HATVAN_VMK="$HATVAN_DIR/hatvan-vmk"
+if test -s "$HATVAN_DIR/build/gepk"; then
+    HATVAN_VMK="$HATVAN_DIR/build/gepk"
+elif test -s "$HATVAN_DIR/gepk"; then
+    HATVAN_VMK="$HATVAN_DIR/gepk"
+fi
 MINIGOLF="$SCRIPT_DIR/minigolf"
 ASM68K="$SCRIPT_DIR/asm68k"
 
@@ -33,7 +38,12 @@ esac
 test -x "$ASM68K" || ( cd "$SCRIPT_DIR" && go build -o asm68k ./cmd/asm68k )
 "$ASM68K" -o _tmp/moto.srec "$SCRIPT_DIR/m68k/cstart.asm" _tmp/main.s >&2
 
-test -s "$HATVAN_VMK" || ( cd "$HATVAN_DIR" && go build -o hatvan-vmk ./cmd/hatvan-vmk )
+if ! test -s "$HATVAN_VMK"; then
+    ( cd "$HATVAN_DIR" && (go build -o build/gepk ./cmd/gepk || go build -o hatvan-vmk ./cmd/gepk) )
+    if test -s "$HATVAN_DIR/build/gepk"; then
+        HATVAN_VMK="$HATVAN_DIR/build/gepk"
+    fi
+fi
 
 if test -z "$TRACE"
 then

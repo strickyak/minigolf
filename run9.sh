@@ -3,6 +3,11 @@ set -ex
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HATVAN_DIR="$(cd "$SCRIPT_DIR/../hatvan-os" && pwd)"
 HATVAN_VM="$HATVAN_DIR/hatvan-vm"
+if test -s "$HATVAN_DIR/build/gep9"; then
+    HATVAN_VM="$HATVAN_DIR/build/gep9"
+elif test -s "$HATVAN_DIR/gep9"; then
+    HATVAN_VM="$HATVAN_DIR/gep9"
+fi
 
 mkdir -p _tmp
 
@@ -122,7 +127,12 @@ fi
 
 #############
 
-test -s "$HATVAN_VM" || ( cd "$HATVAN_DIR" && go build -o hatvan-vm ./cmd/hatvan-vm )
+if ! test -s "$HATVAN_VM"; then
+    ( cd "$HATVAN_DIR" && (go build -o build/gep9 ./cmd/gep9 || go build -o hatvan-vm ./cmd/hatvan-vm) )
+    if test -s "$HATVAN_DIR/build/gep9"; then
+        HATVAN_VM="$HATVAN_DIR/build/gep9"
+    fi
+fi
 
 if test -z "$TRACE"
 then
