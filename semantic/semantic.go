@@ -739,6 +739,40 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 			if s.Alternative != nil {
 				a.analyzeBlock(s.Alternative, true)
 			}
+		case *ast.SwitchStatement:
+			s.Tag = a.foldExpression(s.Tag)
+			tagType := a.analyzeExpression(s.Tag)
+			tagTypeStr := a.exprToString(tagType)
+			if tagTypeStr != "byte" && tagTypeStr != "word" && tagTypeStr != "int" && tagTypeStr != "uint" && tagType != UnknownType {
+				a.reportError(s, "switch tag expression must be byte or word, got %s", tagTypeStr)
+			}
+			hasDefault := false
+			seenCases := make(map[int64]bool)
+			for _, clause := range s.Body {
+				if clause.Token.Type == token.DEFAULT {
+					if hasDefault {
+						a.reportError(clause, "multiple default clauses in switch")
+					}
+					hasDefault = true
+				}
+				for i, v := range clause.Values {
+					clause.Values[i] = a.foldExpression(v)
+					vType := a.analyzeExpression(clause.Values[i])
+					vTypeStr := a.exprToString(vType)
+					if vTypeStr != "byte" && vTypeStr != "word" && vTypeStr != "int" && vTypeStr != "uint" && vType != UnknownType {
+						a.reportError(v, "case expression must be byte or word, got %s", vTypeStr)
+					}
+					if intLit, ok := clause.Values[i].(*ast.IntegerLiteral); ok {
+						if seenCases[intLit.Value] {
+							a.reportError(v, "duplicate case %d in switch", intLit.Value)
+						}
+						seenCases[intLit.Value] = true
+					}
+				}
+				clauseBlock := &ast.BlockStatement{Statements: clause.Body}
+				a.analyzeBlock(clauseBlock, true)
+				clause.Body = clauseBlock.Statements
+			}
 		case *ast.ForStatement:
 			a.pushScope()
 			if s.Condition != nil {

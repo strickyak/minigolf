@@ -1,0 +1,79 @@
+package main
+
+func testByte(b byte) word {
+	var r word
+	switch b {
+	case 1:
+		r = 10
+	case 2, 3:
+		r = 20
+	case 4:
+		r = 40
+		break
+		r = 999
+	default:
+		r = 100
+	}
+	return r
+}
+
+func testWord(w word) word {
+	var r word
+	switch w {
+	default:
+		r = 999
+	case 100:
+		r = 1
+	case 200, 300:
+		r = 2
+	case 400:
+		r = 4
+	}
+	return r
+}
+
+func testNoDefault(b byte) word {
+	var r word = 55
+	switch b {
+	case 1:
+		r = 111
+	case 2:
+		r = 222
+	}
+	return r
+}
+
+func testEmptyCase(b byte) word {
+	var r word = 77
+	switch b {
+	case 1:
+		// empty body
+	case 2:
+		r = 88
+	default:
+		r = 99
+	}
+	return r
+}
+
+func main() {
+	println(testByte(1))
+	println(testByte(2))
+	println(testByte(3))
+	println(testByte(4))
+	println(testByte(5))
+
+	println(testWord(100))
+	println(testWord(200))
+	println(testWord(300))
+	println(testWord(400))
+	println(testWord(500))
+
+	println(testNoDefault(1))
+	println(testNoDefault(2))
+	println(testNoDefault(3))
+
+	println(testEmptyCase(1))
+	println(testEmptyCase(2))
+	println(testEmptyCase(3))
+}

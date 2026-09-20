@@ -1243,6 +1243,113 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.sealBlock(endBlk)
 		b.currentBlock = endBlk
 
+	case *ast.SwitchStatement:
+		b.addInstr(&SourceMarker{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Comment:         fmt.Sprintf("Line %d: Switch statement", s.Token.Line),
+		}, s)
+
+		tagVal := b.buildExpr(s.Tag)
+		b.nextValueID++
+		hiddenTagName := fmt.Sprintf(".switch_tag_%d", b.nextValueID)
+		b.varTypes[hiddenTagName] = tagVal.Type()
+		b.writeVariable(hiddenTagName, b.currentBlock, tagVal)
+
+		var defaultClause *ast.CaseClause
+		var nonDefaultClauses []*ast.CaseClause
+		for _, clause := range s.Body {
+			if clause.Token.Type == token.DEFAULT {
+				defaultClause = clause
+			} else {
+				nonDefaultClauses = append(nonDefaultClauses, clause)
+			}
+		}
+
+		endBlk := b.newBlock()
+		b.breakStack = append(b.breakStack, endBlk)
+
+		if len(nonDefaultClauses) == 0 && defaultClause == nil {
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, s)
+			b.addEdge(b.currentBlock, endBlk)
+			b.sealBlock(endBlk)
+			b.breakStack = b.breakStack[:len(b.breakStack)-1]
+			b.currentBlock = endBlk
+			return
+		}
+
+		caseBodyBlocks := make([]*BasicBlock, len(nonDefaultClauses))
+		for i := range nonDefaultClauses {
+			caseBodyBlocks[i] = b.newBlock()
+		}
+
+		var defaultBlk *BasicBlock
+		if defaultClause != nil {
+			defaultBlk = b.newBlock()
+		} else {
+			defaultBlk = endBlk
+		}
+
+		if len(nonDefaultClauses) == 0 {
+			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: defaultBlk}, s)
+			b.addEdge(b.currentBlock, defaultBlk)
+		} else {
+			for i, clause := range nonDefaultClauses {
+				for vIdx, valExpr := range clause.Values {
+					isLastVal := (i == len(nonDefaultClauses)-1 && vIdx == len(clause.Values)-1)
+					var nextCheckBlk *BasicBlock
+					if isLastVal {
+						nextCheckBlk = defaultBlk
+					} else {
+						nextCheckBlk = b.newBlock()
+					}
+
+					tag := b.readVariable(hiddenTagName, b.currentBlock)
+					caseExprVal := b.buildExpr(valExpr)
+					caseVal := b.coerceType(caseExprVal, tagVal.Type())
+					cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: tag, Right: caseVal}, clause)
+
+					b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: caseBodyBlocks[i], FalseBlock: nextCheckBlk}, clause)
+					b.addEdge(b.currentBlock, caseBodyBlocks[i])
+					b.addEdge(b.currentBlock, nextCheckBlk)
+
+					if !isLastVal {
+						b.sealBlock(nextCheckBlk)
+						b.currentBlock = nextCheckBlk
+					}
+				}
+			}
+		}
+
+		if defaultClause != nil {
+			b.sealBlock(defaultBlk)
+		}
+
+		for i := range nonDefaultClauses {
+			b.sealBlock(caseBodyBlocks[i])
+		}
+
+		for i, clause := range nonDefaultClauses {
+			b.currentBlock = caseBodyBlocks[i]
+			b.buildBlock(&ast.BlockStatement{Statements: clause.Body})
+			if b.currentBlock.Terminator == nil {
+				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, clause)
+				b.addEdge(b.currentBlock, endBlk)
+			}
+		}
+
+		if defaultClause != nil {
+			b.currentBlock = defaultBlk
+			b.buildBlock(&ast.BlockStatement{Statements: defaultClause.Body})
+			if b.currentBlock.Terminator == nil {
+				b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: endBlk}, defaultClause)
+				b.addEdge(b.currentBlock, endBlk)
+			}
+		}
+
+		b.breakStack = b.breakStack[:len(b.breakStack)-1]
+		b.sealBlock(endBlk)
+		b.currentBlock = endBlk
+
 	case *ast.ForStatement:
 		b.addInstr(&SourceMarker{
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
@@ -3759,6 +3866,18 @@ func (b *Builder) findEscapingVars(node ast.Node) {
 		b.findEscapingVars(n.Condition)
 		b.findEscapingVars(n.Consequence)
 		b.findEscapingVars(n.Alternative)
+	case *ast.SwitchStatement:
+		b.findEscapingVars(n.Tag)
+		for _, clause := range n.Body {
+			b.findEscapingVars(clause)
+		}
+	case *ast.CaseClause:
+		for _, expr := range n.Values {
+			b.findEscapingVars(expr)
+		}
+		for _, stmt := range n.Body {
+			b.findEscapingVars(stmt)
+		}
 	case *ast.ForStatement:
 		b.findEscapingVars(n.Condition)
 		b.findEscapingVars(n.Body)
@@ -3857,6 +3976,10 @@ func isNil(node ast.Node) bool {
 		return n == nil
 	case *ast.IfStatement:
 		return n == nil
+	case *ast.SwitchStatement:
+		return n == nil
+	case *ast.CaseClause:
+		return n == nil
 	case *ast.ForStatement:
 		return n == nil
 	case *ast.For3Statement:
@@ -3924,6 +4047,28 @@ func (b *Builder) hasDestructiblesOrDefers(node ast.Node) bool {
 		return true
 	case *ast.IfStatement:
 		return b.hasDestructiblesOrDefers(n.Condition) || b.hasDestructiblesOrDefers(n.Consequence) || b.hasDestructiblesOrDefers(n.Alternative)
+	case *ast.SwitchStatement:
+		if b.hasDestructiblesOrDefers(n.Tag) {
+			return true
+		}
+		for _, clause := range n.Body {
+			if b.hasDestructiblesOrDefers(clause) {
+				return true
+			}
+		}
+		return false
+	case *ast.CaseClause:
+		for _, expr := range n.Values {
+			if b.hasDestructiblesOrDefers(expr) {
+				return true
+			}
+		}
+		for _, stmt := range n.Body {
+			if b.hasDestructiblesOrDefers(stmt) {
+				return true
+			}
+		}
+		return false
 	case *ast.ForStatement:
 		return b.hasDestructiblesOrDefers(n.Condition) || b.hasDestructiblesOrDefers(n.Body)
 	case *ast.For3Statement:

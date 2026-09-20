@@ -1,0 +1,13 @@
+package main
+
+type Foo struct {
+	x word
+}
+
+func main() {
+	var f Foo
+	switch f {
+	case 1:
+		println("one")
+	}
+}

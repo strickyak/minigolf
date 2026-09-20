@@ -180,6 +180,19 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 			s.Alternative = r.resolveStatement(s.Alternative).(*ast.BlockStatement)
 		}
 		return s
+	case *ast.SwitchStatement:
+		s.Tag = r.resolveExpression(s.Tag)
+		for _, clause := range s.Body {
+			r.pushScope()
+			for i, v := range clause.Values {
+				clause.Values[i] = r.resolveExpression(v)
+			}
+			for i, stmt := range clause.Body {
+				clause.Body[i] = r.resolveStatement(stmt)
+			}
+			r.popScope()
+		}
+		return s
 	case *ast.ForStatement:
 		s.Condition = r.resolveExpression(s.Condition)
 		s.Body = r.resolveStatement(s.Body).(*ast.BlockStatement)

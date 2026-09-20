@@ -470,7 +470,8 @@ func Lex(input, filename string) []token.Token {
 		if len(tokens) > 0 {
 			if tok.Line > prevEndLine || tok.Type == token.EOF {
 				if prev.Type == token.IDENT || prev.Type == token.INT || prev.Type == token.STRING ||
-					prev.Type == token.RETURN || prev.Type == token.RPAREN || prev.Type == token.RBRACE || prev.Type == token.RBRACKET {
+					prev.Type == token.RETURN || prev.Type == token.BREAK || prev.Type == token.CONTINUE ||
+					prev.Type == token.RPAREN || prev.Type == token.RBRACE || prev.Type == token.RBRACKET {
 					tokens = append(tokens, token.Token{Type: token.SEMICOLON, Literal: ";", Line: prevEndLine, Column: prev.Column + len(prev.Literal), Filename: l.filename})
 				}
 			}

@@ -4,9 +4,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HATVAN_DIR="$(cd "$SCRIPT_DIR/../hatvan-os" && pwd)"
 HATVAN_VMK="$HATVAN_DIR/hatvan-vmk"
-if test -s "$HATVAN_DIR/build/gepk"; then
+if test -x "$HATVAN_DIR/build/gepk"; then
     HATVAN_VMK="$HATVAN_DIR/build/gepk"
-elif test -s "$HATVAN_DIR/gepk"; then
+elif test -f "$HATVAN_DIR/gepk" -a -x "$HATVAN_DIR/gepk"; then
     HATVAN_VMK="$HATVAN_DIR/gepk"
 fi
 MINIGOLF="$SCRIPT_DIR/minigolf"

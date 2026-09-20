@@ -598,6 +598,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseDeferStatement()
 	case token.IF:
 		return p.parseIfStatement()
+	case token.SWITCH:
+		return p.parseSwitchStatement()
 	case token.FOR:
 		return p.parseForStatement()
 	case token.BREAK:
@@ -857,6 +859,89 @@ func (p *Parser) parseIfStatement() *ast.IfStatement {
 				return nil
 			}
 			stmt.Alternative = p.parseBlockStatement()
+		}
+	}
+
+	return stmt
+}
+
+func (p *Parser) parseSwitchStatement() *ast.SwitchStatement {
+	stmt := &ast.SwitchStatement{Token: p.curToken}
+
+	p.nextToken() // move past 'switch'
+
+	p.allowCompositeLit = false
+	stmt.Tag = p.parseExpression(LOWEST)
+	p.allowCompositeLit = true
+
+	if !p.expectPeek(token.LBRACE) {
+		return nil
+	}
+	// curToken is '{'
+	p.nextToken() // move past '{'
+
+	for !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
+		if p.curTokenIs(token.SEMICOLON) {
+			p.nextToken()
+			continue
+		}
+		if p.curTokenIs(token.CASE) {
+			clause := &ast.CaseClause{Token: p.curToken}
+			p.nextToken() // move past 'case'
+
+			if p.curTokenIs(token.COLON) {
+				p.addError(p.curToken, "missing expression in case clause")
+				return nil
+			}
+
+			for {
+				p.allowCompositeLit = false
+				expr := p.parseExpression(LOWEST)
+				p.allowCompositeLit = true
+				if expr != nil {
+					clause.Values = append(clause.Values, expr)
+				}
+				if p.peekTokenIs(token.COMMA) {
+					p.nextToken() // move to ','
+					p.nextToken() // move to next expr
+				} else {
+					break
+				}
+			}
+
+			if !p.expectPeek(token.COLON) {
+				return nil
+			}
+			// curToken is ':'
+			p.nextToken() // move past ':'
+
+			for !p.curTokenIs(token.CASE) && !p.curTokenIs(token.DEFAULT) && !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
+				s := p.parseStatement()
+				if s != nil {
+					clause.Body = append(clause.Body, s)
+				}
+				p.nextToken()
+			}
+			stmt.Body = append(stmt.Body, clause)
+		} else if p.curTokenIs(token.DEFAULT) {
+			clause := &ast.CaseClause{Token: p.curToken}
+			if !p.expectPeek(token.COLON) {
+				return nil
+			}
+			// curToken is ':'
+			p.nextToken() // move past ':'
+
+			for !p.curTokenIs(token.CASE) && !p.curTokenIs(token.DEFAULT) && !p.curTokenIs(token.RBRACE) && !p.curTokenIs(token.EOF) {
+				s := p.parseStatement()
+				if s != nil {
+					clause.Body = append(clause.Body, s)
+				}
+				p.nextToken()
+			}
+			stmt.Body = append(stmt.Body, clause)
+		} else {
+			p.addError(p.curToken, fmt.Sprintf("expected 'case' or 'default' in switch statement, got %s", p.curToken.Type))
+			return nil
 		}
 	}
 

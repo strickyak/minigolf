@@ -89,6 +89,9 @@ const (
 	RETURN   = "RETURN"
 	BREAK    = "BREAK"
 	CONTINUE = "CONTINUE"
+	SWITCH   = "SWITCH"
+	CASE     = "CASE"
+	DEFAULT  = "DEFAULT"
 	DEFER    = "DEFER"
 	GOTO     = "GOTO"
 
@@ -111,6 +114,9 @@ var keywords = map[string]TokenType{
 	"return":   RETURN,
 	"break":    BREAK,
 	"continue": CONTINUE,
+	"switch":   SWITCH,
+	"case":     CASE,
+	"default":  DEFAULT,
 	"defer":    DEFER,
 	"goto":     GOTO,
 	"nil":      NIL,

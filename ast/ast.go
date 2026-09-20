@@ -181,6 +181,26 @@ func (s *IfStatement) statementNode()         {}
 func (s *IfStatement) TokenLiteral() string   { return s.Token.Literal }
 func (s *IfStatement) GetToken() *token.Token { return &s.Token }
 
+type CaseClause struct {
+	Token  token.Token // The 'case' or 'default' token
+	Values []Expression
+	Body   []Statement
+}
+
+func (c *CaseClause) statementNode()         {}
+func (c *CaseClause) TokenLiteral() string   { return c.Token.Literal }
+func (c *CaseClause) GetToken() *token.Token { return &c.Token }
+
+type SwitchStatement struct {
+	Token token.Token // The 'switch' token
+	Tag   Expression
+	Body  []*CaseClause
+}
+
+func (s *SwitchStatement) statementNode()         {}
+func (s *SwitchStatement) TokenLiteral() string   { return s.Token.Literal }
+func (s *SwitchStatement) GetToken() *token.Token { return &s.Token }
+
 type ForStatement struct {
 	Token     token.Token // The 'for' token
 	Condition Expression

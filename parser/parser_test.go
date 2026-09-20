@@ -254,3 +254,52 @@ func TestOperatorPrecedenceParsing(t *testing.T) {
 		}
 	}
 }
+
+func TestSwitchStatement(t *testing.T) {
+	input := `
+	func test(x word) {
+		switch x {
+		case 1:
+			y = 10
+		case 2, 3:
+			y = 20
+			break
+		default:
+			y = 30
+		}
+	}
+	`
+	tokens := lexer.Lex(input, "<test>")
+	p := New(tokens)
+	program := p.ParseProgram("")
+	checkParserErrors(t, p)
+
+	funcStmt := program.Statements[0].(*ast.FuncStatement)
+	if len(funcStmt.Body.Statements) != 1 {
+		t.Fatalf("expected 1 statement in body, got %d", len(funcStmt.Body.Statements))
+	}
+
+	sw, ok := funcStmt.Body.Statements[0].(*ast.SwitchStatement)
+	if !ok {
+		t.Fatalf("expected *ast.SwitchStatement, got %T", funcStmt.Body.Statements[0])
+	}
+
+	if len(sw.Body) != 3 {
+		t.Fatalf("expected 3 clauses, got %d", len(sw.Body))
+	}
+
+	// Case 1
+	if len(sw.Body[0].Values) != 1 || len(sw.Body[0].Body) != 1 {
+		t.Errorf("case 1 mismatch: values=%d, body=%d", len(sw.Body[0].Values), len(sw.Body[0].Body))
+	}
+
+	// Case 2, 3
+	if len(sw.Body[1].Values) != 2 || len(sw.Body[1].Body) != 2 {
+		t.Errorf("case 2,3 mismatch: values=%d, body=%d", len(sw.Body[1].Values), len(sw.Body[1].Body))
+	}
+
+	// Default
+	if len(sw.Body[2].Values) != 0 || len(sw.Body[2].Body) != 1 {
+		t.Errorf("default mismatch: values=%d, body=%d", len(sw.Body[2].Values), len(sw.Body[2].Body))
+	}
+}
