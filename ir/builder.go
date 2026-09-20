@@ -1249,16 +1249,21 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			Comment:         fmt.Sprintf("Line %d: Switch statement", s.Token.Line),
 		}, s)
 
-		tagVal := b.buildExpr(s.Tag)
-		b.nextValueID++
-		hiddenTagName := fmt.Sprintf(".switch_tag_%d", b.nextValueID)
-		b.varTypes[hiddenTagName] = tagVal.Type()
-		b.writeVariable(hiddenTagName, b.currentBlock, tagVal)
+		var hiddenTagName string
+		var tagVal Value
+		var isString bool
+		if s.Tag != nil {
+			tagVal = b.buildExpr(s.Tag)
+			b.nextValueID++
+			hiddenTagName = fmt.Sprintf(".switch_tag_%d", b.nextValueID)
+			b.varTypes[hiddenTagName] = tagVal.Type()
+			b.writeVariable(hiddenTagName, b.currentBlock, tagVal)
 
-		tagTypeName := tagVal.Type().Name
-		isString := tagTypeName == "prelude.slice_byte" || tagTypeName == "slice_byte" ||
-			tagTypeName == "string" || tagTypeName == "prelude.string" ||
-			(tagVal.Type().IsASlice() && tagVal.Type().ElementType != nil && tagVal.Type().ElementType.IsByte())
+			tagTypeName := tagVal.Type().Name
+			isString = tagTypeName == "prelude.slice_byte" || tagTypeName == "slice_byte" ||
+				tagTypeName == "string" || tagTypeName == "prelude.string" ||
+				(tagVal.Type().IsASlice() && tagVal.Type().ElementType != nil && tagVal.Type().ElementType.IsByte())
+		}
 
 		var defaultClause *ast.CaseClause
 		var nonDefaultClauses []*ast.CaseClause
@@ -1308,23 +1313,28 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 						nextCheckBlk = b.newBlock()
 					}
 
-					tag := b.readVariable(hiddenTagName, b.currentBlock)
-					caseExprVal := b.buildExpr(valExpr)
 					var cond Value
-					if isString {
-						f := b.funcs["prelude.streq"]
-						if f == nil {
-							f = b.funcs["streq"]
-						}
-						if f == nil {
-							log.Panicf("prelude.streq function not found for string switch")
-						}
-						args := []Value{tag, caseExprVal}
-						b.coerceCallArgs(f, args, clause)
-						cond = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, clause)
+					if s.Tag == nil {
+						exprVal := b.buildExpr(valExpr)
+						cond = b.coerceType(exprVal, TypeBool)
 					} else {
-						caseVal := b.coerceType(caseExprVal, tagVal.Type())
-						cond = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: tag, Right: caseVal}, clause)
+						tag := b.readVariable(hiddenTagName, b.currentBlock)
+						caseExprVal := b.buildExpr(valExpr)
+						if isString {
+							f := b.funcs["prelude.streq"]
+							if f == nil {
+								f = b.funcs["streq"]
+							}
+							if f == nil {
+								log.Panicf("prelude.streq function not found for string switch")
+							}
+							args := []Value{tag, caseExprVal}
+							b.coerceCallArgs(f, args, clause)
+							cond = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, clause)
+						} else {
+							caseVal := b.coerceType(caseExprVal, tagVal.Type())
+							cond = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: tag, Right: caseVal}, clause)
+						}
 					}
 
 					b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: caseBodyBlocks[i], FalseBlock: nextCheckBlk}, clause)
@@ -3886,7 +3896,9 @@ func (b *Builder) findEscapingVars(node ast.Node) {
 		b.findEscapingVars(n.Consequence)
 		b.findEscapingVars(n.Alternative)
 	case *ast.SwitchStatement:
-		b.findEscapingVars(n.Tag)
+		if n.Tag != nil {
+			b.findEscapingVars(n.Tag)
+		}
 		for _, clause := range n.Body {
 			b.findEscapingVars(clause)
 		}
@@ -4067,7 +4079,7 @@ func (b *Builder) hasDestructiblesOrDefers(node ast.Node) bool {
 	case *ast.IfStatement:
 		return b.hasDestructiblesOrDefers(n.Condition) || b.hasDestructiblesOrDefers(n.Consequence) || b.hasDestructiblesOrDefers(n.Alternative)
 	case *ast.SwitchStatement:
-		if b.hasDestructiblesOrDefers(n.Tag) {
+		if n.Tag != nil && b.hasDestructiblesOrDefers(n.Tag) {
 			return true
 		}
 		for _, clause := range n.Body {

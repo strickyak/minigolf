@@ -748,21 +748,25 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 				a.analyzeBlock(s.Alternative, true)
 			}
 		case *ast.SwitchStatement:
-			s.Tag = a.foldExpression(s.Tag)
-			tagType := a.analyzeExpression(s.Tag)
-			tagTypeStr := a.exprToString(tagType)
-			if !isIntegerType(tagTypeStr) && !isStringOrSliceByte(tagTypeStr) && tagType != UnknownType {
-				a.reportError(s, "switch tag expression must be byte, word, int, or string, got %s", tagTypeStr)
-			}
-			if isStringOrSliceByte(tagTypeStr) {
-				a.markReachable("prelude.streq")
-				a.magicFuncs["prelude.streq"] = true
-				a.markReachable("prelude.memeq")
-				a.magicFuncs["prelude.memeq"] = true
+			var tagTypeStr string
+			if s.Tag != nil {
+				s.Tag = a.foldExpression(s.Tag)
+				tagType := a.analyzeExpression(s.Tag)
+				tagTypeStr = a.exprToString(tagType)
+				if !isIntegerType(tagTypeStr) && !isStringOrSliceByte(tagTypeStr) && tagType != UnknownType {
+					a.reportError(s, "switch tag expression must be byte, word, int, or string, got %s", tagTypeStr)
+				}
+				if isStringOrSliceByte(tagTypeStr) {
+					a.markReachable("prelude.streq")
+					a.magicFuncs["prelude.streq"] = true
+					a.markReachable("prelude.memeq")
+					a.magicFuncs["prelude.memeq"] = true
+				}
 			}
 			hasDefault := false
 			seenIntCases := make(map[int64]bool)
 			seenStringCases := make(map[string]bool)
+			seenBoolCases := make(map[bool]bool)
 			for _, clause := range s.Body {
 				if clause.Token.Type == token.DEFAULT {
 					if hasDefault {
@@ -776,7 +780,24 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 					vType := a.analyzeExpression(folded)
 					vTypeStr := a.exprToString(vType)
 
-					if isStringOrSliceByte(tagTypeStr) {
+					if s.Tag == nil {
+						if isStringOrSliceByte(vTypeStr) {
+							a.reportError(v, "cannot use string/slice expression in boolean context, got %s", vTypeStr)
+						}
+						if intLit, ok := folded.(*ast.IntegerLiteral); ok {
+							bval := intLit.Value != 0
+							if seenBoolCases[bval] {
+								a.reportError(v, "duplicate case %t in switch", bval)
+							}
+							seenBoolCases[bval] = true
+						} else if ident, ok := folded.(*ast.Identifier); ok && (ident.Value == "true" || ident.Value == "false") {
+							bval := ident.Value == "true"
+							if seenBoolCases[bval] {
+								a.reportError(v, "duplicate case %t in switch", bval)
+							}
+							seenBoolCases[bval] = true
+						}
+					} else if isStringOrSliceByte(tagTypeStr) {
 						strLit, ok := folded.(*ast.StringLiteral)
 						if !ok {
 							a.reportError(v, "case expression in string switch must be a string literal, got %s", vTypeStr)

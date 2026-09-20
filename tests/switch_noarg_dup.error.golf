@@ -1,0 +1,10 @@
+package main
+
+func main() {
+	switch {
+	case true:
+		println(1)
+	case true:
+		println(2)
+	}
+}

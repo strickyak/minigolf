@@ -303,3 +303,35 @@ func TestSwitchStatement(t *testing.T) {
 		t.Errorf("default mismatch: values=%d, body=%d", len(sw.Body[2].Values), len(sw.Body[2].Body))
 	}
 }
+
+func TestNoArgSwitchStatement(t *testing.T) {
+	input := `
+	func test(x word) {
+		switch {
+		case x < 10:
+			y = 1
+		case x == 20, x == 30:
+			y = 2
+		default:
+			y = 3
+		}
+	}
+	`
+	tokens := lexer.Lex(input, "<test>")
+	p := New(tokens)
+	program := p.ParseProgram("")
+	checkParserErrors(t, p)
+
+	funcStmt := program.Statements[0].(*ast.FuncStatement)
+	sw, ok := funcStmt.Body.Statements[0].(*ast.SwitchStatement)
+	if !ok {
+		t.Fatalf("expected *ast.SwitchStatement, got %T", funcStmt.Body.Statements[0])
+	}
+	if sw.Tag != nil {
+		t.Fatalf("expected nil Tag for no-arg switch, got %v", sw.Tag)
+	}
+	if len(sw.Body) != 3 {
+		t.Fatalf("expected 3 clauses, got %d", len(sw.Body))
+	}
+}
+

@@ -870,12 +870,14 @@ func (p *Parser) parseSwitchStatement() *ast.SwitchStatement {
 
 	p.nextToken() // move past 'switch'
 
-	p.allowCompositeLit = false
-	stmt.Tag = p.parseExpression(LOWEST)
-	p.allowCompositeLit = true
+	if !p.curTokenIs(token.LBRACE) {
+		p.allowCompositeLit = false
+		stmt.Tag = p.parseExpression(LOWEST)
+		p.allowCompositeLit = true
 
-	if !p.expectPeek(token.LBRACE) {
-		return nil
+		if !p.expectPeek(token.LBRACE) {
+			return nil
+		}
 	}
 	// curToken is '{'
 	p.nextToken() // move past '{'

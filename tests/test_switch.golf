@@ -101,6 +101,53 @@ func testSliceByte(s slice[byte]) word {
 	return r
 }
 
+func testNoArg(x int) word {
+	var r word
+	switch {
+	case x < 0:
+		r = 1
+	case x == 0:
+		r = 2
+	case x == 10, x == 20:
+		r = 3
+	default:
+		r = 4
+	}
+	return r
+}
+
+func testNoArgNoDefault(x word) word {
+	var r word = 777
+	switch {
+	case x == 1:
+		r = 11
+	case x == 2:
+		r = 22
+	}
+	return r
+}
+
+var evalOrder word
+
+func check(n word, ret bool) bool {
+	evalOrder = evalOrder*10 + n
+	return ret
+}
+
+func testOrder(pick word) word {
+	evalOrder = 0
+	var r word
+	switch {
+	case check(1, pick == 1):
+		r = 100
+	case check(2, pick == 2), check(3, pick == 3):
+		r = 200
+	default:
+		r = 300
+	}
+	return r
+}
+
 func main() {
 	println(testByte(1))
 	println(testByte(2))
@@ -139,4 +186,23 @@ func main() {
 	println(testSliceByte("foo"))
 	println(testSliceByte("bar"))
 	println(testSliceByte("baz"))
+
+	println(testNoArg(-5))
+	println(testNoArg(0))
+	println(testNoArg(10))
+	println(testNoArg(20))
+	println(testNoArg(99))
+
+	println(testNoArgNoDefault(1))
+	println(testNoArgNoDefault(2))
+	println(testNoArgNoDefault(3))
+
+	println(testOrder(1))
+	println(evalOrder)
+	println(testOrder(2))
+	println(evalOrder)
+	println(testOrder(3))
+	println(evalOrder)
+	println(testOrder(99))
+	println(evalOrder)
 }

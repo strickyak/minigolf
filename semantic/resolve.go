@@ -181,7 +181,9 @@ func (r *Resolver) resolveStatement(stmt ast.Statement) ast.Statement {
 		}
 		return s
 	case *ast.SwitchStatement:
-		s.Tag = r.resolveExpression(s.Tag)
+		if s.Tag != nil {
+			s.Tag = r.resolveExpression(s.Tag)
+		}
 		for _, clause := range s.Body {
 			r.pushScope()
 			for i, v := range clause.Values {
