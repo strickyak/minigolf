@@ -32,20 +32,11 @@
       • Long conditional branches cost 4 bytes and 5–6 cycles, whereas short branches cost 2 bytes and 3 cycles.      
       • In functions like fib, sieve, and put_num, the branch targets are almost always within [-128, +127] bytes. A  
       branch-shortening pass or distance estimation will save dozens of bytes and cycles per function.                
-  2. Indexed Addressing Mode Utilization:                                                                             
-      • Array accesses such as flags[i] = 1 currently emit:                                                           
-        ldx #v_main.flags                                                                                             
-        tfr y,d                                                                                                       
-        leax d,x                                                                                                      
-        tfr x,d                                                                                                       
-        tfr d,u                                                                                                       
-        ldb #1                                                                                                        
-        stb ,u                                                                                                        
-                                                                                                                      
-      • With M6809 indexed addressing (stb B,X or stb Y,X), this reduces to:                                          
-        ldb #1                                                                                                        
-        stb y,x                                                                                                       
-      eliminating 4 register-transfer and lea instructions.                                                           
+  2. [DONE] Array Access Chaining & Direct Addressing Mode Utilization:                                                                             
+      • Eliminated redundant `tfr x,d`, `std slot`, and `ldx slot` sequence for single-use `AddressOfElement`, `AddressOfField`, and `AddressOfLocal` instructions.
+      • Added register X tracking (`valInX`, `clobberX()`, `setX()`), allowing effective addresses to be computed and retained directly in register X.
+      • Single-use address calculations are consumed directly via `,x` by `LoadPtr`, `StorePtr`, `ExtractFieldPtr`, and `InsertFieldPtr` without allocating stack slots or spilling to memory.
+      • Shaved 806 cycles on `07_sieve`, 621 cycles on `08_bubble_sort`, and 300 cycles on `05_array_sum`.                                                           
   3. [DONE] Return Sequence & Dead Store Cleanup:
       • Removed redundant `tfr d,x` from 16-bit return sequence in `m6809/backend.go`.
       • Implemented structural single-use consumer analysis (`instructionNeedsSlot`) to elide dead stores before calls, returns, and operations directly in backend code generation without relying on textual peephole matching.
