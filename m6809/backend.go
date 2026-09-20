@@ -3411,13 +3411,14 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.ZeroInit:
 		sz := b.getTypeSizeByType(i.Typ)
-		destStr := b.localAddr(id)
 		if sz == 1 {
-			b.buf.WriteString(fmt.Sprintf("\tclr %s\n", destStr))
+			b.buf.WriteString("\tclrb\n")
+			b.storeResult(id)
 		} else if sz == 2 {
 			b.buf.WriteString("\tclra\n\tclrb\n")
 			b.storeResult(id)
 		} else {
+			destStr := b.localAddr(id)
 			b.emitLoadAddr("x", destStr)
 			b.emitMemset0("x", sz)
 			b.clobberAllRegs()
@@ -3988,7 +3989,7 @@ func (b *Backend) instructionNeedsSlot(f *ir.Function, instr ir.Instruction) boo
 	switch instr.(type) {
 	case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
 		return false
-	case *ir.Phi:
+	case *ir.Phi, *ir.InsertElement, *ir.InsertField:
 		return true
 	}
 
