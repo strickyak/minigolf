@@ -186,6 +186,8 @@ type Backend struct {
 	NoLocalRegAlloc   bool
 	NoCSSALowering    bool
 	NoGlobalRegAlloc  bool
+	NoDeadStore       bool
+	phiOperands       map[int]bool
 	globalRegs        map[int]string
 	cssaScratchOffset int
 	calleeSaveRegs    []string
@@ -1267,9 +1269,9 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 			if b.valInD == val {
 				return
 			}
-		} else if reg == "x" {
+		} else if reg == "x" || reg == "y" || reg == "u" {
 			if b.valInD == val {
-				b.buf.WriteString("\ttfr d,x\n")
+				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
 				return
 			}
 		}
@@ -1364,6 +1366,19 @@ func (b *Backend) storeResult(id int) {
 					b.setD(b.curInstr)
 				} else {
 					b.clobberD()
+				}
+			}
+			return
+		}
+	}
+	if b.f != nil && !b.NoDeadStore {
+		if instr, ok := b.instrs[id]; ok && !b.instructionNeedsSlot(b.f, instr) {
+			if !b.NoLocalRegAlloc {
+				sz := b.getTypeSizeByType(instr.Type())
+				if sz == 1 {
+					b.setB(instr)
+				} else if sz == 2 {
+					b.setD(instr)
 				}
 			}
 			return
@@ -3168,7 +3183,6 @@ func (b *Backend) emitTerminator(blk *ir.BasicBlock, term ir.Terminator, nextBlk
 				if b.getValSize(t.Val) == 1 {
 					b.buf.WriteString("\tclra\n")
 				}
-				b.buf.WriteString("\ttfr d,x\n")
 			} else {
 				b.emitLoadAddr("y", b.getAddrStr(t.Val))
 				b.emitLoadAddr("x", b.retBufAddr())
@@ -3734,6 +3748,160 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	}
 }
 
+func (b *Backend) isSimpleOperand(val ir.Value) bool {
+	val = b.resolveVal(val)
+	switch v := val.(type) {
+	case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.Parameter, *ir.Global:
+		return true
+	case ir.Instruction:
+		if len(b.globalRegs) > 0 {
+			if _, ok := b.globalRegs[v.GetID()]; ok {
+				return true
+			}
+		}
+		canon := b.resolveSlot(v.GetID())
+		if _, ok := b.slots[canon]; ok {
+			return true
+		}
+		if _, ok := b.slots[v.GetID()]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *Backend) instructionNeedsSlot(f *ir.Function, instr ir.Instruction) bool {
+	if b.NoDeadStore {
+		return true
+	}
+	id := instr.GetID()
+
+	// If address is taken, it must have a stack slot.
+	if b.localAddressTaken[id] {
+		return true
+	}
+
+	// If assigned to a hardware register (global regalloc), it does not need a stack slot.
+	if len(b.globalRegs) > 0 {
+		if _, inReg := b.globalRegs[id]; inReg {
+			return false
+		}
+	}
+
+	// Void or unknown types never need slots.
+	if instr.Type().Equals(ir.TypeVoid) || instr.Type().Equals(ir.TypeUnknown) || instr.Type().Name == "" {
+		return false
+	}
+
+	// Types with size > 2 (structs, arrays, etc.) require memory buffer.
+	sz := b.safeTypeSize(instr.Type())
+	if sz > 2 {
+		return true
+	}
+
+	// Constants, sizeof, address-of never need slots.
+	switch instr.(type) {
+	case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
+		return false
+	case *ir.Phi:
+		return true
+	}
+
+	// Phi operands across blocks need stack slots.
+	if b.phiOperands != nil && b.phiOperands[id] {
+		return true
+	}
+
+	// If it has 0 uses, it never needs a stack slot.
+	if b.uses[id] == 0 {
+		return false
+	}
+
+	// If it has more than 1 use, conservatively allocate a slot.
+	if b.uses[id] > 1 {
+		return true
+	}
+
+	// b.uses[id] == 1: Exactly one use in the entire function.
+	// Find where instr is defined and check if its single user is the immediate next instruction.
+	for _, blk := range f.Blocks {
+		for idx, ins := range blk.Instructions {
+			if ins.GetID() != id {
+				continue
+			}
+			// Found instr in blk at idx. Find the next non-marker instruction.
+			var nextInstr ir.Instruction
+			for j := idx + 1; j < len(blk.Instructions); j++ {
+				if _, isMarker := blk.Instructions[j].(*ir.SourceMarker); !isMarker {
+					nextInstr = blk.Instructions[j]
+					break
+				}
+			}
+
+			if nextInstr != nil {
+				if b.fusedCompares != nil && b.fusedCompares[nextInstr.GetID()] {
+					return true
+				}
+				// Check if nextInstr is the single user that consumes instr in register D (or B).
+				switch user := nextInstr.(type) {
+				case *ir.Call:
+					conv := b.getFunctionConvention(user.Func)
+					// Only safe if single argument passed in D or B, with 0 stack args.
+					if len(user.Args) == 1 && user.Args[0] == instr && conv.TotalStackArgBytes == 0 {
+						var loc ParamLocation
+						if len(conv.Params) > 0 {
+							loc = conv.Params[0]
+						} else {
+							loc = ParamLocation{Kind: LocStack, Size: sz}
+						}
+						if loc.Kind == LocReg && (loc.Reg == "d" || loc.Reg == "b") {
+							return false // Safe to elide slot!
+						}
+					}
+
+				case *ir.BinaryOp:
+					switch user.Op {
+					case "add", "sub", "and", "or", "xor":
+						if user.Left == instr && user.Right != instr && b.isSimpleOperand(user.Right) {
+							return false // Safe to elide slot!
+						}
+					}
+
+				case *ir.UnaryOp:
+					if user.Operand == instr {
+						return false // Safe to elide slot!
+					}
+
+				case *ir.Compare:
+					if user.Left == instr && user.Right != instr && b.isSimpleOperand(user.Right) {
+						return false // Safe to elide slot!
+					}
+
+				case *ir.Cast:
+					if user.Operand == instr {
+						return false // Safe to elide slot!
+					}
+				}
+			} else if blk.Terminator != nil {
+				// instr is the last real instruction in blk. Check terminator!
+				switch term := blk.Terminator.(type) {
+				case *ir.Return:
+					if term.Val == instr {
+						return false // Safe to elide slot!
+					}
+				case *ir.Branch:
+					if term.Condition == instr {
+						return false // Safe to elide slot!
+					}
+				}
+			}
+			return true
+		}
+	}
+
+	return true
+}
+
 func (b *Backend) emitFunc(f *ir.Function) {
 	if len(f.Blocks) == 0 {
 		return
@@ -3764,6 +3932,19 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		}
 		if blk.Terminator != nil {
 			b.instrs[blk.Terminator.GetID()] = blk.Terminator
+		}
+	}
+
+	b.phiOperands = make(map[int]bool)
+	for _, blk := range f.Blocks {
+		for _, instr := range blk.Instructions {
+			if phi, ok := instr.(*ir.Phi); ok {
+				for _, edge := range phi.Edges {
+					if opInst, ok := edge.Value.(ir.Instruction); ok {
+						b.phiOperands[opInst.GetID()] = true
+					}
+				}
+			}
 		}
 	}
 
@@ -3852,11 +4033,8 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			if aol, ok := instr.(*ir.AddressOfLocal); ok && b.escapeRes.EscapingAOL != nil && !b.escapeRes.EscapingAOL[aol.GetID()] {
 				continue
 			}
-			if !b.localAddressTaken[instr.GetID()] {
-				switch instr.(type) {
-				case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
-					continue
-				}
+			if !b.instructionNeedsSlot(f, instr) {
+				continue
 			}
 			if !instr.Type().Equals(ir.TypeVoid) && !instr.Type().Equals(ir.TypeUnknown) {
 				sz := b.getTypeSizeByType(instr.Type())
