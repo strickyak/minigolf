@@ -223,3 +223,141 @@ func TestFastcallAssemblyEmission(t *testing.T) {
 		t.Errorf("Stack policy caller should pop 2 bytes args with leas, got:\n%s", asmStack)
 	}
 }
+
+func TestAdaptivePolicy(t *testing.T) {
+	ptrType := ir.Type{Name: "*int", Bits: ir.TypeBitPointer}
+
+	// Leaf 1: clear_buf(buf *int) -> pointer only, should get X
+	clearBuf := &ir.Function{
+		Name: "clear_buf",
+		Parameters: []*ir.Parameter{
+			{ID: 1, Name: "buf", Typ: ptrType},
+		},
+		ReturnType: ir.TypeVoid,
+		Blocks: []*ir.BasicBlock{
+			{
+				ID: 0,
+				Instructions: []ir.Instruction{
+					&ir.StorePtr{
+						BaseInstruction: ir.BaseInstruction{ID: 2, Typ: ir.TypeVoid},
+						Ptr:             &ir.Parameter{ID: 1, Name: "buf", Typ: ptrType},
+						Val:             &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 3, Typ: ir.TypeWord}, Val: 0},
+					},
+				},
+				Terminator: &ir.Return{},
+			},
+		},
+	}
+
+	// Leaf 2: add_one(n int) int -> scalar arithmetic, should get D
+	addOne := &ir.Function{
+		Name: "add_one",
+		Parameters: []*ir.Parameter{
+			{ID: 10, Name: "n", Typ: ir.TypeWord},
+		},
+		ReturnType: ir.TypeWord,
+		Blocks: []*ir.BasicBlock{
+			{
+				ID: 0,
+				Instructions: []ir.Instruction{
+					&ir.BinaryOp{
+						BaseInstruction: ir.BaseInstruction{ID: 11, Typ: ir.TypeWord},
+						Op:              "add",
+						Left:            &ir.Parameter{ID: 10, Name: "n", Typ: ir.TypeWord},
+						Right:           &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 12, Typ: ir.TypeWord}, Val: 1},
+					},
+				},
+				Terminator: &ir.Return{
+					Val: &ir.Parameter{ID: 10, Name: "n", Typ: ir.TypeWord},
+				},
+			},
+		},
+	}
+
+	// Leaf 3: sort_array(arr *int, n int) -> arr is pointer (wants X), n is scalar (wants D)
+	sortArray := &ir.Function{
+		Name: "sort_array",
+		Parameters: []*ir.Parameter{
+			{ID: 20, Name: "arr", Typ: ptrType},
+			{ID: 21, Name: "n", Typ: ir.TypeWord},
+		},
+		ReturnType: ir.TypeVoid,
+		Blocks: []*ir.BasicBlock{
+			{
+				ID: 0,
+				Instructions: []ir.Instruction{
+					&ir.LoadPtr{
+						BaseInstruction: ir.BaseInstruction{ID: 22, Typ: ir.TypeWord},
+						Ptr:             &ir.Parameter{ID: 20, Name: "arr", Typ: ptrType},
+					},
+					&ir.Compare{
+						BaseInstruction: ir.BaseInstruction{ID: 23, Typ: ir.TypeBool},
+						Op:              "<",
+						Left:            &ir.Parameter{ID: 21, Name: "n", Typ: ir.TypeWord},
+						Right:           &ir.ConstWord{BaseInstruction: ir.BaseInstruction{ID: 24, Typ: ir.TypeWord}, Val: 10},
+					},
+				},
+				Terminator: &ir.Return{},
+			},
+		},
+	}
+
+	// Caller (Level 2): wrapper(arr *int, n int) -> calls sort_array(arr, n)
+	// Interpolation point: wrapper should inherit arr in X and n in D!
+	wrapper := &ir.Function{
+		Name: "wrapper",
+		Parameters: []*ir.Parameter{
+			{ID: 30, Name: "arr", Typ: ptrType},
+			{ID: 31, Name: "n", Typ: ir.TypeWord},
+		},
+		ReturnType: ir.TypeVoid,
+		Blocks: []*ir.BasicBlock{
+			{
+				ID: 0,
+				Instructions: []ir.Instruction{
+					&ir.Call{
+						BaseInstruction: ir.BaseInstruction{ID: 32, Typ: ir.TypeVoid},
+						Func:            sortArray,
+						Args: []ir.Value{
+							&ir.Parameter{ID: 30, Name: "arr", Typ: ptrType},
+							&ir.Parameter{ID: 31, Name: "n", Typ: ir.TypeWord},
+						},
+					},
+				},
+				Terminator: &ir.Return{},
+			},
+		},
+	}
+
+	prog := &ir.Program{
+		Functions: []*ir.Function{clearBuf, addOne, sortArray, wrapper},
+	}
+
+	b := New(false, false, false)
+	b.SetConventionPolicy(&AdaptivePolicy{})
+	b.initConventions(prog)
+
+	// 1. clearBuf: 1 param (pointer) -> X
+	cClear := b.getFunctionConvention(clearBuf)
+	if !cClear.IsFastcall || len(cClear.Params) != 1 || cClear.Params[0].Reg != "x" {
+		t.Errorf("clearBuf should have param 0 in X, got: %v", cClear)
+	}
+
+	// 2. addOne: 1 param (scalar) -> D
+	cAdd := b.getFunctionConvention(addOne)
+	if !cAdd.IsFastcall || len(cAdd.Params) != 1 || cAdd.Params[0].Reg != "d" {
+		t.Errorf("addOne should have param 0 in D, got: %v", cAdd)
+	}
+
+	// 3. sortArray: arr in X, n in D
+	cSort := b.getFunctionConvention(sortArray)
+	if !cSort.IsFastcall || len(cSort.Params) != 2 || cSort.Params[0].Reg != "x" || cSort.Params[1].Reg != "d" {
+		t.Errorf("sortArray should have (X, D), got: %v", cSort)
+	}
+
+	// 4. wrapper: calls sortArray(arr, n) -> inherits arr in X, n in D
+	cWrap := b.getFunctionConvention(wrapper)
+	if !cWrap.IsFastcall || len(cWrap.Params) != 2 || cWrap.Params[0].Reg != "x" || cWrap.Params[1].Reg != "d" {
+		t.Errorf("wrapper should inherit (X, D) via interpolation, got: %v", cWrap)
+	}
+}

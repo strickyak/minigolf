@@ -244,8 +244,10 @@ func New(useFramePointer bool, globalsAtY bool, picMode bool) *Backend {
 		b.policy = &StackPolicy{}
 	} else if os.Getenv("CALL_CONVENTION") == "gcc" {
 		b.policy = &GCCPolicy{}
-	} else {
+	} else if os.Getenv("CALL_CONVENTION") == "fastcall" {
 		b.policy = &FastcallPolicy{}
+	} else {
+		b.policy = &AdaptivePolicy{}
 	}
 	if v := os.Getenv("MEMCPY_UNROLL_THRESHOLD"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -286,7 +288,7 @@ func (b *Backend) getFunctionConvention(f *ir.Function) *FunctionConvention {
 		if b.NoFastcall {
 			b.policy = &StackPolicy{}
 		} else {
-			b.policy = &FastcallPolicy{}
+			b.policy = &AdaptivePolicy{}
 		}
 	}
 	conv := b.policy.GetConvention(f, b)
@@ -312,13 +314,17 @@ func (b *Backend) initConventions(program *ir.Program) {
 		if b.NoFastcall {
 			b.policy = &StackPolicy{}
 		} else {
-			b.policy = &FastcallPolicy{}
+			b.policy = &AdaptivePolicy{}
 		}
 	}
-	for _, f := range program.Functions {
-		conv := b.policy.GetConvention(f, b)
-		b.conventions[f.Name] = conv
-		b.conventions[f.EmitName()] = conv
+	if initer, ok := b.policy.(ProgramConventionInitializer); ok {
+		initer.InitConventions(program, b)
+	} else {
+		for _, f := range program.Functions {
+			conv := b.policy.GetConvention(f, b)
+			b.conventions[f.Name] = conv
+			b.conventions[f.EmitName()] = conv
+		}
 	}
 }
 
@@ -2210,6 +2216,15 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 	b.storeResult(i.GetID())
 }
 
+func (b *Backend) isAddrVal(val ir.Value) bool {
+	val = b.resolveVal(val)
+	switch val.(type) {
+	case *ir.AddressOfLocal, *ir.AddressOfGlobal, *ir.AddressOfFunc:
+		return true
+	}
+	return false
+}
+
 func (b *Backend) emitCallInstr(i *ir.Call) {
 	conv := b.getFunctionConvention(i.Func)
 	retSize := b.getTypeSizeByType(i.Typ)
@@ -2268,24 +2283,78 @@ func (b *Backend) emitCallInstr(i *ir.Call) {
 		}
 	}
 
-	// 2. Load register arguments: D / B first, then X
+	// 2. Load register arguments
+	var argForD ir.Value
+	var idxD = -1
+	var isB bool
+	var argForX ir.Value
+	var idxX = -1
+
 	for idx, loc := range conv.Params {
-		if idx < len(i.Args) && loc.Kind == LocReg && (loc.Reg == "d" || loc.Reg == "b") {
-			arg := i.Args[idx]
-			if loc.Reg == "b" {
-				b.loadVal(arg)
-				b.buf.WriteString(fmt.Sprintf("\t; arg %d in B (%s)\n", idx, b.describeVal(arg)))
-			} else {
-				b.loadVal16("d", arg)
-				b.buf.WriteString(fmt.Sprintf("\t; arg %d in D (%s)\n", idx, b.describeVal(arg)))
+		if idx < len(i.Args) && loc.Kind == LocReg {
+			if loc.Reg == "d" || loc.Reg == "b" {
+				argForD = i.Args[idx]
+				idxD = idx
+				isB = (loc.Reg == "b")
+			} else if loc.Reg == "x" {
+				argForX = i.Args[idx]
+				idxX = idx
 			}
 		}
 	}
-	for idx, loc := range conv.Params {
-		if idx < len(i.Args) && loc.Kind == LocReg && loc.Reg == "x" {
-			arg := i.Args[idx]
-			b.loadVal16("x", arg)
-			b.buf.WriteString(fmt.Sprintf("\t; arg %d in X (%s)\n", idx, b.describeVal(arg)))
+
+	if argForD != nil && argForX == nil {
+		if isB {
+			b.loadVal(argForD)
+			b.buf.WriteString(fmt.Sprintf("\t; arg %d in B (%s)\n", idxD, b.describeVal(argForD)))
+		} else {
+			b.loadVal16("d", argForD)
+			b.buf.WriteString(fmt.Sprintf("\t; arg %d in D (%s)\n", idxD, b.describeVal(argForD)))
+		}
+	} else if argForX != nil && argForD == nil {
+		b.loadVal16("x", argForX)
+		b.buf.WriteString(fmt.Sprintf("\t; arg %d in X (%s)\n", idxX, b.describeVal(argForX)))
+	} else if argForD != nil && argForX != nil {
+		resX := b.resolveVal(argForX)
+		xInD := (!b.NoLocalRegAlloc && b.valInD == resX)
+
+		if xInD {
+			// argForX is currently live in D. Transfer it to X first.
+			b.loadVal16("x", argForX)
+			b.buf.WriteString(fmt.Sprintf("\t; arg %d in X (%s)\n", idxX, b.describeVal(argForX)))
+
+			// Now load argForD into D/B. If argForD is an address, it must not clobber X!
+			if b.isAddrVal(argForD) {
+				if !b.globalsAtY {
+					b.loadVal16("y", argForD)
+					b.buf.WriteString("\ttfr y,d\n")
+				} else {
+					b.buf.WriteString("\tpshs x\n")
+					b.loadVal16("x", argForD)
+					b.buf.WriteString("\ttfr x,d\n")
+					b.buf.WriteString("\tpuls x\n")
+				}
+				b.buf.WriteString(fmt.Sprintf("\t; arg %d in D (%s)\n", idxD, b.describeVal(argForD)))
+			} else if isB {
+				b.loadVal(argForD)
+				b.buf.WriteString(fmt.Sprintf("\t; arg %d in B (%s)\n", idxD, b.describeVal(argForD)))
+			} else {
+				b.loadVal16("d", argForD)
+				b.buf.WriteString(fmt.Sprintf("\t; arg %d in D (%s)\n", idxD, b.describeVal(argForD)))
+			}
+		} else {
+			// Default order: Load D (or B) first, then load X second.
+			// This ensures that if loading D uses X as scratch (e.g. emitLoadAddr),
+			// X is subsequently loaded with its final value and not clobbered.
+			if isB {
+				b.loadVal(argForD)
+				b.buf.WriteString(fmt.Sprintf("\t; arg %d in B (%s)\n", idxD, b.describeVal(argForD)))
+			} else {
+				b.loadVal16("d", argForD)
+				b.buf.WriteString(fmt.Sprintf("\t; arg %d in D (%s)\n", idxD, b.describeVal(argForD)))
+			}
+			b.loadVal16("x", argForX)
+			b.buf.WriteString(fmt.Sprintf("\t; arg %d in X (%s)\n", idxX, b.describeVal(argForX)))
 		}
 	}
 
@@ -3854,7 +3923,7 @@ func (b *Backend) instructionNeedsSlot(f *ir.Function, instr ir.Instruction) boo
 						} else {
 							loc = ParamLocation{Kind: LocStack, Size: sz}
 						}
-						if loc.Kind == LocReg && (loc.Reg == "d" || loc.Reg == "b") {
+						if loc.Kind == LocReg && (loc.Reg == "d" || loc.Reg == "b" || loc.Reg == "x") {
 							return false // Safe to elide slot!
 						}
 					}
