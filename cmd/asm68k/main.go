@@ -164,6 +164,74 @@ func parseReg(s string) (isData bool, isAddr bool, regNum uint8, ok bool) {
 	return false, false, 0, false
 }
 
+func parseRegList(s string) (uint16, bool) {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	tokens := strings.FieldsFunc(s, func(r rune) bool {
+		return r == '/' || r == ',' || r == ' '
+	})
+	if len(tokens) == 0 {
+		return 0, false
+	}
+
+	var mask uint16
+	for _, tok := range tokens {
+		tok = strings.TrimSpace(tok)
+		if tok == "" {
+			continue
+		}
+		if idx := strings.Index(tok, "-"); idx != -1 {
+			startStr := tok[:idx]
+			endStr := tok[idx+1:]
+			isD1, isA1, r1, ok1 := parseReg(startStr)
+			isD2, isA2, r2, ok2 := parseReg(endStr)
+			if !ok1 || !ok2 {
+				return 0, false
+			}
+			if isD1 && isD2 {
+				if r1 > r2 {
+					r1, r2 = r2, r1
+				}
+				for r := r1; r <= r2; r++ {
+					mask |= (1 << r)
+				}
+			} else if isA1 && isA2 {
+				if r1 > r2 {
+					r1, r2 = r2, r1
+				}
+				for r := r1; r <= r2; r++ {
+					mask |= (1 << (8 + r))
+				}
+			} else {
+				return 0, false
+			}
+		} else {
+			isD, isA, r, ok := parseReg(tok)
+			if !ok {
+				return 0, false
+			}
+			if isD {
+				mask |= (1 << r)
+			} else if isA {
+				mask |= (1 << (8 + r))
+			}
+		}
+	}
+	return mask, true
+}
+
+func reverseRegMask(mask uint16) uint16 {
+	var rev uint16
+	for i := 0; i < 8; i++ {
+		if (mask & (1 << i)) != 0 {
+			rev |= (1 << (15 - i))
+		}
+		if (mask & (1 << (8 + i))) != 0 {
+			rev |= (1 << (7 - i))
+		}
+	}
+	return rev
+}
+
 func (a *Assembler) parseEA(s string, opSize OpSize) (EA, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -540,6 +608,56 @@ func (a *Assembler) assembleLine(st *Statement) ([]byte, error) {
 		out = append(out, 0x7000|(uint16(r)<<9)|uint16(byte(val)))
 
 	case "MOVE", "MOVEA":
+		if len(ops) < 2 {
+			return nil, fmt.Errorf("MOVE requires 2 operands")
+		}
+		// Special registers: USP
+		if strings.ToUpper(ops[0]) == "USP" {
+			_, isA, r, ok := parseReg(ops[1])
+			if !ok || !isA {
+				return nil, fmt.Errorf("destination of MOVE from USP must be address register: %s", ops[1])
+			}
+			out = append(out, 0x4E68|uint16(r))
+			break
+		}
+		if strings.ToUpper(ops[1]) == "USP" {
+			_, isA, r, ok := parseReg(ops[0])
+			if !ok || !isA {
+				return nil, fmt.Errorf("source of MOVE to USP must be address register: %s", ops[0])
+			}
+			out = append(out, 0x4E60|uint16(r))
+			break
+		}
+		// Special registers: SR
+		if strings.ToUpper(ops[0]) == "SR" {
+			dstEA, err := a.parseEA(ops[1], SizeWord)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, 0x40C0|(uint16(dstEA.Mode)<<3)|uint16(dstEA.Reg))
+			out = append(out, dstEA.ExtWords...)
+			break
+		}
+		if strings.ToUpper(ops[1]) == "SR" {
+			srcEA, err := a.parseEA(ops[0], SizeWord)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, 0x46C0|(uint16(srcEA.Mode)<<3)|uint16(srcEA.Reg))
+			out = append(out, srcEA.ExtWords...)
+			break
+		}
+		// Special registers: CCR
+		if strings.ToUpper(ops[1]) == "CCR" {
+			srcEA, err := a.parseEA(ops[0], SizeWord)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, 0x44C0|(uint16(srcEA.Mode)<<3)|uint16(srcEA.Reg))
+			out = append(out, srcEA.ExtWords...)
+			break
+		}
+
 		srcEA, err := a.parseEA(ops[0], size)
 		if err != nil {
 			return nil, err
@@ -624,7 +742,23 @@ func (a *Assembler) assembleLine(st *Statement) ([]byte, error) {
 		}
 		out = append(out, base|(uint16(rx)<<9)|(szBits<<6)|uint16(ry))
 
-	case "ADD", "ADDA", "SUB", "SUBA", "CMP", "CMPA", "AND", "OR", "EOR":
+	case "ADD", "ADDA", "ADDI", "SUB", "SUBA", "SUBI", "CMP", "CMPA", "CMPI", "AND", "ANDI", "OR", "ORI", "EOR", "EORI":
+		baseMnem := mnem
+		switch mnem {
+		case "ADDA", "ADDI":
+			baseMnem = "ADD"
+		case "SUBA", "SUBI":
+			baseMnem = "SUB"
+		case "CMPA", "CMPI":
+			baseMnem = "CMP"
+		case "ANDI":
+			baseMnem = "AND"
+		case "ORI":
+			baseMnem = "OR"
+		case "EORI":
+			baseMnem = "EOR"
+		}
+
 		// Check if destination is An -> ADDA / SUBA / CMPA
 		_, isA, aReg, dstIsA := parseReg(ops[1])
 		if dstIsA && isA {
@@ -633,12 +767,12 @@ func (a *Assembler) assembleLine(st *Statement) ([]byte, error) {
 				return nil, err
 			}
 			var base uint16
-			switch mnem {
-			case "ADD", "ADDA":
+			switch baseMnem {
+			case "ADD":
 				base = 0xD0C0
-			case "SUB", "SUBA":
+			case "SUB":
 				base = 0x90C0
-			case "CMP", "CMPA":
+			case "CMP":
 				base = 0xB0C0
 			}
 			isLong := uint16(1)
@@ -650,15 +784,42 @@ func (a *Assembler) assembleLine(st *Statement) ([]byte, error) {
 			break
 		}
 
-		// Immediate operation check: if src is #imm and dst is not Dn (or for CMPI / ADDI / SUBI)
+		// Immediate operation check: if src is #imm
 		if strings.HasPrefix(ops[0], "#") {
 			immVal, _ := a.evalExpr(ops[0][1:])
+			if strings.ToUpper(ops[1]) == "SR" {
+				switch baseMnem {
+				case "AND":
+					out = append(out, 0x027C, uint16(immVal))
+				case "OR":
+					out = append(out, 0x007C, uint16(immVal))
+				case "EOR":
+					out = append(out, 0x0A7C, uint16(immVal))
+				default:
+					return nil, fmt.Errorf("unsupported operation %s with SR", mnem)
+				}
+				break
+			}
+			if strings.ToUpper(ops[1]) == "CCR" {
+				switch baseMnem {
+				case "AND":
+					out = append(out, 0x023C, uint16(immVal&0xFF))
+				case "OR":
+					out = append(out, 0x003C, uint16(immVal&0xFF))
+				case "EOR":
+					out = append(out, 0x0A3C, uint16(immVal&0xFF))
+				default:
+					return nil, fmt.Errorf("unsupported operation %s with CCR", mnem)
+				}
+				break
+			}
+
 			dstEA, err := a.parseEA(ops[1], size)
 			if err != nil {
 				return nil, err
 			}
 			var immBase uint16
-			switch mnem {
+			switch baseMnem {
 			case "ADD":
 				immBase = 0x0600
 			case "SUB":
@@ -777,6 +938,161 @@ func (a *Assembler) assembleLine(st *Statement) ([]byte, error) {
 			disp = int16(int32(targetVal) - int32(a.currPC+2))
 		}
 		out = append(out, 0x51C8|uint16(r), uint16(disp))
+
+	case "MOVEM":
+		if len(ops) < 2 {
+			return nil, fmt.Errorf("MOVEM requires 2 operands")
+		}
+		var isRegToMem bool
+		var regMask uint16
+		var eaStr string
+
+		if mask, ok := parseRegList(ops[0]); ok && len(ops) == 2 {
+			isRegToMem = true
+			regMask = mask
+			eaStr = ops[1]
+		} else if len(ops) == 2 {
+			if mask, ok := parseRegList(ops[1]); ok {
+				isRegToMem = false
+				regMask = mask
+				eaStr = ops[0]
+			} else {
+				return nil, fmt.Errorf("MOVEM requires register list as source or destination: %s", st.OpsStr)
+			}
+		} else if len(ops) > 2 {
+			if mask, ok := parseRegList(strings.Join(ops[:len(ops)-1], "/")); ok {
+				isRegToMem = true
+				regMask = mask
+				eaStr = ops[len(ops)-1]
+			} else if mask, ok := parseRegList(strings.Join(ops[1:], "/")); ok {
+				isRegToMem = false
+				regMask = mask
+				eaStr = ops[0]
+			} else {
+				return nil, fmt.Errorf("MOVEM requires register list as source or destination: %s", st.OpsStr)
+			}
+		}
+
+		szBit := uint16(0) // word
+		if size == SizeLong {
+			szBit = 1
+		}
+		ea, err := a.parseEA(eaStr, size)
+		if err != nil {
+			return nil, err
+		}
+
+		var opWord uint16
+		var maskWord uint16
+		if isRegToMem {
+			opWord = 0x4880 | (szBit << 6) | (uint16(ea.Mode) << 3) | uint16(ea.Reg)
+			if ea.Mode == 4 { // -(An)
+				maskWord = reverseRegMask(regMask)
+			} else {
+				maskWord = regMask
+			}
+		} else {
+			opWord = 0x4C80 | (szBit << 6) | (uint16(ea.Mode) << 3) | uint16(ea.Reg)
+			maskWord = regMask
+		}
+
+		out = append(out, opWord, maskWord)
+		out = append(out, ea.ExtWords...)
+
+	case "TRAP":
+		if len(ops) < 1 {
+			return nil, fmt.Errorf("TRAP requires vector operand")
+		}
+		vecStr := strings.TrimPrefix(ops[0], "#")
+		vecVal, err := a.evalExpr(vecStr)
+		if err != nil && a.pass == 2 {
+			return nil, fmt.Errorf("invalid TRAP vector %q: %w", ops[0], err)
+		}
+		if vecVal < 0 || vecVal > 15 {
+			return nil, fmt.Errorf("TRAP vector out of range (0..15): %d", vecVal)
+		}
+		out = append(out, 0x4E40|uint16(vecVal&0x0F))
+
+	case "BTST", "BSET", "BCLR", "BCHG":
+		if len(ops) < 2 {
+			return nil, fmt.Errorf("%s requires 2 operands", mnem)
+		}
+		var opType uint16
+		switch mnem {
+		case "BTST":
+			opType = 0
+		case "BCHG":
+			opType = 1
+		case "BCLR":
+			opType = 2
+		case "BSET":
+			opType = 3
+		}
+
+		if strings.HasPrefix(ops[0], "#") {
+			bitVal, err := a.evalExpr(ops[0][1:])
+			if err != nil && a.pass == 2 {
+				return nil, fmt.Errorf("invalid bit number %q: %w", ops[0], err)
+			}
+			dstEA, err := a.parseEA(ops[1], SizeByte)
+			if err != nil {
+				return nil, err
+			}
+			if dstEA.Mode == 0 {
+				dstEA, _ = a.parseEA(ops[1], SizeLong)
+			}
+			out = append(out, 0x0800|(opType<<6)|(uint16(dstEA.Mode)<<3)|uint16(dstEA.Reg), uint16(bitVal&0xFF))
+			out = append(out, dstEA.ExtWords...)
+		} else {
+			isD, _, dReg, ok := parseReg(ops[0])
+			if !ok || !isD {
+				return nil, fmt.Errorf("%s bit number must be immediate #imm or data register Dn: %s", mnem, ops[0])
+			}
+			dstEA, err := a.parseEA(ops[1], SizeByte)
+			if err != nil {
+				return nil, err
+			}
+			if dstEA.Mode == 0 {
+				dstEA, _ = a.parseEA(ops[1], SizeLong)
+			}
+			out = append(out, 0x0100|(uint16(dReg)<<9)|(opType<<6)|(uint16(dstEA.Mode)<<3)|uint16(dstEA.Reg))
+			out = append(out, dstEA.ExtWords...)
+		}
+
+	case "EXG":
+		if len(ops) < 2 {
+			return nil, fmt.Errorf("EXG requires 2 register operands")
+		}
+		isD1, isA1, r1, ok1 := parseReg(ops[0])
+		isD2, isA2, r2, ok2 := parseReg(ops[1])
+		if !ok1 || !ok2 {
+			return nil, fmt.Errorf("EXG operands must be registers: %s, %s", ops[0], ops[1])
+		}
+		if isD1 && isD2 {
+			out = append(out, 0xC140|(uint16(r1)<<9)|uint16(r2))
+		} else if isA1 && isA2 {
+			out = append(out, 0xC148|(uint16(r1)<<9)|uint16(r2))
+		} else if isD1 && isA2 {
+			out = append(out, 0xC188|(uint16(r1)<<9)|uint16(r2))
+		} else if isA1 && isD2 {
+			out = append(out, 0xC188|(uint16(r2)<<9)|uint16(r1))
+		}
+
+	case "ST", "SF", "SHI", "SLS", "SCC", "SHS", "SCS", "SLO", "SNE", "SEQ", "SVC", "SVS", "SPL", "SMI", "SGE", "SLT", "SGT", "SLE":
+		condMap := map[string]uint16{
+			"ST": 0, "SF": 1, "SHI": 2, "SLS": 3,
+			"SCC": 4, "SHS": 4, "SCS": 5, "SLO": 5,
+			"SNE": 6, "SEQ": 7, "SVC": 8, "SVS": 9,
+			"SPL": 10, "SMI": 11, "SGE": 12, "SLT": 13,
+			"SGT": 14, "SLE": 15,
+		}
+		cond := condMap[mnem]
+		dstEA, err := a.parseEA(ops[0], SizeByte)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, 0x50C0|(cond<<8)|(uint16(dstEA.Mode)<<3)|uint16(dstEA.Reg))
+		out = append(out, dstEA.ExtWords...)
 
 	default:
 		// Branches: BRA, BSR, Bcc
