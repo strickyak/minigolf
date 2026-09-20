@@ -334,4 +334,3 @@ func TestNoArgSwitchStatement(t *testing.T) {
 		t.Fatalf("expected 3 clauses, got %d", len(sw.Body))
 	}
 }
-
