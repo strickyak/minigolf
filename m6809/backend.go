@@ -177,6 +177,7 @@ type Backend struct {
 	curInstr ir.Instruction
 	valInD   ir.Value
 	valInB   ir.Value
+	valInX   ir.Value
 	instrs   map[int]ir.Instruction
 
 	NoBranchLayout    bool
@@ -344,6 +345,7 @@ func (b *Backend) canTrack(val ir.Value) bool {
 func (b *Backend) clobberAllRegs() {
 	b.valInD = nil
 	b.valInB = nil
+	b.valInX = nil
 }
 
 func (b *Backend) clobberD() {
@@ -354,6 +356,10 @@ func (b *Backend) clobberD() {
 func (b *Backend) clobberB() {
 	b.valInB = nil
 	b.valInD = nil
+}
+
+func (b *Backend) clobberX() {
+	b.valInX = nil
 }
 
 func (b *Backend) setD(val ir.Value) {
@@ -372,6 +378,14 @@ func (b *Backend) setB(val ir.Value) {
 		b.valInB = nil
 	}
 	b.valInD = nil
+}
+
+func (b *Backend) setX(val ir.Value) {
+	if b.canTrack(val) {
+		b.valInX = val
+	} else {
+		b.valInX = nil
+	}
 }
 
 func (b *Backend) pushBytes(n int) {
@@ -1099,8 +1113,12 @@ func (b *Backend) emitLoadAddr(reg string, addrStr string) {
 			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", addrStr))
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tleax %s\n\ttfr x,d\n", addrStr))
+			b.clobberX()
 		}
 		return
+	}
+	if reg == "x" {
+		b.clobberX()
 	}
 	if strings.HasPrefix(addrStr, "v_") && !strings.Contains(addrStr, ",") {
 		b.buf.WriteString(fmt.Sprintf("\tld%s #%s\n", reg, addrStr))
@@ -1187,8 +1205,15 @@ func (b *Backend) loadVal(val ir.Value) {
 		if sz == 1 && b.valInB == val {
 			return
 		}
-		if sz == 2 && b.valInD == val {
-			return
+		if sz == 2 {
+			if b.valInD == val {
+				return
+			}
+			if b.valInX == val {
+				b.buf.WriteString("\ttfr x,d\n")
+				b.setD(val)
+				return
+			}
 		}
 	}
 	if inst, ok := val.(ir.Instruction); ok && len(b.globalRegs) > 0 {
@@ -1219,6 +1244,7 @@ func (b *Backend) loadVal(val ir.Value) {
 	case *ir.AddressOfLocal:
 		b.emitLoadAddr("x", b.getAddrStr(v.Local))
 		b.buf.WriteString("\ttfr x,d\n")
+		b.clobberX()
 	case *ir.AddressOfGlobal:
 		if b.globalsAtY {
 			offset := b.globalOffsets[v.Global.Name]
@@ -1229,12 +1255,14 @@ func (b *Backend) loadVal(val ir.Value) {
 			}
 		} else if b.picMode {
 			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\t; &global '%s'\n", v.Global.Name, v.Global.Name))
+			b.clobberX()
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\t; &global '%s'\n", v.Global.Name, v.Global.Name))
 		}
 	case *ir.AddressOfFunc:
 		if b.picMode {
 			b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\n\ttfr x,d\t; &func '%s'\n", v.Func.EmitName(), v.Func.Name))
+			b.clobberX()
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd #%s\t; &func '%s'\n", v.Func.EmitName(), v.Func.Name))
 		}
@@ -1275,9 +1303,27 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 			if b.valInD == val {
 				return
 			}
-		} else if reg == "x" || reg == "y" || reg == "u" {
+			if b.valInX == val {
+				b.buf.WriteString("\ttfr x,d\n")
+				b.setD(val)
+				return
+			}
+		} else if reg == "x" {
+			if b.valInX == val {
+				return
+			}
+			if b.valInD == val {
+				b.buf.WriteString("\ttfr d,x\n")
+				b.setX(val)
+				return
+			}
+		} else if reg == "y" || reg == "u" {
 			if b.valInD == val {
 				b.buf.WriteString(fmt.Sprintf("\ttfr d,%s\n", reg))
+				return
+			}
+			if b.valInX == val {
+				b.buf.WriteString(fmt.Sprintf("\ttfr x,%s\n", reg))
 				return
 			}
 		}
@@ -1288,8 +1334,12 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 				return
 			}
 			b.buf.WriteString(fmt.Sprintf("\ttfr %s,%s\t; %s = %s\n", srcReg, reg, strings.ToUpper(reg), b.describeVal(val)))
-			if !b.NoLocalRegAlloc && reg == "d" {
-				b.setD(val)
+			if !b.NoLocalRegAlloc {
+				if reg == "d" {
+					b.setD(val)
+				} else if reg == "x" {
+					b.setX(val)
+				}
 			}
 			return
 		}
@@ -1321,6 +1371,7 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 		if b.picMode {
 			if reg == "d" {
 				b.buf.WriteString(fmt.Sprintf("\tleax %s,pcr\t; &func '%s'\n\ttfr x,d\n", v.Func.EmitName(), v.Func.Name))
+				b.clobberX()
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tlea%s %s,pcr\t; &func '%s'\n", reg, v.Func.EmitName(), v.Func.Name))
 			}
@@ -1358,6 +1409,8 @@ func (b *Backend) loadVal16(reg string, val ir.Value) {
 	if !b.NoLocalRegAlloc {
 		if reg == "d" {
 			b.setD(val)
+		} else if reg == "x" {
+			b.setX(val)
 		}
 	}
 }
@@ -1839,6 +1892,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 		} else if rightInst, ok := rightVal.(ir.Instruction); ok && len(b.globalRegs) > 0 && b.globalRegs[rightInst.GetID()] != "" {
 			srcReg := b.globalRegs[rightInst.GetID()]
 			b.buf.WriteString(fmt.Sprintf("\tleax d,%s\n\ttfr x,d\n", srcReg))
+			b.clobberX()
 		} else {
 			b.loadVal16("x", rightVal)
 			b.buf.WriteString("\tstx ,--s\n\taddd ,s++\n")
@@ -2037,6 +2091,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				lblLoop := b.nextLabel()
 				lblDone := b.nextLabel()
 				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n%s:\n\taslb\n\trola\n\tleax -1,x\n\tbne %s\n%s:\n", k, lblLoop, lblLoop, lblDone))
+				b.clobberX()
 			}
 		} else {
 			lblLoop := b.nextLabel()
@@ -2047,6 +2102,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				b.buf.WriteString("\tclra\n")
 			}
 			b.buf.WriteString(fmt.Sprintf("\tcmpx #0\n\tbeq %s\n%s:\n\taslb\n\trola\n\tleax -1,x\n\tbne %s\n%s:\n", lblDone, lblLoop, lblLoop, lblDone))
+			b.clobberX()
 		}
 	case "shr":
 		isInt := i.Typ.Equals(ir.TypeInt)
@@ -2074,6 +2130,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				lblLoop := b.nextLabel()
 				lblDone := b.nextLabel()
 				b.buf.WriteString(fmt.Sprintf("\tldx #%d\n%s:\n%s\tleax -1,x\n\tbne %s\n%s:\n", k, lblLoop, shiftInst, lblLoop, lblDone))
+				b.clobberX()
 			}
 		} else {
 			lblLoop := b.nextLabel()
@@ -2084,6 +2141,7 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				b.buf.WriteString("\tclra\n")
 			}
 			b.buf.WriteString(fmt.Sprintf("\tcmpx #0\n\tbeq %s\n%s:\n%s\tleax -1,x\n\tbne %s\n%s:\n", lblDone, lblLoop, shiftInst, lblLoop, lblDone))
+			b.clobberX()
 		}
 	default:
 		log.Panicf("unhandled 2-byte op: %s", i.Op)
@@ -3501,8 +3559,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 		targetStr := b.getAddrStr(i.Local)
 		b.emitLoadAddr("x", targetStr)
-		b.buf.WriteString("\ttfr x,d\n")
-		b.storeResult(id)
+		if reg, ok := b.globalRegs[id]; ok {
+			b.buf.WriteString(fmt.Sprintf("\ttfr x,%s\t; %s = %s\n", reg, strings.ToUpper(reg), b.describeSlot(id)))
+			b.setX(i)
+			b.clobberD()
+		} else if !b.instructionNeedsSlot(b.f, i) {
+			b.setX(i)
+			b.clobberD()
+		} else {
+			b.buf.WriteString("\ttfr x,d\n")
+			b.storeResult(id)
+			b.setX(i)
+		}
 
 	case *ir.AddressOfField:
 		if b.foldedAddrs != nil && b.foldedAddrs[id] {
@@ -3514,8 +3582,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if byteOffset > 0 {
 			b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", byteOffset))
 		}
-		b.buf.WriteString("\ttfr x,d\n")
-		b.storeResult(id)
+		if reg, ok := b.globalRegs[id]; ok {
+			b.buf.WriteString(fmt.Sprintf("\ttfr x,%s\t; %s = %s\n", reg, strings.ToUpper(reg), b.describeSlot(id)))
+			b.setX(i)
+			b.clobberD()
+		} else if !b.instructionNeedsSlot(b.f, i) {
+			b.setX(i)
+			b.clobberD()
+		} else {
+			b.buf.WriteString("\ttfr x,d\n")
+			b.storeResult(id)
+			b.setX(i)
+		}
 
 	case *ir.AddressOfElement:
 		if b.foldedAddrs != nil && b.foldedAddrs[id] {
@@ -3528,8 +3606,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if totalOffset > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", totalOffset))
 			}
-			b.buf.WriteString("\ttfr x,d\n")
-			b.storeResult(id)
+			if reg, ok := b.globalRegs[id]; ok {
+				b.buf.WriteString(fmt.Sprintf("\ttfr x,%s\t; %s = %s\n", reg, strings.ToUpper(reg), b.describeSlot(id)))
+				b.setX(i)
+				b.clobberD()
+			} else if !b.instructionNeedsSlot(b.f, i) {
+				b.setX(i)
+				b.clobberD()
+			} else {
+				b.buf.WriteString("\ttfr x,d\n")
+				b.storeResult(id)
+				b.setX(i)
+			}
 			break
 		}
 		if cIdx, ok := i.Index.(*ir.ConstByte); ok {
@@ -3538,8 +3626,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if totalOffset > 0 {
 				b.buf.WriteString(fmt.Sprintf("\tleax %d,x\n", totalOffset))
 			}
-			b.buf.WriteString("\ttfr x,d\n")
-			b.storeResult(id)
+			if reg, ok := b.globalRegs[id]; ok {
+				b.buf.WriteString(fmt.Sprintf("\ttfr x,%s\t; %s = %s\n", reg, strings.ToUpper(reg), b.describeSlot(id)))
+				b.setX(i)
+				b.clobberD()
+			} else if !b.instructionNeedsSlot(b.f, i) {
+				b.setX(i)
+				b.clobberD()
+			} else {
+				b.buf.WriteString("\ttfr x,d\n")
+				b.storeResult(id)
+				b.setX(i)
+			}
 			break
 		}
 		b.loadVal16("x", i.ArrayPtr)
@@ -3561,8 +3659,18 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 			b.buf.WriteString("\tpuls x\n\tleax d,x\n")
 		}
-		b.buf.WriteString("\ttfr x,d\n")
-		b.storeResult(id)
+		if reg, ok := b.globalRegs[id]; ok {
+			b.buf.WriteString(fmt.Sprintf("\ttfr x,%s\t; %s = %s\n", reg, strings.ToUpper(reg), b.describeSlot(id)))
+			b.setX(i)
+			b.clobberD()
+		} else if !b.instructionNeedsSlot(b.f, i) {
+			b.setX(i)
+			b.clobberD()
+		} else {
+			b.buf.WriteString("\ttfr x,d\n")
+			b.storeResult(id)
+			b.setX(i)
+		}
 
 	case *ir.ExtractFieldPtr:
 		structType := i.Ptr.Type().PointedType()
@@ -3839,8 +3947,16 @@ func (b *Backend) isSimpleOperand(val ir.Value) bool {
 	return false
 }
 
+func isAddressComputationInX(instr ir.Instruction) bool {
+	switch instr.(type) {
+	case *ir.AddressOfElement, *ir.AddressOfField, *ir.AddressOfLocal:
+		return true
+	}
+	return false
+}
+
 func (b *Backend) instructionNeedsSlot(f *ir.Function, instr ir.Instruction) bool {
-	if b.NoDeadStore {
+	if b.NoDeadStore || b.NoLocalRegAlloc {
 		return true
 	}
 	id := instr.GetID()
@@ -3948,6 +4064,26 @@ func (b *Backend) instructionNeedsSlot(f *ir.Function, instr ir.Instruction) boo
 
 				case *ir.Cast:
 					if user.Operand == instr {
+						return false // Safe to elide slot!
+					}
+
+				case *ir.LoadPtr:
+					if user.Ptr == instr && b.safeTypeSize(user.Type()) <= 2 {
+						return false // Safe to elide slot!
+					}
+
+				case *ir.StorePtr:
+					if isAddressComputationInX(instr) && user.Ptr == instr && user.Val != instr && b.isSimpleOperand(user.Val) && b.safeTypeSize(user.Val.Type()) <= 2 {
+						return false // Safe to elide slot!
+					}
+
+				case *ir.ExtractFieldPtr:
+					if user.Ptr == instr && b.safeTypeSize(user.Type()) <= 2 {
+						return false // Safe to elide slot!
+					}
+
+				case *ir.InsertFieldPtr:
+					if isAddressComputationInX(instr) && user.Ptr == instr && user.Val != instr && b.isSimpleOperand(user.Val) && b.safeTypeSize(user.Val.Type()) <= 2 {
 						return false // Safe to elide slot!
 					}
 				}
