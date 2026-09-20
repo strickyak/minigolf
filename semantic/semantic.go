@@ -614,6 +614,14 @@ func (a *Analyzer) popScope() {
 	a.currentScope = a.currentScope.parent
 }
 
+func isStringOrSliceByte(typStr string) bool {
+	return typStr == "string" || typStr == "prelude.string" || typStr == "slice_byte" || typStr == "prelude.slice_byte"
+}
+
+func isIntegerType(typStr string) bool {
+	return typStr == "byte" || typStr == "word" || typStr == "int" || typStr == "uint"
+}
+
 func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 	if createsScope {
 		a.pushScope()
@@ -743,11 +751,18 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 			s.Tag = a.foldExpression(s.Tag)
 			tagType := a.analyzeExpression(s.Tag)
 			tagTypeStr := a.exprToString(tagType)
-			if tagTypeStr != "byte" && tagTypeStr != "word" && tagTypeStr != "int" && tagTypeStr != "uint" && tagType != UnknownType {
-				a.reportError(s, "switch tag expression must be byte or word, got %s", tagTypeStr)
+			if !isIntegerType(tagTypeStr) && !isStringOrSliceByte(tagTypeStr) && tagType != UnknownType {
+				a.reportError(s, "switch tag expression must be byte, word, int, or string, got %s", tagTypeStr)
+			}
+			if isStringOrSliceByte(tagTypeStr) {
+				a.markReachable("prelude.streq")
+				a.magicFuncs["prelude.streq"] = true
+				a.markReachable("prelude.memeq")
+				a.magicFuncs["prelude.memeq"] = true
 			}
 			hasDefault := false
-			seenCases := make(map[int64]bool)
+			seenIntCases := make(map[int64]bool)
+			seenStringCases := make(map[string]bool)
 			for _, clause := range s.Body {
 				if clause.Token.Type == token.DEFAULT {
 					if hasDefault {
@@ -757,16 +772,30 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 				}
 				for i, v := range clause.Values {
 					clause.Values[i] = a.foldExpression(v)
-					vType := a.analyzeExpression(clause.Values[i])
+					folded := clause.Values[i]
+					vType := a.analyzeExpression(folded)
 					vTypeStr := a.exprToString(vType)
-					if vTypeStr != "byte" && vTypeStr != "word" && vTypeStr != "int" && vTypeStr != "uint" && vType != UnknownType {
-						a.reportError(v, "case expression must be byte or word, got %s", vTypeStr)
-					}
-					if intLit, ok := clause.Values[i].(*ast.IntegerLiteral); ok {
-						if seenCases[intLit.Value] {
-							a.reportError(v, "duplicate case %d in switch", intLit.Value)
+
+					if isStringOrSliceByte(tagTypeStr) {
+						strLit, ok := folded.(*ast.StringLiteral)
+						if !ok {
+							a.reportError(v, "case expression in string switch must be a string literal, got %s", vTypeStr)
+							continue
 						}
-						seenCases[intLit.Value] = true
+						if seenStringCases[strLit.Value] {
+							a.reportError(v, "duplicate case %q in switch", strLit.Value)
+						}
+						seenStringCases[strLit.Value] = true
+					} else {
+						if !isIntegerType(vTypeStr) && vType != UnknownType {
+							a.reportError(v, "case expression must be byte, word, or int, got %s", vTypeStr)
+						}
+						if intLit, ok := folded.(*ast.IntegerLiteral); ok {
+							if seenIntCases[intLit.Value] {
+								a.reportError(v, "duplicate case %d in switch", intLit.Value)
+							}
+							seenIntCases[intLit.Value] = true
+						}
 					}
 				}
 				clauseBlock := &ast.BlockStatement{Statements: clause.Body}

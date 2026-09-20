@@ -56,6 +56,51 @@ func testEmptyCase(b byte) word {
 	return r
 }
 
+func testInt(i int) word {
+	var r word
+	switch i {
+	case -100:
+		r = 1
+	case -1, 0:
+		r = 2
+	case 42:
+		r = 3
+	default:
+		r = 99
+	}
+	return r
+}
+
+const GREET = "hello"
+
+func testString(s string) word {
+	var r word
+	switch s {
+	case GREET:
+		r = 1
+	case "world":
+		r = 2
+	case "he", "hell":
+		r = 3
+	case "hello world":
+		r = 4
+	default:
+		r = 100
+	}
+	return r
+}
+
+func testSliceByte(s slice[byte]) word {
+	var r word = 50
+	switch s {
+	case "foo":
+		r = 500
+	case "bar":
+		r = 600
+	}
+	return r
+}
+
 func main() {
 	println(testByte(1))
 	println(testByte(2))
@@ -76,4 +121,22 @@ func main() {
 	println(testEmptyCase(1))
 	println(testEmptyCase(2))
 	println(testEmptyCase(3))
+
+	println(testInt(-100))
+	println(testInt(-1))
+	println(testInt(0))
+	println(testInt(42))
+	println(testInt(999))
+
+	println(testString("hello"))
+	println(testString("world"))
+	println(testString("he"))
+	println(testString("hell"))
+	println(testString("hello world"))
+	println(testString("other"))
+	println(testString("hellow"))
+
+	println(testSliceByte("foo"))
+	println(testSliceByte("bar"))
+	println(testSliceByte("baz"))
 }

@@ -1255,6 +1255,11 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		b.varTypes[hiddenTagName] = tagVal.Type()
 		b.writeVariable(hiddenTagName, b.currentBlock, tagVal)
 
+		tagTypeName := tagVal.Type().Name
+		isString := tagTypeName == "prelude.slice_byte" || tagTypeName == "slice_byte" ||
+			tagTypeName == "string" || tagTypeName == "prelude.string" ||
+			(tagVal.Type().IsASlice() && tagVal.Type().ElementType != nil && tagVal.Type().ElementType.IsByte())
+
 		var defaultClause *ast.CaseClause
 		var nonDefaultClauses []*ast.CaseClause
 		for _, clause := range s.Body {
@@ -1305,8 +1310,22 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 
 					tag := b.readVariable(hiddenTagName, b.currentBlock)
 					caseExprVal := b.buildExpr(valExpr)
-					caseVal := b.coerceType(caseExprVal, tagVal.Type())
-					cond := b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: tag, Right: caseVal}, clause)
+					var cond Value
+					if isString {
+						f := b.funcs["prelude.streq"]
+						if f == nil {
+							f = b.funcs["streq"]
+						}
+						if f == nil {
+							log.Panicf("prelude.streq function not found for string switch")
+						}
+						args := []Value{tag, caseExprVal}
+						b.coerceCallArgs(f, args, clause)
+						cond = b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: f.ReturnType}, Func: f, Args: args}, clause)
+					} else {
+						caseVal := b.coerceType(caseExprVal, tagVal.Type())
+						cond = b.addInstr(&Compare{BaseInstruction: BaseInstruction{Typ: TypeByte}, Op: "eq", Left: tag, Right: caseVal}, clause)
+					}
 
 					b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: caseBodyBlocks[i], FalseBlock: nextCheckBlk}, clause)
 					b.addEdge(b.currentBlock, caseBodyBlocks[i])

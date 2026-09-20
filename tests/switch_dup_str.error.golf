@@ -1,0 +1,11 @@
+package main
+
+func main() {
+	var s string = "abc"
+	switch s {
+	case "foo":
+		println(1)
+	case "foo":
+		println(2)
+	}
+}

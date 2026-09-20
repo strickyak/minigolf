@@ -1,0 +1,10 @@
+package main
+
+func main() {
+	var s string = "abc"
+	var nonLit string = "foo"
+	switch s {
+	case nonLit:
+		println(1)
+	}
+}
