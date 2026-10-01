@@ -1,0 +1,32 @@
+package smap
+
+type Smap[T any] struct {
+	keys   slice[string]
+	values slice[T]
+}
+
+func (o *Smap[T]) Lookup(key string) (T, bool) {
+	for i, e := range o.keys {
+		if e == key {
+			return o.values[i], true
+		}
+	}
+	var zeroT T
+	return zeroT, false
+}
+
+func (o *Smap[T]) Insert(key string, value T) bool {
+	for i, e := range o.keys {
+		if e == key {
+			o.values[i] = value
+			return false
+		}
+	}
+	o.keys.Append(key)
+	o.values.Append(value)
+	return true
+}
+
+func (o *Smap[T]) Keys() slice[string] {
+	return o.keys
+}

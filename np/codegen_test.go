@@ -97,13 +97,13 @@ func roundTripAndRun(t *testing.T, asmSource string, expectedOutput string) {
 func TestBasicArithmeticAndControlFlow(t *testing.T) {
 	src := `package main
 
-var g_total int
+var g_total word
 
-func square(x int) int {
+func square(x word) word {
 	return x * x
 }
 
-func sum_to(n int) int {
+func sum_to(n word) word {
 	total := 0
 	for i := 1; i <= n; i++ {
 		total += i
@@ -157,7 +157,7 @@ func TestSmapAndDict(t *testing.T) {
 	src := `package main
 
 func main() {
-	syms := smap.New[int](8)
+	syms := smap.New[word](8)
 	syms.Insert("Alpha", 10)
 	syms.Insert("Beta", 20)
 
@@ -181,7 +181,7 @@ func main() {
 func TestSwitchStatement(t *testing.T) {
 	src := `package main
 
-func classify(x int) {
+func classify(x word) {
 	switch x {
 	case 1:
 		println("one")

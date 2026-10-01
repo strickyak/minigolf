@@ -1,4 +1,4 @@
-package man
+package _
 
 type List[T any] struct {
 	guts slice[T]

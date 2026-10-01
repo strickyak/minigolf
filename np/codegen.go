@@ -17,6 +17,7 @@ const (
 	KindScalar TypeKind = 2
 	KindSlice  TypeKind = 6
 	KindVoid   TypeKind = 0
+	KindBuffer TypeKind = -1
 )
 
 func (k TypeKind) String() string {
@@ -25,6 +26,8 @@ func (k TypeKind) String() string {
 		return "slice"
 	case KindVoid:
 		return "void"
+	case KindBuffer:
+		return "buffer"
 	default:
 		return "scalar"
 	}
@@ -42,16 +45,20 @@ type Generator struct {
 	labelCounter int
 
 	// Global declarations across modules
-	globals map[string]TypeKind
-	funcs   map[string]*ast.FuncStatement
-	consts  map[string]ast.Expression
+	globals     map[string]TypeKind
+	globalSizes map[string]int
+	globalTypes map[string]string
+	funcs       map[string]*ast.FuncStatement
+	consts      map[string]ast.Expression
 
 	// Per-function state
 	currentFunc *ast.FuncStatement
 	funcPkg     string
 	params      map[string]TypeKind
+	paramTypes  map[string]string
 	paramOrder  []string
 	locals      map[string]TypeKind
+	localTypes  map[string]string
 	localOrder  []string
 	dicts       map[string]bool
 
@@ -62,9 +69,11 @@ type Generator struct {
 // New creates a new NPCode code generator.
 func New() *Generator {
 	return &Generator{
-		globals: make(map[string]TypeKind),
-		funcs:   make(map[string]*ast.FuncStatement),
-		consts:  make(map[string]ast.Expression),
+		globals:     make(map[string]TypeKind),
+		globalSizes: make(map[string]int),
+		globalTypes: make(map[string]string),
+		funcs:       make(map[string]*ast.FuncStatement),
+		consts:      make(map[string]ast.Expression),
 	}
 }
 
@@ -120,12 +129,30 @@ func (g *Generator) collectDeclarations(program *ast.Program) {
 			}
 			qname := s.Name.Value
 			kind := KindScalar
+			size := 2
+			tStr := "word"
 			if s.ValueType != nil {
+				tStr = g.exprToString(s.ValueType)
 				kind = g.getTypeKind(s.ValueType)
+				if arr, ok := s.ValueType.(*ast.ArrayType); ok && arr.Length != nil {
+					if intLit, ok := arr.Length.(*ast.IntegerLiteral); ok {
+						elemSize := g.getTypeSize(arr.Elt)
+						size = int(intLit.Value) * elemSize
+						kind = KindBuffer
+					}
+				} else if kind == KindSlice {
+					size = 6
+				}
 			} else if s.Value != nil {
+				tStr = g.getArgTypeString(s.Value)
 				kind = g.inferType(s.Value)
+				if kind == KindSlice {
+					size = 6
+				}
 			}
 			g.globals[qname] = kind
+			g.globalSizes[qname] = size
+			g.globalTypes[qname] = tStr
 		case *ast.FuncStatement:
 			if s.GetToken() != nil && strings.HasSuffix(s.GetToken().Filename, "prelude.golf") {
 				continue
@@ -156,7 +183,17 @@ func (g *Generator) emitGlobals() {
 	sort.Strings(names)
 	for _, name := range names {
 		kind := g.globals[name]
-		g.emit(".global %s: %s", name, kind.String())
+		sz := g.globalSizes[name]
+		if sz == 0 {
+			sz = 2
+		}
+		if kind == KindBuffer || sz > 6 {
+			g.emit(".global %s: %d", name, sz)
+		} else if kind == KindSlice || sz == 6 {
+			g.emit(".global %s: slice", name)
+		} else {
+			g.emit(".global %s: scalar", name)
+		}
 	}
 	g.emit("")
 }
@@ -174,8 +211,10 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	g.currentFunc = fs
 	g.funcPkg = pkg
 	g.params = make(map[string]TypeKind)
+	g.paramTypes = make(map[string]string)
 	g.paramOrder = nil
 	g.locals = make(map[string]TypeKind)
+	g.localTypes = make(map[string]string)
 	g.localOrder = nil
 	g.dicts = make(map[string]bool)
 	g.loopStack = nil
@@ -183,19 +222,23 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	// Register parameters
 	if fs.Receiver != nil {
 		rKind := g.getTypeKind(fs.Receiver.Type)
-		g.params[fs.Receiver.Name.Value] = rKind
-		g.paramOrder = append(g.paramOrder, fs.Receiver.Name.Value)
+		rTypeStr := g.exprToString(fs.Receiver.Type)
+		g.addParamWithType(fs.Receiver.Name.Value, rKind, rTypeStr)
 	}
 	for _, param := range fs.Parameters {
 		pKind := g.getTypeKind(param.Type)
-		g.params[param.Name.Value] = pKind
-		g.paramOrder = append(g.paramOrder, param.Name.Value)
+		pTypeStr := g.exprToString(param.Type)
+		g.addParamWithType(param.Name.Value, pKind, pTypeStr)
 	}
 
 	// Pre-scan function body to discover and register all local variables
 	if fs.Body != nil {
 		g.collectLocals(fs.Body)
 	}
+	g.addLocal("_pbuf", KindScalar)
+	g.addLocal("_tmp_base", KindScalar)
+	g.addLocal("_tmp_cap", KindScalar)
+	g.addLocal("_tmp_len", KindScalar)
 
 	// Emit function header
 	g.emitComment("====================================================================")
@@ -233,6 +276,10 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 }
 
 func (g *Generator) addLocal(name string, kind TypeKind) {
+	g.addLocalWithType(name, kind, "word")
+}
+
+func (g *Generator) addLocalWithType(name string, kind TypeKind, typeStr string) {
 	if name == "_" || name == "" {
 		return
 	}
@@ -241,7 +288,19 @@ func (g *Generator) addLocal(name string, kind TypeKind) {
 	}
 	if _, exists := g.locals[name]; !exists {
 		g.locals[name] = kind
+		g.localTypes[name] = typeStr
 		g.localOrder = append(g.localOrder, name)
+	}
+}
+
+func (g *Generator) addParamWithType(name string, kind TypeKind, typeStr string) {
+	if name == "_" || name == "" {
+		return
+	}
+	if _, exists := g.params[name]; !exists {
+		g.params[name] = kind
+		g.paramTypes[name] = typeStr
+		g.paramOrder = append(g.paramOrder, name)
 	}
 }
 
@@ -260,30 +319,52 @@ func (g *Generator) scanLocalsFromStatement(stmt ast.Statement) {
 	}
 	switch s := stmt.(type) {
 	case *ast.VarStatement:
+		if arr, ok := s.ValueType.(*ast.ArrayType); ok && arr.Length != nil {
+			panic(fmt.Sprintf("buffers on the stack are not supported in MiniGolf-NP (line %d): declare '%s' as a global variable or allocate with alloc()", s.Token.Line, s.Name.Value))
+		}
 		kind := KindScalar
+		tStr := "word"
 		if s.ValueType != nil {
+			tStr = g.exprToString(s.ValueType)
 			kind = g.getTypeKind(s.ValueType)
 		} else if s.Value != nil {
+			tStr = g.getArgTypeString(s.Value)
 			kind = g.inferType(s.Value)
 		}
-		g.addLocal(s.Name.Value, kind)
+		g.addLocalWithType(s.Name.Value, kind, tStr)
 
 	case *ast.AssignStatement:
 		if s.Token.Literal == ":=" {
 			for i, lhs := range s.Names {
 				if id, ok := lhs.(*ast.Identifier); ok && id.Value != "_" {
 					kind := KindScalar
+					tStr := "word"
 					if i < len(s.Values) {
+						if lit, ok := s.Values[i].(*ast.CompositeLit); ok {
+							if _, ok := lit.Type.(*ast.ArrayType); ok {
+								panic(fmt.Sprintf("buffers on the stack are not supported in MiniGolf-NP (line %d): declare '%s' as a global variable or allocate with alloc()", s.Token.Line, id.Value))
+							}
+						}
 						if g.isDictExpr(s.Values[i]) {
 							g.dicts[id.Value] = true
 							kind = KindSlice
+							tStr = "dict"
 						} else {
 							kind = g.inferType(s.Values[i])
+							tStr = g.getArgTypeString(s.Values[i])
 						}
 					} else if len(s.Values) == 1 {
 						kind = g.inferCallReturnType(s.Values[0], i)
+						if kind == KindSlice {
+							tStr = "string"
+						} else {
+							tStr = "word"
+						}
 					}
-					g.addLocal(id.Value, kind)
+					if kind == KindSlice && tStr == "word" {
+						tStr = "string"
+					}
+					g.addLocalWithType(id.Value, kind, tStr)
 				}
 			}
 		}
@@ -873,12 +954,22 @@ func (g *Generator) compileExpression(expr ast.Expression) {
 		if e.IsSlice || len(e.Indices) >= 2 {
 			g.compileSubSlice(e)
 		} else if len(e.Indices) == 1 {
-			g.compileExpression(e.Left)
-			g.compileExpression(e.Indices[0])
-			if g.inferType(e.Left) == KindSlice {
+			if id, ok := e.Left.(*ast.Identifier); ok && g.globals[id.Value] == KindBuffer {
+				g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+				sz := g.globalSizes[id.Value]
+				g.emit("    PUSH_I16 %d", sz)
+				g.emit("    PUSH_I16 %d", sz)
+				g.emit("    SLICE_NEW")
+				g.compileExpression(e.Indices[0])
 				g.emit("    SLICE_GET_BYTE")
 			} else {
-				g.emit("    SLICE_GET_WORD")
+				g.compileExpression(e.Left)
+				g.compileExpression(e.Indices[0])
+				if g.inferType(e.Left) == KindSlice {
+					g.emit("    SLICE_GET_BYTE")
+				} else {
+					g.emit("    SLICE_GET_WORD")
+				}
 			}
 		}
 
@@ -924,7 +1015,11 @@ func (g *Generator) compileIdentifier(e *ast.Identifier) {
 	}
 
 	// Global lookup
-	if _, isGlobal := g.globals[name]; isGlobal {
+	if kind, isGlobal := g.globals[name]; isGlobal {
+		if kind == KindBuffer {
+			g.emit("    ADDR_OF_GLOBAL %s", name)
+			return
+		}
 		g.emit("    LOAD_GLOBAL %s", name)
 		return
 	}
@@ -935,6 +1030,14 @@ func (g *Generator) compileIdentifier(e *ast.Identifier) {
 
 func (g *Generator) compilePrefix(e *ast.PrefixExpression) {
 	switch e.Operator {
+	case "&":
+		if id, ok := e.Right.(*ast.Identifier); ok {
+			if _, isGlobal := g.globals[id.Value]; isGlobal {
+				g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+				return
+			}
+		}
+		panic(fmt.Sprintf("address-of operator '&' is only supported for globals in MiniGolf-NP at line %d", e.Token.Line))
 	case "!":
 		g.compileExpression(e.Right)
 		g.emit("    NOT")
@@ -1057,7 +1160,15 @@ func (g *Generator) compileInfix(e *ast.InfixExpression) {
 func (g *Generator) compileSubSlice(e *ast.IndexExpression) {
 	// e.Left[low:high]
 	// Sub-slicing pops [end, start, slice]
-	g.compileExpression(e.Left)
+	if id, ok := e.Left.(*ast.Identifier); ok && g.globals[id.Value] == KindBuffer {
+		g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+		sz := g.globalSizes[id.Value]
+		g.emit("    PUSH_I16 %d", sz)
+		g.emit("    PUSH_I16 %d", sz)
+		g.emit("    SLICE_NEW")
+	} else {
+		g.compileExpression(e.Left)
+	}
 
 	if len(e.Indices) == 2 {
 		// low and high explicitly given
@@ -1220,11 +1331,12 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    SLICE_CAP")
 		return
 
-	case "print", "println":
-		for _, arg := range call.Arguments {
-			g.compileExpression(arg)
-			g.emit("    IO_PRINT")
-		}
+	case "print":
+		g.compilePrint(call, false)
+		return
+
+	case "println":
+		g.compilePrint(call, true)
 		return
 
 	case "alloc":
@@ -1375,7 +1487,10 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    BIT_AND")
 		return
 
-	case "word", "int", "uint", "int16", "uint16":
+	case "int", "int16":
+		panic(fmt.Sprintf("signed 'int' is not supported in MiniGolf-NP (line %d): use unsigned 'word' or 'byte'", call.Token.Line))
+
+	case "word", "uint", "uint16":
 		g.compileExpression(call.Arguments[0])
 		return
 	}
@@ -1458,6 +1573,9 @@ func (g *Generator) getTypeKind(typ ast.Expression) TypeKind {
 	switch t := typ.(type) {
 	case *ast.Identifier:
 		name := t.Value
+		if name == "int" || name == "int16" {
+			panic(fmt.Sprintf("signed 'int' is not supported in MiniGolf-NP (line %d): use unsigned 'word' or 'byte'", t.Token.Line))
+		}
 		if name == "string" {
 			return KindSlice
 		}
@@ -1466,6 +1584,9 @@ func (g *Generator) getTypeKind(typ ast.Expression) TypeKind {
 		}
 		return KindScalar
 	case *ast.ArrayType:
+		if t.Length != nil {
+			return KindBuffer
+		}
 		return KindSlice
 	case *ast.PointerType:
 		return KindScalar
@@ -1474,6 +1595,33 @@ func (g *Generator) getTypeKind(typ ast.Expression) TypeKind {
 		return KindSlice
 	default:
 		return KindScalar
+	}
+}
+
+func (g *Generator) getTypeSize(typ ast.Expression) int {
+	if typ == nil {
+		return 2
+	}
+	switch t := typ.(type) {
+	case *ast.Identifier:
+		if t.Value == "byte" || t.Value == "uint8" {
+			return 1
+		}
+		if t.Value == "string" {
+			return 6
+		}
+		return 2
+	case *ast.ArrayType:
+		if t.Length != nil {
+			if intLit, ok := t.Length.(*ast.IntegerLiteral); ok {
+				return int(intLit.Value) * g.getTypeSize(t.Elt)
+			}
+		}
+		return 6
+	case *ast.PointerType:
+		return 2
+	default:
+		return 2
 	}
 }
 
@@ -1708,4 +1856,200 @@ func (g *Generator) nodeToString(node ast.Node) string {
 	default:
 		return n.TokenLiteral()
 	}
+}
+
+func (g *Generator) compilePrint(call *ast.CallExpression, isPrintln bool) {
+	nArgs := len(call.Arguments)
+	if nArgs == 0 {
+		g.emit("    PUSH_NIL_SLICE")
+		if isPrintln {
+			g.emit("    PRINTLN")
+		} else {
+			g.emit("    PRINT")
+		}
+		return
+	}
+
+	typeStrings := make([]string, nArgs)
+	valSizes := make([]int, nArgs)
+	totalValBytes := 0
+
+	for i, arg := range call.Arguments {
+		tStr := g.getArgTypeString(arg)
+		if g.inferType(arg) == KindSlice && tStr != "string" {
+			tStr = "string"
+		}
+		typeStrings[i] = tStr
+		if tStr == "string" || g.inferType(arg) == KindSlice {
+			valSizes[i] = 6
+		} else {
+			valSizes[i] = 2
+		}
+		totalValBytes += valSizes[i]
+	}
+
+	totalBufSize := nArgs*4 + totalValBytes
+	pbufVar := "_pbuf"
+
+	cmdName := "print"
+	if isPrintln {
+		cmdName = "println"
+	}
+	g.emitComment("%s(%s)", cmdName, g.argsToString(call.Arguments))
+
+	g.emit("    PUSH_I16 %d", totalBufSize)
+	g.emit("    BUF_ALLOC")
+	g.emit("    STORE_LOCAL %s", pbufVar)
+
+	valOffset := nArgs * 4
+	for i, arg := range call.Arguments {
+		tStr := typeStrings[i]
+		curValOff := valOffset
+		curValSize := valSizes[i]
+		valOffset += curValSize
+
+		// 1. Evaluate argument and store value at curValOff
+		if curValSize == 6 {
+			// Slice value (3 words)
+			tmpBase := "_tmp_base"
+			tmpCap := "_tmp_cap"
+			tmpLen := "_tmp_len"
+
+			g.compileExpression(arg)
+			g.emit("    STORE_LOCAL %s", tmpLen)
+			g.emit("    STORE_LOCAL %s", tmpCap)
+			g.emit("    STORE_LOCAL %s", tmpBase)
+
+			g.emit("    LOAD_LOCAL %s", pbufVar)
+			g.emit("    LOAD_LOCAL %s", tmpBase)
+			g.emit("    STORE_FIELD %d", curValOff)
+
+			g.emit("    LOAD_LOCAL %s", pbufVar)
+			g.emit("    LOAD_LOCAL %s", tmpCap)
+			g.emit("    STORE_FIELD %d", curValOff+2)
+
+			g.emit("    LOAD_LOCAL %s", pbufVar)
+			g.emit("    LOAD_LOCAL %s", tmpLen)
+			g.emit("    STORE_FIELD %d", curValOff+4)
+		} else {
+			// Scalar value (1 word)
+			tmpVal := "_tmp_base"
+			g.compileExpression(arg)
+			g.emit("    STORE_LOCAL %s", tmpVal)
+			g.emit("    LOAD_LOCAL %s", pbufVar)
+			g.emit("    LOAD_LOCAL %s", tmpVal)
+			g.emit("    STORE_FIELD %d", curValOff)
+		}
+
+		// 2. Set any[i].BaseAddr (offset i * 4) = pbuf + curValOff (+ 1 if byte)
+		g.emit("    LOAD_LOCAL %s", pbufVar)
+		g.emit("    LOAD_LOCAL %s", pbufVar)
+		baseOff := curValOff
+		if tStr == "byte" || tStr == "uint8" {
+			baseOff = curValOff + 1
+		}
+		if baseOff != 0 {
+			g.emit("    PUSH_I16 %d", baseOff)
+			g.emit("    ADD")
+		}
+		g.emit("    STORE_FIELD %d", i*4)
+
+		// 3. Set any[i].TypeStr (offset i * 4 + 2) = pointer to type name string
+		g.emit("    LOAD_LOCAL %s", pbufVar)
+		g.emit("    PUSH_STR %s", strconv.Quote(tStr))
+		g.emit("    POP")
+		g.emit("    POP")
+		g.emit("    STORE_FIELD %d", i*4+2)
+	}
+
+	// Push Slice[any] { pbuf, nArgs, nArgs }
+	g.emit("    LOAD_LOCAL %s", pbufVar)
+	if nArgs == 1 {
+		g.emit("    PUSH_1")
+		g.emit("    PUSH_1")
+	} else {
+		g.emit("    PUSH_I16 %d", nArgs)
+		g.emit("    PUSH_I16 %d", nArgs)
+	}
+
+	if isPrintln {
+		g.emit("    PRINTLN")
+	} else {
+		g.emit("    PRINT")
+	}
+
+	// Free temporary buffer
+	g.emit("    LOAD_LOCAL %s", pbufVar)
+	g.emit("    BUF_FREE")
+}
+
+func (g *Generator) getArgTypeString(expr ast.Expression) string {
+	if expr == nil {
+		return "word"
+	}
+	if g.inferType(expr) == KindSlice {
+		return "string"
+	}
+	switch e := expr.(type) {
+	case *ast.StringLiteral:
+		return "string"
+	case *ast.IntegerLiteral:
+		return "word"
+	case *ast.Identifier:
+		if e.Value == "true" || e.Value == "false" {
+			return "bool"
+		}
+		if t, ok := g.localTypes[e.Value]; ok && t != "" {
+			return t
+		}
+		if t, ok := g.paramTypes[e.Value]; ok && t != "" {
+			return t
+		}
+		if t, ok := g.globalTypes[e.Value]; ok && t != "" {
+			return t
+		}
+		if resolved := e.GetResolvedType(); resolved != nil {
+			tStr := g.exprToString(resolved)
+			if tStr == "byte" || tStr == "uint8" {
+				return "byte"
+			}
+			if tStr == "string" || tStr == "slice[byte]" {
+				return "string"
+			}
+			if tStr == "bool" {
+				return "bool"
+			}
+			return "word"
+		}
+		return "word"
+	case *ast.CallExpression:
+		if id, ok := e.Function.(*ast.Identifier); ok {
+			if id.Value == "byte" || id.Value == "uint8" {
+				return "byte"
+			}
+			if id.Value == "word" || id.Value == "uint" || id.Value == "uint16" {
+				return "word"
+			}
+			if id.Value == "string" {
+				return "string"
+			}
+			if id.Value == "int" || id.Value == "int16" {
+				panic(fmt.Sprintf("signed 'int' is not supported in MiniGolf-NP (line %d): use unsigned 'word' or 'byte'", e.Token.Line))
+			}
+		}
+		return "word"
+	default:
+		if g.inferType(expr) == KindSlice {
+			return "string"
+		}
+		return "word"
+	}
+}
+
+func (g *Generator) argsToString(args []ast.Expression) string {
+	var parts []string
+	for _, a := range args {
+		parts = append(parts, g.nodeToString(a))
+	}
+	return strings.Join(parts, ", ")
 }

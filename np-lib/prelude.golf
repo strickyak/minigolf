@@ -1,0 +1,103 @@
+package prelude
+
+func peek[T any](addr word) T {
+	return *((*T)(addr))
+}
+
+func poke[T any](addr word, value T) {
+	*((*T)(addr)) = value
+}
+
+func peekb(addr word) byte        { return *((*byte)(addr)) }
+func peekw(addr word) word        { return *((*word)(addr)) }
+func pokeb(addr word, value byte) { *((*byte)(addr)) = value }
+func pokew(addr word, value word) { *((*word)(addr)) = value }
+
+func alloc(size word) word {
+	return 0
+}
+
+func free(addr word) {
+}
+
+type any struct {
+	BaseAddr word
+	TypeStr  word
+}
+
+type slice[T any] struct {
+	Base word
+	Cap  word
+	Len  word
+}
+
+func (o *slice[T]) Append(x T) {
+	if o.Base == 0 {
+		o.Base = alloc(8 * sizeof[T]())
+		o.Cap = 8
+		o.Len = 1
+		o.Put(0, x)
+		return
+	}
+	n := o.Len
+	if n+1 < o.Cap {
+		o.Len++
+		o.Put(n, x)
+		return
+	}
+
+	var z slice[T]
+	z.Cap = o.Cap + o.Cap
+	if z.Cap < 8 {
+		z.Cap = 8
+	}
+	z.Base = alloc(z.Cap * sizeof[T]())
+	z.Len = n + 1
+
+	for i := range n {
+		z.Put(i, o.Get(i))
+	}
+	z.Put(n, x)
+	free(o.Base)
+	*o = z
+}
+
+func (o *slice[T]) Address(i word) word {
+	if i >= o.Len {
+		panic("slice index out of bounds")
+	}
+	return o.Base + (i * sizeof[T]())
+}
+
+func (o *slice[T]) Get(i word) T {
+	if i >= o.Len {
+		panic("slice index out of bounds")
+	}
+	return peek[T](o.Base + (i * sizeof[T]()))
+}
+
+func (o *slice[T]) Put(i word, x T) {
+	if i >= o.Len {
+		panic("slice index out of bounds")
+	}
+	poke[T](o.Base + (i * sizeof[T]()), x)
+}
+
+func (o *slice[T]) Chop(start word, limit word) slice[T] {
+	if start > limit || limit > o.Cap {
+		panic("slice chop out of bounds")
+	}
+	var z slice[T]
+	z.Base = o.Base + (start * sizeof[T]())
+	z.Len = limit - start
+	z.Cap = z.Len
+	return z
+}
+
+func strlen(s *byte) (n word) {
+	for *s != 0 {
+		n++
+		s = (*byte)(word(s) + 1)
+	}
+	return
+}
