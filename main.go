@@ -19,6 +19,7 @@ import (
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6809"
 	"github.com/strickyak/minigolf/m68k"
+	"github.com/strickyak/minigolf/np"
 	"github.com/strickyak/minigolf/opt"
 	"github.com/strickyak/minigolf/parser"
 	// "github.com/strickyak/minigolf/prelude"
@@ -56,12 +57,15 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 		}
 	}
 
-	//disabled// // If "prelude.golf" is not found in the path, we use the version included in this compiler.
-	//disabled// if base == "prelude.golf" {
-	//disabled// 	content = []byte(prelude.Source)
-	//disabled// 	err = nil
-	//disabled// 	return
-	//disabled// }
+	// Fallback for prelude.golf in standard locations if not found in path
+	if base == "prelude.golf" {
+		for _, fallbackDir := range []string{"golflib", "../golflib"} {
+			filename := filepath.Join(fallbackDir, base)
+			if c, err2 := os.ReadFile(filename); err2 == nil {
+				return c, nil
+			}
+		}
+	}
 
 	return nil, fmt.Errorf("Cannot find filename %q in path %v", base, path)
 }
@@ -275,7 +279,7 @@ MORE:
 
 func main() {
 	// Define command-line flags
-	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502)")
+	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, np)")
 	outFlag := flag.String("o", "", "Output object file name")
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
@@ -615,6 +619,25 @@ func main() {
 			os.Exit(1)
 		}
 		log.Printf("Successfully dumped AST to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=np : Generate NP assembly directly from AST and exit cleanly
+	if *archFlag == "NP" {
+		resolver := semantic.NewResolver(golfDefines)
+		resolver.Resolve(program)
+
+		backend := np.New()
+		asmCode := backend.Generate(program)
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (NP Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing NP output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via NP to: %s", *outFlag)
 		os.Exit(0)
 	}
 
