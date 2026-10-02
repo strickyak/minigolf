@@ -38,7 +38,7 @@ import re
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 MINIGOLF_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 NITROS9_DIR = os.environ.get("NITROS9DIR", "/home/strick/modoc/coco-shelf/nitros9")
-NPCODE_DIR = os.path.join(NITROS9_DIR, "npcode")
+NPCODE_DIR = SCRIPT_DIR
 NITROS9_DEFS = os.path.join(NITROS9_DIR, "defs")
 RECIPES_DIR = os.path.join(NITROS9_DIR, "recipes", "deep65280")
 DEFAULT_DISK = os.path.join(RECIPES_DIR, "deep0.dsk")

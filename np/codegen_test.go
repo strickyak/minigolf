@@ -14,9 +14,14 @@ import (
 	"github.com/strickyak/minigolf/semantic"
 )
 
-const (
-	npcodeDir = "/home/strick/modoc/coco-shelf/nitros9/npcode"
-)
+var npcodeDir = func() string {
+	if p, err := filepath.Abs("../np-runtime"); err == nil {
+		if _, err := os.Stat(filepath.Join(p, "npasm.py")); err == nil {
+			return p
+		}
+	}
+	return "/home/strick/github.com/strickyak/minigolf/np-runtime"
+}()
 
 func compileGolfToNP(t *testing.T, src string) string {
 	tokens := lexer.Lex(src, "test.golf")
