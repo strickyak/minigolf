@@ -132,7 +132,11 @@ func (g *Generator) Generate(program *ast.Program) string {
 func (g *Generator) collectDeclarations(program *ast.Program) {
 	// Pre-pass: collect and resolve struct types
 	for pass := 0; pass < 3; pass++ {
+		currentPkg := ""
 		for _, stmt := range program.Statements {
+			if ps, ok := stmt.(*ast.PackageStatement); ok {
+				currentPkg = ps.Name.Value
+			}
 			if s, ok := stmt.(*ast.TypeStatement); ok {
 				if st, ok := s.BaseType.(*ast.StructType); ok {
 					var info structInfo
@@ -148,8 +152,12 @@ func (g *Generator) collectDeclarations(program *ast.Program) {
 						})
 						currOffset += fSize
 					}
-					info.size = (currOffset + 1) & ^1
+					info.size = currOffset
 					g.structs[info.name] = info
+					if currentPkg != "" && currentPkg != "main" {
+						g.structs[currentPkg+"."+info.name] = info
+						g.structs[currentPkg+"_"+info.name] = info
+					}
 				}
 			}
 		}
@@ -206,11 +214,17 @@ func (g *Generator) collectDeclarations(program *ast.Program) {
 			if s.Receiver != nil {
 				rType := g.exprToString(s.Receiver.Type)
 				rType = strings.TrimPrefix(rType, "*")
+				rType = strings.ReplaceAll(rType, ".", "_")
+				if currentPkg != "" && currentPkg != "main" && !strings.HasPrefix(rType, currentPkg) {
+					rType = currentPkg + "_" + rType
+				}
 				qname = rType + "_" + s.Name.Value
+			} else if currentPkg != "" && currentPkg != "main" {
+				qname = currentPkg + "_" + s.Name.Value
 			}
 			g.funcs[qname] = s
 			if currentPkg != "" && currentPkg != "main" {
-				g.funcs[currentPkg+"."+qname] = s
+				g.funcs[currentPkg+"."+s.Name.Value] = s
 			}
 		}
 	}
@@ -250,7 +264,13 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	if fs.Receiver != nil {
 		rType := g.exprToString(fs.Receiver.Type)
 		rType = strings.TrimPrefix(rType, "*")
+		rType = strings.ReplaceAll(rType, ".", "_")
+		if pkg != "" && pkg != "main" && !strings.HasPrefix(rType, pkg) {
+			rType = pkg + "_" + rType
+		}
 		fnName = rType + "_" + fs.Name.Value
+	} else if pkg != "" && pkg != "main" {
+		fnName = pkg + "_" + fs.Name.Value
 	}
 
 	isEntry := fnName == "main" || strings.Contains(fs.Linkage, "entry")
@@ -333,6 +353,30 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	}
 	if len(g.paramOrder) > 0 || len(g.localOrder) > 0 {
 		g.emit("")
+	}
+
+	// Emit global variable initializers if this is the entry function
+	if isEntry {
+		currPkg := ""
+		for _, stmt := range g.program.Statements {
+			switch s := stmt.(type) {
+			case *ast.PackageStatement:
+				currPkg = s.Name.Value
+			case *ast.VarStatement:
+				if s.GetToken() != nil && strings.HasSuffix(s.GetToken().Filename, "prelude.golf") {
+					continue
+				}
+				if s.Value != nil {
+					qname := s.Name.Value
+					if currPkg != "" && currPkg != "main" {
+						qname = currPkg + "_" + s.Name.Value
+					}
+					g.emitComment("init global %s", qname)
+					g.compileExpression(s.Value)
+					g.emit("    STORE_GLOBAL %s", qname)
+				}
+			}
+		}
 	}
 
 	// Emit function body statements
@@ -618,7 +662,7 @@ func (g *Generator) isMemTarget(expr ast.Expression) bool {
 	switch expr.(type) {
 	case *ast.SelectorExpression, *ast.IndexExpression:
 		return true
-	case *ast.PrefixExpression:
+	case *ast.PrefixExpression, *ast.PointerType:
 		return true
 	}
 	return false
@@ -631,10 +675,28 @@ func (g *Generator) compileAssign(s *ast.AssignStatement) {
 		rhs := s.Values[0]
 
 		if pref, ok := lhs.(*ast.PrefixExpression); ok && pref.Operator == "*" {
+			isByte := g.isBytePointer(pref.Right)
 			g.compileExpression(rhs)
 			g.compileExpression(pref.Right)
 			g.emit("    SWAP")
-			g.emit("    POKE2")
+			if isByte {
+				g.emit("    POKE1")
+			} else {
+				g.emit("    POKE2")
+			}
+			return
+		}
+
+		if ptrType, ok := lhs.(*ast.PointerType); ok {
+			isByte := g.isBytePointer(ptrType.Elt)
+			g.compileExpression(rhs)
+			g.compileExpression(ptrType.Elt)
+			g.emit("    SWAP")
+			if isByte {
+				g.emit("    POKE1")
+			} else {
+				g.emit("    POKE2")
+			}
 			return
 		}
 
@@ -705,14 +767,33 @@ func (g *Generator) storeTarget(lhs ast.Expression, rhsContext ast.Expression) {
 	case *ast.PrefixExpression:
 		// *ptr = val
 		if target.Operator == "*" {
+			isByte := g.isBytePointer(target.Right)
 			tempName := "_tmp_base"
 			g.emit("    STORE_LOCAL %s", tempName)
 			g.compileExpression(target.Right)
 			g.emit("    LOAD_LOCAL %s", tempName)
-			g.emit("    POKE2")
+			if isByte {
+				g.emit("    POKE1")
+			} else {
+				g.emit("    POKE2")
+			}
 			return
 		}
 		panic(fmt.Sprintf("invalid assignment target prefix operator %q", target.Operator))
+
+	case *ast.PointerType:
+		// *ptr = val
+		isByte := g.isBytePointer(target.Elt)
+		tempName := "_tmp_base"
+		g.emit("    STORE_LOCAL %s", tempName)
+		g.compileExpression(target.Elt)
+		g.emit("    LOAD_LOCAL %s", tempName)
+		if isByte {
+			g.emit("    POKE1")
+		} else {
+			g.emit("    POKE2")
+		}
+		return
 
 	case *ast.SelectorExpression, *ast.IndexExpression:
 		_, size := g.compileAddress(target)
@@ -789,6 +870,94 @@ func (g *Generator) compileOpAssign(s *ast.OpAssignStatement) {
 		return
 	}
 
+	if sel, ok := s.Name.(*ast.SelectorExpression); ok {
+		_, size := g.compileAddress(sel)
+		g.emit("    STORE_LOCAL _tmp_addr")
+		g.emit("    LOAD_LOCAL _tmp_addr")
+		if size == 1 {
+			g.emit("    PEEK1")
+		} else {
+			g.emit("    PEEK2")
+		}
+		g.compileExpression(s.Value)
+		switch s.Operator {
+		case "+":
+			g.emit("    ADD")
+		case "-":
+			g.emit("    SUB")
+		case "*":
+			g.emit("    MUL")
+		case "/":
+			g.emit("    DIV")
+		case "%":
+			g.emit("    MOD")
+		case "&":
+			g.emit("    BIT_AND")
+		case "|":
+			g.emit("    BIT_OR")
+		case "^":
+			g.emit("    BIT_XOR")
+		case "<<":
+			g.emit("    SHL")
+		case ">>":
+			g.emit("    SHR")
+		default:
+			panic(fmt.Sprintf("unsupported op-assign operator %q", s.Operator))
+		}
+		g.emit("    LOAD_LOCAL _tmp_addr")
+		g.emit("    SWAP")
+		if size == 1 {
+			g.emit("    POKE1")
+		} else {
+			g.emit("    POKE2")
+		}
+		return
+	}
+
+	if idx, ok := s.Name.(*ast.IndexExpression); ok {
+		_, size := g.compileAddress(idx)
+		g.emit("    STORE_LOCAL _tmp_addr")
+		g.emit("    LOAD_LOCAL _tmp_addr")
+		if size == 1 {
+			g.emit("    PEEK1")
+		} else {
+			g.emit("    PEEK2")
+		}
+		g.compileExpression(s.Value)
+		switch s.Operator {
+		case "+":
+			g.emit("    ADD")
+		case "-":
+			g.emit("    SUB")
+		case "*":
+			g.emit("    MUL")
+		case "/":
+			g.emit("    DIV")
+		case "%":
+			g.emit("    MOD")
+		case "&":
+			g.emit("    BIT_AND")
+		case "|":
+			g.emit("    BIT_OR")
+		case "^":
+			g.emit("    BIT_XOR")
+		case "<<":
+			g.emit("    SHL")
+		case ">>":
+			g.emit("    SHR")
+		default:
+			panic(fmt.Sprintf("unsupported op-assign operator %q", s.Operator))
+		}
+		g.emit("    LOAD_LOCAL _tmp_addr")
+		g.emit("    SWAP")
+		if size == 1 {
+			g.emit("    POKE1")
+		} else {
+			g.emit("    POKE2")
+		}
+		return
+	}
+
 	panic(fmt.Sprintf("unsupported target for op-assignment: %T", s.Name))
 }
 
@@ -804,6 +973,51 @@ func (g *Generator) compileIncDec(s *ast.IncDecStatement) {
 		g.storeTarget(id, nil)
 		return
 	}
+
+	if sel, ok := s.Name.(*ast.SelectorExpression); ok {
+		_, size := g.compileAddress(sel)
+		g.emit("    DUP")
+		if size == 1 {
+			g.emit("    PEEK1")
+		} else {
+			g.emit("    PEEK2")
+		}
+		g.emit("    PUSH_1")
+		if s.Token.Literal == "++" {
+			g.emit("    ADD")
+		} else {
+			g.emit("    SUB")
+		}
+		if size == 1 {
+			g.emit("    POKE1")
+		} else {
+			g.emit("    POKE2")
+		}
+		return
+	}
+
+	if idx, ok := s.Name.(*ast.IndexExpression); ok {
+		_, size := g.compileAddress(idx)
+		g.emit("    DUP")
+		if size == 1 {
+			g.emit("    PEEK1")
+		} else {
+			g.emit("    PEEK2")
+		}
+		g.emit("    PUSH_1")
+		if s.Token.Literal == "++" {
+			g.emit("    ADD")
+		} else {
+			g.emit("    SUB")
+		}
+		if size == 1 {
+			g.emit("    POKE1")
+		} else {
+			g.emit("    POKE2")
+		}
+		return
+	}
+
 	panic(fmt.Sprintf("unsupported target for increment/decrement: %T", s.Name))
 }
 
@@ -1107,6 +1321,14 @@ func (g *Generator) compileExpression(expr ast.Expression) {
 	case *ast.PrefixExpression:
 		g.compilePrefix(e)
 
+	case *ast.PointerType:
+		g.compileExpression(e.Elt)
+		if g.isBytePointer(e.Elt) {
+			g.emit("    PEEK1")
+		} else {
+			g.emit("    PEEK2")
+		}
+
 	case *ast.InfixExpression:
 		g.compileInfix(e)
 
@@ -1235,39 +1457,8 @@ func (g *Generator) compileIdentifier(e *ast.Identifier) {
 func (g *Generator) compilePrefix(e *ast.PrefixExpression) {
 	switch e.Operator {
 	case "&":
-		if id, ok := e.Right.(*ast.Identifier); ok {
-			if _, isGlobal := g.globals[id.Value]; isGlobal {
-				g.emit("    ADDR_OF_GLOBAL %s", id.Value)
-				return
-			}
-			if _, isLocal := g.locals[id.Value]; isLocal {
-				g.emit("    ADDR_OF_LOCAL %s", id.Value)
-				return
-			}
-			if _, isParam := g.params[id.Value]; isParam {
-				g.emit("    ADDR_OF_LOCAL %s", id.Value)
-				return
-			}
-		}
-		if idxExpr, ok := e.Right.(*ast.IndexExpression); ok {
-			if id, ok := idxExpr.Left.(*ast.Identifier); ok {
-				if _, isGlobal := g.globals[id.Value]; isGlobal {
-					elemSize := g.globalElemSizes[id.Value]
-					if elemSize == 0 {
-						elemSize = 2
-					}
-					g.emit("    ADDR_OF_GLOBAL %s", id.Value)
-					g.compileExpression(idxExpr.Indices[0])
-					if elemSize != 1 {
-						g.emit("    PUSH_I16 %d", elemSize)
-						g.emit("    MUL")
-					}
-					g.emit("    ADD")
-					return
-				}
-			}
-		}
-		panic(fmt.Sprintf("address-of operator '&' is only supported for variables and arrays in MiniGolf-NP at line %d", e.Token.Line))
+		_, _ = g.compileAddress(e.Right)
+		return
 	case "!":
 		g.compileExpression(e.Right)
 		g.emit("    NOT")
@@ -1282,7 +1473,11 @@ func (g *Generator) compilePrefix(e *ast.PrefixExpression) {
 	case "*":
 		// Pointer dereference *ptr
 		g.compileExpression(e.Right)
-		g.emit("    PEEK2")
+		if g.isBytePointer(e.Right) {
+			g.emit("    PEEK1")
+		} else {
+			g.emit("    PEEK2")
+		}
 	default:
 		panic(fmt.Sprintf("unsupported prefix operator %q at line %d", e.Operator, e.Token.Line))
 	}
@@ -1433,14 +1628,29 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		method := sel.Right.Value
 		recv := sel.Left
 
-		// Check if sel.Left is an imported package name (e.g. smap.New)
-		if pkgIdent, isPkg := recv.(*ast.Identifier); isPkg && pkgIdent.Value == "smap" {
-			if method == "New" {
+		// Check if sel.Left is an imported package name (e.g. btree.New, smap.New)
+		if pkgIdent, isPkg := recv.(*ast.Identifier); isPkg {
+			if pkgIdent.Value == "smap" && method == "New" {
 				n := 8
 				if len(call.Arguments) > 0 {
 					n = g.evalIntConst(call.Arguments[0])
 				}
 				g.emit("    DICT_NEW %d", n)
+				return
+			}
+			qname := pkgIdent.Value + "_" + method
+			if _, exists := g.funcs[qname]; exists {
+				for _, arg := range call.Arguments {
+					g.compileExpression(arg)
+				}
+				g.emit("    CALL %s", qname)
+				return
+			}
+			if _, exists := g.funcs[pkgIdent.Value+"."+method]; exists {
+				for _, arg := range call.Arguments {
+					g.compileExpression(arg)
+				}
+				g.emit("    CALL %s", qname)
 				return
 			}
 		}
@@ -1562,8 +1772,13 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		}
 	}
 
-	// 2. Generic instantiation call: e.g. smap.New[string](8)
+	// 2. Generic/index call: e.g. sizeof[T]() or smap.New[string](8)
 	if idxExpr, ok := call.Function.(*ast.IndexExpression); ok {
+		if id, ok := idxExpr.Left.(*ast.Identifier); ok && id.Value == "sizeof" {
+			sz := g.getTypeSize(idxExpr.Indices[0])
+			g.emit("    PUSH_I16 %d", sz)
+			return
+		}
 		if sel, ok := idxExpr.Left.(*ast.SelectorExpression); ok && sel.Right.Value == "New" {
 			n := 8
 			if len(call.Arguments) > 0 {
@@ -1580,6 +1795,12 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 			g.emit("    DICT_NEW %d", n)
 			return
 		}
+	}
+
+	// 2b. Pointer type cast: (*Node)(expr)
+	if _, ok := call.Function.(*ast.PointerType); ok {
+		g.compileExpression(call.Arguments[0])
+		return
 	}
 
 	// 3. Identifier function call
@@ -1614,9 +1835,14 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.compilePrint(call, true)
 		return
 
-	case "alloc":
+	case "alloc", "malloc":
 		g.compileExpression(call.Arguments[0])
 		g.emit("    BUF_ALLOC")
+		return
+
+	case "zalloc":
+		g.compileExpression(call.Arguments[0])
+		g.emit("    ZALLOC")
 		return
 
 	case "free":
@@ -1789,6 +2015,11 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 	targetName := fnName
 	if id.Package != "" && id.Package != "main" && id.Package != "prelude" {
 		targetName = id.Package + "_" + id.ShortName
+	} else if g.funcPkg != "" && g.funcPkg != "main" {
+		pkgFn := g.funcPkg + "_" + fnName
+		if _, exists := g.funcs[pkgFn]; exists {
+			targetName = pkgFn
+		}
 	}
 	g.emit("    CALL %s", targetName)
 }
@@ -1806,15 +2037,30 @@ func (g *Generator) isVoidCall(expr ast.Expression) bool {
 		if fs, exists := g.funcs[id.Value]; exists && len(fs.ReturnParameters) == 0 {
 			return true
 		}
+		if g.funcPkg != "" && g.funcPkg != "main" {
+			pkgFn := g.funcPkg + "_" + id.Value
+			if fs, exists := g.funcs[pkgFn]; exists && len(fs.ReturnParameters) == 0 {
+				return true
+			}
+		}
 	}
 	if sel, ok := call.Function.(*ast.SelectorExpression); ok {
 		switch sel.Right.Value {
 		case "Insert", "Append":
 			return true
 		}
+		rTypeName := g.inferTypeName(sel.Left)
+		methodKey := rTypeName + "_" + sel.Right.Value
+		if fs, exists := g.funcs[methodKey]; exists && len(fs.ReturnParameters) == 0 {
+			return true
+		}
 		if id, ok := sel.Left.(*ast.Identifier); ok {
-			key := id.Value + "." + sel.Right.Value
+			key := id.Value + "_" + sel.Right.Value
 			if fs, exists := g.funcs[key]; exists && len(fs.ReturnParameters) == 0 {
+				return true
+			}
+			key2 := id.Value + "." + sel.Right.Value
+			if fs, exists := g.funcs[key2]; exists && len(fs.ReturnParameters) == 0 {
 				return true
 			}
 		}
@@ -1861,14 +2107,43 @@ func (g *Generator) emitComment(format string, args ...interface{}) {
 	g.emit("; " + fmt.Sprintf(format, args...))
 }
 
+func (g *Generator) lookupStruct(name string) (*structInfo, bool) {
+	name = strings.TrimPrefix(name, "*")
+	if g.funcPkg != "" && g.funcPkg != "main" && !strings.Contains(name, ".") && !strings.Contains(name, "_") {
+		if s, ok := g.structs[g.funcPkg+"."+name]; ok {
+			return &s, true
+		}
+		if s, ok := g.structs[g.funcPkg+"_"+name]; ok {
+			return &s, true
+		}
+	}
+	if s, ok := g.structs[name]; ok {
+		return &s, true
+	}
+	if strings.Contains(name, ".") {
+		if s, ok := g.structs[strings.ReplaceAll(name, ".", "_")]; ok {
+			return &s, true
+		}
+	}
+	if strings.Contains(name, "_") {
+		if s, ok := g.structs[strings.ReplaceAll(name, "_", ".")]; ok {
+			return &s, true
+		}
+	}
+	return nil, false
+}
+
 func (g *Generator) getTypeSizeByName(name string) int {
+	if strings.HasPrefix(name, "*") {
+		return 2
+	}
 	if name == "byte" || name == "uint8" || name == "bool" {
 		return 1
 	}
 	if name == "string" || strings.HasPrefix(name, "slice[") || strings.HasPrefix(name, "[]") || strings.HasPrefix(name, "smap[") || strings.HasPrefix(name, "map[") || name == "dict" {
 		return 6
 	}
-	if sInfo, ok := g.structs[name]; ok {
+	if sInfo, ok := g.lookupStruct(name); ok {
 		return sInfo.size
 	}
 	return 2
@@ -1890,7 +2165,13 @@ func (g *Generator) getTypeKind(typ ast.Expression) TypeKind {
 		if name == "noreturn" || name == "void" {
 			return KindVoid
 		}
-		if _, ok := g.structs[name]; ok {
+		if _, ok := g.lookupStruct(name); ok {
+			return KindBuffer
+		}
+		return KindScalar
+	case *ast.SelectorExpression:
+		sName := g.exprToString(t)
+		if _, ok := g.lookupStruct(sName); ok {
 			return KindBuffer
 		}
 		return KindScalar
@@ -1915,13 +2196,19 @@ func (g *Generator) getTypeSize(typ ast.Expression) int {
 	}
 	switch t := typ.(type) {
 	case *ast.Identifier:
-		if t.Value == "byte" || t.Value == "uint8" {
+		if t.Value == "byte" || t.Value == "uint8" || t.Value == "bool" {
 			return 1
 		}
 		if t.Value == "string" {
 			return 6
 		}
-		if sInfo, ok := g.structs[t.Value]; ok {
+		if sInfo, ok := g.lookupStruct(t.Value); ok {
+			return sInfo.size
+		}
+		return 2
+	case *ast.SelectorExpression:
+		sName := g.exprToString(t)
+		if sInfo, ok := g.lookupStruct(sName); ok {
 			return sInfo.size
 		}
 		return 2
@@ -2012,6 +2299,30 @@ func (g *Generator) compileAddress(expr ast.Expression) (string, int) {
 		g.compileElemAddress(e.Left, e.Indices[0], elemSize)
 		return elemTypeStr, elemSize
 
+	case *ast.CallExpression:
+		g.compileExpression(e)
+		tStr := ""
+		if sel, ok := e.Function.(*ast.SelectorExpression); ok {
+			rTypeName := g.inferTypeName(sel.Left)
+			methodKey := rTypeName + "_" + sel.Right.Value
+			if fs, exists := g.funcs[methodKey]; exists && len(fs.ReturnParameters) > 0 {
+				tStr = g.exprToString(fs.ReturnParameters[0].Type)
+			}
+		} else if id, ok := e.Function.(*ast.Identifier); ok {
+			fnName := id.Value
+			if g.funcPkg != "" && g.funcPkg != "main" {
+				if fs, exists := g.funcs[g.funcPkg+"_"+fnName]; exists && len(fs.ReturnParameters) > 0 {
+					tStr = g.exprToString(fs.ReturnParameters[0].Type)
+				}
+			}
+			if tStr == "" {
+				if fs, exists := g.funcs[fnName]; exists && len(fs.ReturnParameters) > 0 {
+					tStr = g.exprToString(fs.ReturnParameters[0].Type)
+				}
+			}
+		}
+		return tStr, 2
+
 	case *ast.SelectorExpression:
 		fieldName := e.Right.Value
 		if fieldName == "Base" || fieldName == "Cap" || fieldName == "Len" {
@@ -2033,7 +2344,11 @@ func (g *Generator) compileAddress(expr ast.Expression) (string, int) {
 		}
 
 		leftType, _ := g.compileAddress(e.Left)
-		sInfo, ok := g.structs[leftType]
+		if strings.HasPrefix(leftType, "*") {
+			g.emit("    PEEK2")
+			leftType = strings.TrimPrefix(leftType, "*")
+		}
+		sInfo, ok := g.lookupStruct(leftType)
 		if !ok {
 			panic(fmt.Sprintf("unknown struct type %q for selector .%s", leftType, fieldName))
 		}
@@ -2228,15 +2543,19 @@ func (g *Generator) inferTypeName(expr ast.Expression) string {
 	if expr == nil {
 		return "object"
 	}
-	if id, ok := expr.(*ast.Identifier); ok {
-		if k, ok := g.locals[id.Value]; ok {
-			return k.String()
-		}
-		if k, ok := g.params[id.Value]; ok {
-			return k.String()
-		}
+	rawType := g.getArgTypeString(expr)
+	rawType = strings.TrimPrefix(rawType, "*")
+	rawType = strings.ReplaceAll(rawType, ".", "_")
+	if g.funcPkg != "" && g.funcPkg != "main" && !strings.Contains(rawType, "_") {
+		candidate := g.funcPkg + "_" + rawType
+		return candidate
 	}
-	return "object"
+	return rawType
+}
+
+func (g *Generator) isBytePointer(expr ast.Expression) bool {
+	t := g.getArgTypeString(expr)
+	return t == "*byte" || t == "*uint8" || t == "*bool"
 }
 
 func (g *Generator) exprToString(expr ast.Expression) string {
@@ -2245,6 +2564,12 @@ func (g *Generator) exprToString(expr ast.Expression) string {
 	}
 	switch e := expr.(type) {
 	case *ast.Identifier:
+		if e.Package != "" && e.Package != "main" && e.Package != "builtin" && e.Package != "prelude" {
+			if e.ShortName != "" {
+				return e.Package + "." + e.ShortName
+			}
+			return e.Package + "." + e.Value
+		}
 		return e.Value
 	case *ast.PointerType:
 		return "*" + g.exprToString(e.Elt)
@@ -2263,6 +2588,8 @@ func (g *Generator) exprToString(expr ast.Expression) string {
 			res += "]"
 		}
 		return res
+	case *ast.SelectorExpression:
+		return g.exprToString(e.Left) + "." + e.Right.Value
 	default:
 		return expr.TokenLiteral()
 	}
@@ -2495,9 +2822,6 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 	if expr == nil {
 		return "word"
 	}
-	if g.inferType(expr) == KindSlice {
-		return "string"
-	}
 	switch e := expr.(type) {
 	case *ast.StringLiteral:
 		return "string"
@@ -2518,19 +2842,36 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 		}
 		if resolved := e.GetResolvedType(); resolved != nil {
 			tStr := g.exprToString(resolved)
-			if tStr == "byte" || tStr == "uint8" {
-				return "byte"
+			if tStr != "" {
+				return tStr
 			}
-			if tStr == "string" || tStr == "slice[byte]" {
-				return "string"
-			}
-			if tStr == "bool" {
-				return "bool"
+		}
+		return "word"
+	case *ast.PointerType:
+		subType := g.getArgTypeString(e.Elt)
+		if strings.HasPrefix(subType, "*") {
+			return strings.TrimPrefix(subType, "*")
+		}
+		return "word"
+	case *ast.PrefixExpression:
+		if e.Operator == "&" {
+			return "*" + g.getArgTypeString(e.Right)
+		}
+		if e.Operator == "*" {
+			subType := g.getArgTypeString(e.Right)
+			if strings.HasPrefix(subType, "*") {
+				return strings.TrimPrefix(subType, "*")
 			}
 			return "word"
 		}
-		return "word"
+		if e.Operator == "!" {
+			return "bool"
+		}
+		return g.getArgTypeString(e.Right)
 	case *ast.IndexExpression:
+		if e.IsSlice || len(e.Indices) >= 2 {
+			return "string"
+		}
 		elemTypeStr, _ := g.getElemTypeInfo(e.Left)
 		return elemTypeStr
 	case *ast.SelectorExpression:
@@ -2538,7 +2879,8 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 			return "word"
 		}
 		leftType := g.getArgTypeString(e.Left)
-		if sInfo, ok := g.structs[leftType]; ok {
+		leftType = strings.TrimPrefix(leftType, "*")
+		if sInfo, ok := g.lookupStruct(leftType); ok {
 			for _, f := range sInfo.fields {
 				if f.name == e.Right.Value {
 					return g.exprToString(f.typ)
@@ -2547,6 +2889,9 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 		}
 		return "word"
 	case *ast.CallExpression:
+		if ptrType, ok := e.Function.(*ast.PointerType); ok {
+			return g.exprToString(ptrType)
+		}
 		if id, ok := e.Function.(*ast.Identifier); ok {
 			if id.Value == "byte" || id.Value == "uint8" {
 				return "byte"
@@ -2560,6 +2905,11 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 			if id.Value == "int" || id.Value == "int16" {
 				panic(fmt.Sprintf("signed 'int' is not supported in MiniGolf-NP (line %d): use unsigned 'word' or 'byte'", e.Token.Line))
 			}
+			if g.funcPkg != "" && g.funcPkg != "main" {
+				if fs, exists := g.funcs[g.funcPkg+"_"+id.Value]; exists && len(fs.ReturnParameters) > 0 {
+					return g.exprToString(fs.ReturnParameters[0].Type)
+				}
+			}
 			if fs, exists := g.funcs[id.Value]; exists && len(fs.ReturnParameters) > 0 {
 				return g.exprToString(fs.ReturnParameters[0].Type)
 			}
@@ -2571,6 +2921,20 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 			if sel.Right.Value == "Get" {
 				elemTypeStr, _ := g.getElemTypeInfo(sel.Left)
 				return elemTypeStr
+			}
+			if pkgIdent, isPkg := sel.Left.(*ast.Identifier); isPkg {
+				qname := pkgIdent.Value + "_" + sel.Right.Value
+				if fs, exists := g.funcs[qname]; exists && len(fs.ReturnParameters) > 0 {
+					return g.exprToString(fs.ReturnParameters[0].Type)
+				}
+				if fs, exists := g.funcs[pkgIdent.Value+"."+sel.Right.Value]; exists && len(fs.ReturnParameters) > 0 {
+					return g.exprToString(fs.ReturnParameters[0].Type)
+				}
+			}
+			rTypeName := g.inferTypeName(sel.Left)
+			methodKey := rTypeName + "_" + sel.Right.Value
+			if fs, exists := g.funcs[methodKey]; exists && len(fs.ReturnParameters) > 0 {
+				return g.exprToString(fs.ReturnParameters[0].Type)
 			}
 		}
 		return "word"

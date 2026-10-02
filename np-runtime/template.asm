@@ -45,7 +45,7 @@ vm_is_println   rmb     1       ; 1 = println, 0 = print
 heap_ptr        rmb     2       ; current allocation pointer in heap_buf
 
 pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
-heap_buf        rmb     2048    ; heap buffer for Append dynamic slices
+heap_buf        rmb     16384   ; heap buffer for dynamic allocations
 line_buf        rmb     256     ; output line buffer for PRINTLN
 globals_buf     rmb     2560    ; storage buffer for global variables
 global_ptrs     rmb     128     ; pointers to each global variable (up to 64 globals)
@@ -193,6 +193,9 @@ init_tbl
         leay    op_shl1_add,pcr
         sty     $36*2,x
 
+        leay    op_zalloc,pcr
+        sty     $37*2,x
+
         leay    op_add,pcr
         sty     $40*2,x
 
@@ -202,8 +205,26 @@ init_tbl
         leay    op_mul,pcr
         sty     $42*2,x
 
+        leay    op_neg,pcr
+        sty     $45*2,x
+
         leay    op_bit_and,pcr
         sty     $46*2,x
+
+        leay    op_bit_or,pcr
+        sty     $47*2,x
+
+        leay    op_bit_xor,pcr
+        sty     $48*2,x
+
+        leay    op_bit_not,pcr
+        sty     $49*2,x
+
+        leay    op_shl,pcr
+        sty     $4A*2,x
+
+        leay    op_shr,pcr
+        sty     $4B*2,x
 
         leay    op_cmp_eq,pcr
         sty     $4C*2,x
@@ -760,9 +781,27 @@ heap_alloc
         puls    x,pc            ; return allocated address in X
 
 op_buf_alloc
-        pulu    d               ; discard size
-        ldx     <data_base
-        leax    pbuf_scratch,x
+        pulu    d               ; D = requested size
+        lbsr    heap_alloc      ; X = allocated address
+        pshu    x
+        lbra    dispatch
+
+op_zalloc
+        pulu    d               ; D = requested size
+        pshs    d               ; save size on S
+        lbsr    heap_alloc      ; X = allocated address
+        puls    d               ; D = size
+        pshs    x               ; save allocated address on S
+        tsta
+        bne     zalloc_loop
+        tstb
+        beq     zalloc_done
+zalloc_loop
+        clr     ,x+
+        subd    #1
+        bne     zalloc_loop
+zalloc_done
+        puls    x               ; restore allocated address
         pshu    x
         lbra    dispatch
 
@@ -1026,10 +1065,63 @@ op_mul
         leas    4,s             ; drop locals
         lbra    dispatch
 
+op_neg
+        ldd     #0
+        subd    ,u
+        std     ,u
+        lbra    dispatch
+
 op_bit_and
         pulu    d               ; D = b
         anda    ,u
         andb    1,u
+        std     ,u
+        lbra    dispatch
+
+op_bit_or
+        pulu    d               ; D = b
+        ora     ,u
+        orb     1,u
+        std     ,u
+        lbra    dispatch
+
+op_bit_xor
+        pulu    d               ; D = b
+        eora    ,u
+        eorb    1,u
+        std     ,u
+        lbra    dispatch
+
+op_bit_not
+        com     ,u
+        com     1,u
+        lbra    dispatch
+
+op_shl
+        pulu    x               ; X = count
+        ldd     ,u              ; D = val
+        cmpx    #0
+        beq     shl_done
+shl_loop
+        aslb
+        rola
+        leax    -1,x
+        bne     shl_loop
+shl_done
+        std     ,u
+        lbra    dispatch
+
+op_shr
+        pulu    x               ; X = count
+        ldd     ,u              ; D = val
+        cmpx    #0
+        beq     shr_done
+shr_loop
+        lsra
+        rorb
+        leax    -1,x
+        bne     shr_loop
+shr_done
         std     ,u
         lbra    dispatch
 

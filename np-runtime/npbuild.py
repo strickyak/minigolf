@@ -110,6 +110,7 @@ def main():
     parser.add_argument("--system-img", default=DEFAULT_IMG, help="NitrOS-9 system boot image path")
     parser.add_argument("--engine", default="deep65280v2", help="gep9 engine")
     parser.add_argument("--gep9", default=DEFAULT_GEP9, help="Path to gep9 executable")
+    parser.add_argument("-I", "--include", action="append", default=[], help="Directory to search for imports")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
 
     args = parser.parse_args()
@@ -135,7 +136,10 @@ def main():
         if ext == ".golf":
             log(f"Compiling MiniGolf source '{cur_file}' -> NPCode assembly...", args.verbose)
             npasm_path = os.path.join(build_dir, f"{base_name}.npasm")
-            cmd = ["go", "run", "main.go", "-m=np", "-o", npasm_path, cur_file]
+            cmd = ["go", "run", "main.go", "-m=np"]
+            for inc in args.include:
+                cmd.extend(["-I", inc])
+            cmd.extend(["-o", npasm_path, cur_file])
             run_cmd(cmd, verbose=args.verbose, cwd=MINIGOLF_DIR)
             cur_file = npasm_path
             ext = ".npasm"
