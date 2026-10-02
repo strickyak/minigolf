@@ -32,16 +32,16 @@ if test -n "$VERIFY"; then
     RUN_MODE="--verify"
 fi
 
-VERBOSE_FLAG=()
+EXTRA_FLAGS=()
 if test -n "$TRACE" || test -n "$VERBOSE"; then
-    VERBOSE_FLAG=(-v)
+    EXTRA_FLAGS+=("-v")
 fi
 
 case "$P" in 
     *.golf | *.npasm | *.npc )
         python3 "$NPBUILD" "$P" \
             "$RUN_MODE" \
-            "${VERBOSE_FLAG[@]}" \
+            "${EXTRA_FLAGS[@]}" \
             -I "$SCRIPT_DIR/np-lib" \
             -I "$SCRIPT_DIR/tests" \
             -I "$SCRIPT_DIR/golflib" \

@@ -757,8 +757,8 @@ func (g *Generator) storeTarget(lhs ast.Expression, rhsContext ast.Expression) {
 			g.emit("    STORE_LOCAL %s", target.Value)
 			return
 		}
-		if _, isGlobal := g.globals[target.Value]; isGlobal {
-			g.emit("    STORE_GLOBAL %s", target.Value)
+		if qname, isGlobal := g.resolveGlobal(target.Value); isGlobal {
+			g.emit("    STORE_GLOBAL %s", qname)
 			return
 		}
 		// Fallback to local
@@ -1441,12 +1441,13 @@ func (g *Generator) compileIdentifier(e *ast.Identifier) {
 	}
 
 	// Global lookup
-	if kind, isGlobal := g.globals[name]; isGlobal {
+	if qname, isGlobal := g.resolveGlobal(name); isGlobal {
+		kind := g.globals[qname]
 		if kind == KindBuffer {
-			g.emit("    ADDR_OF_GLOBAL %s", name)
+			g.emit("    ADDR_OF_GLOBAL %s", qname)
 			return
 		}
-		g.emit("    LOAD_GLOBAL %s", name)
+		g.emit("    LOAD_GLOBAL %s", qname)
 		return
 	}
 
@@ -1762,12 +1763,36 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 
 		default:
 			// General method call: push receiver, push args, call Type_Method
-			g.compileExpression(recv)
+			rTypeName := g.inferTypeName(recv)
+			targetMethod := rTypeName + "_" + method
+			passAddr := false
+			var fs *ast.FuncStatement
+			if f, exists := g.funcs[targetMethod]; exists {
+				fs = f
+			} else if g.funcPkg != "" && g.funcPkg != "main" {
+				candidate := g.funcPkg + "_" + targetMethod
+				if f2, exists2 := g.funcs[candidate]; exists2 {
+					targetMethod = candidate
+					fs = f2
+				}
+			}
+			if fs != nil && fs.Receiver != nil {
+				if _, isPtr := fs.Receiver.Type.(*ast.PointerType); isPtr {
+					recvType := g.getArgTypeString(recv)
+					if !strings.HasPrefix(recvType, "*") {
+						passAddr = true
+					}
+				}
+			}
+			if passAddr {
+				g.compileAddress(recv)
+			} else {
+				g.compileExpression(recv)
+			}
 			for _, arg := range call.Arguments {
 				g.compileExpression(arg)
 			}
-			rTypeName := g.inferTypeName(recv)
-			g.emit("    CALL %s_%s", rTypeName, method)
+			g.emit("    CALL %s", targetMethod)
 			return
 		}
 	}
@@ -2133,6 +2158,19 @@ func (g *Generator) lookupStruct(name string) (*structInfo, bool) {
 	return nil, false
 }
 
+func (g *Generator) resolveGlobal(name string) (string, bool) {
+	if _, ok := g.globals[name]; ok {
+		return name, true
+	}
+	if g.funcPkg != "" && g.funcPkg != "main" && !strings.Contains(name, "_") {
+		qname := g.funcPkg + "_" + name
+		if _, ok := g.globals[qname]; ok {
+			return qname, true
+		}
+	}
+	return "", false
+}
+
 func (g *Generator) getTypeSizeByName(name string) int {
 	if strings.HasPrefix(name, "*") {
 		return 2
@@ -2232,23 +2270,24 @@ func (g *Generator) getElemTypeInfo(expr ast.Expression) (string, int) {
 	if expr == nil {
 		return "word", 2
 	}
-	tStr := ""
+	tStr := g.getArgTypeString(expr)
 	if id, ok := expr.(*ast.Identifier); ok {
-		if t, ok := g.localTypes[id.Value]; ok {
-			tStr = t
-		} else if t, ok := g.paramTypes[id.Value]; ok {
-			tStr = t
-		} else if t, ok := g.globalTypes[id.Value]; ok {
-			tStr = t
-		}
-		if g.globals[id.Value] == KindBuffer {
-			elemSz := g.globalElemSizes[id.Value]
+		if qname, isGlobal := g.resolveGlobal(id.Value); isGlobal && g.globals[qname] == KindBuffer {
+			elemSz := g.globalElemSizes[qname]
+			if elemSz == 0 {
+				elemSz = 1
+			}
 			if idx := strings.Index(tStr, "]"); idx >= 0 {
 				elemTypeName := tStr[idx+1:]
 				return elemTypeName, elemSz
 			}
 			return "word", elemSz
 		}
+	}
+	if idx := strings.Index(tStr, "]"); idx >= 0 {
+		elemTypeName := tStr[idx+1:]
+		elemSz := g.getTypeSizeByName(elemTypeName)
+		return elemTypeName, elemSz
 	}
 	if strings.Contains(tStr, "slice[string]") || strings.Contains(tStr, "[]string") || strings.HasSuffix(tStr, "]string") {
 		return "string", 6
@@ -2277,9 +2316,9 @@ func (g *Generator) compileAddress(expr ast.Expression) (string, int) {
 	switch e := expr.(type) {
 	case *ast.Identifier:
 		name := e.Value
-		if _, isGlobal := g.globals[name]; isGlobal {
-			g.emit("    ADDR_OF_GLOBAL %s", name)
-			tStr := g.globalTypes[name]
+		if qname, isGlobal := g.resolveGlobal(name); isGlobal {
+			g.emit("    ADDR_OF_GLOBAL %s", qname)
+			tStr := g.globalTypes[qname]
 			return tStr, g.getTypeSizeByName(tStr)
 		}
 		if _, isLocal := g.locals[name]; isLocal {
@@ -2325,7 +2364,9 @@ func (g *Generator) compileAddress(expr ast.Expression) (string, int) {
 
 	case *ast.SelectorExpression:
 		fieldName := e.Right.Value
-		if fieldName == "Base" || fieldName == "Cap" || fieldName == "Len" {
+		leftTypeStr := g.getArgTypeString(e.Left)
+		isSlice := (leftTypeStr == "string" || strings.HasPrefix(leftTypeStr, "[]") || strings.HasPrefix(leftTypeStr, "slice[") || leftTypeStr == "dict" || strings.HasPrefix(leftTypeStr, "smap[") || strings.HasPrefix(leftTypeStr, "map["))
+		if isSlice && (fieldName == "Base" || fieldName == "Cap" || fieldName == "Len") {
 			g.compileAddress(e.Left)
 			offset := 0
 			switch fieldName {
@@ -2371,11 +2412,13 @@ func (g *Generator) compileAddress(expr ast.Expression) (string, int) {
 
 func (g *Generator) compileElemAddress(target ast.Expression, idx ast.Expression, elemSize int) {
 	if id, ok := target.(*ast.Identifier); ok {
-		if g.globals[id.Value] == KindBuffer {
-			g.emit("    ADDR_OF_GLOBAL %s", id.Value)
-		} else if _, isGlobal := g.globals[id.Value]; isGlobal {
-			g.emit("    ADDR_OF_GLOBAL %s", id.Value)
-			g.emit("    PEEK2")
+		if qname, isGlobal := g.resolveGlobal(id.Value); isGlobal {
+			if g.globals[qname] == KindBuffer {
+				g.emit("    ADDR_OF_GLOBAL %s", qname)
+			} else {
+				g.emit("    ADDR_OF_GLOBAL %s", qname)
+				g.emit("    PEEK2")
+			}
 		} else if _, isLocal := g.locals[id.Value]; isLocal {
 			g.emit("    ADDR_OF_LOCAL %s", id.Value)
 			g.emit("    PEEK2")
@@ -2384,6 +2427,11 @@ func (g *Generator) compileElemAddress(target ast.Expression, idx ast.Expression
 			g.emit("    PEEK2")
 		} else {
 			g.compileExpression(target)
+			g.emit("    PEEK2")
+		}
+	} else if sel, ok := target.(*ast.SelectorExpression); ok {
+		fTypeStr, _ := g.compileAddress(sel)
+		if !strings.HasPrefix(fTypeStr, "[") || strings.HasPrefix(fTypeStr, "[]") {
 			g.emit("    PEEK2")
 		}
 	} else {
@@ -2420,8 +2468,8 @@ func (g *Generator) inferType(expr ast.Expression) TypeKind {
 		if k, ok := g.params[e.Value]; ok {
 			return k
 		}
-		if k, ok := g.globals[e.Value]; ok {
-			return k
+		if qname, isGlobal := g.resolveGlobal(e.Value); isGlobal {
+			return g.globals[qname]
 		}
 		if e.Value == "true" || e.Value == "false" {
 			return KindScalar
@@ -2444,11 +2492,13 @@ func (g *Generator) inferType(expr ast.Expression) TypeKind {
 		elemKind, _ := g.getElemType(e.Left)
 		return elemKind
 	case *ast.SelectorExpression:
-		if e.Right.Value == "Base" || e.Right.Value == "Cap" || e.Right.Value == "Len" {
+		leftType := g.getArgTypeString(e.Left)
+		isSlice := (leftType == "string" || strings.HasPrefix(leftType, "[]") || strings.HasPrefix(leftType, "slice[") || leftType == "dict" || strings.HasPrefix(leftType, "smap[") || strings.HasPrefix(leftType, "map["))
+		if isSlice && (e.Right.Value == "Base" || e.Right.Value == "Cap" || e.Right.Value == "Len") {
 			return KindScalar
 		}
-		leftType := g.getArgTypeString(e.Left)
-		if sInfo, ok := g.structs[leftType]; ok {
+		leftType = strings.TrimPrefix(leftType, "*")
+		if sInfo, ok := g.lookupStruct(leftType); ok {
 			for _, f := range sInfo.fields {
 				if f.name == e.Right.Value {
 					return g.getTypeKind(f.typ)
@@ -2574,6 +2624,9 @@ func (g *Generator) exprToString(expr ast.Expression) string {
 	case *ast.PointerType:
 		return "*" + g.exprToString(e.Elt)
 	case *ast.ArrayType:
+		if e.Length != nil {
+			return fmt.Sprintf("[%s]%s", g.nodeToString(e.Length), g.exprToString(e.Elt))
+		}
 		return "[]" + g.exprToString(e.Elt)
 	case *ast.IndexExpression:
 		res := g.exprToString(e.Left)
@@ -2837,8 +2890,8 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 		if t, ok := g.paramTypes[e.Value]; ok && t != "" {
 			return t
 		}
-		if t, ok := g.globalTypes[e.Value]; ok && t != "" {
-			return t
+		if qname, ok := g.resolveGlobal(e.Value); ok && g.globalTypes[qname] != "" {
+			return g.globalTypes[qname]
 		}
 		if resolved := e.GetResolvedType(); resolved != nil {
 			tStr := g.exprToString(resolved)
@@ -2875,10 +2928,11 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 		elemTypeStr, _ := g.getElemTypeInfo(e.Left)
 		return elemTypeStr
 	case *ast.SelectorExpression:
-		if e.Right.Value == "Base" || e.Right.Value == "Cap" || e.Right.Value == "Len" {
+		leftType := g.getArgTypeString(e.Left)
+		isSlice := (leftType == "string" || strings.HasPrefix(leftType, "[]") || strings.HasPrefix(leftType, "slice[") || leftType == "dict" || strings.HasPrefix(leftType, "smap[") || strings.HasPrefix(leftType, "map["))
+		if isSlice && (e.Right.Value == "Base" || e.Right.Value == "Cap" || e.Right.Value == "Len") {
 			return "word"
 		}
-		leftType := g.getArgTypeString(e.Left)
 		leftType = strings.TrimPrefix(leftType, "*")
 		if sInfo, ok := g.lookupStruct(leftType); ok {
 			for _, f := range sInfo.fields {
