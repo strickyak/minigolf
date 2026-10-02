@@ -1,0 +1,74 @@
+package main
+
+// queens[row] = column of queen in that row (0-based)
+var queens [8]word
+
+// safe returns true (non-zero) if placing a queen at (row, col) is safe
+// given queens already placed in rows 0..row-1
+func safe(row word, col word) word {
+	for r := word(0); r < row; r++ {
+		c := queens[r]
+		if c == col {
+			return 0
+		}
+		// check diagonal: |r - row| == |c - col|
+		var dr word
+		if row > r {
+			dr = row - r
+		} else {
+			dr = r - row
+		}
+		var dc word
+		if col > c {
+			dc = col - c
+		} else {
+			dc = c - col
+		}
+		if dr == dc {
+			return 0
+		}
+	}
+	return 1
+}
+
+// found is set to 1 once we find the first solution
+var found word
+
+func solve(row word) {
+	if found != 0 {
+		return
+	}
+	if row == 8 {
+		found = 1
+		return
+	}
+	for col := word(0); col < 8; col++ {
+		if safe(row, col) != 0 {
+			queens[row] = col
+			solve(row + 1)
+			if found != 0 {
+				return
+			}
+		}
+	}
+}
+
+func printBoard() {
+	println("+---+---+---+---+---+---+---+---+")
+	for row := word(0); row < 8; row++ {
+		for col := word(0); col < 8; col++ {
+			if queens[row] == col {
+				print("| Q ")
+			} else {
+				print("|   ")
+			}
+		}
+		println("|")
+		println("+---+---+---+---+---+---+---+---+")
+	}
+}
+
+func main() {
+	solve(0)
+	printBoard()
+}
