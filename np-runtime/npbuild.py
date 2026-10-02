@@ -136,7 +136,11 @@ def main():
         if ext == ".golf":
             log(f"Compiling MiniGolf source '{cur_file}' -> NPCode assembly...", args.verbose)
             npasm_path = os.path.join(build_dir, f"{base_name}.npasm")
-            cmd = ["go", "run", "main.go", "-m=np"]
+            minigolf_bin = os.path.join(MINIGOLF_DIR, "minigolf")
+            if os.path.exists(minigolf_bin) and os.access(minigolf_bin, os.X_OK):
+                cmd = [minigolf_bin, "-m=np"]
+            else:
+                cmd = ["go", "run", "main.go", "-m=np"]
             for inc in args.include:
                 cmd.extend(["-I", inc])
             cmd.extend(["-o", npasm_path, cur_file])
