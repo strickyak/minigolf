@@ -1,7 +1,7 @@
 ;
 ; Starting whole-program compilation (NP Backend)
 ; Target architecture: NP
-; Output object file: np-tests/test_for3.npasm
+; Output object file: 
 ; Source files: [np-tests/test_for3.golf]
 ;
 
@@ -16,7 +16,13 @@
     .local _tmp_base: scalar
     .local _tmp_cap: scalar
     .local _tmp_len: scalar
+    .local _tmp_addr: scalar
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
 
+; init_0()
 ; for <init>; <cond>; <inc>
 ; i := byte(0)
     PUSH_0

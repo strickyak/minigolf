@@ -45,11 +45,12 @@ type Generator struct {
 	labelCounter int
 
 	// Global declarations across modules
-	globals     map[string]TypeKind
-	globalSizes map[string]int
-	globalTypes map[string]string
-	funcs       map[string]*ast.FuncStatement
-	consts      map[string]ast.Expression
+	globals         map[string]TypeKind
+	globalSizes     map[string]int
+	globalElemSizes map[string]int
+	globalTypes     map[string]string
+	funcs           map[string]*ast.FuncStatement
+	consts          map[string]ast.Expression
 
 	// Per-function state
 	currentFunc *ast.FuncStatement
@@ -69,11 +70,12 @@ type Generator struct {
 // New creates a new NPCode code generator.
 func New() *Generator {
 	return &Generator{
-		globals:     make(map[string]TypeKind),
-		globalSizes: make(map[string]int),
-		globalTypes: make(map[string]string),
-		funcs:       make(map[string]*ast.FuncStatement),
-		consts:      make(map[string]ast.Expression),
+		globals:         make(map[string]TypeKind),
+		globalSizes:     make(map[string]int),
+		globalElemSizes: make(map[string]int),
+		globalTypes:     make(map[string]string),
+		funcs:           make(map[string]*ast.FuncStatement),
+		consts:          make(map[string]ast.Expression),
 	}
 }
 
@@ -135,8 +137,9 @@ func (g *Generator) collectDeclarations(program *ast.Program) {
 				tStr = g.exprToString(s.ValueType)
 				kind = g.getTypeKind(s.ValueType)
 				if arr, ok := s.ValueType.(*ast.ArrayType); ok && arr.Length != nil {
+					elemSize := g.getTypeSize(arr.Elt)
+					g.globalElemSizes[qname] = elemSize
 					if intLit, ok := arr.Length.(*ast.IntegerLiteral); ok {
-						elemSize := g.getTypeSize(arr.Elt)
 						size = int(intLit.Value) * elemSize
 						kind = KindBuffer
 					}
@@ -239,6 +242,11 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	g.addLocal("_tmp_base", KindScalar)
 	g.addLocal("_tmp_cap", KindScalar)
 	g.addLocal("_tmp_len", KindScalar)
+	g.addLocal("_tmp_addr", KindScalar)
+	g.addLocal("_swap_0", KindSlice)
+	g.addLocal("_swap_1", KindSlice)
+	g.addLocal("_swap_2", KindSlice)
+	g.addLocal("_swap_3", KindSlice)
 
 	// Emit function header
 	g.emitComment("====================================================================")
@@ -396,10 +404,16 @@ func (g *Generator) scanLocalsFromStatement(stmt ast.Statement) {
 			if s.Value != nil {
 				if valId, ok := s.Value.(*ast.Identifier); ok && valId.Value != "_" {
 					elemKind := KindScalar
+					tStr := "word"
 					if rngKind == KindSlice {
-						// string element is byte (scalar), slice[T] element is T
+						elemKind, _ = g.getElemType(s.RangeValue)
+						if elemKind == KindSlice {
+							tStr = "string"
+						} else {
+							tStr = "byte"
+						}
 					}
-					g.addLocal(valId.Value, elemKind)
+					g.addLocalWithType(valId.Value, elemKind, tStr)
 				}
 			}
 		}
@@ -534,7 +548,37 @@ func (g *Generator) compileAssign(s *ast.AssignStatement) {
 		lhs := s.Names[0]
 		rhs := s.Values[0]
 
-		// Special case: smap.Insert or list.Append might be desugared into assignment
+		if sel, ok := lhs.(*ast.SelectorExpression); ok {
+			offset := 0
+			switch sel.Right.Value {
+			case "Base":
+				offset = 0
+			case "Cap":
+				offset = 2
+			case "Len":
+				offset = 4
+			default:
+				panic(fmt.Sprintf("unsupported selector field %s", sel.Right.Value))
+			}
+			if id, ok := sel.Left.(*ast.Identifier); ok {
+				if _, isGlobal := g.globals[id.Value]; isGlobal {
+					g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+				} else if _, isLocal := g.locals[id.Value]; isLocal {
+					g.emit("    ADDR_OF_LOCAL %s", id.Value)
+				} else if _, isParam := g.params[id.Value]; isParam {
+					g.emit("    ADDR_OF_LOCAL %s", id.Value)
+				} else {
+					g.compileExpression(sel.Left)
+				}
+			} else {
+				g.compileExpression(sel.Left)
+			}
+			g.emit("    PUSH_I16 %d", offset)
+			g.compileExpression(rhs)
+			g.emit("    SET_WORD_FIELD")
+			return
+		}
+
 		g.compileExpression(rhs)
 		g.storeTarget(lhs, rhs)
 		return
@@ -553,13 +597,15 @@ func (g *Generator) compileAssign(s *ast.AssignStatement) {
 
 	// Multiple assignment: a, b = c, d
 	if len(s.Names) == len(s.Values) {
-		// Evaluate all RHS values onto stack
-		for _, rhs := range s.Values {
+		tempVars := make([]string, len(s.Values))
+		for i, rhs := range s.Values {
+			tempVars[i] = fmt.Sprintf("_swap_%d", i)
 			g.compileExpression(rhs)
+			g.emit("    STORE_LOCAL %s", tempVars[i])
 		}
-		// Store in reverse order
-		for i := len(s.Names) - 1; i >= 0; i-- {
-			g.storeTarget(s.Names[i], s.Values[i])
+		for i, lhs := range s.Names {
+			g.emit("    LOAD_LOCAL %s", tempVars[i])
+			g.storeTarget(lhs, s.Values[i])
 		}
 		return
 	}
@@ -597,16 +643,42 @@ func (g *Generator) storeTarget(lhs ast.Expression, rhsContext ast.Expression) {
 		// Fallback to local
 		g.emit("    STORE_LOCAL %s", target.Value)
 
+	case *ast.SelectorExpression:
+		offset := 0
+		switch target.Right.Value {
+		case "Base":
+			offset = 0
+		case "Cap":
+			offset = 2
+		case "Len":
+			offset = 4
+		default:
+			panic(fmt.Sprintf("unsupported selector field %s", target.Right.Value))
+		}
+		tmpVal := "_tmp_base"
+		g.emit("    STORE_LOCAL %s", tmpVal)
+		if id, ok := target.Left.(*ast.Identifier); ok {
+			if _, isGlobal := g.globals[id.Value]; isGlobal {
+				g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+			} else if _, isLocal := g.locals[id.Value]; isLocal {
+				g.emit("    ADDR_OF_LOCAL %s", id.Value)
+			} else if _, isParam := g.params[id.Value]; isParam {
+				g.emit("    ADDR_OF_LOCAL %s", id.Value)
+			} else {
+				g.compileExpression(target.Left)
+			}
+		} else {
+			g.compileExpression(target.Left)
+		}
+		g.emit("    PUSH_I16 %d", offset)
+		g.emit("    LOAD_LOCAL %s", tmpVal)
+		g.emit("    SET_WORD_FIELD")
+		return
+
 	case *ast.PrefixExpression:
 		// *ptr = val
 		if target.Operator == "*" {
-			// Stack currently has `val`.
-			// We need `ptr`, then `val`, then `STORE_FIELD 0`.
-			// Evaluate ptr to temporary or swap:
-			// In NPCode: obj_ptr is popped first, val is popped second in STORE_FIELD.
-			// Stack must have: [obj_ptr, val].
-			// If stack has [val], we can store val in temp, push ptr, push val, STORE_FIELD 0.
-			tempName := g.allocTempLocal(KindScalar)
+			tempName := "_tmp_base"
 			g.emit("    STORE_LOCAL %s", tempName)
 			g.compileExpression(target.Right)
 			g.emit("    LOAD_LOCAL %s", tempName)
@@ -616,14 +688,49 @@ func (g *Generator) storeTarget(lhs ast.Expression, rhsContext ast.Expression) {
 		panic(fmt.Sprintf("invalid assignment target prefix operator %q", target.Operator))
 
 	case *ast.IndexExpression:
-		// target.Left[target.Indices[0]] = val
-		// SLICE_SET_WORD expects stack: [slice, idx, val]
-		tempVal := g.allocTempLocal(KindScalar)
-		g.emit("    STORE_LOCAL %s", tempVal)
-		g.compileExpression(target.Left)
-		g.compileExpression(target.Indices[0])
-		g.emit("    LOAD_LOCAL %s", tempVal)
-		g.emit("    SLICE_SET_WORD")
+		elemKind, elemSize := g.getElemType(target.Left)
+		if elemKind == KindSlice && elemSize == 6 {
+			// Stack currently has 3-word slice/string: [Base, Cap, Len]
+			tmpLen := "_tmp_len"
+			tmpCap := "_tmp_cap"
+			tmpBase := "_tmp_base"
+			g.emit("    STORE_LOCAL %s", tmpLen)
+			g.emit("    STORE_LOCAL %s", tmpCap)
+			g.emit("    STORE_LOCAL %s", tmpBase)
+
+			g.compileElemAddress(target.Left, target.Indices[0], elemSize)
+			tmpAddr := "_tmp_addr"
+			g.emit("    STORE_LOCAL %s", tmpAddr)
+
+			g.emit("    LOAD_LOCAL %s", tmpAddr)
+			g.emit("    PUSH_0")
+			g.emit("    LOAD_LOCAL %s", tmpBase)
+			g.emit("    SET_WORD_FIELD")
+
+			g.emit("    LOAD_LOCAL %s", tmpAddr)
+			g.emit("    PUSH_I16 2")
+			g.emit("    LOAD_LOCAL %s", tmpCap)
+			g.emit("    SET_WORD_FIELD")
+
+			g.emit("    LOAD_LOCAL %s", tmpAddr)
+			g.emit("    PUSH_I16 4")
+			g.emit("    LOAD_LOCAL %s", tmpLen)
+			g.emit("    SET_WORD_FIELD")
+		} else if elemSize == 1 {
+			tmpVal := "_tmp_base"
+			g.emit("    STORE_LOCAL %s", tmpVal)
+			g.compileElemAddress(target.Left, target.Indices[0], elemSize)
+			g.emit("    PUSH_0")
+			g.emit("    LOAD_LOCAL %s", tmpVal)
+			g.emit("    SET_CHAR_FIELD")
+		} else {
+			tmpVal := "_tmp_base"
+			g.emit("    STORE_LOCAL %s", tmpVal)
+			g.compileElemAddress(target.Left, target.Indices[0], elemSize)
+			g.emit("    PUSH_0")
+			g.emit("    LOAD_LOCAL %s", tmpVal)
+			g.emit("    SET_WORD_FIELD")
+		}
 
 	default:
 		panic(fmt.Sprintf("unsupported assignment target type: %T", lhs))
@@ -751,14 +858,20 @@ func (g *Generator) compileForRange(s *ast.ForRangeStatement) {
 	lenVar := fmt.Sprintf("_rng_len_%d", line)
 	valVar := fmt.Sprintf("_rng_val_%d", line)
 
-	// Evaluate range target and store in valVar
-	g.compileExpression(s.RangeValue)
-	g.emit("    STORE_LOCAL %s", valVar)
+	isSlice := (g.inferType(s.RangeValue) == KindSlice)
 
-	// lenVar = len(valVar)
-	g.emit("    LOAD_LOCAL %s", valVar)
-	g.emit("    SLICE_LEN")
-	g.emit("    STORE_LOCAL %s", lenVar)
+	if !isSlice {
+		// Integer range: for k := range N
+		g.compileExpression(s.RangeValue)
+		g.emit("    STORE_LOCAL %s", lenVar)
+	} else {
+		// Slice range: for i, val := range slice
+		g.compileExpression(s.RangeValue)
+		g.emit("    STORE_LOCAL %s", valVar)
+		g.emit("    LOAD_LOCAL %s", valVar)
+		g.emit("    SLICE_LEN")
+		g.emit("    STORE_LOCAL %s", lenVar)
+	}
 
 	// idxVar = 0
 	g.emit("    PUSH_0")
@@ -787,14 +900,41 @@ func (g *Generator) compileForRange(s *ast.ForRangeStatement) {
 	// Bind value (element) if present and not blank
 	if s.Value != nil {
 		if id, ok := s.Value.(*ast.Identifier); ok && id.Value != "_" {
+			elemKind, elemSize := g.getElemType(s.RangeValue)
+			// valVar is a slice (Base, Cap, Len)
+			// Base is at offset 4 from top of slice (pop Len, pop Cap)
 			g.emit("    LOAD_LOCAL %s", valVar)
+			g.emit("    POP")
+			g.emit("    POP")
 			g.emit("    LOAD_LOCAL %s", idxVar)
-			if g.inferType(s.RangeValue) == KindSlice {
-				g.emit("    SLICE_GET_BYTE")
-			} else {
-				g.emit("    SLICE_GET_WORD")
+			if elemSize != 1 {
+				g.emit("    PUSH_I16 %d", elemSize)
+				g.emit("    MUL")
 			}
-			g.emit("    STORE_LOCAL %s", id.Value)
+			g.emit("    ADD")
+
+			if elemKind == KindSlice && elemSize == 6 {
+				tmpAddr := "_tmp_addr"
+				g.emit("    STORE_LOCAL %s", tmpAddr)
+				g.emit("    LOAD_LOCAL %s", tmpAddr)
+				g.emit("    PUSH_0")
+				g.emit("    GET_WORD_FIELD")
+				g.emit("    LOAD_LOCAL %s", tmpAddr)
+				g.emit("    PUSH_I16 2")
+				g.emit("    GET_WORD_FIELD")
+				g.emit("    LOAD_LOCAL %s", tmpAddr)
+				g.emit("    PUSH_I16 4")
+				g.emit("    GET_WORD_FIELD")
+				g.emit("    STORE_LOCAL %s", id.Value)
+			} else if elemSize == 1 {
+				g.emit("    PUSH_0")
+				g.emit("    GET_CHAR_FIELD")
+				g.emit("    STORE_LOCAL %s", id.Value)
+			} else {
+				g.emit("    PUSH_0")
+				g.emit("    GET_WORD_FIELD")
+				g.emit("    STORE_LOCAL %s", id.Value)
+			}
 		}
 	}
 
@@ -954,29 +1094,56 @@ func (g *Generator) compileExpression(expr ast.Expression) {
 		if e.IsSlice || len(e.Indices) >= 2 {
 			g.compileSubSlice(e)
 		} else if len(e.Indices) == 1 {
-			if id, ok := e.Left.(*ast.Identifier); ok && g.globals[id.Value] == KindBuffer {
-				g.emit("    ADDR_OF_GLOBAL %s", id.Value)
-				sz := g.globalSizes[id.Value]
-				g.emit("    PUSH_I16 %d", sz)
-				g.emit("    PUSH_I16 %d", sz)
-				g.emit("    SLICE_NEW")
-				g.compileExpression(e.Indices[0])
-				g.emit("    SLICE_GET_BYTE")
+			elemKind, elemSize := g.getElemType(e.Left)
+			g.compileElemAddress(e.Left, e.Indices[0], elemSize)
+			if elemKind == KindSlice && elemSize == 6 {
+				tmpAddr := "_tmp_addr"
+				g.emit("    STORE_LOCAL %s", tmpAddr)
+				g.emit("    LOAD_LOCAL %s", tmpAddr)
+				g.emit("    PUSH_0")
+				g.emit("    GET_WORD_FIELD")
+				g.emit("    LOAD_LOCAL %s", tmpAddr)
+				g.emit("    PUSH_I16 2")
+				g.emit("    GET_WORD_FIELD")
+				g.emit("    LOAD_LOCAL %s", tmpAddr)
+				g.emit("    PUSH_I16 4")
+				g.emit("    GET_WORD_FIELD")
+			} else if elemSize == 1 {
+				g.emit("    PUSH_0")
+				g.emit("    GET_CHAR_FIELD")
 			} else {
-				g.compileExpression(e.Left)
-				g.compileExpression(e.Indices[0])
-				if g.inferType(e.Left) == KindSlice {
-					g.emit("    SLICE_GET_BYTE")
-				} else {
-					g.emit("    SLICE_GET_WORD")
-				}
+				g.emit("    PUSH_0")
+				g.emit("    GET_WORD_FIELD")
 			}
 		}
 
 	case *ast.SelectorExpression:
-		// Access struct field
-		g.compileExpression(e.Left)
-		g.emit("    LOAD_FIELD 0")
+		offset := 0
+		switch e.Right.Value {
+		case "Base":
+			offset = 0
+		case "Cap":
+			offset = 2
+		case "Len":
+			offset = 4
+		default:
+			panic(fmt.Sprintf("unsupported selector field %s", e.Right.Value))
+		}
+		if id, ok := e.Left.(*ast.Identifier); ok {
+			if _, isGlobal := g.globals[id.Value]; isGlobal {
+				g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+			} else if _, isLocal := g.locals[id.Value]; isLocal {
+				g.emit("    ADDR_OF_LOCAL %s", id.Value)
+			} else if _, isParam := g.params[id.Value]; isParam {
+				g.emit("    ADDR_OF_LOCAL %s", id.Value)
+			} else {
+				g.compileExpression(e.Left)
+			}
+		} else {
+			g.compileExpression(e.Left)
+		}
+		g.emit("    PUSH_I16 %d", offset)
+		g.emit("    GET_WORD_FIELD")
 
 	default:
 		panic(fmt.Sprintf("unsupported expression type in MiniGolf-NP: %T at line %d", expr, expr.GetToken().Line))
@@ -1036,8 +1203,34 @@ func (g *Generator) compilePrefix(e *ast.PrefixExpression) {
 				g.emit("    ADDR_OF_GLOBAL %s", id.Value)
 				return
 			}
+			if _, isLocal := g.locals[id.Value]; isLocal {
+				g.emit("    ADDR_OF_LOCAL %s", id.Value)
+				return
+			}
+			if _, isParam := g.params[id.Value]; isParam {
+				g.emit("    ADDR_OF_LOCAL %s", id.Value)
+				return
+			}
 		}
-		panic(fmt.Sprintf("address-of operator '&' is only supported for globals in MiniGolf-NP at line %d", e.Token.Line))
+		if idxExpr, ok := e.Right.(*ast.IndexExpression); ok {
+			if id, ok := idxExpr.Left.(*ast.Identifier); ok {
+				if _, isGlobal := g.globals[id.Value]; isGlobal {
+					elemSize := g.globalElemSizes[id.Value]
+					if elemSize == 0 {
+						elemSize = 2
+					}
+					g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+					g.compileExpression(idxExpr.Indices[0])
+					if elemSize != 1 {
+						g.emit("    PUSH_I16 %d", elemSize)
+						g.emit("    MUL")
+					}
+					g.emit("    ADD")
+					return
+				}
+			}
+		}
+		panic(fmt.Sprintf("address-of operator '&' is only supported for variables and arrays in MiniGolf-NP at line %d", e.Token.Line))
 	case "!":
 		g.compileExpression(e.Right)
 		g.emit("    NOT")
@@ -1100,17 +1293,17 @@ func (g *Generator) compileInfix(e *ast.InfixExpression) {
 		case "!=":
 			// STR_CMP returns 0 on match, non-zero on mismatch
 		case "<":
-			g.emit("    PUSH_0")
-			g.emit("    CMP_LT")
+			g.emit("    PUSH_NEG1")
+			g.emit("    CMP_EQ")
 		case "<=":
-			g.emit("    PUSH_0")
-			g.emit("    CMP_LE")
+			g.emit("    PUSH_1")
+			g.emit("    CMP_NE")
 		case ">":
-			g.emit("    PUSH_0")
-			g.emit("    CMP_GT")
+			g.emit("    PUSH_1")
+			g.emit("    CMP_EQ")
 		case ">=":
-			g.emit("    PUSH_0")
-			g.emit("    CMP_GE")
+			g.emit("    PUSH_NEG1")
+			g.emit("    CMP_NE")
 		}
 		return
 	}
@@ -1625,6 +1818,72 @@ func (g *Generator) getTypeSize(typ ast.Expression) int {
 	}
 }
 
+func (g *Generator) getElemType(expr ast.Expression) (TypeKind, int) {
+	if expr == nil {
+		return KindScalar, 2
+	}
+	tStr := ""
+	if id, ok := expr.(*ast.Identifier); ok {
+		if t, ok := g.localTypes[id.Value]; ok {
+			tStr = t
+		} else if t, ok := g.paramTypes[id.Value]; ok {
+			tStr = t
+		} else if t, ok := g.globalTypes[id.Value]; ok {
+			tStr = t
+		}
+		if g.globals[id.Value] == KindBuffer {
+			elemSz := g.globalElemSizes[id.Value]
+			if elemSz == 6 {
+				return KindSlice, 6
+			} else if elemSz == 1 {
+				return KindScalar, 1
+			}
+			return KindScalar, 2
+		}
+	}
+	if strings.Contains(tStr, "slice[string]") || strings.Contains(tStr, "[]string") || strings.HasSuffix(tStr, "]string") {
+		return KindSlice, 6
+	}
+	if tStr == "string" || strings.Contains(tStr, "byte") || strings.Contains(tStr, "uint8") {
+		return KindScalar, 1
+	}
+	return KindScalar, 2
+}
+
+func (g *Generator) compileElemAddress(target ast.Expression, idx ast.Expression, elemSize int) {
+	if id, ok := target.(*ast.Identifier); ok {
+		if g.globals[id.Value] == KindBuffer {
+			g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+		} else if _, isGlobal := g.globals[id.Value]; isGlobal {
+			g.emit("    ADDR_OF_GLOBAL %s", id.Value)
+			g.emit("    PUSH_0")
+			g.emit("    GET_WORD_FIELD")
+		} else if _, isLocal := g.locals[id.Value]; isLocal {
+			g.emit("    ADDR_OF_LOCAL %s", id.Value)
+			g.emit("    PUSH_0")
+			g.emit("    GET_WORD_FIELD")
+		} else if _, isParam := g.params[id.Value]; isParam {
+			g.emit("    ADDR_OF_LOCAL %s", id.Value)
+			g.emit("    PUSH_0")
+			g.emit("    GET_WORD_FIELD")
+		} else {
+			g.compileExpression(target)
+			g.emit("    PUSH_0")
+			g.emit("    GET_WORD_FIELD")
+		}
+	} else {
+		g.compileExpression(target)
+		g.emit("    PUSH_0")
+		g.emit("    GET_WORD_FIELD")
+	}
+	g.compileExpression(idx)
+	if elemSize != 1 {
+		g.emit("    PUSH_I16 %d", elemSize)
+		g.emit("    MUL")
+	}
+	g.emit("    ADD")
+}
+
 func (g *Generator) inferType(expr ast.Expression) TypeKind {
 	if expr == nil {
 		return KindVoid
@@ -1664,7 +1923,8 @@ func (g *Generator) inferType(expr ast.Expression) TypeKind {
 		if e.IsSlice || len(e.Indices) >= 2 {
 			return KindSlice
 		}
-		return KindScalar
+		elemKind, _ := g.getElemType(e.Left)
+		return elemKind
 	case *ast.CallExpression:
 		return g.inferCallReturnType(e, 0)
 	default:
@@ -1772,7 +2032,18 @@ func (g *Generator) exprToString(expr ast.Expression) string {
 	case *ast.ArrayType:
 		return "[]" + g.exprToString(e.Elt)
 	case *ast.IndexExpression:
-		return g.exprToString(e.Left)
+		res := g.exprToString(e.Left)
+		if len(e.Indices) > 0 {
+			res += "["
+			for i, idx := range e.Indices {
+				if i > 0 {
+					res += ", "
+				}
+				res += g.exprToString(idx)
+			}
+			res += "]"
+		}
+		return res
 	default:
 		return expr.TokenLiteral()
 	}

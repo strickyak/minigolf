@@ -1,0 +1,1055 @@
+;
+; Starting whole-program compilation (NP Backend)
+; Target architecture: NP
+; Output object file: 
+; Source files: [np-tests/test_sort_strings.golf]
+;
+
+; Global Variable Table
+.global arr: 120
+.global v: slice
+
+; ====================================================================
+; Function: Show
+; ====================================================================
+.function Show
+    .param v: slice
+    .local _rng_idx_4: scalar
+    .local _rng_len_4: scalar
+    .local _rng_val_4: slice
+    .local i: scalar
+    .local s: slice
+    .local _pbuf: scalar
+    .local _tmp_base: scalar
+    .local _tmp_cap: scalar
+    .local _tmp_len: scalar
+    .local _tmp_addr: scalar
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; for range ...
+    LOAD_LOCAL v
+    STORE_LOCAL _rng_val_4
+    LOAD_LOCAL _rng_val_4
+    SLICE_LEN
+    STORE_LOCAL _rng_len_4
+    PUSH_0
+    STORE_LOCAL _rng_idx_4
+.L_range_top_1:
+    LOAD_LOCAL _rng_idx_4
+    LOAD_LOCAL _rng_len_4
+    CMP_LT
+    JUMP_IF_FALSE .L_range_exit_3
+    LOAD_LOCAL _rng_idx_4
+    STORE_LOCAL i
+    LOAD_LOCAL _rng_val_4
+    POP
+    POP
+    LOAD_LOCAL _rng_idx_4
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STORE_LOCAL s
+; println(i, s)
+; println(i, s)
+    PUSH_I16 16
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL i
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 8
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    STORE_FIELD 0
+    LOAD_LOCAL _pbuf
+    PUSH_STR "word"
+    POP
+    POP
+    STORE_FIELD 2
+    LOAD_LOCAL s
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 10
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 12
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 14
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 10
+    ADD
+    STORE_FIELD 4
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 6
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    PUSH_I16 2
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_range_cont_2:
+    LOAD_LOCAL _rng_idx_4
+    PUSH_1
+    ADD
+    STORE_LOCAL _rng_idx_4
+    JUMP .L_range_top_1
+.L_range_exit_3:
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: Sort
+; ====================================================================
+.function Sort
+    .param a: slice
+    .local n: scalar
+    .local _rng_idx_11: scalar
+    .local _rng_len_11: scalar
+    .local _rng_val_11: scalar
+    .local k: scalar
+    .local _rng_idx_13: scalar
+    .local _rng_len_13: scalar
+    .local _rng_val_13: scalar
+    .local i: scalar
+    .local j: scalar
+    .local _pbuf: scalar
+    .local _tmp_base: scalar
+    .local _tmp_cap: scalar
+    .local _tmp_len: scalar
+    .local _tmp_addr: scalar
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; n := len(a)
+    LOAD_LOCAL a
+    SLICE_LEN
+    STORE_LOCAL n
+; for range ...
+    LOAD_LOCAL n
+    PUSH_1
+    SUB
+    STORE_LOCAL _rng_len_11
+    PUSH_0
+    STORE_LOCAL _rng_idx_11
+.L_range_top_4:
+    LOAD_LOCAL _rng_idx_11
+    LOAD_LOCAL _rng_len_11
+    CMP_LT
+    JUMP_IF_FALSE .L_range_exit_6
+    LOAD_LOCAL _rng_idx_11
+    STORE_LOCAL k
+; println("-----------------------", k)
+; println("-----------------------", k)
+    PUSH_I16 16
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "-----------------------"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 8
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 10
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 12
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    STORE_FIELD 0
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 2
+    LOAD_LOCAL k
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 14
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 14
+    ADD
+    STORE_FIELD 4
+    LOAD_LOCAL _pbuf
+    PUSH_STR "word"
+    POP
+    POP
+    STORE_FIELD 6
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    PUSH_I16 2
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; for range ...
+    LOAD_LOCAL n
+    PUSH_1
+    SUB
+    STORE_LOCAL _rng_len_13
+    PUSH_0
+    STORE_LOCAL _rng_idx_13
+.L_range_top_7:
+    LOAD_LOCAL _rng_idx_13
+    LOAD_LOCAL _rng_len_13
+    CMP_LT
+    JUMP_IF_FALSE .L_range_exit_9
+    LOAD_LOCAL _rng_idx_13
+    STORE_LOCAL i
+; j := i + 1
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL j
+; if a[...] > a[...]
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL j
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STR_CMP
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_10
+; println("  swap", i, a[...], j, a[...])
+; println("  swap", i, a[...], j, a[...])
+    PUSH_I16 42
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "  swap"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 20
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 22
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 24
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 20
+    ADD
+    STORE_FIELD 0
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 2
+    LOAD_LOCAL i
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 26
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 26
+    ADD
+    STORE_FIELD 4
+    LOAD_LOCAL _pbuf
+    PUSH_STR "word"
+    POP
+    POP
+    STORE_FIELD 6
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 28
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 30
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 32
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 28
+    ADD
+    STORE_FIELD 8
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 10
+    LOAD_LOCAL j
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 34
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 34
+    ADD
+    STORE_FIELD 12
+    LOAD_LOCAL _pbuf
+    PUSH_STR "word"
+    POP
+    POP
+    STORE_FIELD 14
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL j
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 36
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 38
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 40
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 36
+    ADD
+    STORE_FIELD 16
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 18
+    LOAD_LOCAL _pbuf
+    PUSH_I16 5
+    PUSH_I16 5
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; a[...], a[...] = a[...], a[...]
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL j
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STORE_LOCAL _swap_0
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STORE_LOCAL _swap_1
+    LOAD_LOCAL _swap_0
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+    LOAD_LOCAL _swap_1
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL j
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; println("  becomes", i, a[...], j, a[...])
+; println("  becomes", i, a[...], j, a[...])
+    PUSH_I16 42
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "  becomes"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 20
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 22
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 24
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 20
+    ADD
+    STORE_FIELD 0
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 2
+    LOAD_LOCAL i
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 26
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 26
+    ADD
+    STORE_FIELD 4
+    LOAD_LOCAL _pbuf
+    PUSH_STR "word"
+    POP
+    POP
+    STORE_FIELD 6
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 28
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 30
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 32
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 28
+    ADD
+    STORE_FIELD 8
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 10
+    LOAD_LOCAL j
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 34
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 34
+    ADD
+    STORE_FIELD 12
+    LOAD_LOCAL _pbuf
+    PUSH_STR "word"
+    POP
+    POP
+    STORE_FIELD 14
+    ADDR_OF_LOCAL a
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL j
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    GET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    GET_WORD_FIELD
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_base
+    STORE_FIELD 36
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_cap
+    STORE_FIELD 38
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _tmp_len
+    STORE_FIELD 40
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 36
+    ADD
+    STORE_FIELD 16
+    LOAD_LOCAL _pbuf
+    PUSH_STR "string"
+    POP
+    POP
+    STORE_FIELD 18
+    LOAD_LOCAL _pbuf
+    PUSH_I16 5
+    PUSH_I16 5
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_endif_10:
+.L_range_cont_8:
+    LOAD_LOCAL _rng_idx_13
+    PUSH_1
+    ADD
+    STORE_LOCAL _rng_idx_13
+    JUMP .L_range_top_7
+.L_range_exit_9:
+; Show(a)
+    LOAD_LOCAL a
+    CALL Show
+    POP
+.L_range_cont_5:
+    LOAD_LOCAL _rng_idx_11
+    PUSH_1
+    ADD
+    STORE_LOCAL _rng_idx_11
+    JUMP .L_range_top_4
+.L_range_exit_6:
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: main
+; ====================================================================
+.function main entry
+    .local _pbuf: scalar
+    .local _tmp_base: scalar
+    .local _tmp_cap: scalar
+    .local _tmp_len: scalar
+    .local _tmp_addr: scalar
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; init_0()
+; v.Base = word(&arr[...])
+    ADDR_OF_GLOBAL v
+    PUSH_I16 0
+    ADDR_OF_GLOBAL arr
+    PUSH_I8 2
+    PUSH_I16 6
+    MUL
+    ADD
+    SET_WORD_FIELD
+; v.Len = 14
+    ADDR_OF_GLOBAL v
+    PUSH_I16 4
+    PUSH_I8 14
+    SET_WORD_FIELD
+; v.Cap = 14
+    ADDR_OF_GLOBAL v
+    PUSH_I16 2
+    PUSH_I8 14
+    SET_WORD_FIELD
+; v[...] = "zero"
+    PUSH_STR "zero"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_0
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "one"
+    PUSH_STR "one"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_1
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "two"
+    PUSH_STR "two"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 2
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "three"
+    PUSH_STR "three"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 3
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "four"
+    PUSH_STR "four"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 4
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "five"
+    PUSH_STR "five"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 5
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "six"
+    PUSH_STR "six"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 6
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "seven"
+    PUSH_STR "seven"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 7
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "eight"
+    PUSH_STR "eight"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 8
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "nine"
+    PUSH_STR "nine"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 9
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "eighty"
+    PUSH_STR "eighty"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 10
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "ninety"
+    PUSH_STR "ninety"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 11
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "fourty"
+    PUSH_STR "fourty"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 12
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; v[...] = "seventy"
+    PUSH_STR "seventy"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    ADDR_OF_GLOBAL v
+    PUSH_0
+    GET_WORD_FIELD
+    PUSH_I8 13
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_0
+    LOAD_LOCAL _tmp_base
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    LOAD_LOCAL _tmp_cap
+    SET_WORD_FIELD
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    LOAD_LOCAL _tmp_len
+    SET_WORD_FIELD
+; Sort(v)
+    LOAD_GLOBAL v
+    CALL Sort
+    POP
+    RET_VOID
+.endfunction
+

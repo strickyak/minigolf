@@ -200,7 +200,7 @@ def main():
             f"--includedir={build_dir}",
             f"--includedir={SCRIPT_DIR}",
             f"--includedir={NITROS9_DEFS}",
-            "-o", output_path,
+            "--list=/tmp/test_for3.list", "-o", output_path,
             TEMPLATE_ASM
         ]
         run_cmd(lwasm_cmd, verbose=args.verbose)
