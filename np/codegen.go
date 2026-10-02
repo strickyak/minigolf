@@ -573,9 +573,12 @@ func (g *Generator) compileAssign(s *ast.AssignStatement) {
 			} else {
 				g.compileExpression(sel.Left)
 			}
-			g.emit("    PUSH_I16 %d", offset)
+			if offset != 0 {
+				g.emit("    PUSH_I16 %d", offset)
+				g.emit("    ADD")
+			}
 			g.compileExpression(rhs)
-			g.emit("    SET_WORD_FIELD")
+			g.emit("    POKE2")
 			return
 		}
 
@@ -670,9 +673,12 @@ func (g *Generator) storeTarget(lhs ast.Expression, rhsContext ast.Expression) {
 		} else {
 			g.compileExpression(target.Left)
 		}
-		g.emit("    PUSH_I16 %d", offset)
+		if offset != 0 {
+			g.emit("    PUSH_I16 %d", offset)
+			g.emit("    ADD")
+		}
 		g.emit("    LOAD_LOCAL %s", tmpVal)
-		g.emit("    SET_WORD_FIELD")
+		g.emit("    POKE2")
 		return
 
 	case *ast.PrefixExpression:
@@ -682,7 +688,7 @@ func (g *Generator) storeTarget(lhs ast.Expression, rhsContext ast.Expression) {
 			g.emit("    STORE_LOCAL %s", tempName)
 			g.compileExpression(target.Right)
 			g.emit("    LOAD_LOCAL %s", tempName)
-			g.emit("    STORE_FIELD 0")
+			g.emit("    POKE2")
 			return
 		}
 		panic(fmt.Sprintf("invalid assignment target prefix operator %q", target.Operator))
@@ -703,33 +709,32 @@ func (g *Generator) storeTarget(lhs ast.Expression, rhsContext ast.Expression) {
 			g.emit("    STORE_LOCAL %s", tmpAddr)
 
 			g.emit("    LOAD_LOCAL %s", tmpAddr)
-			g.emit("    PUSH_0")
 			g.emit("    LOAD_LOCAL %s", tmpBase)
-			g.emit("    SET_WORD_FIELD")
+			g.emit("    POKE2")
 
 			g.emit("    LOAD_LOCAL %s", tmpAddr)
 			g.emit("    PUSH_I16 2")
+			g.emit("    ADD")
 			g.emit("    LOAD_LOCAL %s", tmpCap)
-			g.emit("    SET_WORD_FIELD")
+			g.emit("    POKE2")
 
 			g.emit("    LOAD_LOCAL %s", tmpAddr)
 			g.emit("    PUSH_I16 4")
+			g.emit("    ADD")
 			g.emit("    LOAD_LOCAL %s", tmpLen)
-			g.emit("    SET_WORD_FIELD")
+			g.emit("    POKE2")
 		} else if elemSize == 1 {
 			tmpVal := "_tmp_base"
 			g.emit("    STORE_LOCAL %s", tmpVal)
 			g.compileElemAddress(target.Left, target.Indices[0], elemSize)
-			g.emit("    PUSH_0")
 			g.emit("    LOAD_LOCAL %s", tmpVal)
-			g.emit("    SET_CHAR_FIELD")
+			g.emit("    POKE1")
 		} else {
 			tmpVal := "_tmp_base"
 			g.emit("    STORE_LOCAL %s", tmpVal)
 			g.compileElemAddress(target.Left, target.Indices[0], elemSize)
-			g.emit("    PUSH_0")
 			g.emit("    LOAD_LOCAL %s", tmpVal)
-			g.emit("    SET_WORD_FIELD")
+			g.emit("    POKE2")
 		}
 
 	default:
@@ -907,32 +912,35 @@ func (g *Generator) compileForRange(s *ast.ForRangeStatement) {
 			g.emit("    POP")
 			g.emit("    POP")
 			g.emit("    LOAD_LOCAL %s", idxVar)
-			if elemSize != 1 {
+			if elemSize == 2 {
+				g.emit("    SHL1_ADD")
+			} else if elemSize == 1 {
+				g.emit("    ADD")
+			} else {
 				g.emit("    PUSH_I16 %d", elemSize)
 				g.emit("    MUL")
+				g.emit("    ADD")
 			}
-			g.emit("    ADD")
 
 			if elemKind == KindSlice && elemSize == 6 {
 				tmpAddr := "_tmp_addr"
 				g.emit("    STORE_LOCAL %s", tmpAddr)
 				g.emit("    LOAD_LOCAL %s", tmpAddr)
-				g.emit("    PUSH_0")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    PEEK2")
 				g.emit("    LOAD_LOCAL %s", tmpAddr)
 				g.emit("    PUSH_I16 2")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    ADD")
+				g.emit("    PEEK2")
 				g.emit("    LOAD_LOCAL %s", tmpAddr)
 				g.emit("    PUSH_I16 4")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    ADD")
+				g.emit("    PEEK2")
 				g.emit("    STORE_LOCAL %s", id.Value)
 			} else if elemSize == 1 {
-				g.emit("    PUSH_0")
-				g.emit("    GET_CHAR_FIELD")
+				g.emit("    PEEK1")
 				g.emit("    STORE_LOCAL %s", id.Value)
 			} else {
-				g.emit("    PUSH_0")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    PEEK2")
 				g.emit("    STORE_LOCAL %s", id.Value)
 			}
 		}
@@ -1100,20 +1108,19 @@ func (g *Generator) compileExpression(expr ast.Expression) {
 				tmpAddr := "_tmp_addr"
 				g.emit("    STORE_LOCAL %s", tmpAddr)
 				g.emit("    LOAD_LOCAL %s", tmpAddr)
-				g.emit("    PUSH_0")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    PEEK2")
 				g.emit("    LOAD_LOCAL %s", tmpAddr)
 				g.emit("    PUSH_I16 2")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    ADD")
+				g.emit("    PEEK2")
 				g.emit("    LOAD_LOCAL %s", tmpAddr)
 				g.emit("    PUSH_I16 4")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    ADD")
+				g.emit("    PEEK2")
 			} else if elemSize == 1 {
-				g.emit("    PUSH_0")
-				g.emit("    GET_CHAR_FIELD")
+				g.emit("    PEEK1")
 			} else {
-				g.emit("    PUSH_0")
-				g.emit("    GET_WORD_FIELD")
+				g.emit("    PEEK2")
 			}
 		}
 
@@ -1142,8 +1149,11 @@ func (g *Generator) compileExpression(expr ast.Expression) {
 		} else {
 			g.compileExpression(e.Left)
 		}
-		g.emit("    PUSH_I16 %d", offset)
-		g.emit("    GET_WORD_FIELD")
+		if offset != 0 {
+			g.emit("    PUSH_I16 %d", offset)
+			g.emit("    ADD")
+		}
+		g.emit("    PEEK2")
 
 	default:
 		panic(fmt.Sprintf("unsupported expression type in MiniGolf-NP: %T at line %d", expr, expr.GetToken().Line))
@@ -1245,7 +1255,7 @@ func (g *Generator) compilePrefix(e *ast.PrefixExpression) {
 	case "*":
 		// Pointer dereference *ptr
 		g.compileExpression(e.Right)
-		g.emit("    LOAD_FIELD 0")
+		g.emit("    PEEK2")
 	default:
 		panic(fmt.Sprintf("unsupported prefix operator %q at line %d", e.Operator, e.Token.Line))
 	}
@@ -1542,15 +1552,26 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    BUF_FREE")
 		return
 
-	case "peek", "peekb", "peek_byte":
+	case "peekb", "peek_byte":
 		g.compileExpression(call.Arguments[0])
-		g.emit("    LOAD_FIELD 0")
+		g.emit("    PEEK1")
 		return
 
-	case "poke", "pokeb", "poke_byte":
+	case "peek", "peekw", "peek_word":
+		g.compileExpression(call.Arguments[0])
+		g.emit("    PEEK2")
+		return
+
+	case "pokeb", "poke_byte":
 		g.compileExpression(call.Arguments[0])
 		g.compileExpression(call.Arguments[1])
-		g.emit("    STORE_FIELD 0")
+		g.emit("    POKE1")
+		return
+
+	case "poke", "pokew", "poke_word":
+		g.compileExpression(call.Arguments[0])
+		g.compileExpression(call.Arguments[1])
+		g.emit("    POKE2")
 		return
 
 	case "sys_exit", "exit":
@@ -1856,32 +1877,31 @@ func (g *Generator) compileElemAddress(target ast.Expression, idx ast.Expression
 			g.emit("    ADDR_OF_GLOBAL %s", id.Value)
 		} else if _, isGlobal := g.globals[id.Value]; isGlobal {
 			g.emit("    ADDR_OF_GLOBAL %s", id.Value)
-			g.emit("    PUSH_0")
-			g.emit("    GET_WORD_FIELD")
+			g.emit("    PEEK2")
 		} else if _, isLocal := g.locals[id.Value]; isLocal {
 			g.emit("    ADDR_OF_LOCAL %s", id.Value)
-			g.emit("    PUSH_0")
-			g.emit("    GET_WORD_FIELD")
+			g.emit("    PEEK2")
 		} else if _, isParam := g.params[id.Value]; isParam {
 			g.emit("    ADDR_OF_LOCAL %s", id.Value)
-			g.emit("    PUSH_0")
-			g.emit("    GET_WORD_FIELD")
+			g.emit("    PEEK2")
 		} else {
 			g.compileExpression(target)
-			g.emit("    PUSH_0")
-			g.emit("    GET_WORD_FIELD")
+			g.emit("    PEEK2")
 		}
 	} else {
 		g.compileExpression(target)
-		g.emit("    PUSH_0")
-		g.emit("    GET_WORD_FIELD")
+		g.emit("    PEEK2")
 	}
 	g.compileExpression(idx)
-	if elemSize != 1 {
+	if elemSize == 2 {
+		g.emit("    SHL1_ADD")
+	} else if elemSize == 1 {
+		g.emit("    ADD")
+	} else {
 		g.emit("    PUSH_I16 %d", elemSize)
 		g.emit("    MUL")
+		g.emit("    ADD")
 	}
-	g.emit("    ADD")
 }
 
 func (g *Generator) inferType(expr ast.Expression) TypeKind {
@@ -2192,28 +2212,44 @@ func (g *Generator) compilePrint(call *ast.CallExpression, isPrintln bool) {
 			g.emit("    STORE_LOCAL %s", tmpBase)
 
 			g.emit("    LOAD_LOCAL %s", pbufVar)
+			if curValOff != 0 {
+				g.emit("    PUSH_I16 %d", curValOff)
+				g.emit("    ADD")
+			}
 			g.emit("    LOAD_LOCAL %s", tmpBase)
-			g.emit("    STORE_FIELD %d", curValOff)
+			g.emit("    POKE2")
 
 			g.emit("    LOAD_LOCAL %s", pbufVar)
+			g.emit("    PUSH_I16 %d", curValOff+2)
+			g.emit("    ADD")
 			g.emit("    LOAD_LOCAL %s", tmpCap)
-			g.emit("    STORE_FIELD %d", curValOff+2)
+			g.emit("    POKE2")
 
 			g.emit("    LOAD_LOCAL %s", pbufVar)
+			g.emit("    PUSH_I16 %d", curValOff+4)
+			g.emit("    ADD")
 			g.emit("    LOAD_LOCAL %s", tmpLen)
-			g.emit("    STORE_FIELD %d", curValOff+4)
+			g.emit("    POKE2")
 		} else {
 			// Scalar value (1 word)
 			tmpVal := "_tmp_base"
 			g.compileExpression(arg)
 			g.emit("    STORE_LOCAL %s", tmpVal)
 			g.emit("    LOAD_LOCAL %s", pbufVar)
+			if curValOff != 0 {
+				g.emit("    PUSH_I16 %d", curValOff)
+				g.emit("    ADD")
+			}
 			g.emit("    LOAD_LOCAL %s", tmpVal)
-			g.emit("    STORE_FIELD %d", curValOff)
+			g.emit("    POKE2")
 		}
 
 		// 2. Set any[i].BaseAddr (offset i * 4) = pbuf + curValOff (+ 1 if byte)
 		g.emit("    LOAD_LOCAL %s", pbufVar)
+		if i*4 != 0 {
+			g.emit("    PUSH_I16 %d", i*4)
+			g.emit("    ADD")
+		}
 		g.emit("    LOAD_LOCAL %s", pbufVar)
 		baseOff := curValOff
 		if tStr == "byte" || tStr == "uint8" {
@@ -2223,14 +2259,16 @@ func (g *Generator) compilePrint(call *ast.CallExpression, isPrintln bool) {
 			g.emit("    PUSH_I16 %d", baseOff)
 			g.emit("    ADD")
 		}
-		g.emit("    STORE_FIELD %d", i*4)
+		g.emit("    POKE2")
 
 		// 3. Set any[i].TypeStr (offset i * 4 + 2) = pointer to type name string
 		g.emit("    LOAD_LOCAL %s", pbufVar)
+		g.emit("    PUSH_I16 %d", i*4+2)
+		g.emit("    ADD")
 		g.emit("    PUSH_STR %s", strconv.Quote(tStr))
 		g.emit("    POP")
 		g.emit("    POP")
-		g.emit("    STORE_FIELD %d", i*4+2)
+		g.emit("    POKE2")
 	}
 
 	// Push Slice[any] { pbuf, nArgs, nArgs }

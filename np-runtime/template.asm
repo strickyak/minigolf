@@ -144,20 +144,23 @@ init_tbl
         leay    op_addr_of_global,pcr
         sty     $30*2,x
 
-        leay    op_get_word_field,pcr
+        leay    op_peek2,pcr
         sty     $31*2,x
 
-        leay    op_set_word_field,pcr
+        leay    op_poke2,pcr
         sty     $32*2,x
 
-        leay    op_get_char_field,pcr
+        leay    op_peek1,pcr
         sty     $33*2,x
 
-        leay    op_set_char_field,pcr
+        leay    op_poke1,pcr
         sty     $34*2,x
 
         leay    op_addr_of_local,pcr
         sty     $35*2,x
+
+        leay    op_shl1_add,pcr
+        sty     $36*2,x
 
         leay    op_add,pcr
         sty     $40*2,x
@@ -533,41 +536,37 @@ sg_loop
         leas    1,s             ; clean stack
         lbra    dispatch
 
-op_get_word_field
-        pulu    d               ; D = offset
-        pulu    x               ; X = ptr
-        leax    d,x             ; X = ptr + offset
-        ldd     ,x              ; D = word at ptr + offset
-        pshu    d
+op_peek2
+        ldx     ,u              ; X = addr
+        ldd     ,x              ; D = word at addr
+        std     ,u              ; replace addr with word
         lbra    dispatch
 
-op_set_word_field
+op_poke2
         pulu    d               ; D = val
-        pshs    d               ; save val on S
-        pulu    d               ; D = offset
-        pulu    x               ; X = ptr
-        leax    d,x             ; X = ptr + offset
-        puls    d               ; restore D = val
-        std     ,x              ; store val at ptr + offset
+        pulu    x               ; X = addr
+        std     ,x              ; store word at addr
         lbra    dispatch
 
-op_get_char_field
-        pulu    d               ; D = offset
-        pulu    x               ; X = ptr
-        leax    d,x             ; X = ptr + offset
-        ldb     ,x              ; B = byte
-        clra                    ; zero-extend to 16-bit word
-        pshu    d
+op_peek1
+        ldx     ,u              ; X = addr
+        ldb     ,x              ; B = byte at addr
+        clra                    ; zero-extend
+        std     ,u              ; replace addr with word
         lbra    dispatch
 
-op_set_char_field
+op_poke1
         pulu    d               ; B = val (low byte)
-        pshs    b               ; save val on S
-        pulu    d               ; D = offset
-        pulu    x               ; X = ptr
-        leax    d,x             ; X = ptr + offset
-        puls    a               ; A = val
-        sta     ,x              ; store byte at ptr + offset
+        pulu    x               ; X = addr
+        stb     ,x              ; store byte at addr
+        lbra    dispatch
+
+op_shl1_add
+        pulu    d               ; D = index
+        aslb
+        rola                    ; D = index << 1
+        addd    ,u              ; D = (index << 1) + base
+        std     ,u              ; replace base with result
         lbra    dispatch
 
 op_buf_alloc
