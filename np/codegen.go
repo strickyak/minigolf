@@ -2277,20 +2277,29 @@ func (g *Generator) getElemTypeInfo(expr ast.Expression) (string, int) {
 			if elemSz == 0 {
 				elemSz = 1
 			}
-			if idx := strings.Index(tStr, "]"); idx >= 0 {
+			if strings.HasPrefix(tStr, "slice[") && strings.HasSuffix(tStr, "]") {
+				elemTypeName := tStr[6 : len(tStr)-1]
+				return elemTypeName, elemSz
+			}
+			if idx := strings.Index(tStr, "]"); idx >= 0 && idx < len(tStr)-1 {
 				elemTypeName := tStr[idx+1:]
 				return elemTypeName, elemSz
 			}
 			return "word", elemSz
 		}
 	}
-	if idx := strings.Index(tStr, "]"); idx >= 0 {
-		elemTypeName := tStr[idx+1:]
+	if strings.HasPrefix(tStr, "slice[") && strings.HasSuffix(tStr, "]") {
+		elemTypeName := tStr[6 : len(tStr)-1]
 		elemSz := g.getTypeSizeByName(elemTypeName)
 		return elemTypeName, elemSz
 	}
 	if strings.Contains(tStr, "slice[string]") || strings.Contains(tStr, "[]string") || strings.HasSuffix(tStr, "]string") {
 		return "string", 6
+	}
+	if idx := strings.Index(tStr, "]"); idx >= 0 && idx < len(tStr)-1 {
+		elemTypeName := tStr[idx+1:]
+		elemSz := g.getTypeSizeByName(elemTypeName)
+		return elemTypeName, elemSz
 	}
 	if tStr == "string" || strings.Contains(tStr, "byte") || strings.Contains(tStr, "uint8") {
 		return "byte", 1

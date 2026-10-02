@@ -1,0 +1,317 @@
+----------------------- 0
+  swap 0 zero 1 one
+  becomes 0 one 1 zero
+  swap 1 zero 2 two
+  becomes 1 two 2 zero
+  swap 2 zero 3 three
+  becomes 2 three 3 zero
+  swap 3 zero 4 four
+  becomes 3 four 4 zero
+  swap 4 zero 5 five
+  becomes 4 five 5 zero
+  swap 5 zero 6 six
+  becomes 5 six 6 zero
+  swap 6 zero 7 seven
+  becomes 6 seven 7 zero
+  swap 7 zero 8 eight
+  becomes 7 eight 8 zero
+  swap 8 zero 9 nine
+  becomes 8 nine 9 zero
+  swap 9 zero 10 eighty
+  becomes 9 eighty 10 zero
+  swap 10 zero 11 ninety
+  becomes 10 ninety 11 zero
+  swap 11 zero 12 fourty
+  becomes 11 fourty 12 zero
+  swap 12 zero 13 seventy
+  becomes 12 seventy 13 zero
+0 one
+1 two
+2 three
+3 four
+4 five
+5 six
+6 seven
+7 eight
+8 nine
+9 eighty
+10 ninety
+11 fourty
+12 seventy
+13 zero
+----------------------- 1
+  swap 1 two 2 three
+  becomes 1 three 2 two
+  swap 2 two 3 four
+  becomes 2 four 3 two
+  swap 3 two 4 five
+  becomes 3 five 4 two
+  swap 4 two 5 six
+  becomes 4 six 5 two
+  swap 5 two 6 seven
+  becomes 5 seven 6 two
+  swap 6 two 7 eight
+  becomes 6 eight 7 two
+  swap 7 two 8 nine
+  becomes 7 nine 8 two
+  swap 8 two 9 eighty
+  becomes 8 eighty 9 two
+  swap 9 two 10 ninety
+  becomes 9 ninety 10 two
+  swap 10 two 11 fourty
+  becomes 10 fourty 11 two
+  swap 11 two 12 seventy
+  becomes 11 seventy 12 two
+0 one
+1 three
+2 four
+3 five
+4 six
+5 seven
+6 eight
+7 nine
+8 eighty
+9 ninety
+10 fourty
+11 seventy
+12 two
+13 zero
+----------------------- 2
+  swap 1 three 2 four
+  becomes 1 four 2 three
+  swap 2 three 3 five
+  becomes 2 five 3 three
+  swap 3 three 4 six
+  becomes 3 six 4 three
+  swap 4 three 5 seven
+  becomes 4 seven 5 three
+  swap 5 three 6 eight
+  becomes 5 eight 6 three
+  swap 6 three 7 nine
+  becomes 6 nine 7 three
+  swap 7 three 8 eighty
+  becomes 7 eighty 8 three
+  swap 8 three 9 ninety
+  becomes 8 ninety 9 three
+  swap 9 three 10 fourty
+  becomes 9 fourty 10 three
+  swap 10 three 11 seventy
+  becomes 10 seventy 11 three
+0 one
+1 four
+2 five
+3 six
+4 seven
+5 eight
+6 nine
+7 eighty
+8 ninety
+9 fourty
+10 seventy
+11 three
+12 two
+13 zero
+----------------------- 3
+  swap 0 one 1 four
+  becomes 0 four 1 one
+  swap 1 one 2 five
+  becomes 1 five 2 one
+  swap 3 six 4 seven
+  becomes 3 seven 4 six
+  swap 4 six 5 eight
+  becomes 4 eight 5 six
+  swap 5 six 6 nine
+  becomes 5 nine 6 six
+  swap 6 six 7 eighty
+  becomes 6 eighty 7 six
+  swap 7 six 8 ninety
+  becomes 7 ninety 8 six
+  swap 8 six 9 fourty
+  becomes 8 fourty 9 six
+  swap 9 six 10 seventy
+  becomes 9 seventy 10 six
+0 four
+1 five
+2 one
+3 seven
+4 eight
+5 nine
+6 eighty
+7 ninety
+8 fourty
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 4
+  swap 0 four 1 five
+  becomes 0 five 1 four
+  swap 3 seven 4 eight
+  becomes 3 eight 4 seven
+  swap 4 seven 5 nine
+  becomes 4 nine 5 seven
+  swap 5 seven 6 eighty
+  becomes 5 eighty 6 seven
+  swap 6 seven 7 ninety
+  becomes 6 ninety 7 seven
+  swap 7 seven 8 fourty
+  becomes 7 fourty 8 seven
+0 five
+1 four
+2 one
+3 eight
+4 nine
+5 eighty
+6 ninety
+7 fourty
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 5
+  swap 2 one 3 eight
+  becomes 2 eight 3 one
+  swap 3 one 4 nine
+  becomes 3 nine 4 one
+  swap 4 one 5 eighty
+  becomes 4 eighty 5 one
+  swap 5 one 6 ninety
+  becomes 5 ninety 6 one
+  swap 6 one 7 fourty
+  becomes 6 fourty 7 one
+0 five
+1 four
+2 eight
+3 nine
+4 eighty
+5 ninety
+6 fourty
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 6
+  swap 1 four 2 eight
+  becomes 1 eight 2 four
+  swap 3 nine 4 eighty
+  becomes 3 eighty 4 nine
+  swap 5 ninety 6 fourty
+  becomes 5 fourty 6 ninety
+0 five
+1 eight
+2 four
+3 eighty
+4 nine
+5 fourty
+6 ninety
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 7
+  swap 0 five 1 eight
+  becomes 0 eight 1 five
+  swap 2 four 3 eighty
+  becomes 2 eighty 3 four
+  swap 4 nine 5 fourty
+  becomes 4 fourty 5 nine
+0 eight
+1 five
+2 eighty
+3 four
+4 fourty
+5 nine
+6 ninety
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 8
+  swap 1 five 2 eighty
+  becomes 1 eighty 2 five
+0 eight
+1 eighty
+2 five
+3 four
+4 fourty
+5 nine
+6 ninety
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 9
+0 eight
+1 eighty
+2 five
+3 four
+4 fourty
+5 nine
+6 ninety
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 10
+0 eight
+1 eighty
+2 five
+3 four
+4 fourty
+5 nine
+6 ninety
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 11
+0 eight
+1 eighty
+2 five
+3 four
+4 fourty
+5 nine
+6 ninety
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
+----------------------- 12
+0 eight
+1 eighty
+2 five
+3 four
+4 fourty
+5 nine
+6 ninety
+7 one
+8 seven
+9 seventy
+10 six
+11 three
+12 two
+13 zero
