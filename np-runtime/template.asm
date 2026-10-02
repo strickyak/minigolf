@@ -30,6 +30,7 @@ code_base_ptr   rmb     2       ; pointer to bytecode base
 frame_ptr       rmb     2       ; pointer to current call frame
 cur_vtab        rmb     2       ; pointer to current function's var size table
 callee_vtab     rmb     2       ; temporary for callee var size table during call
+frame_sz        rmb     2       ; temporary for frame size during call/entry
 fcount          rmb     2       ; function count
 entry_func      rmb     2       ; entry function index
 call_ret_pc     rmb     2       ; saved return PC during op_call
@@ -41,10 +42,12 @@ vm_sp           rmb     2       ; saved VM evaluation stack pointer
 vm_len          rmb     2       ; length of any slice
 vm_any          rmb     2       ; current any pointer
 vm_is_println   rmb     1       ; 1 = println, 0 = print
+heap_ptr        rmb     2       ; current allocation pointer in heap_buf
 
-heap_buf        rmb     256     ; heap buffer for BUF_ALLOC
+pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
+heap_buf        rmb     2048    ; heap buffer for Append dynamic slices
 line_buf        rmb     256     ; output line buffer for PRINTLN
-globals_buf     rmb     2048    ; storage buffer for global variables
+globals_buf     rmb     2560    ; storage buffer for global variables
 global_ptrs     rmb     128     ; pointers to each global variable (up to 64 globals)
 dispatch_tbl    rmb     512     ; 256 opcode function pointers
 
@@ -62,6 +65,9 @@ start
 * Save data area base and OS-9 initial stack pointer
         stu     <data_base
         sts     <init_os9_sp
+        ldx     <data_base
+        leax    heap_buf,x
+        stx     <heap_ptr
 
 * Initialize dispatch table with op_illegal
         leax    dispatch_tbl,u
@@ -80,10 +86,25 @@ init_tbl
         sty     $00*2,x
 
         leay    op_push_0,pcr
+        sty     $01*2,x         ; PUSH_NIL
+
+        leay    op_push_nil_slice,pcr
+        sty     $02*2,x         ; PUSH_NIL_SLICE
+
+        leay    op_push_1,pcr
+        sty     $03*2,x         ; PUSH_TRUE
+
+        leay    op_push_0,pcr
+        sty     $04*2,x         ; PUSH_FALSE
+
+        leay    op_push_0,pcr
         sty     $05*2,x
 
         leay    op_push_1,pcr
         sty     $06*2,x
+
+        leay    op_push_neg1,pcr
+        sty     $07*2,x         ; PUSH_NEG1
 
         leay    op_push_i8,pcr
         sty     $08*2,x
@@ -96,6 +117,15 @@ init_tbl
 
         leay    op_pop,pcr
         sty     $0C*2,x
+
+        leay    op_pop_slice,pcr
+        sty     $0D*2,x         ; POP_SLICE
+
+        leay    op_dup,pcr
+        sty     $0E*2,x
+
+        leay    op_swap,pcr
+        sty     $0F*2,x
 
         leay    op_load_local_0,pcr
         sty     $20*2,x
@@ -193,8 +223,14 @@ init_tbl
         leay    op_cmp_ge,pcr
         sty     $51*2,x
 
+        leay    op_not,pcr
+        sty     $52*2,x
+
         leay    op_jump,pcr
         sty     $60*2,x
+
+        leay    op_jump_if_true,pcr
+        sty     $61*2,x
 
         leay    op_jump_if_false,pcr
         sty     $62*2,x
@@ -205,14 +241,29 @@ init_tbl
         leay    op_ret,pcr
         sty     $64*2,x
 
+        leay    op_ret,pcr
+        sty     $65*2,x
+
         leay    op_ret_void,pcr
         sty     $66*2,x
 
         leay    op_slice_len,pcr
         sty     $71*2,x
 
+        leay    op_slice_sub,pcr
+        sty     $73*2,x
+
         leay    op_str_cmp,pcr
         sty     $77*2,x
+
+        leay    op_list_append,pcr
+        sty     $97*2,x
+
+        leay    op_str_append,pcr
+        sty     $9A*2,x
+
+        leay    op_slice_append_str,pcr
+        sty     $9B*2,x
 
         leay    op_print,pcr
         sty     $CA*2,x
@@ -226,7 +277,7 @@ init_tbl
 * Clear globals_buf:
         ldu     <data_base
         leau    globals_buf,u
-        ldd     #2048/2
+        ldd     #2560/2
 clr_g_loop
         clr     ,u+
         clr     ,u+
@@ -325,11 +376,20 @@ done_sum
 
 * 9. Setup initial Call Frame on S for entry function:
         ldd     2,x             ; D = entry frame_size
+        std     <frame_sz       ; save entry frame_size in DP
         coma
         comb
         addd    #1              ; D = -entry_frame_size
         leas    d,s             ; allocate entry frame on S
 * S is now at start of entry function locals!
+        ldd     <frame_sz       ; D = entry frame_size (sets CC!)
+        beq     entry_frame_zeroed
+        leax    ,s
+entry_zero_loop
+        clr     ,x+
+        subd    #1
+        bne     entry_zero_loop
+entry_frame_zeroed
         ldd     #0              ; sentinel ($0000)
         pshs    d               ; push sentinel caller frame_ptr at frame_ptr - 2
         pshs    d               ; push sentinel return PC at frame_ptr - 4
@@ -364,8 +424,21 @@ op_push_0
         pshu    d
         lbra    dispatch
 
+op_push_nil_slice
+        clra
+        clrb
+        pshu    d
+        pshu    d
+        pshu    d
+        lbra    dispatch
+
 op_push_1
         ldd     #1
+        pshu    d
+        lbra    dispatch
+
+op_push_neg1
+        ldd     #$FFFF
         pshu    d
         lbra    dispatch
 
@@ -392,6 +465,10 @@ op_push_str
 
 op_pop
         leau    2,u
+        lbra    dispatch
+
+op_pop_slice
+        leau    6,u
         lbra    dispatch
 
 * Helper: get_local_info
@@ -438,8 +515,19 @@ op_load_local
         ldb     ,y+
 do_load_local
         lbsr    get_local_info  ; X = addr, B = size
+        cmpb    #1
+        beq     load_local_byte
         cmpb    #2
-        bne     load_local_slice
+        beq     load_local_word
+        cmpb    #6
+        beq     load_local_slice
+        bra     load_local_loop
+load_local_byte
+        ldb     ,x
+        clra
+        pshu    d
+        lbra    dispatch
+load_local_word
         ldd     ,x
         pshu    d
         lbra    dispatch
@@ -450,6 +538,16 @@ load_local_slice
         pshu    d
         ldd     4,x
         pshu    d
+        lbra    dispatch
+load_local_loop
+        lsrb                    ; B = word count
+        pshs    b               ; save count on S
+ll_words
+        ldd     ,x++
+        pshu    d
+        dec     ,s
+        bne     ll_words
+        leas    1,s
         lbra    dispatch
 
 op_store_local_0
@@ -472,8 +570,18 @@ op_store_local
         ldb     ,y+
 do_store_local
         lbsr    get_local_info  ; X = addr, B = size
+        cmpb    #1
+        beq     store_local_byte
         cmpb    #2
-        bne     store_local_slice
+        beq     store_local_word
+        cmpb    #6
+        beq     store_local_slice
+        bra     store_local_loop
+store_local_byte
+        pulu    d
+        stb     ,x
+        lbra    dispatch
+store_local_word
         pulu    d
         std     ,x
         lbra    dispatch
@@ -484,6 +592,17 @@ store_local_slice
         std     2,x
         pulu    d
         std     ,x
+        lbra    dispatch
+store_local_loop
+        leax    b,x             ; X = addr + size
+        lsrb                    ; B = word count
+        pshs    b               ; save count on S
+sl_words
+        pulu    d
+        std     ,--x
+        dec     ,s
+        bne     sl_words
+        leas    1,s
         lbra    dispatch
 
 op_addr_of_local
@@ -515,6 +634,12 @@ op_load_global
         leax    npc_binary+16,pcr ; global variable table
         ldd     d,x             ; D = size of global
         puls    x               ; X = address of global
+        cmpb    #1
+        beq     lg_byte
+        cmpb    #2
+        beq     lg_word
+        cmpb    #6
+        beq     lg_slice
         lsrb                    ; B = word count
         pshs    b               ; save word count on stack
 lg_loop
@@ -523,6 +648,23 @@ lg_loop
         dec     ,s
         bne     lg_loop
         leas    1,s             ; clean stack
+        lbra    dispatch
+lg_byte
+        ldb     ,x
+        clra
+        pshu    d
+        lbra    dispatch
+lg_word
+        ldd     ,x
+        pshu    d
+        lbra    dispatch
+lg_slice
+        ldd     ,x
+        pshu    d
+        ldd     2,x
+        pshu    d
+        ldd     4,x
+        pshu    d
         lbra    dispatch
 
 op_store_global
@@ -538,6 +680,12 @@ op_store_global
         leax    npc_binary+16,pcr ; global variable table
         ldd     d,x             ; D = size of global
         puls    x               ; X = address of global
+        cmpb    #1
+        beq     sg_byte
+        cmpb    #2
+        beq     sg_word
+        cmpb    #6
+        beq     sg_slice
         leax    d,x             ; X = address + size
         lsrb                    ; B = word count
         pshs    b               ; save word count on stack
@@ -547,6 +695,22 @@ sg_loop
         dec     ,s
         bne     sg_loop
         leas    1,s             ; clean stack
+        lbra    dispatch
+sg_byte
+        pulu    d
+        stb     ,x
+        lbra    dispatch
+sg_word
+        pulu    d
+        std     ,x
+        lbra    dispatch
+sg_slice
+        pulu    d
+        std     4,x
+        pulu    d
+        std     2,x
+        pulu    d
+        std     ,x
         lbra    dispatch
 
 op_peek2
@@ -582,15 +746,232 @@ op_shl1_add
         std     ,u              ; replace base with result
         lbra    dispatch
 
+* Helper: heap_alloc
+* Input:  D = requested size in bytes
+* Output: X = allocated memory address
+heap_alloc
+        addd    #1
+        anda    #$FF
+        andb    #$FE            ; round up to even number of bytes
+        ldx     <heap_ptr       ; X = current allocation ptr
+        pshs    x               ; save allocated address on S
+        leax    d,x             ; advance heap pointer
+        stx     <heap_ptr
+        puls    x,pc            ; return allocated address in X
+
 op_buf_alloc
         pulu    d               ; discard size
         ldx     <data_base
-        leax    heap_buf,x
+        leax    pbuf_scratch,x
         pshu    x
         lbra    dispatch
 
 op_buf_free
         pulu    d               ; discard buffer pointer
+        lbra    dispatch
+
+op_dup
+        ldd     ,u
+        pshu    d
+        lbra    dispatch
+
+op_swap
+        ldd     ,u
+        ldx     2,u
+        std     2,u
+        stx     ,u
+        lbra    dispatch
+
+op_not
+        ldd     ,u
+        beq     op_not_zero
+        clra
+        clrb
+        std     ,u
+        lbra    dispatch
+op_not_zero
+        ldd     #1
+        std     ,u
+        lbra    dispatch
+
+op_jump_if_true
+        ldd     ,y++            ; signed relative offset
+        pulu    x               ; X = condition
+        cmpx    #0              ; is condition non-zero?
+        lbeq    dispatch        ; 0: do not jump
+        leay    d,y             ; !=0: jump!
+        lbra    dispatch
+
+op_slice_sub
+        pulu    d               ; D = end
+        pulu    x               ; X = start
+        pshs    d,x             ; 0,s = end, 2,s = start
+        ldd     ,s              ; D = end
+        subd    2,s             ; D = end - start
+        std     ,u              ; update len at ,u
+        ldd     2,u             ; D = cap
+        subd    2,s             ; D = cap - start
+        std     2,u             ; update cap at 2,u
+        ldd     4,u             ; D = ptr
+        addd    2,s             ; D = ptr + start
+        std     4,u             ; update ptr at 4,u
+        leas    4,s
+        lbra    dispatch
+
+op_str_append
+        sty     <vm_pc          ; preserve VM PC
+        pulu    d               ; D = char_code
+        pshs    d               ; save char_code on S (low byte in 1,s)
+        ldd     ,u              ; D = len
+        cmpd    2,u             ; len == cap?
+        blo     sa_byte_have_room
+        ldd     2,u             ; D = old_cap
+        aslb
+        rola                    ; D = old_cap * 2
+        cmpd    #8
+        bhs     sa_byte_cap_ok
+        ldd     #8
+sa_byte_cap_ok
+        std     2,u             ; update cap on U
+        pshs    d               ; save new_cap
+        lbsr    heap_alloc      ; X = new_buf
+        puls    d               ; restore new_cap
+        ldy     4,u             ; Y = old_ptr
+        stx     4,u             ; update ptr on U
+        ldd     ,u              ; D = len
+        beq     sa_byte_copy_done
+sa_byte_copy_loop
+        lda     ,y+
+        sta     ,x+
+        subd    #1
+        bne     sa_byte_copy_loop
+sa_byte_copy_done
+sa_byte_have_room
+        ldx     4,u             ; X = ptr
+        ldd     ,u              ; D = len
+        leax    d,x             ; X = ptr + len
+        puls    d               ; B = char_code
+        stb     ,x              ; store byte
+        ldd     ,u
+        addd    #1
+        std     ,u              ; len += 1
+        ldy     <vm_pc          ; restore VM PC
+        lbra    dispatch
+
+op_slice_append_str
+        sty     <vm_pc          ; preserve VM PC
+        pulu    d               ; s_len
+        pshs    d
+        pulu    d               ; s_cap
+        pshs    d
+        pulu    d               ; s_ptr
+        pshs    d
+* S now has: 0,s = s_ptr, 2,s = s_cap, 4,s = s_len
+* U now has: ,u = list_len, 2,u = list_cap, 4,u = list_base
+        ldd     ,u              ; D = list_len
+        cmpd    2,u             ; list_len == list_cap?
+        blo     sa_str_have_room
+        ldd     2,u             ; D = old_cap
+        aslb
+        rola
+        cmpd    #8
+        bhs     sa_str_cap_ok
+        ldd     #8
+sa_str_cap_ok
+        std     2,u             ; update list_cap on U
+        pshs    d               ; 0,s = new_cap
+        aslb
+        rola                    ; D = new_cap * 2
+        addd    ,s              ; D = new_cap * 3
+        aslb
+        rola                    ; D = new_cap * 6
+        leas    2,s             ; drop temp new_cap
+        lbsr    heap_alloc      ; X = new_buf
+        ldy     4,u             ; Y = old_base
+        stx     4,u             ; update list_base on U
+        ldd     ,u              ; D = list_len
+        beq     sa_str_copy_done
+sa_str_copy_loop
+        pshs    d
+        ldd     ,y++
+        std     ,x++
+        ldd     ,y++
+        std     ,x++
+        ldd     ,y++
+        std     ,x++
+        puls    d
+        subd    #1
+        bne     sa_str_copy_loop
+sa_str_copy_done
+sa_str_have_room
+* Compute offset = list_len * 6
+        ldd     ,u              ; D = list_len
+        pshs    d
+        aslb
+        rola                    ; D * 2
+        addd    ,s              ; D * 3
+        aslb
+        rola                    ; D * 6
+        leas    2,s
+        ldx     4,u             ; X = list_base
+        leax    d,x             ; X = list_base + list_len * 6
+        puls    d               ; s_ptr
+        std     ,x++
+        puls    d               ; s_cap
+        std     ,x++
+        puls    d               ; s_len
+        std     ,x
+        ldd     ,u
+        addd    #1
+        std     ,u              ; list_len += 1
+        ldy     <vm_pc          ; restore VM PC
+        lbra    dispatch
+
+op_list_append
+        sty     <vm_pc          ; preserve VM PC
+        pulu    d               ; D = val
+        pshs    d               ; save val on S
+* U now has: ,u = len, 2,u = cap, 4,u = base
+        ldd     ,u              ; D = len
+        cmpd    2,u             ; len == cap?
+        blo     la_have_room
+        ldd     2,u             ; D = old_cap
+        aslb
+        rola
+        cmpd    #8
+        bhs     la_cap_ok
+        ldd     #8
+la_cap_ok
+        std     2,u             ; update cap
+        pshs    d
+        aslb
+        rola                    ; D = new_cap * 2
+        lbsr    heap_alloc      ; X = new_buf
+        puls    d
+        ldy     4,u             ; Y = old_base
+        stx     4,u             ; update base
+        ldd     ,u              ; D = len
+        beq     la_copy_done
+la_copy_loop
+        pshs    d
+        ldd     ,y++
+        std     ,x++
+        puls    d
+        subd    #1
+        bne     la_copy_loop
+la_copy_done
+la_have_room
+        ldd     ,u              ; D = len
+        aslb
+        rola                    ; D = len * 2
+        ldx     4,u             ; X = base
+        leax    d,x
+        puls    d               ; D = val
+        std     ,x
+        ldd     ,u
+        addd    #1
+        std     ,u              ; len += 1
+        ldy     <vm_pc          ; restore VM PC
         lbra    dispatch
 
 op_store_field
@@ -738,7 +1119,7 @@ op_call
         lda     ,x              ; A = arg_count
         sta     <call_argc      ; save arg_count
         ldd     2,x             ; D = target frame_size
-        pshs    d               ; 0,s = target frame_size
+        std     <frame_sz       ; save target frame_size in DP
         ldd     4,x             ; D = target code_offset
         ldy     <code_base_ptr
         leay    d,y             ; Y = target entry PC!
@@ -746,13 +1127,21 @@ op_call
         ldx     <ltab_ptr
         leax    d,x
         stx     <callee_vtab    ; callee's var_table pointer in DP temp
-        puls    d               ; restore target frame_size
 
-* Allocate frame_size on S:
+* Allocate and zero frame_size on S:
+        ldd     <frame_sz       ; D = target_frame_size
         coma
         comb
         addd    #1              ; D = -target_frame_size
         leas    d,s             ; S = S - target_frame_size
+        ldd     <frame_sz       ; D = target_frame_size (sets CC!)
+        beq     call_frame_zeroed
+        leax    ,s              ; X = start of frame
+call_zero_loop
+        clr     ,x+
+        subd    #1
+        bne     call_zero_loop
+call_frame_zeroed
 
 * Push caller context:
         ldx     <frame_ptr      ; caller frame_ptr
@@ -776,8 +1165,18 @@ call_arg_loop
         sta     <call_argc      ; save current slot
         tfr     a,b             ; B = slot index
         lbsr    get_local_info  ; X = addr, B = size
+        cmpb    #1
+        beq     call_arg_byte
         cmpb    #2
-        bne     call_arg_slice
+        beq     call_arg_word
+        cmpb    #6
+        beq     call_arg_slice
+        bra     call_arg_loop_words
+call_arg_byte
+        pulu    d
+        stb     ,x
+        bra     call_next_arg
+call_arg_word
         pulu    d
         std     ,x
         bra     call_next_arg
@@ -788,6 +1187,17 @@ call_arg_slice
         std     2,x
         pulu    d
         std     ,x
+        bra     call_next_arg
+call_arg_loop_words
+        leax    b,x             ; X = addr + size
+        lsrb                    ; B = word count
+        pshs    b               ; save count on S
+ca_words
+        pulu    d
+        std     ,--x
+        dec     ,s
+        bne     ca_words
+        leas    1,s
 call_next_arg
         lda     <call_argc
         bne     call_arg_loop
@@ -816,9 +1226,6 @@ op_ret_void
         ldx     -2,x            ; X = caller's frame_ptr!
         stx     <frame_ptr      ; restore caller's frame_ptr!
         leas    -6,x            ; restore caller's S!
-        clra
-        clrb
-        pshu    d               ; push dummy 0x0000 return value
         lbra    dispatch
 
 ret_exit
