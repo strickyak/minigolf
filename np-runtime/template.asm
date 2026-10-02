@@ -40,6 +40,7 @@ vm_pc           rmb     2       ; saved VM PC
 vm_sp           rmb     2       ; saved VM evaluation stack pointer
 vm_len          rmb     2       ; length of any slice
 vm_any          rmb     2       ; current any pointer
+vm_is_println   rmb     1       ; 1 = println, 0 = print
 
 heap_buf        rmb     256     ; heap buffer for BUF_ALLOC
 line_buf        rmb     256     ; output line buffer for PRINTLN
@@ -177,11 +178,20 @@ init_tbl
         leay    op_cmp_eq,pcr
         sty     $4C*2,x
 
+        leay    op_cmp_ne,pcr
+        sty     $4D*2,x
+
         leay    op_cmp_lt,pcr
         sty     $4E*2,x
 
         leay    op_cmp_le,pcr
         sty     $4F*2,x
+
+        leay    op_cmp_gt,pcr
+        sty     $50*2,x
+
+        leay    op_cmp_ge,pcr
+        sty     $51*2,x
 
         leay    op_jump,pcr
         sty     $60*2,x
@@ -203,6 +213,9 @@ init_tbl
 
         leay    op_str_cmp,pcr
         sty     $77*2,x
+
+        leay    op_print,pcr
+        sty     $CA*2,x
 
         leay    op_println,pcr
         sty     $CB*2,x
@@ -643,40 +656,50 @@ op_cmp_eq
         ldd     2,u             ; D = a
         subd    ,u              ; D = a - b
         leau    2,u             ; drop b
-        beq     cmp_eq_true
-        clra
-        clrb
-        std     ,u
-        lbra    dispatch
-cmp_eq_true
-        ldd     #1
-        std     ,u
-        lbra    dispatch
+        beq     cmp_true
+        bra     cmp_false
+
+op_cmp_ne
+        ldd     2,u             ; D = a
+        subd    ,u              ; D = a - b
+        leau    2,u             ; drop b
+        bne     cmp_true
+        bra     cmp_false
 
 op_cmp_lt
         ldd     2,u             ; D = a
         subd    ,u              ; D = a - b (borrow -> C=1)
         leau    2,u             ; drop b
-        bcs     cmp_lt_true
-        clra
-        clrb
-        std     ,u
-        lbra    dispatch
-cmp_lt_true
-        ldd     #1
-        std     ,u
-        lbra    dispatch
+        blo     cmp_true        ; unsigned a < b
+        bra     cmp_false
 
 op_cmp_le
         ldd     2,u             ; D = a
         subd    ,u              ; D = a - b (sets C and Z)
         leau    2,u             ; drop b
-        bls     cmp_le_true     ; unsigned a <= b
+        bls     cmp_true        ; unsigned a <= b
+        bra     cmp_false
+
+op_cmp_gt
+        ldd     2,u             ; D = a
+        subd    ,u              ; D = a - b
+        leau    2,u             ; drop b
+        bhi     cmp_true        ; unsigned a > b
+        bra     cmp_false
+
+op_cmp_ge
+        ldd     2,u             ; D = a
+        subd    ,u              ; D = a - b
+        leau    2,u             ; drop b
+        bhs     cmp_true        ; unsigned a >= b
+
+cmp_false
         clra
         clrb
         std     ,u
         lbra    dispatch
-cmp_le_true
+
+cmp_true
         ldd     #1
         std     ,u
         lbra    dispatch
@@ -910,9 +933,18 @@ oi_d2
         os9     F$Exit
 
 ********************************************************************
-* op_println: Print Slice[any] to standard output
+* op_print / op_println: Print Slice[any] to standard output
 ********************************************************************
+op_print
+        clr     <vm_is_println
+        bra     do_print
+
 op_println
+        lda     #1
+        sta     <vm_is_println
+        bra     do_print
+
+do_print
         pulu    d               ; D = len
         pulu    x               ; X = cap (discard)
         pulu    x               ; X = base (pointer to array of any structs)
@@ -984,10 +1016,10 @@ pl_next_elem
         bra     pl_elem_loop
 
 pl_done
+        tst     <vm_is_println
+        beq     pr_write_raw
         lda     #$0D            ; append CR ($0D, OS-9 line terminator)
         sta     ,y+
-
-* Write line to stdout
         ldx     <data_base
         leax    line_buf,x      ; X = start of line_buf
         tfr     y,d             ; D = end of line_buf
@@ -996,7 +1028,20 @@ pl_done
         tfr     d,y             ; Y = length for I$WritLn
         lda     #1              ; path 1 = stdout
         os9     I$WritLn
+        bra     pr_finish
 
+pr_write_raw
+        ldx     <data_base
+        leax    line_buf,x      ; X = start of line_buf
+        tfr     y,d             ; D = end of line_buf
+        pshs    x
+        subd    ,s++            ; D = count of bytes
+        beq     pr_finish       ; 0 bytes -> nothing to write
+        tfr     d,y             ; Y = length for I$Write
+        lda     #1              ; path 1 = stdout
+        os9     I$Write
+
+pr_finish
 * Restore VM registers and continue dispatch
         ldu     <vm_sp
         ldy     <vm_pc
