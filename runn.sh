@@ -10,13 +10,16 @@ elif test -f "$HATVAN_DIR/gep9" -a -x "$HATVAN_DIR/gep9"; then
     HATVAN_VM="$HATVAN_DIR/gep9"
 fi
 MINIGOLF="$SCRIPT_DIR/minigolf"
-NPBUILD="$SCRIPT_DIR/np-runtime/npbuild.py"
+NPBUILD="$SCRIPT_DIR/par3-runtime/npbuild.py"
+if [ ! -f "$NPBUILD" ]; then
+    NPBUILD="$SCRIPT_DIR/np-runtime/npbuild.py"
+fi
 
 mkdir -p _tmp
 
 P=$1
 if test -z "$P"; then
-    echo "Usage: $0 <file.golf|file.npasm|file.npc> [options]" >&2
+    echo "Usage: $0 <file.par3|file.p3a|file.p3p|file.golf> [options]" >&2
     exit 1
 fi
 shift
@@ -38,10 +41,11 @@ if test -n "$TRACE" || test -n "$VERBOSE"; then
 fi
 
 case "$P" in 
-    *.golf | *.npasm | *.npc )
+    *.par3 | *.p3a | *.p3p | *.golf | *.npasm | *.npc )
         python3 "$NPBUILD" "$P" \
             "$RUN_MODE" \
             "${EXTRA_FLAGS[@]}" \
+            -I "$SCRIPT_DIR/par3-lib" \
             -I "$SCRIPT_DIR/np-lib" \
             -I "$SCRIPT_DIR/tests" \
             -I "$SCRIPT_DIR/golflib" \
@@ -49,7 +53,7 @@ case "$P" in
             "$@"
         ;;
     * )
-        echo "BAD EXTENSION: Expected .golf, .npasm, or .npc: '$P'" >&2
+        echo "BAD EXTENSION: Expected .par3, .p3a, .p3p, .golf: '$P'" >&2
         exit 13
         ;;
 esac

@@ -15,12 +15,14 @@ import (
 )
 
 var npcodeDir = func() string {
-	if p, err := filepath.Abs("../np-runtime"); err == nil {
-		if _, err := os.Stat(filepath.Join(p, "npasm.py")); err == nil {
-			return p
+	for _, cand := range []string{"../par3-runtime", "par3-runtime", "../../par3-runtime", "../np-runtime", "np-runtime"} {
+		if p, err := filepath.Abs(cand); err == nil {
+			if _, err := os.Stat(filepath.Join(p, "npasm.py")); err == nil {
+				return p
+			}
 		}
 	}
-	return "/home/strick/github.com/strickyak/minigolf/np-runtime"
+	return "../par3-runtime"
 }()
 
 func compileGolfToNP(t *testing.T, src string) string {
@@ -40,16 +42,16 @@ func compileGolfToNP(t *testing.T, src string) string {
 
 func roundTripAndRun(t *testing.T, asmSource string, expectedOutput string) {
 	tmpDir := t.TempDir()
-	asmPath := filepath.Join(tmpDir, "test.npasm")
-	npcPath := filepath.Join(tmpDir, "test.npc")
-	disAsmPath := filepath.Join(tmpDir, "test_re.npasm")
-	npcRePath := filepath.Join(tmpDir, "test_re.npc")
+	asmPath := filepath.Join(tmpDir, "test.p3a")
+	npcPath := filepath.Join(tmpDir, "test.p3p")
+	disAsmPath := filepath.Join(tmpDir, "test_re.p3a")
+	npcRePath := filepath.Join(tmpDir, "test_re.p3p")
 
 	if err := os.WriteFile(asmPath, []byte(asmSource), 0644); err != nil {
 		t.Fatalf("failed to write asm: %v", err)
 	}
 
-	// 1. Assemble: npasm.py test.npasm -o test.npc
+	// 1. Assemble: npasm.py test.p3a -o test.p3p
 	npasmPy := filepath.Join(npcodeDir, "npasm.py")
 	cmd := exec.Command("python3", npasmPy, asmPath, "-o", npcPath)
 	out, err := cmd.CombinedOutput()
@@ -57,7 +59,7 @@ func roundTripAndRun(t *testing.T, asmSource string, expectedOutput string) {
 		t.Fatalf("npasm.py failed: %v\nOutput:\n%s\nAssembly Source:\n%s", err, string(out), asmSource)
 	}
 
-	// 2. Disassemble: npdis.py test.npc --asm -o test_re.npasm
+	// 2. Disassemble: npdis.py test.p3p --asm -o test_re.p3a
 	npdisPy := filepath.Join(npcodeDir, "npdis.py")
 	cmd = exec.Command("python3", npdisPy, npcPath, "--asm", "-o", disAsmPath)
 	out, err = cmd.CombinedOutput()
@@ -65,7 +67,7 @@ func roundTripAndRun(t *testing.T, asmSource string, expectedOutput string) {
 		t.Fatalf("npdis.py failed: %v\nOutput:\n%s", err, string(out))
 	}
 
-	// 3. Re-assemble: npasm.py test_re.npasm -o test_re.npc
+	// 3. Re-assemble: npasm.py test_re.p3a -o test_re.p3p
 	cmd = exec.Command("python3", npasmPy, disAsmPath, "-o", npcRePath)
 	out, err = cmd.CombinedOutput()
 	if err != nil {
@@ -75,11 +77,11 @@ func roundTripAndRun(t *testing.T, asmSource string, expectedOutput string) {
 	// 4. Verify byte-for-byte binary match
 	b1, err := os.ReadFile(npcPath)
 	if err != nil {
-		t.Fatalf("failed to read test.npc: %v", err)
+		t.Fatalf("failed to read test.p3p: %v", err)
 	}
 	b2, err := os.ReadFile(npcRePath)
 	if err != nil {
-		t.Fatalf("failed to read test_re.npc: %v", err)
+		t.Fatalf("failed to read test_re.p3p: %v", err)
 	}
 	if !bytes.Equal(b1, b2) {
 		t.Fatalf("round-trip mismatch: %d bytes vs %d bytes", len(b1), len(b2))

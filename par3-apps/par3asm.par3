@@ -713,9 +713,9 @@ func bin_flush() {
 
 func write_tables() {
     // 1. Header (16 bytes)
-    bin_write_byte('N')
     bin_write_byte('P')
-    bin_write_byte('C')
+    bin_write_byte('3')
+    bin_write_byte('P')
     bin_write_byte(1)
     bin_write_byte(1) // FormatVer
     bin_write_byte(0) // Flags
@@ -1087,7 +1087,7 @@ func default_output_name(path string) string {
     } else {
         buf_append(path)
     }
-    buf_append(".npc")
+    buf_append(".p3p")
     return clone_str(buf_str())
 }
 
@@ -1132,7 +1132,7 @@ func main() {
 
     args := sys_args()
     if args.Len() == 0 {
-        println("Usage: npasm <input.npasm> [-o <output.npc>]")
+        println("Usage: par3asm <input.p3a> [-o <output.p3p>]")
         sys_exit(1)
     }
 

@@ -18,7 +18,7 @@ import struct
 from typing import List, Dict, Optional, Tuple, Any
 
 from opcodes import (
-    MAGIC, FORMAT_VER, HEADER_SIZE, FUNC_ENTRY_SIZE,
+    MAGIC, VALID_MAGICS, FORMAT_VER, HEADER_SIZE, FUNC_ENTRY_SIZE,
     OPCODE_TABLE, FLAG_6309_NATIVE, FLAG_MMU_BANKED
 )
 
@@ -196,8 +196,8 @@ class NPVM:
             raise VMError("Binary smaller than header")
 
         magic = self.raw_binary[0:4]
-        if magic != MAGIC:
-            raise VMError(f"Invalid NPC magic: {magic!r}")
+        if magic not in VALID_MAGICS:
+            raise VMError(f"Invalid Par3 Pcodes magic: {magic!r}")
 
         self.format_ver = self.raw_binary[4]
         self.flags = self.raw_binary[5]

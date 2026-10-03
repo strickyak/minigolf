@@ -1,0 +1,391 @@
+;
+; Starting whole-program compilation (Par3 Backend)
+; Target architecture: PAR3
+; Output object file: par3-tests/test_for3.p3a
+; Source files: [par3-tests/test_for3.par3]
+;
+
+; ====================================================================
+; Function: peekb
+; ====================================================================
+.function prelude_peekb
+    .param addr: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; return *
+    LOAD_LOCAL addr
+    PEEK1
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: peekw
+; ====================================================================
+.function prelude_peekw
+    .param addr: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; return *
+    LOAD_LOCAL addr
+    PEEK2
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: pokeb
+; ====================================================================
+.function prelude_pokeb
+    .param addr: word
+    .param value: byte
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; * = value
+    LOAD_LOCAL value
+    LOAD_LOCAL addr
+    SWAP
+    POKE1
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: pokew
+; ====================================================================
+.function prelude_pokew
+    .param addr: word
+    .param value: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; * = value
+    LOAD_LOCAL value
+    LOAD_LOCAL addr
+    SWAP
+    POKE2
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: alloc
+; ====================================================================
+.function prelude_alloc
+    .param size: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; return 0
+    PUSH_0
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: free
+; ====================================================================
+.function prelude_free
+    .param addr: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: strlen
+; ====================================================================
+.function prelude_strlen
+    .param s: word
+    .local n: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; n := word(0)
+    PUSH_0
+    STORE_LOCAL n
+; for * != 0
+.L_for_top_1:
+    LOAD_LOCAL s
+    PEEK1
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_for_exit_2
+; n++
+    LOAD_LOCAL n
+    PUSH_1
+    ADD
+    STORE_LOCAL n
+; s = *(word(s) + 1)
+    LOAD_LOCAL s
+    PUSH_1
+    ADD
+    STORE_LOCAL s
+    JUMP .L_for_top_1
+.L_for_exit_2:
+; return n
+    LOAD_LOCAL n
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: main
+; ====================================================================
+.function main entry
+    .local i: byte
+    .local j: word
+    .local n: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; for <init>; <cond>; <inc>
+; i := byte(0)
+    PUSH_0
+    PUSH_I16 255
+    BIT_AND
+    STORE_LOCAL i
+.L_for3_top_3:
+    LOAD_LOCAL i
+    PUSH_I8 5
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_5
+; println(i)
+; println(i)
+    PUSH_I16 6
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL i
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 5
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "byte"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_for3_cont_4:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_3
+.L_for3_exit_5:
+; j := 5
+    PUSH_I8 5
+    STORE_LOCAL j
+; for <init>; <cond>; <inc>
+.L_for3_top_6:
+    LOAD_LOCAL j
+    PUSH_I8 10
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_8
+; println(j)
+; println(j)
+    PUSH_I16 6
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL j
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "word"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_for3_cont_7:
+; j++
+    LOAD_LOCAL j
+    PUSH_1
+    ADD
+    STORE_LOCAL j
+    JUMP .L_for3_top_6
+.L_for3_exit_8:
+; j = 5
+    PUSH_I8 5
+    STORE_LOCAL j
+; for <init>; <cond>; <inc>
+.L_for3_top_9:
+    LOAD_LOCAL j
+    PUSH_I8 10
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_11
+; println(j)
+; println(j)
+    PUSH_I16 6
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL j
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "word"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_for3_cont_10:
+; j = j + 1
+    LOAD_LOCAL j
+    PUSH_1
+    ADD
+    STORE_LOCAL j
+    JUMP .L_for3_top_9
+.L_for3_exit_11:
+; n := 13
+    PUSH_I8 13
+    STORE_LOCAL n
+; for n < 15
+.L_for_top_12:
+    LOAD_LOCAL n
+    PUSH_I8 15
+    CMP_LT
+    JUMP_IF_FALSE .L_for_exit_13
+; println(n)
+; println(n)
+    PUSH_I16 6
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL n
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "word"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; n++
+    LOAD_LOCAL n
+    PUSH_1
+    ADD
+    STORE_LOCAL n
+    JUMP .L_for_top_12
+.L_for_exit_13:
+    RET_VOID
+.endfunction
+

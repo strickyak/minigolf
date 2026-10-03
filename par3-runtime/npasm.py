@@ -893,7 +893,7 @@ def main():
 
     if output_file is None:
         base, _ = os.path.splitext(input_file)
-        output_file = base + ".npc"
+        output_file = base + ".p3p"
 
     try:
         with open(input_file, "r", encoding="utf-8") as f:

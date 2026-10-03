@@ -4,7 +4,9 @@ Shared between npasm.py, npdis.py, and VM runtimes.
 """
 
 # Binary Format Constants
-MAGIC = b"NPC\x01"
+MAGIC = b"P3P\x01"
+LEGACY_MAGIC = b"NPC\x01"
+VALID_MAGICS = (b"P3P\x01", b"NPC\x01")
 FORMAT_VER = 1
 HEADER_SIZE = 16
 FUNC_ENTRY_SIZE = 10

@@ -304,6 +304,17 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 		g.addParamWithType(param.Name.Value, pKind, pTypeStr)
 	}
 
+	// Named return parameters are not supported in Par3
+	for _, ret := range fs.ReturnParameters {
+		if ret.Name != nil && ret.Name.Value != "" && ret.Name.Value != "_" {
+			line := 0
+			if ret.Name.Token.Line != 0 {
+				line = ret.Name.Token.Line
+			}
+			panic(fmt.Sprintf("named return parameters are not supported in Par3 (line %d): %s", line, ret.Name.Value))
+		}
+	}
+
 	// Pre-scan function body to discover and register all local variables
 	if fs.Body != nil {
 		g.collectLocals(fs.Body)
@@ -367,7 +378,7 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 			case *ast.PackageStatement:
 				currPkg = s.Name.Value
 			case *ast.VarStatement:
-				if s.GetToken() != nil && strings.HasSuffix(s.GetToken().Filename, "prelude.golf") {
+				if s.GetToken() != nil && (strings.HasSuffix(s.GetToken().Filename, "prelude.golf") || strings.HasSuffix(s.GetToken().Filename, "prelude.par3")) {
 					continue
 				}
 				if s.Value != nil {
@@ -1265,6 +1276,13 @@ func (g *Generator) compileSwitch(s *ast.SwitchStatement) {
 
 func (g *Generator) compileReturn(s *ast.ReturnStatement) {
 	if len(s.ReturnValues) == 0 {
+		if g.currentFunc != nil && len(g.currentFunc.ReturnParameters) > 0 {
+			line := 0
+			if s.Token.Line != 0 {
+				line = s.Token.Line
+			}
+			panic(fmt.Sprintf("bare return is not supported in Par3 (line %d): return value required", line))
+		}
 		g.emit("    RET_VOID")
 		return
 	}

@@ -2176,12 +2176,12 @@ func main() {
     }
 
     if len(src_file) == 0 {
-        println("Usage: minigolf_np [-o out.npa] source.golf")
+        println("Usage: minigolf_par3 [-o out.p3a] source.par3")
         sys_exit(1)
     }
 
     if len(out_file) == 0 {
-        out_file = "a.npa"
+        out_file = "a.p3a"
     }
 
     // Pass 1: Parse signatures and declarations

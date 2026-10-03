@@ -57,12 +57,14 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 		}
 	}
 
-	// Fallback for prelude.golf in standard locations if not found in path
-	if base == "prelude.golf" {
-		for _, fallbackDir := range []string{"golflib", "../golflib"} {
-			filename := filepath.Join(fallbackDir, base)
-			if c, err2 := os.ReadFile(filename); err2 == nil {
-				return c, nil
+	// Fallback for prelude.golf or prelude.par3 in standard locations if not found in path
+	if base == "prelude.golf" || base == "prelude.par3" {
+		for _, fallbackDir := range []string{"golflib", "../golflib", "par3-lib", "../par3-lib", "np-lib", "../np-lib"} {
+			for _, name := range []string{"prelude.par3", "prelude.golf"} {
+				filename := filepath.Join(fallbackDir, name)
+				if c, err2 := os.ReadFile(filename); err2 == nil {
+					return c, nil
+				}
 			}
 		}
 	}
@@ -124,7 +126,7 @@ func topoSortModules(importEdges map[string][]string, initFuncsByModule map[stri
 	return result
 }
 
-func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Program {
+func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch string) *ast.Program {
 	var program *ast.Program
 	imported := make(map[string]bool)
 
@@ -139,6 +141,11 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Pr
 	path := []string{mainDirname}
 	for _, d := range importDirPath {
 		path = append(path, d)
+	}
+	for _, libDir := range []string{"par3-lib", "../par3-lib", "golflib", "../golflib", "np-lib", "../np-lib"} {
+		if fi, err := os.Stat(libDir); err == nil && fi.IsDir() {
+			path = append(path, libDir)
+		}
 	}
 
 	slurp := func(filename string, overridePackage string, path []string) {
@@ -196,8 +203,21 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag) *ast.Pr
 		}
 	}
 
+	isPar3Arch := strings.EqualFold(arch, "PAR3") || strings.EqualFold(arch, "NP")
 	imported["prelude"] = true
-	slurp("prelude.golf", "prelude", path)
+	preludeFile := "prelude.golf"
+	if isPar3Arch {
+		preludeFile = "prelude.par3"
+	}
+	if _, err := ReadFileFromPath(preludeFile, path); err == nil {
+		slurp(preludeFile, "prelude", path)
+	} else {
+		altPrelude := "prelude.par3"
+		if isPar3Arch {
+			altPrelude = "prelude.golf"
+		}
+		slurp(altPrelude, "prelude", path)
+	}
 
 	imported["main"] = true
 	slurp(mainSourceFile, "main", nil)
@@ -206,7 +226,21 @@ MORE:
 	for key, done := range imported {
 		if !done {
 			imported[key] = true
-			slurp(key+".golf", key, path)
+			exts := []string{".golf", ".par3"}
+			if isPar3Arch {
+				exts = []string{".par3", ".golf"}
+			}
+			found := false
+			for _, ext := range exts {
+				if _, err := ReadFileFromPath(key+ext, path); err == nil {
+					slurp(key+ext, key, path)
+					found = true
+					break
+				}
+			}
+			if !found {
+				slurp(key+exts[0], key, path)
+			}
 			// We changed the iterated object, so restart the iteration.
 			// When everything is done, we fall through and return the program.
 			goto MORE
@@ -279,7 +313,7 @@ MORE:
 
 func main() {
 	// Define command-line flags
-	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, np)")
+	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, par3, np)")
 	outFlag := flag.String("o", "", "Output object file name")
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
@@ -603,7 +637,7 @@ func main() {
 	// Compilation Pipeline
 	// =========================================================================
 	// 1 & 2. Parse all source files into a single flat namespace AST
-	program := ParseSourceFiles(mainSourceFile, importDirPath)
+	program := ParseSourceFiles(mainSourceFile, importDirPath, *archFlag)
 
 	*archFlag = strings.ToUpper(*archFlag)
 
@@ -622,22 +656,22 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Flag -m=np : Generate NP assembly directly from AST and exit cleanly
-	if *archFlag == "NP" {
+	// Flag -m=par3 or -m=np : Generate Par3 assembly directly from AST and exit cleanly
+	if *archFlag == "PAR3" || *archFlag == "NP" {
 		resolver := semantic.NewResolver(golfDefines)
 		resolver.Resolve(program)
 
 		backend := np.New()
 		asmCode := backend.Generate(program)
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (NP Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (Par3 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing NP output: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error writing Par3 output: %v\n", err)
 			os.Exit(1)
 		}
-		log.Printf("Successfully compiled via NP to: %s", *outFlag)
+		log.Printf("Successfully compiled via Par3 to: %s", *outFlag)
 		os.Exit(0)
 	}
 
