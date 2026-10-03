@@ -4,10 +4,10 @@ package main
 const MAX_CONSTS      = 64
 const MAX_GLOBALS     = 64
 const MAX_FUNCS       = 64
-const MAX_PARAMS      = 128
-const MAX_LOCALS      = 512
-const MAX_STRING_POOL = 8192
-const MAX_STRINGS     = 768
+const MAX_PARAMS      = 64
+const MAX_LOCALS      = 256
+const MAX_STRING_POOL = 3072
+const MAX_STRINGS     = 256
 
 // Token Kinds
 const TOK_EOF     = 0
@@ -149,27 +149,31 @@ func out_dec(v word) {
     }
 }
 
+func emit_nl() {
+    out_char(13)
+}
+
 func emit(s string) {
     out_str(s)
-    out_char('\n')
+    emit_nl()
 }
 
 func emit2(s1 string, s2 string) {
     out_str(s1)
     out_str(s2)
-    out_char('\n')
+    emit_nl()
 }
 
 func emit_u8(s string, v word) {
     out_str(s)
     out_dec(v)
-    out_char('\n')
+    emit_nl()
 }
 
 func emit_u16(s string, v word) {
     out_str(s)
     out_dec(v)
-    out_char('\n')
+    emit_nl()
 }
 
 func emit_str(s string, str_val string) {
@@ -192,7 +196,7 @@ func emit_str(s string, str_val string) {
         }
     }
     out_char('"')
-    out_char('\n')
+    emit_nl()
 }
 
 func next_label() word {
@@ -203,7 +207,8 @@ func next_label() word {
 func emit_label(lbl word) {
     out_str(".L_")
     out_dec(lbl)
-    out_str(":\n")
+    out_char(':')
+    emit_nl()
 }
 
 func emit_jump(op string, lbl word) {
@@ -211,7 +216,7 @@ func emit_jump(op string, lbl word) {
     out_str(op)
     out_str(" .L_")
     out_dec(lbl)
-    out_char('\n')
+    emit_nl()
 }
 
 // -----------------------------------------------------------------------------
@@ -385,6 +390,9 @@ func find_cur_local(name string) word {
 // -----------------------------------------------------------------------------
 
 func reset_lexer() {
+    if len(cur_line) > 0 {
+        free(cur_line.Base)
+    }
     cur_line = ""
     line_pos = 0
     is_eof = false
@@ -393,6 +401,10 @@ func reset_lexer() {
 
 func peek_char() byte {
     for !is_eof && line_pos >= word(len(cur_line)) {
+        if len(cur_line) > 0 {
+            free(cur_line.Base)
+            cur_line = ""
+        }
         line, eof := file_readline(in_file_h)
         line_pos = 0
         if eof != 0 {
@@ -1553,6 +1565,34 @@ func emit_call(name string, nargs word) word {
         emit("    STR_CMP")
         return KIND_SCALAR
     }
+    if name == "startswith" {
+        emit("    STR_STARTSWITH")
+        return KIND_SCALAR
+    }
+    if name == "endswith" {
+        emit("    STR_ENDSWITH")
+        return KIND_SCALAR
+    }
+    if name == "find" {
+        emit("    STR_FIND")
+        return KIND_SCALAR
+    }
+    if name == "lstrip" {
+        emit("    STR_LSTRIP")
+        return KIND_SLICE
+    }
+    if name == "rstrip" {
+        emit("    STR_RSTRIP")
+        return KIND_SLICE
+    }
+    if name == "strip" {
+        emit("    STR_STRIP")
+        return KIND_SLICE
+    }
+    if name == "replace_ident" {
+        emit("    STR_REPLACE_IDENT")
+        return KIND_SLICE
+    }
 
     emit2("    CALL ", name)
     fi := find_func(name)
@@ -2063,7 +2103,7 @@ func run_pass2() {
             out_str(global_names[i])
             out_str(": ")
             out_dec(global_sizes[i])
-            out_char('\n')
+            emit_nl()
         }
         emit("")
     }
@@ -2112,10 +2152,11 @@ func run_pass2() {
                 out_str(param_names[p_start + i])
                 out_str(": ")
                 if param_kinds[p_start + i] == KIND_SLICE {
-                    out_str("slice\n")
+                    out_str("slice")
                 } else {
-                    out_str("word\n")
+                    out_str("word")
                 }
+                emit_nl()
             }
 
             l_start := func_first_local[cur_func_idx]
@@ -2125,10 +2166,11 @@ func run_pass2() {
                 out_str(local_names[l_start + i])
                 out_str(": ")
                 if local_kinds[l_start + i] == KIND_SLICE {
-                    out_str("slice\n")
+                    out_str("slice")
                 } else {
-                    out_str("word\n")
+                    out_str("word")
                 }
+                emit_nl()
             }
             emit("")
 
@@ -2138,7 +2180,7 @@ func run_pass2() {
             expect("}")
 
             emit("    RET_VOID")
-            emit(".endfunction\n")
+            emit(".endfunction")
         } else {
             next_tok()
         }

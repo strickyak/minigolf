@@ -43,31 +43,53 @@ vm_len          rmb     2       ; length of any slice
 vm_any          rmb     2       ; current any pointer
 vm_is_println   rmb     1       ; 1 = println, 0 = print
 heap_ptr        rmb     2       ; current allocation pointer in heap_buf
+free_buckets    rmb     16      ; 8 free list bucket pointers (16,32,64,128,256,512,1024,2048)
+param_ptr       rmb     2       ; CLI parameter pointer
+param_len       rmb     2       ; CLI parameter length
+path_scratch    rmb     64      ; scratch buffer for OS-9 pathnames
+dp_pad          rmb     1       ; align following buffers to 16-bit word boundary
 
 pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
-heap_buf        rmb     16384   ; heap buffer for dynamic allocations
+heap_buf        rmb     12288   ; heap buffer for dynamic allocations (12KB)
 line_buf        rmb     256     ; output line buffer for PRINTLN
-globals_buf     rmb     2560    ; storage buffer for global variables
-global_ptrs     rmb     128     ; pointers to each global variable (up to 64 globals)
+globals_buf     rmb     14336   ; storage buffer for global variables (14KB)
+global_ptrs     rmb     256     ; pointers to each global variable (up to 128 globals)
 dispatch_tbl    rmb     512     ; 256 opcode function pointers
 
 vm_stack        rmb     512     ; 256-word evaluation stack
 vm_stack_top    equ     .
 
 * System stack room (holds VM call stack frames)
-stack_space     rmb     4096
+stack_space     rmb     2048
 size            equ     .
 
-name    use     modname.asm
+name
+        use     modname.asm
         fcb     edition
 
 start
 * Save data area base and OS-9 initial stack pointer
         stu     <data_base
         sts     <init_os9_sp
+        stx     <param_ptr
+        sty     <param_len
         ldx     <data_base
         leax    heap_buf,x
         stx     <heap_ptr
+
+* Clear free_buckets:
+        ldx     <data_base
+        leax    free_buckets,x
+        clra
+        clrb
+        std     ,x++
+        std     ,x++
+        std     ,x++
+        std     ,x++
+        std     ,x++
+        std     ,x++
+        std     ,x++
+        std     ,x++
 
 * Initialize dispatch table with op_illegal
         leax    dispatch_tbl,u
@@ -205,6 +227,12 @@ init_tbl
         leay    op_mul,pcr
         sty     $42*2,x
 
+        leay    op_div,pcr
+        sty     $43*2,x
+
+        leay    op_mod,pcr
+        sty     $44*2,x
+
         leay    op_neg,pcr
         sty     $45*2,x
 
@@ -268,14 +296,41 @@ init_tbl
         leay    op_ret_void,pcr
         sty     $66*2,x
 
+        leay    op_nop,pcr
+        sty     $70*2,x         ; SLICE_NEW
+
         leay    op_slice_len,pcr
-        sty     $71*2,x
+        sty     $71*2,x         ; SLICE_LEN
+
+        leay    op_slice_cap,pcr
+        sty     $72*2,x         ; SLICE_CAP
 
         leay    op_slice_sub,pcr
-        sty     $73*2,x
+        sty     $73*2,x         ; SLICE_SUB
 
         leay    op_str_cmp,pcr
-        sty     $77*2,x
+        sty     $77*2,x         ; STR_CMP
+
+        leay    op_str_startswith,pcr
+        sty     $78*2,x         ; STR_STARTSWITH
+
+        leay    op_str_endswith,pcr
+        sty     $79*2,x         ; STR_ENDSWITH
+
+        leay    op_str_find,pcr
+        sty     $7A*2,x         ; STR_FIND
+
+        leay    op_str_lstrip,pcr
+        sty     $7B*2,x         ; STR_LSTRIP
+
+        leay    op_str_rstrip,pcr
+        sty     $7C*2,x         ; STR_RSTRIP
+
+        leay    op_str_strip,pcr
+        sty     $7D*2,x         ; STR_STRIP
+
+        leay    op_str_replace_ident,pcr
+        sty     $7F*2,x         ; STR_REPLACE_IDENT
 
         leay    op_list_append,pcr
         sty     $97*2,x
@@ -286,11 +341,44 @@ init_tbl
         leay    op_slice_append_str,pcr
         sty     $9B*2,x
 
+        leay    op_file_open_read,pcr
+        sty     $C0*2,x
+
+        leay    op_file_open_write,pcr
+        sty     $C1*2,x
+
+        leay    op_file_readline,pcr
+        sty     $C2*2,x
+
+        leay    op_file_write,pcr
+        sty     $C3*2,x
+
+        leay    op_file_close,pcr
+        sty     $C4*2,x
+
+        leay    op_os_isfile,pcr
+        sty     $C5*2,x
+
+        leay    op_os_makedirs,pcr
+        sty     $C6*2,x
+
+        leay    op_sys_args,pcr
+        sty     $C7*2,x
+
+        leay    op_sys_exit,pcr
+        sty     $C8*2,x
+
         leay    op_print,pcr
         sty     $CA*2,x
 
         leay    op_println,pcr
         sty     $CB*2,x
+
+        leay    op_file_read,pcr
+        sty     $CC*2,x
+
+        leay    op_file_write_buf,pcr
+        sty     $CD*2,x
 
 * Initialize VM state by parsing NPC binary header:
         leax    npc_binary,pcr  ; X = binary start
@@ -298,7 +386,7 @@ init_tbl
 * Clear globals_buf:
         ldu     <data_base
         leau    globals_buf,u
-        ldd     #2560/2
+        ldd     #14336/2
 clr_g_loop
         clr     ,u+
         clr     ,u+
@@ -771,14 +859,160 @@ op_shl1_add
 * Input:  D = requested size in bytes
 * Output: X = allocated memory address
 heap_alloc
-        addd    #1
-        anda    #$FF
-        andb    #$FE            ; round up to even number of bytes
-        ldx     <heap_ptr       ; X = current allocation ptr
-        pshs    x               ; save allocated address on S
-        leax    d,x             ; advance heap pointer
-        stx     <heap_ptr
-        puls    x,pc            ; return allocated address in X
+        pshs    y
+        cmpd    #14
+        bls     ha_b0
+        cmpd    #30
+        bls     ha_b1
+        cmpd    #62
+        bls     ha_b2
+        cmpd    #126
+        bls     ha_b3
+        cmpd    #254
+        bls     ha_b4
+        cmpd    #510
+        bls     ha_b5
+        cmpd    #1022
+        bls     ha_b6
+        cmpd    #2046
+        bls     ha_b7
+
+* Oversized (> 2046 bytes): bump allocate directly
+        addd    #3
+        andb    #$FE
+        ldx     <heap_ptr
+        pshs    x               ; save block address
+        leax    d,x             ; X = new heap_ptr
+        ldd     <data_base
+        addd    #heap_buf+12288 ; D = heap limit
+        pshs    d
+        cmpx    ,s++            ; compare new heap_ptr (X) with limit
+        bhi     ha_oom_ov
+        stx     <heap_ptr       ; save valid new heap_ptr
+        puls    x               ; X = block address
+        ldb     #$FF
+        stb     ,x              ; header = $FF (oversized)
+        leax    2,x             ; return user pointer
+        puls    y,pc
+
+ha_oom_ov
+        puls    x               ; drop saved block address
+        puls    y               ; restore Y
+        ldb     #207            ; E$MemFul
+        os9     F$Exit
+
+ha_b0   ldb     #0
+        ldy     #16
+        bra     ha_bucket
+ha_b1   ldb     #1
+        ldy     #32
+        bra     ha_bucket
+ha_b2   ldb     #2
+        ldy     #64
+        bra     ha_bucket
+ha_b3   ldb     #3
+        ldy     #128
+        bra     ha_bucket
+ha_b4   ldb     #4
+        ldy     #256
+        bra     ha_bucket
+ha_b5   ldb     #5
+        ldy     #512
+        bra     ha_bucket
+ha_b6   ldb     #6
+        ldy     #1024
+        bra     ha_bucket
+ha_b7   ldb     #7
+        ldy     #2048
+
+ha_bucket
+* B = bucket index (0..7), Y = block size (16..2048)
+        pshs    b               ; save bucket index (0..7)
+        clra
+        aslb
+        rola                    ; D = B * 2 (0..14)
+        ldx     <data_base
+        leax    free_buckets,x  ; X = &free_buckets[0]
+        leax    d,x             ; X = &free_buckets[B]
+        ldd     ,x              ; D = free_buckets[B]
+        bne     ha_reuse
+        puls    b               ; restore bucket index (0..7)
+
+ha_bump
+* Allocate new block of size Y from heap_ptr
+* B is untouched and holds bucket index (0..7)
+        pshs    b               ; save bucket index
+        ldx     <heap_ptr
+        pshs    x               ; save block address
+        tfr     y,d
+        leax    d,x             ; X = new heap_ptr
+        ldd     <data_base
+        addd    #heap_buf+12288 ; D = heap limit
+        pshs    d
+        cmpx    ,s++            ; compare new heap_ptr (X) with limit
+        bhi     ha_oom
+        stx     <heap_ptr       ; save valid new heap_ptr
+        puls    x               ; X = block address
+        puls    b               ; restore bucket index
+        stb     ,x              ; store bucket index in block header
+        leax    2,x             ; return user pointer
+        puls    y,pc
+
+ha_oom
+        puls    x               ; drop saved block address
+        puls    b               ; drop saved B
+        puls    y               ; restore Y
+        ldb     #207            ; E$MemFul
+        os9     F$Exit
+
+ha_reuse
+* Reuse block from free list:
+* D = block address. Block layout: [byte 0: bucket_idx][byte 1: unused][bytes 2-3: next]
+* X points directly to free_buckets[B]
+        leas    1,s             ; drop saved B
+        pshs    d               ; save block address
+        tfr     d,y             ; Y = block address
+        ldd     2,y             ; D = block->next
+        std     ,x              ; free_buckets[B] = block->next
+        puls    x               ; X = block address
+        leax    2,x             ; return user pointer
+        puls    y,pc
+
+* Helper: heap_free
+* Input:  D = user pointer to free
+heap_free
+        cmpd    #0              ; NULL check
+        beq     hf_done
+        tfr     d,x
+        leax    -2,x            ; X = block header
+* Bounds check against heap_buf:
+        pshs    y
+        ldd     <data_base
+        addd    #heap_buf       ; D = heap_buf start
+        pshs    d
+        cmpx    ,s++
+        blo     hf_done_y       ; before heap_buf: ignore
+        addd    #12288          ; D = heap_buf end
+        pshs    d
+        cmpx    ,s++
+        bhs     hf_done_y       ; at or after heap_buf end: ignore
+        ldb     ,x              ; B = bucket index
+        cmpb    #7
+        bhi     hf_done_y       ; > 7 (oversized or invalid): ignore
+* Valid bucket block! Link onto free_buckets[B]:
+        clra
+        aslb
+        rola                    ; D = B * 2
+        ldy     <data_base
+        leay    free_buckets,y  ; Y = &free_buckets[0]
+        leay    d,y             ; Y = &free_buckets[B]
+        ldd     ,y              ; D = current head
+        std     2,x             ; block->next = current head
+        stx     ,y              ; free_buckets[B] = block
+hf_done_y
+        puls    y
+hf_done
+        rts
 
 op_buf_alloc
         pulu    d               ; D = requested size
@@ -806,7 +1040,8 @@ zalloc_done
         lbra    dispatch
 
 op_buf_free
-        pulu    d               ; discard buffer pointer
+        pulu    d               ; D = buffer pointer to free
+        lbsr    heap_free
         lbra    dispatch
 
 op_dup
@@ -1331,6 +1566,12 @@ op_slice_len
         pshu    d               ; push len
         lbra    dispatch
 
+op_slice_cap
+        ldd     2,u             ; D = cap
+        leau    6,u             ; drop slice (len, cap, ptr)
+        pshu    d               ; push cap
+        lbra    dispatch
+
 op_str_cmp
 * Save VM PC (Y):
         sty     <vm_pc
@@ -1402,6 +1643,709 @@ sc_greater_lens
         ldy     <vm_pc
         lbra    dispatch
 
+********************************************************************
+* cic_check: Helper to check if char in A is in chars set
+* Input:  A = char to test
+*         Y = chars_ptr (if 0, check default whitespace: SP, TAB, LF, CR)
+*         D = chars_len
+* Output: B = 1 if match, 0 if not
+* Preserves: A
+********************************************************************
+cic_check
+        cmpy    #0
+        bne     cic_custom
+* Default whitespace: SP, TAB, LF, CR
+        cmpa    #' '
+        beq     cic_yes
+        cmpa    #9
+        beq     cic_yes
+        cmpa    #10
+        beq     cic_yes
+        cmpa    #13
+        beq     cic_yes
+        clrb
+        rts
+
+cic_custom
+        subd    #0              ; test if D == 0
+        beq     cic_no
+        pshs    d,y
+        ldx     ,s              ; X = loop count
+cic_loop
+        cmpa    ,y+
+        beq     cic_found
+        leax    -1,x
+        bne     cic_loop
+        puls    d,y
+cic_no
+        clrb
+        rts
+
+cic_found
+        puls    d,y
+cic_yes
+        ldb     #1
+        rts
+
+********************************************************************
+* op_str_startswith ($78): [str, pfx] -> [bool]
+********************************************************************
+op_str_startswith
+        sty     <vm_pc
+        pulu    d               ; D = pfx_len
+        pulu    x               ; discard pfx_cap
+        pulu    y               ; Y = pfx_ptr
+        pshs    d,y             ; 0,s = pfx_len, 2,s = pfx_ptr
+
+        pulu    d               ; D = str_len
+        pulu    x               ; discard str_cap
+        pulu    x               ; X = str_ptr
+
+        cmpd    ,s              ; compare str_len with pfx_len
+        blo     sw_false        ; str_len < pfx_len -> false
+
+        ldd     ,s              ; D = pfx_len
+        beq     sw_true         ; pfx_len == 0 -> true
+        pshs    d               ; 0,s = count loop, 2,s = pfx_len, 4,s = pfx_ptr
+        ldy     4,s             ; Y = pfx_ptr
+
+sw_loop
+        lda     ,x+
+        cmpa    ,y+
+        bne     sw_mismatch
+        ldd     ,s
+        subd    #1
+        std     ,s
+        bne     sw_loop
+
+        leas    2,s             ; drop loop count
+sw_true
+        leas    4,s             ; drop pfx_len, pfx_ptr
+        ldd     #1
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+sw_mismatch
+        leas    2,s             ; drop loop count
+sw_false
+        leas    4,s             ; drop pfx_len, pfx_ptr
+        ldd     #0
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+********************************************************************
+* op_str_endswith ($79): [str, sfx] -> [bool]
+********************************************************************
+op_str_endswith
+        sty     <vm_pc
+        pulu    d               ; D = sfx_len
+        pulu    x               ; discard sfx_cap
+        pulu    y               ; Y = sfx_ptr
+        pshs    d,y             ; 0,s = sfx_len, 2,s = sfx_ptr
+
+        pulu    d               ; D = str_len
+        pulu    x               ; discard str_cap
+        pulu    x               ; X = str_ptr
+
+        cmpd    ,s              ; compare str_len with sfx_len
+        blo     ew_false        ; str_len < sfx_len -> false
+
+        subd    ,s              ; D = str_len - sfx_len
+        leax    d,x             ; X = str_ptr + offset
+
+        ldd     ,s              ; D = sfx_len
+        beq     ew_true
+        pshs    d               ; 0,s = loop count
+        ldy     4,s             ; Y = sfx_ptr
+
+ew_loop
+        lda     ,x+
+        cmpa    ,y+
+        bne     ew_mismatch
+        ldd     ,s
+        subd    #1
+        std     ,s
+        bne     ew_loop
+
+        leas    2,s             ; drop loop count
+ew_true
+        leas    4,s
+        ldd     #1
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+ew_mismatch
+        leas    2,s
+ew_false
+        leas    4,s
+        ldd     #0
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+********************************************************************
+* op_str_find ($7A): [str, sub, start] -> [idx]
+********************************************************************
+op_str_find
+        sty     <vm_pc
+        pulu    d               ; D = start
+        pshs    d               ; 0,s = start
+
+        pulu    d               ; D = sub_len
+        pulu    x               ; discard sub_cap
+        pulu    y               ; Y = sub_ptr
+        pshs    d,y             ; 0,s = sub_len, 2,s = sub_ptr, 4,s = start
+
+        pulu    d               ; D = str_len
+        pulu    x               ; discard str_cap
+        pulu    x               ; X = str_ptr
+        pshs    d,x             ; 0,s = str_len, 2,s = str_ptr, 4,s = sub_len, 6,s = sub_ptr, 8,s = start
+
+        ldd     4,s             ; sub_len
+        bne     sf_nonempty
+* Empty needle:
+        ldd     8,s             ; start
+        cmpd    0,s             ; compare with str_len
+        bls     sf_empty_ok
+        ldd     0,s             ; min(start, str_len)
+sf_empty_ok
+        leas    10,s
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+sf_nonempty
+        ldd     8,s             ; start
+        cmpd    0,s             ; start vs str_len
+        bhs     sf_not_found
+
+        ldd     0,s             ; str_len
+        subd    4,s             ; str_len - sub_len
+        blo     sf_not_found    ; sub_len > str_len
+        cmpd    8,s             ; max_start vs start
+        blo     sf_not_found    ; start > max_start
+
+        pshs    d               ; 0,s = max_start
+* Stack:
+* 0,s = max_start
+* 2,s = str_len
+* 4,s = str_ptr
+* 6,s = sub_len
+* 8,s = sub_ptr
+* 10,s = start (candidate index)
+
+sf_cand_loop
+        ldd     10,s            ; D = cur_idx
+        ldx     4,s             ; X = str_ptr
+        leax    d,x             ; X = str_ptr + cur_idx
+        ldy     8,s             ; Y = sub_ptr
+        ldd     6,s             ; D = sub_len
+        pshs    d               ; 0,s = byte count
+
+sf_byte_loop
+        lda     ,x+
+        cmpa    ,y+
+        bne     sf_cand_mismatch
+        ldd     ,s
+        subd    #1
+        std     ,s
+        bne     sf_byte_loop
+
+* All bytes matched!
+        leas    2,s             ; drop byte count
+        ldd     10,s            ; D = cur_idx
+        leas    12,s            ; drop max_start, str_len, str_ptr, sub_len, sub_ptr, start
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+sf_cand_mismatch
+        leas    2,s             ; drop byte count
+        ldd     10,s            ; cur_idx
+        cmpd    0,s             ; cur_idx vs max_start
+        bhs     sf_exhausted
+        addd    #1
+        std     10,s            ; cur_idx++
+        bra     sf_cand_loop
+
+sf_exhausted
+        leas    2,s             ; drop max_start
+sf_not_found
+        leas    10,s            ; drop vars
+        ldd     #$FFFF          ; -1
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+********************************************************************
+* op_str_lstrip ($7B): [str, chars] -> [view]
+********************************************************************
+op_str_lstrip
+        sty     <vm_pc
+        pulu    d               ; chars_len
+        pulu    x               ; chars_cap
+        pulu    y               ; chars_ptr
+        pshs    d,y             ; 0,s = chars_len, 2,s = chars_ptr
+
+        pulu    d               ; str_len
+        pulu    x               ; str_cap
+        pulu    y               ; str_ptr
+        pshs    d,x,y           ; 0,s = str_len, 2,s = str_cap, 4,s = str_ptr, 6,s = chars_len, 8,s = chars_ptr
+
+        ldd     #0
+        pshs    d               ; 0,s = i (offset)
+* Stack:
+* 0,s = i
+* 2,s = str_len
+* 4,s = str_cap
+* 6,s = str_ptr
+* 8,s = chars_len
+* 10,s = chars_ptr
+
+ls_loop
+        ldd     ,s              ; D = i
+        cmpd    2,s             ; i vs str_len
+        bhs     ls_done
+        ldx     6,s             ; str_ptr
+        lda     d,x             ; A = str_ptr[i]
+        ldy     10,s            ; chars_ptr
+        ldd     8,s             ; chars_len
+        lbsr    cic_check
+        tstb
+        beq     ls_done         ; not in chars -> stop
+
+        ldd     ,s
+        addd    #1
+        std     ,s              ; i++
+        bra     ls_loop
+
+ls_done
+        ldd     ,s              ; D = i
+        ldx     6,s             ; str_ptr
+        leax    d,x             ; X = new_ptr
+        pshu    x               ; push ptr to U
+
+        ldd     4,s             ; str_cap
+        subd    ,s              ; str_cap - i
+        pshu    d               ; push cap to U
+
+        ldd     2,s             ; str_len
+        subd    ,s              ; str_len - i
+        pshu    d               ; push len to U
+
+        leas    12,s            ; drop i(2), str_len(2), str_cap(2), str_ptr(2), chars_len(2), chars_ptr(2)
+        ldy     <vm_pc
+        lbra    dispatch
+
+********************************************************************
+* op_str_rstrip ($7C): [str, chars] -> [view]
+********************************************************************
+op_str_rstrip
+        sty     <vm_pc
+        pulu    d               ; chars_len
+        pulu    x               ; chars_cap
+        pulu    y               ; chars_ptr
+        pshs    d,y             ; 0,s = chars_len, 2,s = chars_ptr
+
+        pulu    d               ; str_len
+        pulu    x               ; str_cap
+        pulu    y               ; str_ptr
+        pshs    d,x,y           ; 0,s = str_len, 2,s = str_cap, 4,s = str_ptr, 6,s = chars_len, 8,s = chars_ptr
+
+rs_loop
+        ldd     ,s              ; str_len
+        beq     rs_done
+        subd    #1              ; D = str_len - 1
+        ldx     4,s             ; str_ptr
+        lda     d,x             ; A = str_ptr[str_len - 1]
+        ldy     8,s             ; chars_ptr
+        ldd     6,s             ; chars_len
+        lbsr    cic_check
+        tstb
+        beq     rs_done
+
+        ldd     ,s
+        subd    #1
+        std     ,s              ; str_len--
+        bra     rs_loop
+
+rs_done
+        ldx     4,s             ; str_ptr
+        ldy     2,s             ; str_cap
+        ldd     ,s              ; str_len
+        pshu    x
+        pshu    y
+        pshu    d
+
+        leas    10,s
+        ldy     <vm_pc
+        lbra    dispatch
+
+********************************************************************
+* op_str_strip ($7D): [str, chars] -> [view]
+********************************************************************
+op_str_strip
+        sty     <vm_pc
+        pulu    d               ; chars_len
+        pulu    x               ; chars_cap
+        pulu    y               ; chars_ptr
+        pshs    d,y             ; 0,s = chars_len, 2,s = chars_ptr
+
+        pulu    d               ; str_len
+        pulu    x               ; str_cap
+        pulu    y               ; str_ptr
+        pshs    d,x,y           ; 0,s = str_len, 2,s = str_cap, 4,s = str_ptr, 6,s = chars_len, 8,s = chars_ptr
+
+* Find start index:
+        ldd     #0
+        pshs    d               ; 0,s = start_idx
+* Stack:
+* 0,s = start_idx
+* 2,s = str_len
+* 4,s = str_cap
+* 6,s = str_ptr
+* 8,s = chars_len
+* 10,s = chars_ptr
+
+st_l_loop
+        ldd     ,s              ; start_idx
+        cmpd    2,s             ; vs str_len
+        bhs     st_l_done
+        ldx     6,s             ; str_ptr
+        lda     d,x
+        ldy     10,s            ; chars_ptr
+        ldd     8,s             ; chars_len
+        lbsr    cic_check
+        tstb
+        beq     st_l_done
+
+        ldd     ,s
+        addd    #1
+        std     ,s              ; start_idx++
+        bra     st_l_loop
+
+st_l_done
+* Now end_idx starts at str_len
+        ldd     2,s             ; str_len
+        pshs    d               ; 0,s = end_idx
+* Stack:
+* 0,s = end_idx
+* 2,s = start_idx
+* 4,s = str_len
+* 6,s = str_cap
+* 8,s = str_ptr
+* 10,s = chars_len
+* 12,s = chars_ptr
+
+st_r_loop
+        ldd     ,s              ; end_idx
+        cmpd    2,s             ; compare end_idx with start_idx
+        bls     st_done
+        subd    #1              ; end_idx - 1
+        ldx     8,s             ; str_ptr
+        lda     d,x
+        ldy     12,s            ; chars_ptr
+        ldd     10,s            ; chars_len
+        lbsr    cic_check
+        tstb
+        beq     st_done
+
+        ldd     ,s
+        subd    #1
+        std     ,s              ; end_idx--
+        bra     st_r_loop
+
+st_done
+        ldd     2,s             ; start_idx
+        ldx     8,s             ; str_ptr
+        leax    d,x             ; X = new_ptr
+        pshu    x               ; push ptr to U
+
+        ldd     6,s             ; str_cap
+        subd    2,s             ; str_cap - start_idx
+        pshu    d               ; push cap to U
+
+        ldd     ,s              ; end_idx
+        subd    2,s             ; end_idx - start_idx
+        pshu    d               ; push len to U
+
+        leas    14,s
+        ldy     <vm_pc
+        lbra    dispatch
+
+********************************************************************
+* is_ident_char: Helper to check if char in A is in [A-Za-z0-9_.]
+* Input:  A = character
+* Output: B = 1 if identifier char, 0 otherwise
+* Preserves: A
+********************************************************************
+is_ident_char
+        cmpa    #'A'
+        blo     iic_not_upper
+        cmpa    #'Z'
+        bls     iic_yes
+iic_not_upper
+        cmpa    #'a'
+        blo     iic_not_lower
+        cmpa    #'z'
+        bls     iic_yes
+iic_not_lower
+        cmpa    #'0'
+        blo     iic_not_digit
+        cmpa    #'9'
+        bls     iic_yes
+iic_not_digit
+        cmpa    #'_'
+        beq     iic_yes
+        cmpa    #'.
+        beq     iic_yes
+        clrb
+        rts
+iic_yes
+        ldb     #1
+        rts
+
+********************************************************************
+* check_ident_match_at_pos: Helper for op_str_replace_ident
+* Evaluates word-boundary match at frame's pos.
+* Input: frame on S (with return address at 0,s, offsets +2):
+*   6,s  = pos
+*   10,s = src_ptr
+*   14,s = src_len
+*   16,s = old_len
+*   18,s = old_ptr
+* Output: B = 1 if match, 0 if not
+********************************************************************
+check_ident_match_at_pos
+* Check if pos <= src_len - old_len
+        ldd     10,s            ; src_len
+        subd    16,s            ; src_len - old_len
+        blo     cim_no
+        cmpd    6,s             ; vs pos
+        blo     cim_no
+
+* Boundary before: if pos > 0, src[pos-1] must NOT be ident char
+        ldd     6,s             ; pos
+        beq     cim_before_ok
+        subd    #1
+        ldx     14,s            ; src_ptr
+        lda     d,x
+        lbsr    is_ident_char
+        tstb
+        bne     cim_no
+
+cim_before_ok
+* Boundary after: if pos + old_len < src_len, src[pos+old_len] must NOT be ident char
+        ldd     6,s             ; pos
+        addd    16,s            ; pos + old_len
+        cmpd    10,s            ; vs src_len
+        bhs     cim_after_ok
+        ldx     14,s            ; src_ptr
+        lda     d,x
+        lbsr    is_ident_char
+        tstb
+        bne     cim_no
+
+cim_after_ok
+* Compare old_len bytes at src_ptr + pos with old_ptr
+        ldd     6,s             ; pos
+        ldx     14,s            ; src_ptr
+        leax    d,x             ; X = src_ptr + pos
+        ldy     18,s            ; Y = old_ptr
+        ldd     16,s            ; old_len
+        pshs    d               ; 0,s = count
+
+cim_cmp_loop
+        lda     ,x+
+        cmpa    ,y+
+        bne     cim_mismatch
+        ldd     ,s
+        subd    #1
+        std     ,s
+        bne     cim_cmp_loop
+
+* All bytes matched!
+        leas    2,s             ; drop count
+        ldb     #1
+        rts
+
+cim_mismatch
+        leas    2,s             ; drop count
+cim_no
+        clrb
+        rts
+
+********************************************************************
+* op_str_replace_ident ($7F): [src, old, new] -> [res]
+********************************************************************
+op_str_replace_ident
+        sty     <vm_pc
+        pulu    d               ; new_len
+        pulu    x               ; new_cap
+        pulu    y               ; new_ptr
+        pshs    d,y             ; 0,s = new_len, 2,s = new_ptr
+
+        pulu    d               ; old_len
+        pulu    x               ; old_cap
+        pulu    y               ; old_ptr
+        pshs    d,y             ; 0,s = old_len, 2,s = old_ptr, 4,s = new_len, 6,s = new_ptr
+
+        pulu    d               ; src_len
+        pulu    x               ; src_cap
+        pulu    y               ; src_ptr
+        pshs    d,x,y           ; 0,s = src_len, 2,s = src_cap, 4,s = src_ptr, 6,s = old_len, 8,s = old_ptr, 10,s = new_len, 12,s = new_ptr
+
+        leas    -8,s            ; allocate work area
+* Frame layout (22 bytes total):
+* 0,s  = out_ptr (2 bytes)
+* 2,s  = out_idx (2 bytes)
+* 4,s  = pos (2 bytes)
+* 6,s  = num_matches / new_total_len (2 bytes)
+* 8,s  = src_len (2 bytes)
+* 10,s = src_cap (2 bytes)
+* 12,s = src_ptr (2 bytes)
+* 14,s = old_len (2 bytes)
+* 16,s = old_ptr (2 bytes)
+* 18,s = new_len (2 bytes)
+* 20,s = new_ptr (2 bytes)
+
+* Check trivial conditions:
+        ldd     14,s            ; old_len
+        beq     ri_return_orig
+        ldd     8,s             ; src_len
+        cmpd    14,s            ; src_len vs old_len
+        blo     ri_return_orig
+
+* Initialize Pass 1:
+        ldd     #0
+        std     4,s             ; pos = 0
+        std     6,s             ; num_matches = 0
+
+ri_p1_loop
+        ldd     4,s             ; pos
+        cmpd    8,s             ; pos vs src_len
+        bhs     ri_p1_done
+        lbsr    check_ident_match_at_pos
+        tstb
+        beq     ri_p1_no_match
+
+* Match found:
+        ldd     6,s
+        addd    #1
+        std     6,s             ; num_matches++
+        ldd     4,s
+        addd    14,s            ; pos += old_len
+        std     4,s
+        bra     ri_p1_loop
+
+ri_p1_no_match
+        ldd     4,s
+        addd    #1
+        std     4,s             ; pos++
+        bra     ri_p1_loop
+
+ri_p1_done
+        ldd     6,s             ; num_matches
+        bne     ri_do_replace
+        bra     ri_return_orig
+
+ri_return_orig
+        ldx     12,s            ; src_ptr
+        ldy     10,s            ; src_cap
+        ldd     8,s             ; src_len
+        leas    22,s            ; drop frame
+        pshu    x
+        pshu    y
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+ri_do_replace
+* Calculate new_total_len = src_len + num_matches * (new_len - old_len)
+        ldx     6,s             ; X = num_matches
+        ldd     8,s             ; D = src_len
+        std     6,s             ; 6,s = new_total_len accumulator
+ri_len_loop
+        cmpx    #0
+        beq     ri_len_done
+        ldd     6,s
+        addd    18,s            ; + new_len
+        subd    14,s            ; - old_len
+        std     6,s
+        leax    -1,x
+        bra     ri_len_loop
+
+ri_len_done
+        ldd     6,s             ; D = new_total_len
+        lbsr    heap_alloc      ; X = allocated buffer
+        stx     0,s             ; out_ptr
+        ldd     #0
+        std     2,s             ; out_idx = 0
+        std     4,s             ; pos = 0
+
+ri_p2_loop
+        ldd     4,s             ; pos
+        cmpd    8,s             ; pos vs src_len
+        bhs     ri_p2_done
+        lbsr    check_ident_match_at_pos
+        tstb
+        beq     ri_p2_single
+
+* Match in Pass 2: copy new string
+        ldd     18,s            ; new_len
+        beq     ri_p2_skip_copy
+        pshs    d               ; 0,s = count
+        ldy     22,s            ; Y = new_ptr (shifted by 2 due to pshs d)
+        ldd     4,s             ; out_idx (shifted by 2)
+        ldx     2,s             ; out_ptr (shifted by 2)
+        leax    d,x             ; X = out_ptr + out_idx
+ri_p2_cpy_new
+        lda     ,y+
+        sta     ,x+
+        ldd     ,s
+        subd    #1
+        std     ,s
+        bne     ri_p2_cpy_new
+        leas    2,s             ; drop count
+
+ri_p2_skip_copy
+        ldd     2,s             ; out_idx
+        addd    18,s            ; out_idx += new_len
+        std     2,s
+        ldd     4,s             ; pos
+        addd    14,s            ; pos += old_len
+        std     4,s
+        bra     ri_p2_loop
+
+ri_p2_single
+        ldd     4,s             ; pos
+        ldx     12,s            ; src_ptr
+        lda     d,x             ; A = src_ptr[pos]
+        ldd     2,s             ; out_idx
+        ldx     0,s             ; out_ptr
+        sta     d,x             ; out_ptr[out_idx] = A
+        ldd     2,s
+        addd    #1
+        std     2,s             ; out_idx++
+        ldd     4,s
+        addd    #1
+        std     4,s             ; pos++
+        bra     ri_p2_loop
+
+ri_p2_done
+        ldx     0,s             ; out_ptr
+        ldy     6,s             ; new_total_len (cap)
+        ldd     6,s             ; new_total_len (len)
+        leas    22,s            ; drop frame
+        pshu    x
+        pshu    y
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
 op_illegal
         lda     -1,y            ; A = opcode byte
         pshs    a
@@ -1411,7 +2355,7 @@ op_illegal
         lsra
         cmpa    #9
         bls     oi_d1
-        adda    #'A'-'0'-10
+        adda    #7
 oi_d1
         adda    #'0
         sta     >$FF89          ; print high hex digit
@@ -1419,7 +2363,7 @@ oi_d1
         anda    #$0F
         cmpa    #9
         bls     oi_d2
-        adda    #'A'-'0'-10
+        adda    #7
 oi_d2
         adda    #'0
         sta     >$FF89          ; print low hex digit
@@ -1594,6 +2538,435 @@ f_units
 
 p10_tbl
         fdb     10000,1000,100,10,0
+
+********************************************************************
+* op_div / op_mod / udiv16: 16-bit Unsigned Division & Modulo
+********************************************************************
+op_div
+        ldx     ,u              ; X = b (divisor)
+        ldd     2,u             ; D = a (dividend)
+        lbsr    udiv16          ; D = a / b, X = a % b
+        leau    2,u             ; drop b
+        std     ,u              ; replace a with quotient
+        lbra    dispatch
+
+op_mod
+        ldx     ,u              ; X = b (divisor)
+        ldd     2,u             ; D = a (dividend)
+        lbsr    udiv16          ; D = a / b, X = a % b
+        leau    2,u             ; drop b
+        stx     ,u              ; replace a with remainder
+        lbra    dispatch
+
+udiv16
+        cmpx    #0
+        bne     do_udiv16
+        clra
+        clrb
+        ldx     #0
+        rts
+do_udiv16
+        pshs    x               ; 3,s = divisor
+        pshs    d               ; 1,s = dividend
+        lda     #16
+        pshs    a               ; 0,s = loop counter
+        clra
+        clrb                    ; D = 0 (remainder)
+udiv_loop
+        lsl     2,s             ; shift dividend low byte
+        rol     1,s             ; shift dividend high byte
+        rolb                    ; shift carry into remainder D
+        rola
+        cmpd    3,s             ; compare remainder with divisor
+        blo     udiv_skip
+        subd    3,s             ; remainder -= divisor
+        inc     2,s             ; quotient low bit = 1
+udiv_skip
+        dec     ,s
+        bne     udiv_loop
+        tfr     d,x             ; X = remainder
+        ldd     1,s             ; D = quotient
+        leas    5,s             ; drop counter (1), dividend (2), divisor (2)
+        rts
+
+********************************************************************
+* copy_path: helper to copy string slice to path_scratch ($0D-terminated)
+* Input:  X = string base pointer, D = string length
+* Output: X = pointer to path_scratch
+********************************************************************
+copy_path
+        pshs    u,y
+        ldu     <data_base
+        leau    path_scratch,u  ; U = destination
+        pshs    u               ; save destination pointer
+        tfr     d,y             ; Y = count
+        cmpy    #62
+        bls     cp_len_ok
+        ldy     #62
+cp_len_ok
+        cmpy    #0
+        beq     cp_end
+cp_loop
+        lda     ,x+
+        sta     ,u+
+        leay    -1,y
+        bne     cp_loop
+cp_end
+        lda     #$0D            ; OS-9 path terminator
+        sta     ,u
+        puls    x               ; X = path_scratch
+        puls    u,y,pc
+
+********************************************************************
+* File I/O Opcodes ($C0..$C4, $CC, $CD)
+********************************************************************
+op_file_open_read
+        sty     <vm_pc
+        pulu    d               ; D = len
+        pulu    x               ; X = cap (discard)
+        pulu    x               ; X = base
+        lbsr    copy_path       ; X = path_scratch ($0D-terminated)
+        lda     #1              ; READ.
+        os9     I$Open
+        bcs     open_r_fail
+        tfr     a,b
+        clra                    ; D = handle
+        pshu    d
+        ldd     #1              ; ok = 1
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+open_r_fail
+        ldd     #0
+        pshu    d               ; handle = 0
+        pshu    d               ; ok = 0
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_file_open_write
+        sty     <vm_pc
+        pulu    d               ; D = len
+        pulu    x               ; X = cap (discard)
+        pulu    x               ; X = base
+        lbsr    copy_path       ; X = path_scratch ($0D-terminated)
+        lda     #2              ; WRITE.
+        ldb     #3              ; read/write attributes
+        os9     I$Create
+        bcc     open_w_ok
+        cmpb    #218            ; E$CE (file exists)?
+        bne     open_w_fail
+        ldx     <data_base
+        leax    path_scratch,x
+        os9     I$Delete
+        ldx     <data_base
+        leax    path_scratch,x
+        lda     #2
+        ldb     #3
+        os9     I$Create
+        bcs     open_w_fail
+open_w_ok
+        tfr     a,b
+        clra                    ; D = handle
+        pshu    d
+        ldd     #1              ; ok = 1
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+open_w_fail
+        ldd     #0
+        pshu    d               ; handle = 0
+        pshu    d               ; ok = 0
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_file_readline
+        sty     <vm_pc
+        pulu    d               ; D = handle
+        tfr     b,a             ; A = path
+        pshs    u               ; save eval stack U
+        ldx     <data_base
+        leax    line_buf,x      ; X = line_buf
+        ldy     #255            ; max length
+        os9     I$ReadLn
+        bcs     rdln_eof
+        cmpy    #0
+        beq     rdln_eof
+        tfr     y,d             ; D = length read
+        pshs    d               ; save length
+        lbsr    heap_alloc      ; X = allocated heap memory
+        puls    d               ; D = length
+        ldy     <data_base
+        leay    line_buf,y      ; Y = source line_buf
+        pshs    d,x             ; 0,s = buffer, 2,s = length
+        tfr     d,u             ; U = count
+rdln_cp
+        lda     ,y+
+        sta     ,x+
+        leau    -1,u
+        cmpu    #0
+        bne     rdln_cp
+        puls    d,x             ; D = length, X = buffer
+        puls    u               ; restore eval stack U
+        pshu    x               ; Base = X
+        pshu    d               ; Cap = D
+        pshu    d               ; Len = D
+        ldd     #0              ; eof = 0
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+rdln_eof
+        puls    u               ; restore eval stack U
+        ldd     #0
+        pshu    d               ; Base = 0
+        pshu    d               ; Cap = 0
+        pshu    d               ; Len = 0
+        ldd     #1              ; eof = 1
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_file_write
+        sty     <vm_pc
+        pulu    d               ; D = len
+        tfr     d,y             ; Y = length
+        pulu    x               ; X = cap (discard)
+        pulu    x               ; X = base
+        pulu    d               ; D = handle
+        tfr     b,a             ; A = path
+        os9     I$Write
+        bcs     wr_fail
+        ldd     #1              ; ok = 1
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+wr_fail
+        ldd     #0              ; ok = 0
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_file_write_buf
+        sty     <vm_pc
+        pulu    y               ; Y = count
+        pulu    x               ; X = buf_addr
+        pulu    d               ; D = handle
+        tfr     b,a             ; A = path
+        os9     I$Write
+        bcs     wr_buf_fail
+        tfr     y,d             ; D = count written
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+wr_buf_fail
+        ldd     #0
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_file_read
+        sty     <vm_pc
+        pulu    y               ; Y = count
+        pulu    x               ; X = buf_addr
+        pulu    d               ; D = handle
+        tfr     b,a             ; A = path
+        os9     I$Read
+        bcs     rd_fail
+        tfr     y,d             ; D = actual count read
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+rd_fail
+        ldd     #0
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_file_close
+        sty     <vm_pc
+        pulu    d               ; D = handle
+        tfr     b,a             ; A = path
+        os9     I$Close
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_os_isfile
+        sty     <vm_pc
+        pulu    d               ; D = len
+        pulu    x               ; X = cap (discard)
+        pulu    x               ; X = base
+        lbsr    copy_path
+        lda     #1              ; READ.
+        os9     I$Open
+        bcs     is_not_file
+        os9     I$Close
+        ldd     #1              ; true
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+is_not_file
+        ldd     #0              ; false
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_os_makedirs
+        sty     <vm_pc
+        pulu    d               ; D = len
+        pulu    x               ; X = cap (discard)
+        pulu    x               ; X = base
+        lbsr    copy_path
+        ldb     #3              ; read/write
+        os9     I$MakDir
+        bcc     mak_ok
+        cmpb    #218            ; E$CE (exists)?
+        beq     mak_ok
+        ldd     #0              ; false
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+mak_ok
+        ldd     #1              ; true
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_sys_exit
+        pulu    d               ; D = code
+        tfr     b,a             ; A = status
+        os9     F$Exit
+
+********************************************************************
+* op_sys_args: Parse CLI parameters into string slice list
+********************************************************************
+op_sys_args
+        sty     <vm_pc
+        pshs    u               ; save eval stack U
+        ldx     <param_ptr
+        cmpx    #0
+        lbeq    sa_empty
+
+        ; Pass 1: count number of tokens
+        clra
+        clrb
+        pshs    d               ; 0,s = token count N
+sa_scan_lead
+        lda     ,x
+        cmpa    #$0D
+        beq     sa_count_done
+        cmpa    #' '
+        beq     sa_skip_space
+        cmpa    #9
+        beq     sa_skip_space
+        ; Found token start!
+        inc     1,s
+sa_in_tok
+        lda     ,x+
+        cmpa    #$0D
+        beq     sa_count_done
+        cmpa    #' '
+        beq     sa_scan_lead
+        cmpa    #9
+        beq     sa_scan_lead
+        bra     sa_in_tok
+sa_skip_space
+        leax    1,x
+        bra     sa_scan_lead
+
+sa_count_done
+        ldd     ,s              ; D = token count N
+        lbeq    sa_empty_cnt
+        pshs    d               ; 0,s = N (token count), 2,s = saved N
+        aslb
+        rola                    ; D = N * 2
+        addd    ,s              ; D = N * 3
+        aslb
+        rola                    ; D = N * 6
+        lbsr    heap_alloc      ; X = allocated slice buffer
+        pshs    x               ; 0,s = list_buf (fixed base), 2,s = N, 4,s = N
+        pshs    x               ; 0,s = list_buf write ptr
+
+        ; Pass 2: populate list_buf with string slices
+        ldx     <param_ptr      ; reset X to param string
+sa_tok2_lead
+        lda     ,x
+        cmpa    #$0D
+        beq     sa_tok_finish
+        cmpa    #' '
+        beq     sa_skip2
+        cmpa    #9
+        beq     sa_skip2
+        ; Start of token at X
+        tfr     x,y             ; Y = start of token
+sa_tok2_end
+        lda     ,x+
+        cmpa    #$0D
+        beq     sa_tok2_found
+        cmpa    #' '
+        beq     sa_tok2_found
+        cmpa    #9
+        beq     sa_tok2_found
+        bra     sa_tok2_end
+
+sa_tok2_found
+        clrb                    ; B = 0, so D = delimiter word (A in high byte)
+        pshs    d               ; 0,s = delimiter word
+        pshs    x               ; 0,s = next char ptr in param string, 2,s = delimiter word
+        tfr     x,d
+        subd    #1              ; D = end of token
+        pshs    y
+        subd    ,s++            ; D = length of token = (X - 1) - Y
+        pshs    d               ; 0,s = token length, 2,s = next char ptr, 4,s = delimiter
+        lbsr    heap_alloc      ; X = allocated string buffer
+        ldd     ,s              ; D = token length
+        pshs    d,x             ; 0,s = allocated buffer, 2,s = token length
+        tfr     d,u             ; U = loop counter (length)
+sa_cp_loop
+        cmpu    #0
+        beq     sa_cp_done
+        lda     ,y+
+        sta     ,x+
+        leau    -1,u
+        bra     sa_cp_loop
+sa_cp_done
+        puls    d,x             ; D = token length, X = allocated buffer
+        ldu     6,s             ; U = list_buf write ptr
+        stx     ,u++            ; Base = allocated buffer
+        std     ,u++            ; Cap = length
+        std     ,u++            ; Len = length
+        stu     6,s             ; update list_buf write ptr
+        leas    2,s             ; drop token length
+        puls    x               ; restore next char ptr in param string
+        puls    d               ; restore delimiter word (A = delimiter)
+        cmpa    #$0D
+        beq     sa_tok_finish
+        bra     sa_tok2_lead
+
+sa_skip2
+        leax    1,x
+        bra     sa_tok2_lead
+
+sa_tok_finish
+        leas    2,s             ; drop write ptr
+        puls    x               ; X = list_buf base
+        puls    d               ; D = N
+        leas    2,s             ; drop saved N
+        puls    u               ; U = eval stack
+        pshu    x               ; Base = list_buf
+        pshu    d               ; Cap = N
+        pshu    d               ; Len = N
+        ldy     <vm_pc
+        lbra    dispatch
+
+sa_empty_cnt
+        leas    2,s             ; drop count
+sa_empty
+        puls    u               ; U = eval stack
+        ldd     #0
+        pshu    d               ; Base = 0
+        pshu    d               ; Cap = 0
+        pshu    d               ; Len = 0
+        ldy     <vm_pc
+        lbra    dispatch
 
 ********************************************************************
 * Baked NPC Binary Payload

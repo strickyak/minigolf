@@ -1,0 +1,168 @@
+package main
+
+var io_buf [256]byte
+var hex_chars [16]byte
+
+func init_hex() {
+    hex_chars[0] = '0'
+    hex_chars[1] = '1'
+    hex_chars[2] = '2'
+    hex_chars[3] = '3'
+    hex_chars[4] = '4'
+    hex_chars[5] = '5'
+    hex_chars[6] = '6'
+    hex_chars[7] = '7'
+    hex_chars[8] = '8'
+    hex_chars[9] = '9'
+    hex_chars[10] = 'A'
+    hex_chars[11] = 'B'
+    hex_chars[12] = 'C'
+    hex_chars[13] = 'D'
+    hex_chars[14] = 'E'
+    hex_chars[15] = 'F'
+}
+
+func path_join(dir string, file string) string {
+    if len(dir) == 0 {
+        return file
+    }
+    need_slash := false
+    if dir[len(dir)-1] != '/' {
+        need_slash = true
+    }
+    total := word(len(dir)) + word(len(file))
+    if need_slash {
+        total++
+    }
+    p := alloc(total)
+    off := word(0)
+    for i := word(0); i < word(len(dir)); i++ {
+        pokeb(p + off, dir[i])
+        off++
+    }
+    if need_slash {
+        pokeb(p + off, '/')
+        off++
+    }
+    for i := word(0); i < word(len(file)); i++ {
+        pokeb(p + off, file[i])
+        off++
+    }
+    var res string
+    res.Base = p
+    res.Cap = total
+    res.Len = total
+    return res
+}
+
+func get_arg(args_base word, idx word) string {
+    addr := args_base + idx * 6
+    var res string
+    res.Base = peek(addr)
+    res.Cap = peek(addr + 2)
+    res.Len = peek(addr + 4)
+    return res
+}
+
+func write_str(h word, s string) {
+    if len(s) > 0 {
+        file_write(h, s.Base, word(len(s)))
+    }
+}
+
+func main() {
+    init_hex()
+    args := sys_args()
+    if args.Len < 2 {
+        println("Usage: par3pack <input.p3p> <modname> [out_dir]")
+        sys_exit(1)
+    }
+
+    in_path := get_arg(args.Base, 0)
+    modname := get_arg(args.Base, 1)
+    out_dir := ""
+    if args.Len >= 3 {
+        out_dir = get_arg(args.Base, 2)
+    }
+
+    // 1. Create modname.asm
+    mod_path := path_join(out_dir, "modname.asm")
+    mh, mok := file_open_write(mod_path)
+    if mok == 0 {
+        print("ERROR: Cannot open ")
+        println(mod_path)
+        sys_exit(1)
+    }
+    write_str(mh, "        fcs     /")
+    write_str(mh, modname)
+    write_str(mh, "/\r")
+    file_close(mh)
+
+    // 2. Open input .p3p
+    ih, iok := file_open_read(in_path)
+    if iok == 0 {
+        print("ERROR: Cannot open ")
+        println(in_path)
+        sys_exit(1)
+    }
+
+    // 3. Create payload.asm
+    pay_path := path_join(out_dir, "payload.asm")
+    ph, pok := file_open_write(pay_path)
+    if pok == 0 {
+        print("ERROR: Cannot open ")
+        println(pay_path)
+        file_close(ih)
+        sys_exit(1)
+    }
+
+    // 4. Stream input .p3p and write fcb lines
+    line_buf := alloc(128)
+    col := word(0)
+    for {
+        n := file_read(ih, word(&io_buf[0]), 256)
+        if n == 0 {
+            break
+        }
+        for i := word(0); i < n; i++ {
+            b := word(io_buf[i])
+            if col == 0 {
+                pfx := "        fcb     "
+                for j := word(0); j < word(len(pfx)); j++ {
+                    pokeb(line_buf + j, pfx[j])
+                }
+                pokeb(line_buf + 16, '$')
+                pokeb(line_buf + 17, hex_chars[(b >> 4) & 0xF])
+                pokeb(line_buf + 18, hex_chars[b & 0xF])
+                col = 19
+            } else {
+                pokeb(line_buf + col, ',')
+                col++
+                pokeb(line_buf + col, '$')
+                col++
+                pokeb(line_buf + col, hex_chars[(b >> 4) & 0xF])
+                col++
+                pokeb(line_buf + col, hex_chars[b & 0xF])
+                col++
+            }
+            if col >= 79 {
+                pokeb(line_buf + col, 13)
+                col++
+                file_write(ph, line_buf, col)
+                col = 0
+            }
+        }
+    }
+    if col > 0 {
+        pokeb(line_buf + col, 13)
+        col++
+        file_write(ph, line_buf, col)
+    }
+
+    file_close(ih)
+    file_close(ph)
+
+    print("Generated modname.asm and payload.asm for ")
+    println(modname)
+    sys_exit(0)
+}

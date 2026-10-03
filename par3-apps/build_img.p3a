@@ -1,0 +1,5978 @@
+;
+; Starting whole-program compilation (Par3 Backend)
+; Target architecture: PAR3
+; Output object file: 
+; Source files: [par3-apps/build_img.par3]
+;
+
+; Global Variable Table
+.global dec_digits: 8
+.global io_buf: 256
+.global mod_dir: slice
+.global mod_exec_off: 128
+.global mod_name: 384
+.global mod_path: 384
+.global mod_role: 384
+.global mod_size: 128
+.global mod_slot: 128
+.global name_raw: 32
+.global num_mods: word
+.global slot4_first_addr: word
+.global zero_buf: 256
+
+; ====================================================================
+; Function: peekb
+; ====================================================================
+.function prelude_peekb
+    .param addr: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; return *
+    LOAD_LOCAL addr
+    PEEK1
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: peekw
+; ====================================================================
+.function prelude_peekw
+    .param addr: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; return *
+    LOAD_LOCAL addr
+    PEEK2
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: pokeb
+; ====================================================================
+.function prelude_pokeb
+    .param addr: word
+    .param value: byte
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; * = value
+    LOAD_LOCAL value
+    LOAD_LOCAL addr
+    SWAP
+    POKE1
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: pokew
+; ====================================================================
+.function prelude_pokew
+    .param addr: word
+    .param value: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; * = value
+    LOAD_LOCAL value
+    LOAD_LOCAL addr
+    SWAP
+    POKE2
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: alloc
+; ====================================================================
+.function prelude_alloc
+    .param size: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; return 0
+    PUSH_0
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: free
+; ====================================================================
+.function prelude_free
+    .param addr: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: strlen
+; ====================================================================
+.function prelude_strlen
+    .param s: word
+    .local n: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; n := word(0)
+    PUSH_0
+    STORE_LOCAL n
+; for * != 0
+.L_for_top_1:
+    LOAD_LOCAL s
+    PEEK1
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_for_exit_2
+; n++
+    LOAD_LOCAL n
+    PUSH_1
+    ADD
+    STORE_LOCAL n
+; s = *(word(s) + 1)
+    LOAD_LOCAL s
+    PUSH_1
+    ADD
+    STORE_LOCAL s
+    JUMP .L_for_top_1
+.L_for_exit_2:
+; return n
+    LOAD_LOCAL n
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: add_mod
+; ====================================================================
+.function add_mod
+    .param slot: word
+    .param role: slice
+    .param path: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; if num_mods >= MAX_MODS
+    LOAD_GLOBAL num_mods
+    PUSH_I8 64
+    CMP_GE
+    JUMP_IF_FALSE .L_endif_3
+; println("ERROR: Exceeded MAX_MODS (64)")
+; println("ERROR: Exceeded MAX_MODS (64)")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Exceeded MAX_MODS (64)"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_3:
+; mod_slot[...] = slot
+    LOAD_LOCAL slot
+    ADDR_OF_GLOBAL mod_slot
+    LOAD_GLOBAL num_mods
+    SHL1_ADD
+    SWAP
+    POKE2
+; mod_role[...] = role
+    LOAD_LOCAL role
+    ADDR_OF_GLOBAL mod_role
+    LOAD_GLOBAL num_mods
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+; mod_path[...] = path
+    LOAD_LOCAL path
+    ADDR_OF_GLOBAL mod_path
+    LOAD_GLOBAL num_mods
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+; mod_size[...] = 0
+    PUSH_0
+    ADDR_OF_GLOBAL mod_size
+    LOAD_GLOBAL num_mods
+    SHL1_ADD
+    SWAP
+    POKE2
+; mod_name[...] = ""
+    PUSH_STR ""
+    ADDR_OF_GLOBAL mod_name
+    LOAD_GLOBAL num_mods
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+; mod_exec_off[...] = 0
+    PUSH_0
+    ADDR_OF_GLOBAL mod_exec_off
+    LOAD_GLOBAL num_mods
+    SHL1_ADD
+    SWAP
+    POKE2
+; num_mods++
+    LOAD_GLOBAL num_mods
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_mods
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: print_hex4
+; ====================================================================
+.function print_hex4
+    .param v: word
+    .local hex: slice
+    .local idx: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; hex := "0123456789ABCDEF"
+    PUSH_STR "0123456789ABCDEF"
+    STORE_LOCAL hex
+; idx := v & 15
+    LOAD_LOCAL v
+    PUSH_I8 15
+    BIT_AND
+    STORE_LOCAL idx
+; print(hex[...])
+; print(hex[...])
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL hex
+    LOAD_LOCAL idx
+    LOAD_LOCAL idx
+    PUSH_1
+    ADD
+    SLICE_SUB
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: print_hex16
+; ====================================================================
+.function print_hex16
+    .param v: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; print("$")
+; print("$")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "$"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex4(v >> 12)
+    LOAD_LOCAL v
+    PUSH_I8 12
+    SHR
+    CALL print_hex4
+; print_hex4(v >> 8)
+    LOAD_LOCAL v
+    PUSH_I8 8
+    SHR
+    CALL print_hex4
+; print_hex4(v >> 4)
+    LOAD_LOCAL v
+    PUSH_I8 4
+    SHR
+    CALL print_hex4
+; print_hex4(v)
+    LOAD_LOCAL v
+    CALL print_hex4
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: print_pad
+; ====================================================================
+.function print_pad
+    .param s: slice
+    .param width: word
+    .local slen: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; print(s)
+; print(s)
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL s
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; slen := word(len(s))
+    LOAD_LOCAL s
+    SLICE_LEN
+    STORE_LOCAL slen
+; for slen < width
+.L_for_top_4:
+    LOAD_LOCAL slen
+    LOAD_LOCAL width
+    CMP_LT
+    JUMP_IF_FALSE .L_for_exit_5
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; slen++
+    LOAD_LOCAL slen
+    PUSH_1
+    ADD
+    STORE_LOCAL slen
+    JUMP .L_for_top_4
+.L_for_exit_5:
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: print_dec_pad
+; ====================================================================
+.function print_dec_pad
+    .param val: word
+    .param width: word
+    .local pos: word
+    .local temp: word
+    .local i: word
+    .local j: word
+    .local b: byte
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; pos := word(0)
+    PUSH_0
+    STORE_LOCAL pos
+; if val == 0
+    LOAD_LOCAL val
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_else_6
+; dec_digits[...] = 48
+    PUSH_I8 48
+    ADDR_OF_GLOBAL dec_digits
+    PUSH_0
+    ADD
+    SWAP
+    POKE1
+; pos = 1
+    PUSH_1
+    STORE_LOCAL pos
+    JUMP .L_endif_7
+.L_else_6:
+; temp := val
+    LOAD_LOCAL val
+    STORE_LOCAL temp
+; for temp > 0
+.L_for_top_8:
+    LOAD_LOCAL temp
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_for_exit_9
+; dec_digits[...] = byte(48 + temp %!)(MISSING)
+    PUSH_I8 48
+    LOAD_LOCAL temp
+    PUSH_I8 10
+    MOD
+    ADD
+    PUSH_I16 255
+    BIT_AND
+    ADDR_OF_GLOBAL dec_digits
+    LOAD_LOCAL pos
+    ADD
+    SWAP
+    POKE1
+; pos++
+    LOAD_LOCAL pos
+    PUSH_1
+    ADD
+    STORE_LOCAL pos
+; temp /= 10
+    LOAD_LOCAL temp
+    PUSH_I8 10
+    DIV
+    STORE_LOCAL temp
+    JUMP .L_for_top_8
+.L_for_exit_9:
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_10:
+    LOAD_LOCAL i
+    LOAD_LOCAL pos
+    PUSH_I8 2
+    DIV
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_12
+; j := pos - 1 - i
+    LOAD_LOCAL pos
+    PUSH_1
+    SUB
+    LOAD_LOCAL i
+    SUB
+    STORE_LOCAL j
+; b := dec_digits[...]
+    ADDR_OF_GLOBAL dec_digits
+    LOAD_LOCAL i
+    ADD
+    PEEK1
+    STORE_LOCAL b
+; dec_digits[...] = dec_digits[...]
+    ADDR_OF_GLOBAL dec_digits
+    LOAD_LOCAL j
+    ADD
+    PEEK1
+    ADDR_OF_GLOBAL dec_digits
+    LOAD_LOCAL i
+    ADD
+    SWAP
+    POKE1
+; dec_digits[...] = b
+    LOAD_LOCAL b
+    ADDR_OF_GLOBAL dec_digits
+    LOAD_LOCAL j
+    ADD
+    SWAP
+    POKE1
+.L_for3_cont_11:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_10
+.L_for3_exit_12:
+.L_endif_7:
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_13:
+    LOAD_LOCAL i
+    LOAD_LOCAL pos
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_15
+; print(dec_digits[...])
+; print(dec_digits[...])
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    ADDR_OF_GLOBAL dec_digits
+    PUSH_I16 8
+    PUSH_I16 8
+    SLICE_NEW
+    LOAD_LOCAL i
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    SLICE_SUB
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_for3_cont_14:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_13
+.L_for3_exit_15:
+; for pos < width
+.L_for_top_16:
+    LOAD_LOCAL pos
+    LOAD_LOCAL width
+    CMP_LT
+    JUMP_IF_FALSE .L_for_exit_17
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; pos++
+    LOAD_LOCAL pos
+    PUSH_1
+    ADD
+    STORE_LOCAL pos
+    JUMP .L_for_top_16
+.L_for_exit_17:
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: read_be16
+; ====================================================================
+.function read_be16
+    .param buf: word
+    .param off: word
+    .local hi: word
+    .local lo: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; hi := word(peekb(buf + off))
+    LOAD_LOCAL buf
+    LOAD_LOCAL off
+    ADD
+    PEEK1
+    STORE_LOCAL hi
+; lo := word(peekb(buf + off + 1))
+    LOAD_LOCAL buf
+    LOAD_LOCAL off
+    ADD
+    PUSH_1
+    ADD
+    PEEK1
+    STORE_LOCAL lo
+; return hi << 8 | lo
+    LOAD_LOCAL hi
+    PUSH_I8 8
+    SHL
+    LOAD_LOCAL lo
+    BIT_OR
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: write_be16
+; ====================================================================
+.function write_be16
+    .param buf: word
+    .param off: word
+    .param val: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; pokeb(buf + off, byte(val >> 8 & 255))
+    LOAD_LOCAL buf
+    LOAD_LOCAL off
+    ADD
+    LOAD_LOCAL val
+    PUSH_I8 8
+    SHR
+    PUSH_I16 255
+    BIT_AND
+    PUSH_I16 255
+    BIT_AND
+    POKE1
+; pokeb(buf + off + 1, byte(val & 255))
+    LOAD_LOCAL buf
+    LOAD_LOCAL off
+    ADD
+    PUSH_1
+    ADD
+    LOAD_LOCAL val
+    PUSH_I16 255
+    BIT_AND
+    PUSH_I16 255
+    BIT_AND
+    POKE1
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: basename
+; ====================================================================
+.function basename
+    .param path: slice
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; i := word(len(path))
+    LOAD_LOCAL path
+    SLICE_LEN
+    STORE_LOCAL i
+; for i > 0
+.L_for_top_18:
+    LOAD_LOCAL i
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_for_exit_19
+; i--
+    LOAD_LOCAL i
+    PUSH_1
+    SUB
+    STORE_LOCAL i
+; if path[...] == 47
+    ADDR_OF_LOCAL path
+    PEEK2
+    LOAD_LOCAL i
+    ADD
+    PEEK1
+    PUSH_I8 47
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_20
+; return path[...]
+    LOAD_LOCAL path
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    LOAD_LOCAL path
+    SLICE_LEN
+    SLICE_SUB
+    RET_SLICE
+.L_endif_20:
+    JUMP .L_for_top_18
+.L_for_exit_19:
+; return path
+    LOAD_LOCAL path
+    RET_SLICE
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: extract_os9_name
+; ====================================================================
+.function extract_os9_name
+    .param name_off: word
+    .param n_read: word
+    .local out_len: word
+    .local p: word
+    .local b: word
+    .local s: slice
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; out_len := word(0)
+    PUSH_0
+    STORE_LOCAL out_len
+; p := name_off
+    LOAD_LOCAL name_off
+    STORE_LOCAL p
+; for out_len < 31 && p < n_read
+.L_for_top_21:
+    LOAD_LOCAL out_len
+    PUSH_I8 31
+    CMP_LT
+    DUP
+    JUMP_IF_FALSE .L_and_false_23
+    POP
+    LOAD_LOCAL p
+    LOAD_LOCAL n_read
+    CMP_LT
+    JUMP .L_and_end_24
+.L_and_false_23:
+.L_and_end_24:
+    JUMP_IF_FALSE .L_for_exit_22
+; b := peekb(word(&io_buf[...]) + p)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    LOAD_LOCAL p
+    ADD
+    PEEK1
+    STORE_LOCAL b
+; p++
+    LOAD_LOCAL p
+    PUSH_1
+    ADD
+    STORE_LOCAL p
+; pokeb(word(&name_raw[...]) + out_len, b & 127)
+    ADDR_OF_GLOBAL name_raw
+    PUSH_0
+    ADD
+    LOAD_LOCAL out_len
+    ADD
+    LOAD_LOCAL b
+    PUSH_I8 127
+    BIT_AND
+    POKE1
+; out_len++
+    LOAD_LOCAL out_len
+    PUSH_1
+    ADD
+    STORE_LOCAL out_len
+; if b & 128 != 0
+    LOAD_LOCAL b
+    PUSH_I16 128
+    BIT_AND
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_endif_25
+; break
+    JUMP .L_for_exit_22
+.L_endif_25:
+    JUMP .L_for_top_21
+.L_for_exit_22:
+; var s
+; s.Base = alloc(out_len + 1)
+    LOAD_LOCAL out_len
+    PUSH_1
+    ADD
+    BUF_ALLOC
+    ADDR_OF_LOCAL s
+    SWAP
+    POKE2
+; s.Cap = out_len
+    LOAD_LOCAL out_len
+    ADDR_OF_LOCAL s
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+; s.Len = out_len
+    LOAD_LOCAL out_len
+    ADDR_OF_LOCAL s
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_26:
+    LOAD_LOCAL i
+    LOAD_LOCAL out_len
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_28
+; pokeb(s.Base + i, peekb(word(&name_raw[...]) + i))
+    ADDR_OF_LOCAL s
+    PEEK2
+    LOAD_LOCAL i
+    ADD
+    ADDR_OF_GLOBAL name_raw
+    PUSH_0
+    ADD
+    LOAD_LOCAL i
+    ADD
+    PEEK1
+    POKE1
+.L_for3_cont_27:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_26
+.L_for3_exit_28:
+; pokeb(s.Base + out_len, 0)
+    ADDR_OF_LOCAL s
+    PEEK2
+    LOAD_LOCAL out_len
+    ADD
+    PUSH_0
+    POKE1
+; return s
+    LOAD_LOCAL s
+    RET_SLICE
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: inspect_module
+; ====================================================================
+.function inspect_module
+    .param idx: word
+    .local m_path: slice
+    .local h: word
+    .local ok: word
+    .local n: word
+    .local sz: word
+    .local name_off: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; m_path := mod_path[...]
+    ADDR_OF_GLOBAL mod_path
+    LOAD_LOCAL idx
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    STORE_LOCAL m_path
+; h, ok := file_open_read(m_path)
+    LOAD_LOCAL m_path
+    FILE_OPEN_READ
+    STORE_LOCAL ok
+    STORE_LOCAL h
+; if ok == 0
+    LOAD_LOCAL ok
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_29
+; print("ERROR: Cannot open module: ")
+; print("ERROR: Cannot open module: ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Cannot open module: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println(m_path)
+; println(m_path)
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL m_path
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_29:
+; n := file_read(h, word(&io_buf[...]), 64)
+    LOAD_LOCAL h
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 64
+    FILE_READ
+    STORE_LOCAL n
+; file_close(h)
+    LOAD_LOCAL h
+    FILE_CLOSE
+; if n < 16 || peekb(word(&io_buf[...])) != 135 || peekb(word(&io_buf[...]) + 1) != 205
+    LOAD_LOCAL n
+    PUSH_I8 16
+    CMP_LT
+    DUP
+    JUMP_IF_TRUE .L_or_true_32
+    POP
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PEEK1
+    PUSH_I16 135
+    CMP_NE
+    JUMP .L_or_end_33
+.L_or_true_32:
+.L_or_end_33:
+    DUP
+    JUMP_IF_TRUE .L_or_true_30
+    POP
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_1
+    ADD
+    PEEK1
+    PUSH_I16 205
+    CMP_NE
+    JUMP .L_or_end_31
+.L_or_true_30:
+.L_or_end_31:
+    JUMP_IF_FALSE .L_endif_34
+; print("ERROR: Invalid sync bytes in: ")
+; print("ERROR: Invalid sync bytes in: ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Invalid sync bytes in: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println(m_path)
+; println(m_path)
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL m_path
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_34:
+; sz := read_be16(word(&io_buf[...]), 2)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 2
+    CALL read_be16
+    STORE_LOCAL sz
+; if mod_slot[...] == SLOT_KRN
+    ADDR_OF_GLOBAL mod_slot
+    LOAD_LOCAL idx
+    SHL1_ADD
+    PEEK2
+    PUSH_I8 8
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_35
+; sz = 4352
+    PUSH_I16 4352
+    STORE_LOCAL sz
+.L_endif_35:
+; mod_size[...] = sz
+    LOAD_LOCAL sz
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL idx
+    SHL1_ADD
+    SWAP
+    POKE2
+; name_off := read_be16(word(&io_buf[...]), 4)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 4
+    CALL read_be16
+    STORE_LOCAL name_off
+; mod_exec_off[...] = read_be16(word(&io_buf[...]), 9)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 9
+    CALL read_be16
+    ADDR_OF_GLOBAL mod_exec_off
+    LOAD_LOCAL idx
+    SHL1_ADD
+    SWAP
+    POKE2
+; mod_name[...] = extract_os9_name(name_off, n)
+    LOAD_LOCAL name_off
+    LOAD_LOCAL n
+    CALL extract_os9_name
+    ADDR_OF_GLOBAL mod_name
+    LOAD_LOCAL idx
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: write_zeroes
+; ====================================================================
+.function write_zeroes
+    .param out_h: word
+    .param count: word
+    .local chunk: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; for count > 0
+.L_for_top_36:
+    LOAD_LOCAL count
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_for_exit_37
+; chunk := count
+    LOAD_LOCAL count
+    STORE_LOCAL chunk
+; if chunk > 256
+    LOAD_LOCAL chunk
+    PUSH_I16 256
+    CMP_GT
+    JUMP_IF_FALSE .L_endif_38
+; chunk = 256
+    PUSH_I16 256
+    STORE_LOCAL chunk
+.L_endif_38:
+; file_write(out_h, word(&zero_buf[...]), chunk)
+    LOAD_LOCAL out_h
+    ADDR_OF_GLOBAL zero_buf
+    PUSH_0
+    ADD
+    LOAD_LOCAL chunk
+    FILE_WRITE_BUF
+    POP
+; count -= chunk
+    LOAD_LOCAL count
+    LOAD_LOCAL chunk
+    SUB
+    STORE_LOCAL count
+    JUMP .L_for_top_36
+.L_for_exit_37:
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: stream_file
+; ====================================================================
+.function stream_file
+    .param out_h: word
+    .param path: slice
+    .param expected_size: word
+    .local in_h: word
+    .local ok: word
+    .local rem: word
+    .local chunk: word
+    .local n: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; in_h, ok := file_open_read(path)
+    LOAD_LOCAL path
+    FILE_OPEN_READ
+    STORE_LOCAL ok
+    STORE_LOCAL in_h
+; if ok == 0
+    LOAD_LOCAL ok
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_39
+; print("ERROR: Cannot open for streaming: ")
+; print("ERROR: Cannot open for streaming: ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Cannot open for streaming: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println(path)
+; println(path)
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL path
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_39:
+; rem := expected_size
+    LOAD_LOCAL expected_size
+    STORE_LOCAL rem
+; for rem > 0
+.L_for_top_40:
+    LOAD_LOCAL rem
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_for_exit_41
+; chunk := rem
+    LOAD_LOCAL rem
+    STORE_LOCAL chunk
+; if chunk > 256
+    LOAD_LOCAL chunk
+    PUSH_I16 256
+    CMP_GT
+    JUMP_IF_FALSE .L_endif_42
+; chunk = 256
+    PUSH_I16 256
+    STORE_LOCAL chunk
+.L_endif_42:
+; n := file_read(in_h, word(&io_buf[...]), chunk)
+    LOAD_LOCAL in_h
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    LOAD_LOCAL chunk
+    FILE_READ
+    STORE_LOCAL n
+; if n == 0
+    LOAD_LOCAL n
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_43
+; break
+    JUMP .L_for_exit_41
+.L_endif_43:
+; file_write(out_h, word(&io_buf[...]), n)
+    LOAD_LOCAL out_h
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    LOAD_LOCAL n
+    FILE_WRITE_BUF
+    POP
+; rem -= n
+    LOAD_LOCAL rem
+    LOAD_LOCAL n
+    SUB
+    STORE_LOCAL rem
+    JUMP .L_for_top_40
+.L_for_exit_41:
+; file_close(in_h)
+    LOAD_LOCAL in_h
+    FILE_CLOSE
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: stream_slot
+; ====================================================================
+.function stream_slot
+    .param out_h: word
+    .param slot_id: word
+    .param slot_start: word
+    .param slot_end: word
+    .local total_size: word
+    .local count: word
+    .local i: word
+    .local slot_capacity: word
+    .local lead_zeros: word
+    .local curr_addr: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; total_size := word(0)
+    PUSH_0
+    STORE_LOCAL total_size
+; count := word(0)
+    PUSH_0
+    STORE_LOCAL count
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_44:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_mods
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_46
+; if mod_slot[...] == slot_id
+    ADDR_OF_GLOBAL mod_slot
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    LOAD_LOCAL slot_id
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_47
+; total_size += mod_size[...]
+    LOAD_LOCAL total_size
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    ADD
+    STORE_LOCAL total_size
+; count++
+    LOAD_LOCAL count
+    PUSH_1
+    ADD
+    STORE_LOCAL count
+.L_endif_47:
+.L_for3_cont_45:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_44
+.L_for3_exit_46:
+; slot_capacity := slot_end - slot_start
+    LOAD_LOCAL slot_end
+    LOAD_LOCAL slot_start
+    SUB
+    STORE_LOCAL slot_capacity
+; if count == 0
+    LOAD_LOCAL count
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_48
+; write_zeroes(out_h, slot_capacity)
+    LOAD_LOCAL out_h
+    LOAD_LOCAL slot_capacity
+    CALL write_zeroes
+; return 
+    RET_VOID
+.L_endif_48:
+; if total_size > slot_capacity
+    LOAD_LOCAL total_size
+    LOAD_LOCAL slot_capacity
+    CMP_GT
+    JUMP_IF_FALSE .L_endif_49
+; print("ERROR: Overflow in slot starting at ")
+; print("ERROR: Overflow in slot starting at ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Overflow in slot starting at "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(slot_start)
+    LOAD_LOCAL slot_start
+    CALL print_hex16
+; println("!")
+; println("!")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "!"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_49:
+; lead_zeros := slot_capacity - total_size
+    LOAD_LOCAL slot_capacity
+    LOAD_LOCAL total_size
+    SUB
+    STORE_LOCAL lead_zeros
+; curr_addr := slot_start + lead_zeros
+    LOAD_LOCAL slot_start
+    LOAD_LOCAL lead_zeros
+    ADD
+    STORE_LOCAL curr_addr
+; if slot_id == SLOT_4
+    LOAD_LOCAL slot_id
+    PUSH_I8 4
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_50
+; slot4_first_addr = curr_addr
+    LOAD_LOCAL curr_addr
+    STORE_GLOBAL slot4_first_addr
+.L_endif_50:
+; write_zeroes(out_h, lead_zeros)
+    LOAD_LOCAL out_h
+    LOAD_LOCAL lead_zeros
+    CALL write_zeroes
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_51:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_mods
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_53
+; if mod_slot[...] == slot_id
+    ADDR_OF_GLOBAL mod_slot
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    LOAD_LOCAL slot_id
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_54
+; print_pad(mod_role[...], 18)
+    ADDR_OF_GLOBAL mod_role
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    PUSH_I8 18
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad(basename(mod_path[...]), 25)
+    ADDR_OF_GLOBAL mod_path
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    CALL basename
+    PUSH_I8 25
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(curr_addr)
+    LOAD_LOCAL curr_addr
+    CALL print_hex16
+; print("   ")
+; print("   ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "   "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(mod_size[...])
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    CALL print_hex16
+; print(" (")
+; print(" (")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " ("
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_dec_pad(mod_size[...], 5)
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    PUSH_I8 5
+    CALL print_dec_pad
+; print(") ")
+; print(") ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ") "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad(mod_name[...], 10)
+    ADDR_OF_GLOBAL mod_name
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    PUSH_I8 10
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(mod_exec_off[...])
+    ADDR_OF_GLOBAL mod_exec_off
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    CALL print_hex16
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; stream_file(out_h, mod_path[...], mod_size[...])
+    LOAD_LOCAL out_h
+    ADDR_OF_GLOBAL mod_path
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    CALL stream_file
+; curr_addr += mod_size[...]
+    LOAD_LOCAL curr_addr
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    ADD
+    STORE_LOCAL curr_addr
+.L_endif_54:
+.L_for3_cont_52:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_51
+.L_for3_exit_53:
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: path_join
+; ====================================================================
+.function path_join
+    .param dir: slice
+    .param file: slice
+    .local need_slash: byte
+    .local total: word
+    .local p: word
+    .local off: word
+    .local i: word
+    .local res: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; need_slash := false
+    PUSH_FALSE
+    STORE_LOCAL need_slash
+; if len(dir) > 0 && dir[...] != 47
+    LOAD_LOCAL dir
+    SLICE_LEN
+    PUSH_0
+    CMP_GT
+    DUP
+    JUMP_IF_FALSE .L_and_false_55
+    POP
+    ADDR_OF_LOCAL dir
+    PEEK2
+    LOAD_LOCAL dir
+    SLICE_LEN
+    PUSH_1
+    SUB
+    ADD
+    PEEK1
+    PUSH_I8 47
+    CMP_NE
+    JUMP .L_and_end_56
+.L_and_false_55:
+.L_and_end_56:
+    JUMP_IF_FALSE .L_endif_57
+; need_slash = true
+    PUSH_TRUE
+    STORE_LOCAL need_slash
+.L_endif_57:
+; total := word(len(dir)) + word(len(file))
+    LOAD_LOCAL dir
+    SLICE_LEN
+    LOAD_LOCAL file
+    SLICE_LEN
+    ADD
+    STORE_LOCAL total
+; if need_slash
+    LOAD_LOCAL need_slash
+    JUMP_IF_FALSE .L_endif_58
+; total++
+    LOAD_LOCAL total
+    PUSH_1
+    ADD
+    STORE_LOCAL total
+.L_endif_58:
+; p := alloc(total)
+    LOAD_LOCAL total
+    BUF_ALLOC
+    STORE_LOCAL p
+; off := word(0)
+    PUSH_0
+    STORE_LOCAL off
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_59:
+    LOAD_LOCAL i
+    LOAD_LOCAL dir
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_61
+; pokeb(p + off, dir[...])
+    LOAD_LOCAL p
+    LOAD_LOCAL off
+    ADD
+    ADDR_OF_LOCAL dir
+    PEEK2
+    LOAD_LOCAL i
+    ADD
+    PEEK1
+    POKE1
+; off++
+    LOAD_LOCAL off
+    PUSH_1
+    ADD
+    STORE_LOCAL off
+.L_for3_cont_60:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_59
+.L_for3_exit_61:
+; if need_slash
+    LOAD_LOCAL need_slash
+    JUMP_IF_FALSE .L_endif_62
+; pokeb(p + off, 47)
+    LOAD_LOCAL p
+    LOAD_LOCAL off
+    ADD
+    PUSH_I8 47
+    POKE1
+; off++
+    LOAD_LOCAL off
+    PUSH_1
+    ADD
+    STORE_LOCAL off
+.L_endif_62:
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_63:
+    LOAD_LOCAL i
+    LOAD_LOCAL file
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_65
+; pokeb(p + off, file[...])
+    LOAD_LOCAL p
+    LOAD_LOCAL off
+    ADD
+    ADDR_OF_LOCAL file
+    PEEK2
+    LOAD_LOCAL i
+    ADD
+    PEEK1
+    POKE1
+; off++
+    LOAD_LOCAL off
+    PUSH_1
+    ADD
+    STORE_LOCAL off
+.L_for3_cont_64:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_63
+.L_for3_exit_65:
+; var res
+; res.Base = p
+    LOAD_LOCAL p
+    ADDR_OF_LOCAL res
+    SWAP
+    POKE2
+; res.Cap = total
+    LOAD_LOCAL total
+    ADDR_OF_LOCAL res
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+; res.Len = total
+    LOAD_LOCAL total
+    ADDR_OF_LOCAL res
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+; return res
+    LOAD_LOCAL res
+    RET_SLICE
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: register_deep_modules
+; ====================================================================
+.function register_deep_modules
+    .param dir: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; add_mod(SLOT_4, "dir Command", path_join(dir, "dir"))
+    PUSH_I8 4
+    PUSH_STR "dir Command"
+    LOAD_LOCAL dir
+    PUSH_STR "dir"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_4, "setime Command", path_join(dir, "setime"))
+    PUSH_I8 4
+    PUSH_STR "setime Command"
+    LOAD_LOCAL dir
+    PUSH_STR "setime"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_4, "date Command", path_join(dir, "date"))
+    PUSH_I8 4
+    PUSH_STR "date Command"
+    LOAD_LOCAL dir
+    PUSH_STR "date"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_4, "stop Command", path_join(dir, "stop"))
+    PUSH_I8 4
+    PUSH_STR "stop Command"
+    LOAD_LOCAL dir
+    PUSH_STR "stop"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "SCF Manager", path_join(dir, "scf"))
+    PUSH_I8 5
+    PUSH_STR "SCF Manager"
+    LOAD_LOCAL dir
+    PUSH_STR "scf"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "ACIA Driver", path_join(dir, "sc6850"))
+    PUSH_I8 5
+    PUSH_STR "ACIA Driver"
+    LOAD_LOCAL dir
+    PUSH_STR "sc6850"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "Clock Driver", path_join(dir, "clock"))
+    PUSH_I8 5
+    PUSH_STR "Clock Driver"
+    LOAD_LOCAL dir
+    PUSH_STR "clock"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "Term Descriptor", path_join(dir, "term"))
+    PUSH_I8 5
+    PUSH_STR "Term Descriptor"
+    LOAD_LOCAL dir
+    PUSH_STR "term"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "Shell Command", path_join(dir, "shell_21"))
+    PUSH_I8 5
+    PUSH_STR "Shell Command"
+    LOAD_LOCAL dir
+    PUSH_STR "shell_21"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "mfree Command", path_join(dir, "mfree"))
+    PUSH_I8 5
+    PUSH_STR "mfree Command"
+    LOAD_LOCAL dir
+    PUSH_STR "mfree"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "free Command", path_join(dir, "free"))
+    PUSH_I8 5
+    PUSH_STR "free Command"
+    LOAD_LOCAL dir
+    PUSH_STR "free"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "procs Command", path_join(dir, "procs"))
+    PUSH_I8 5
+    PUSH_STR "procs Command"
+    LOAD_LOCAL dir
+    PUSH_STR "procs"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_5, "mdir Command", path_join(dir, "mdir"))
+    PUSH_I8 5
+    PUSH_STR "mdir Command"
+    LOAD_LOCAL dir
+    PUSH_STR "mdir"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_6, "DD Descriptor", path_join(dir, "dd"))
+    PUSH_I8 6
+    PUSH_STR "DD Descriptor"
+    LOAD_LOCAL dir
+    PUSH_STR "dd"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_6, "EmuDsk Driver", path_join(dir, "emudsk"))
+    PUSH_I8 6
+    PUSH_STR "EmuDsk Driver"
+    LOAD_LOCAL dir
+    PUSH_STR "emudsk"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_6, "SysGo Module", path_join(dir, "sysgo"))
+    PUSH_I8 6
+    PUSH_STR "SysGo Module"
+    LOAD_LOCAL dir
+    PUSH_STR "sysgo"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_6, "RBF Manager", path_join(dir, "rbf"))
+    PUSH_I8 6
+    PUSH_STR "RBF Manager"
+    LOAD_LOCAL dir
+    PUSH_STR "rbf"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_6, "I/O Manager", path_join(dir, "ioman"))
+    PUSH_I8 6
+    PUSH_STR "I/O Manager"
+    LOAD_LOCAL dir
+    PUSH_STR "ioman"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_7L, "Configuration", path_join(dir, "init"))
+    PUSH_I8 7
+    PUSH_STR "Configuration"
+    LOAD_LOCAL dir
+    PUSH_STR "init"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_7L, "Kernel (part 2)", path_join(dir, "krnp2"))
+    PUSH_I8 7
+    PUSH_STR "Kernel (part 2)"
+    LOAD_LOCAL dir
+    PUSH_STR "krnp2"
+    CALL path_join
+    CALL add_mod
+; add_mod(SLOT_KRN, "Kernel (part 1)", path_join(dir, "krn"))
+    PUSH_I8 8
+    PUSH_STR "Kernel (part 1)"
+    LOAD_LOCAL dir
+    PUSH_STR "krn"
+    CALL path_join
+    CALL add_mod
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: register_flat_modules
+; ====================================================================
+.function register_flat_modules
+    .param dir: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; add_mod(1, "Kernel (part 1)", path_join(dir, "krn"))
+    PUSH_1
+    PUSH_STR "Kernel (part 1)"
+    LOAD_LOCAL dir
+    PUSH_STR "krn"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "Kernel (part 2)", path_join(dir, "krnp2"))
+    PUSH_1
+    PUSH_STR "Kernel (part 2)"
+    LOAD_LOCAL dir
+    PUSH_STR "krnp2"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "Configuration", path_join(dir, "init"))
+    PUSH_1
+    PUSH_STR "Configuration"
+    LOAD_LOCAL dir
+    PUSH_STR "init"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "I/O Manager", path_join(dir, "ioman"))
+    PUSH_1
+    PUSH_STR "I/O Manager"
+    LOAD_LOCAL dir
+    PUSH_STR "ioman"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "RBF Manager", path_join(dir, "rbf"))
+    PUSH_1
+    PUSH_STR "RBF Manager"
+    LOAD_LOCAL dir
+    PUSH_STR "rbf"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "SCF Manager", path_join(dir, "scf"))
+    PUSH_1
+    PUSH_STR "SCF Manager"
+    LOAD_LOCAL dir
+    PUSH_STR "scf"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "ACIA Driver", path_join(dir, "sc6850"))
+    PUSH_1
+    PUSH_STR "ACIA Driver"
+    LOAD_LOCAL dir
+    PUSH_STR "sc6850"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "Clock Driver", path_join(dir, "clock"))
+    PUSH_1
+    PUSH_STR "Clock Driver"
+    LOAD_LOCAL dir
+    PUSH_STR "clock"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "Term Descriptor", path_join(dir, "term"))
+    PUSH_1
+    PUSH_STR "Term Descriptor"
+    LOAD_LOCAL dir
+    PUSH_STR "term"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "EmuDsk Driver", path_join(dir, "emudsk"))
+    PUSH_1
+    PUSH_STR "EmuDsk Driver"
+    LOAD_LOCAL dir
+    PUSH_STR "emudsk"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "DD Descriptor", path_join(dir, "dd"))
+    PUSH_1
+    PUSH_STR "DD Descriptor"
+    LOAD_LOCAL dir
+    PUSH_STR "dd"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "SysGo Module", path_join(dir, "sysgo"))
+    PUSH_1
+    PUSH_STR "SysGo Module"
+    LOAD_LOCAL dir
+    PUSH_STR "sysgo"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "Shell Command", path_join(dir, "shell_21"))
+    PUSH_1
+    PUSH_STR "Shell Command"
+    LOAD_LOCAL dir
+    PUSH_STR "shell_21"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "mfree Command", path_join(dir, "mfree"))
+    PUSH_1
+    PUSH_STR "mfree Command"
+    LOAD_LOCAL dir
+    PUSH_STR "mfree"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "free Command", path_join(dir, "free"))
+    PUSH_1
+    PUSH_STR "free Command"
+    LOAD_LOCAL dir
+    PUSH_STR "free"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "procs Command", path_join(dir, "procs"))
+    PUSH_1
+    PUSH_STR "procs Command"
+    LOAD_LOCAL dir
+    PUSH_STR "procs"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "mdir Command", path_join(dir, "mdir"))
+    PUSH_1
+    PUSH_STR "mdir Command"
+    LOAD_LOCAL dir
+    PUSH_STR "mdir"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "dir Command", path_join(dir, "dir"))
+    PUSH_1
+    PUSH_STR "dir Command"
+    LOAD_LOCAL dir
+    PUSH_STR "dir"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "setime Command", path_join(dir, "setime"))
+    PUSH_1
+    PUSH_STR "setime Command"
+    LOAD_LOCAL dir
+    PUSH_STR "setime"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "date Command", path_join(dir, "date"))
+    PUSH_1
+    PUSH_STR "date Command"
+    LOAD_LOCAL dir
+    PUSH_STR "date"
+    CALL path_join
+    CALL add_mod
+; add_mod(1, "stop Command", path_join(dir, "stop"))
+    PUSH_1
+    PUSH_STR "stop Command"
+    LOAD_LOCAL dir
+    PUSH_STR "stop"
+    CALL path_join
+    CALL add_mod
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: has_substr
+; ====================================================================
+.function has_substr
+    .param s: slice
+    .param sub: slice
+    .local limit: word
+    .local i: word
+    .local match: byte
+    .local j: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; if len(s) < len(sub)
+    LOAD_LOCAL s
+    SLICE_LEN
+    LOAD_LOCAL sub
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_endif_66
+; return false
+    PUSH_FALSE
+    RET
+.L_endif_66:
+; limit := word(len(s)) - word(len(sub))
+    LOAD_LOCAL s
+    SLICE_LEN
+    LOAD_LOCAL sub
+    SLICE_LEN
+    SUB
+    STORE_LOCAL limit
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_67:
+    LOAD_LOCAL i
+    LOAD_LOCAL limit
+    CMP_LE
+    JUMP_IF_FALSE .L_for3_exit_69
+; match := true
+    PUSH_TRUE
+    STORE_LOCAL match
+; for <init>; <cond>; <inc>
+; j := word(0)
+    PUSH_0
+    STORE_LOCAL j
+.L_for3_top_70:
+    LOAD_LOCAL j
+    LOAD_LOCAL sub
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_72
+; if s[...] != sub[...]
+    ADDR_OF_LOCAL s
+    PEEK2
+    LOAD_LOCAL i
+    LOAD_LOCAL j
+    ADD
+    ADD
+    PEEK1
+    ADDR_OF_LOCAL sub
+    PEEK2
+    LOAD_LOCAL j
+    ADD
+    PEEK1
+    CMP_NE
+    JUMP_IF_FALSE .L_endif_73
+; match = false
+    PUSH_FALSE
+    STORE_LOCAL match
+; break
+    JUMP .L_for3_exit_72
+.L_endif_73:
+.L_for3_cont_71:
+; j++
+    LOAD_LOCAL j
+    PUSH_1
+    ADD
+    STORE_LOCAL j
+    JUMP .L_for3_top_70
+.L_for3_exit_72:
+; if match
+    LOAD_LOCAL match
+    JUMP_IF_FALSE .L_endif_74
+; return true
+    PUSH_TRUE
+    RET
+.L_endif_74:
+.L_for3_cont_68:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_67
+.L_for3_exit_69:
+; return false
+    PUSH_FALSE
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: get_arg
+; ====================================================================
+.function get_arg
+    .param args_base: word
+    .param idx: word
+    .local addr: word
+    .local res: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; addr := args_base + idx * 6
+    LOAD_LOCAL args_base
+    LOAD_LOCAL idx
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL addr
+; var res
+; res.Base = peek(addr)
+    LOAD_LOCAL addr
+    PEEK2
+    ADDR_OF_LOCAL res
+    SWAP
+    POKE2
+; res.Cap = peek(addr + 2)
+    LOAD_LOCAL addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    ADDR_OF_LOCAL res
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+; res.Len = peek(addr + 4)
+    LOAD_LOCAL addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    ADDR_OF_LOCAL res
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+; return res
+    LOAD_LOCAL res
+    RET_SLICE
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: main
+; ====================================================================
+.function main entry
+    .local is_flat: byte
+    .local mod_dir: slice
+    .local out_path: slice
+    .local args: slice
+    .local i: word
+    .local arg: slice
+    .local out_h: word
+    .local ok: word
+    .local curr_addr: word
+    .local krn_exec: word
+    .local krn_idx: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; is_flat := false
+    PUSH_FALSE
+    STORE_LOCAL is_flat
+; mod_dir := ""
+    PUSH_STR ""
+    STORE_LOCAL mod_dir
+; out_path := ""
+    PUSH_STR ""
+    STORE_LOCAL out_path
+; args := sys_args()
+    SYS_ARGS
+    STORE_LOCAL args
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_75:
+    LOAD_LOCAL i
+    ADDR_OF_LOCAL args
+    PUSH_I16 4
+    ADD
+    PEEK2
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_77
+; arg := get_arg(args.Base, i)
+    ADDR_OF_LOCAL args
+    PEEK2
+    LOAD_LOCAL i
+    CALL get_arg
+    STORE_LOCAL arg
+; if arg == "--flat"
+    LOAD_LOCAL arg
+    PUSH_STR "--flat"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_else_78
+; is_flat = true
+    PUSH_TRUE
+    STORE_LOCAL is_flat
+    JUMP .L_endif_79
+.L_else_78:
+; if arg == "--deep"
+    LOAD_LOCAL arg
+    PUSH_STR "--deep"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_else_80
+; is_flat = false
+    PUSH_FALSE
+    STORE_LOCAL is_flat
+    JUMP .L_endif_81
+.L_else_80:
+; if len(mod_dir) == 0
+    LOAD_LOCAL mod_dir
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_else_82
+; mod_dir = arg
+    LOAD_LOCAL arg
+    STORE_LOCAL mod_dir
+    JUMP .L_endif_83
+.L_else_82:
+; if len(out_path) == 0
+    LOAD_LOCAL out_path
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_84
+; out_path = arg
+    LOAD_LOCAL arg
+    STORE_LOCAL out_path
+.L_endif_84:
+.L_endif_83:
+.L_endif_81:
+.L_endif_79:
+.L_for3_cont_76:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_75
+.L_for3_exit_77:
+; if !is_flat
+    LOAD_LOCAL is_flat
+    NOT
+    JUMP_IF_FALSE .L_endif_85
+; if has_substr(out_path, "flat") || has_substr(mod_dir, "flat")
+    LOAD_LOCAL out_path
+    PUSH_STR "flat"
+    CALL has_substr
+    DUP
+    JUMP_IF_TRUE .L_or_true_86
+    POP
+    LOAD_LOCAL mod_dir
+    PUSH_STR "flat"
+    CALL has_substr
+    JUMP .L_or_end_87
+.L_or_true_86:
+.L_or_end_87:
+    JUMP_IF_FALSE .L_endif_88
+; is_flat = true
+    PUSH_TRUE
+    STORE_LOCAL is_flat
+.L_endif_88:
+.L_endif_85:
+; if len(out_path) == 0
+    LOAD_LOCAL out_path
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_89
+; if is_flat
+    LOAD_LOCAL is_flat
+    JUMP_IF_FALSE .L_else_90
+; out_path = "flat65280.img"
+    PUSH_STR "flat65280.img"
+    STORE_LOCAL out_path
+    JUMP .L_endif_91
+.L_else_90:
+; out_path = "deep65280.img"
+    PUSH_STR "deep65280.img"
+    STORE_LOCAL out_path
+.L_endif_91:
+.L_endif_89:
+; if len(mod_dir) == 0
+    LOAD_LOCAL mod_dir
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_92
+; if is_flat
+    LOAD_LOCAL is_flat
+    JUMP_IF_FALSE .L_else_93
+; mod_dir = ".mods"
+    PUSH_STR ".mods"
+    STORE_LOCAL mod_dir
+    JUMP .L_endif_94
+.L_else_93:
+; mod_dir = "/dd/MODS"
+    PUSH_STR "/dd/MODS"
+    STORE_LOCAL mod_dir
+.L_endif_94:
+.L_endif_92:
+; num_mods = 0
+    PUSH_0
+    STORE_GLOBAL num_mods
+; if is_flat
+    LOAD_LOCAL is_flat
+    JUMP_IF_FALSE .L_else_95
+; register_flat_modules(mod_dir)
+    LOAD_LOCAL mod_dir
+    CALL register_flat_modules
+    JUMP .L_endif_96
+.L_else_95:
+; register_deep_modules(mod_dir)
+    LOAD_LOCAL mod_dir
+    CALL register_deep_modules
+.L_endif_96:
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_97:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_mods
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_99
+; inspect_module(i)
+    LOAD_LOCAL i
+    CALL inspect_module
+.L_for3_cont_98:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_97
+.L_for3_exit_99:
+; out_h, ok := file_open_write(out_path)
+    LOAD_LOCAL out_path
+    FILE_OPEN_WRITE
+    STORE_LOCAL ok
+    STORE_LOCAL out_h
+; if ok == 0
+    LOAD_LOCAL ok
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_100
+; print("ERROR: Cannot create output image: ")
+; print("ERROR: Cannot create output image: ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Cannot create output image: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println(out_path)
+; println(out_path)
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL out_path
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_100:
+; print_pad("Role", 18)
+    PUSH_STR "Role"
+    PUSH_I8 18
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad("File", 25)
+    PUSH_STR "File"
+    PUSH_I8 25
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad("Addr", 8)
+    PUSH_STR "Addr"
+    PUSH_I8 8
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad("Size", 8)
+    PUSH_STR "Size"
+    PUSH_I8 8
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad("Name", 10)
+    PUSH_STR "Name"
+    PUSH_I8 10
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad("Exec", 8)
+    PUSH_STR "Exec"
+    PUSH_I8 8
+    CALL print_pad
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_101:
+    LOAD_LOCAL i
+    PUSH_I8 80
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_103
+; print("-")
+; print("-")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "-"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_for3_cont_102:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_101
+.L_for3_exit_103:
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; if is_flat
+    LOAD_LOCAL is_flat
+    JUMP_IF_FALSE .L_endif_104
+; write_zeroes(out_h, 2048)
+    LOAD_LOCAL out_h
+    PUSH_I16 2048
+    CALL write_zeroes
+; curr_addr := 2048
+    PUSH_I16 2048
+    STORE_LOCAL curr_addr
+; krn_exec := 2048 + mod_exec_off[...]
+    PUSH_I16 2048
+    ADDR_OF_GLOBAL mod_exec_off
+    PUSH_0
+    SHL1_ADD
+    PEEK2
+    ADD
+    STORE_LOCAL krn_exec
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_105:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_mods
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_107
+; print_pad(mod_role[...], 18)
+    ADDR_OF_GLOBAL mod_role
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    PUSH_I8 18
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad(basename(mod_path[...]), 25)
+    ADDR_OF_GLOBAL mod_path
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    CALL basename
+    PUSH_I8 25
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(curr_addr)
+    LOAD_LOCAL curr_addr
+    CALL print_hex16
+; print("   ")
+; print("   ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "   "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(mod_size[...])
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    CALL print_hex16
+; print(" (")
+; print(" (")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " ("
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_dec_pad(mod_size[...], 5)
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    PUSH_I8 5
+    CALL print_dec_pad
+; print(") ")
+; print(") ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ") "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad(mod_name[...], 10)
+    ADDR_OF_GLOBAL mod_name
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    PUSH_I8 10
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(mod_exec_off[...])
+    ADDR_OF_GLOBAL mod_exec_off
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    CALL print_hex16
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; stream_file(out_h, mod_path[...], mod_size[...])
+    LOAD_LOCAL out_h
+    ADDR_OF_GLOBAL mod_path
+    LOAD_LOCAL i
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    CALL stream_file
+; curr_addr += mod_size[...]
+    LOAD_LOCAL curr_addr
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    ADD
+    STORE_LOCAL curr_addr
+.L_for3_cont_106:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_105
+.L_for3_exit_107:
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_108:
+    LOAD_LOCAL i
+    PUSH_I8 80
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_110
+; print("-")
+; print("-")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "-"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_for3_cont_109:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_108
+.L_for3_exit_110:
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print("Total module space used: $0800..")
+; print("Total module space used: $0800..")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Total module space used: $0800.."
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(curr_addr)
+    LOAD_LOCAL curr_addr
+    CALL print_hex16
+; print(" (")
+; print(" (")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " ("
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_dec_pad(curr_addr - 2048, 5)
+    LOAD_LOCAL curr_addr
+    PUSH_I16 2048
+    SUB
+    PUSH_I8 5
+    CALL print_dec_pad
+; println(" bytes)")
+; println(" bytes)")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " bytes)"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print("Free RAM before I/O: ")
+; print("Free RAM before I/O: ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Free RAM before I/O: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(curr_addr)
+    LOAD_LOCAL curr_addr
+    CALL print_hex16
+; println("..$FEFF")
+; println("..$FEFF")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "..$FEFF"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; write_zeroes(out_h, 65520 - curr_addr)
+    LOAD_LOCAL out_h
+    PUSH_I16 65520
+    LOAD_LOCAL curr_addr
+    SUB
+    CALL write_zeroes
+; write_be16(word(&io_buf[...]), 0, 256)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_0
+    PUSH_I16 256
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 2, 256)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 2
+    PUSH_I16 256
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 4, 259)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 4
+    PUSH_I16 259
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 6, 271)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 6
+    PUSH_I16 271
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 8, 268)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 8
+    PUSH_I16 268
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 10, 262)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 10
+    PUSH_I16 262
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 12, 265)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 12
+    PUSH_I16 265
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 14, krn_exec)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 14
+    LOAD_LOCAL krn_exec
+    CALL write_be16
+; file_write(out_h, word(&io_buf[...]), 16)
+    LOAD_LOCAL out_h
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 16
+    FILE_WRITE_BUF
+    POP
+; file_close(out_h)
+    LOAD_LOCAL out_h
+    FILE_CLOSE
+; print("Reset vector ($FFFE) set to: ")
+; print("Reset vector ($FFFE) set to: ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Reset vector ($FFFE) set to: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(krn_exec)
+    LOAD_LOCAL krn_exec
+    CALL print_hex16
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print("Successfully generated ")
+; print("Successfully generated ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Successfully generated "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print(out_path)
+; print(out_path)
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL out_path
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println(" (65536 bytes)")
+; println(" (65536 bytes)")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " (65536 bytes)"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(0)
+    PUSH_0
+    SYS_EXIT
+.L_endif_104:
+; write_zeroes(out_h, 32768)
+    LOAD_LOCAL out_h
+    PUSH_I16 32768
+    CALL write_zeroes
+; stream_slot(out_h, SLOT_4, 32768, 40960)
+    LOAD_LOCAL out_h
+    PUSH_I8 4
+    PUSH_I16 32768
+    PUSH_I16 40960
+    CALL stream_slot
+; stream_slot(out_h, SLOT_5, 40960, 49152)
+    LOAD_LOCAL out_h
+    PUSH_I8 5
+    PUSH_I16 40960
+    PUSH_I16 49152
+    CALL stream_slot
+; stream_slot(out_h, SLOT_6, 49152, 57344)
+    LOAD_LOCAL out_h
+    PUSH_I8 6
+    PUSH_I16 49152
+    PUSH_I16 57344
+    CALL stream_slot
+; stream_slot(out_h, SLOT_7L, 57344, 60928)
+    LOAD_LOCAL out_h
+    PUSH_I8 7
+    PUSH_I16 57344
+    PUSH_I16 60928
+    CALL stream_slot
+; krn_idx := word(65535)
+    PUSH_I16 65535
+    STORE_LOCAL krn_idx
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_111:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_mods
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_113
+; if mod_slot[...] == SLOT_KRN
+    ADDR_OF_GLOBAL mod_slot
+    LOAD_LOCAL i
+    SHL1_ADD
+    PEEK2
+    PUSH_I8 8
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_114
+; krn_idx = i
+    LOAD_LOCAL i
+    STORE_LOCAL krn_idx
+; break
+    JUMP .L_for3_exit_113
+.L_endif_114:
+.L_for3_cont_112:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_111
+.L_for3_exit_113:
+; if krn_idx == 65535 || mod_size[...] != 4352
+    LOAD_LOCAL krn_idx
+    PUSH_I16 65535
+    CMP_EQ
+    DUP
+    JUMP_IF_TRUE .L_or_true_115
+    POP
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL krn_idx
+    SHL1_ADD
+    PEEK2
+    PUSH_I16 4352
+    CMP_NE
+    JUMP .L_or_end_116
+.L_or_true_115:
+.L_or_end_116:
+    JUMP_IF_FALSE .L_endif_117
+; println("ERROR: Kernel missing or size != $1100")
+; println("ERROR: Kernel missing or size != $1100")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Kernel missing or size != $1100"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_117:
+; print_pad(mod_role[...], 18)
+    ADDR_OF_GLOBAL mod_role
+    LOAD_LOCAL krn_idx
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    PUSH_I8 18
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad("krn", 25)
+    PUSH_STR "krn"
+    PUSH_I8 25
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(60928)
+    PUSH_I16 60928
+    CALL print_hex16
+; print("   ")
+; print("   ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "   "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(mod_size[...])
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL krn_idx
+    SHL1_ADD
+    PEEK2
+    CALL print_hex16
+; print(" (")
+; print(" (")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " ("
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_dec_pad(mod_size[...], 5)
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL krn_idx
+    SHL1_ADD
+    PEEK2
+    PUSH_I8 5
+    CALL print_dec_pad
+; print(") ")
+; print(") ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ") "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_pad("Krn", 10)
+    PUSH_STR "Krn"
+    PUSH_I8 10
+    CALL print_pad
+; print(" ")
+; print(" ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(mod_exec_off[...])
+    ADDR_OF_GLOBAL mod_exec_off
+    LOAD_LOCAL krn_idx
+    SHL1_ADD
+    PEEK2
+    CALL print_hex16
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; stream_file(out_h, mod_path[...], mod_size[...])
+    LOAD_LOCAL out_h
+    ADDR_OF_GLOBAL mod_path
+    LOAD_LOCAL krn_idx
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    ADDR_OF_GLOBAL mod_size
+    LOAD_LOCAL krn_idx
+    SHL1_ADD
+    PEEK2
+    CALL stream_file
+; krn_exec := 60928 + mod_exec_off[...]
+    PUSH_I16 60928
+    ADDR_OF_GLOBAL mod_exec_off
+    LOAD_LOCAL krn_idx
+    SHL1_ADD
+    PEEK2
+    ADD
+    STORE_LOCAL krn_exec
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_118:
+    LOAD_LOCAL i
+    PUSH_I8 80
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_120
+; print("-")
+; print("-")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "-"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+.L_for3_cont_119:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_118
+.L_for3_exit_120:
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println("Slot 0 ($0000..$1FFF): System globals, DP, stack (zeroed)")
+; println("Slot 0 ($0000..$1FFF): System globals, DP, stack (zeroed)")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Slot 0 ($0000..$1FFF): System globals, DP, stack (zeroed)"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println("Slots 1..3 ($2000..$7FFF) + lower Slot 4: Free dynamic RAM (31KB)")
+; println("Slots 1..3 ($2000..$7FFF) + lower Slot 4: Free dynamic RAM (31KB)")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Slots 1..3 ($2000..$7FFF) + lower Slot 4: Free dynamic RAM (31KB)"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print("Slots 4..7 (")
+; print("Slots 4..7 (")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Slots 4..7 ("
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(slot4_first_addr)
+    LOAD_GLOBAL slot4_first_addr
+    CALL print_hex16
+; println("..$EDFF): Preloaded modules (high-packed, abutting $EE00)")
+; println("..$EDFF): Preloaded modules (high-packed, abutting $EE00)")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "..$EDFF): Preloaded modules (high-packed, abutting $EE00)"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println("Slot 7 ($EE00..$FFFF): Kernel at $EE00, size $1100, ends at $FF00")
+; println("Slot 7 ($EE00..$FFFF): Kernel at $EE00, size $1100, ends at $FF00")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Slot 7 ($EE00..$FFFF): Kernel at $EE00, size $1100, ends at $FF00"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print("Reset vector ($FFFE) set to: ")
+; print("Reset vector ($FFFE) set to: ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Reset vector ($FFFE) set to: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print_hex16(krn_exec)
+    LOAD_LOCAL krn_exec
+    CALL print_hex16
+; println("")
+; println("")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ""
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println("SWI2 vector ($FFF4) set to:  $FEF1")
+; println("SWI2 vector ($FFF4) set to:  $FEF1")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "SWI2 vector ($FFF4) set to:  $FEF1"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println("IRQ vector ($FFF8) set to:   $FEF7")
+; println("IRQ vector ($FFF8) set to:   $FEF7")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "IRQ vector ($FFF8) set to:   $FEF7"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; write_zeroes(out_h, 240)
+    LOAD_LOCAL out_h
+    PUSH_I16 240
+    CALL write_zeroes
+; write_be16(word(&io_buf[...]), 0, 65262)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_0
+    PUSH_I16 65262
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 2, 65262)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 2
+    PUSH_I16 65262
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 4, 65265)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 4
+    PUSH_I16 65265
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 6, 65268)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 6
+    PUSH_I16 65268
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 8, 65271)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 8
+    PUSH_I16 65271
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 10, 65274)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 10
+    PUSH_I16 65274
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 12, 65277)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 12
+    PUSH_I16 65277
+    CALL write_be16
+; write_be16(word(&io_buf[...]), 14, krn_exec)
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 14
+    LOAD_LOCAL krn_exec
+    CALL write_be16
+; file_write(out_h, word(&io_buf[...]), 16)
+    LOAD_LOCAL out_h
+    ADDR_OF_GLOBAL io_buf
+    PUSH_0
+    ADD
+    PUSH_I8 16
+    FILE_WRITE_BUF
+    POP
+; file_close(out_h)
+    LOAD_LOCAL out_h
+    FILE_CLOSE
+; print("Successfully generated ")
+; print("Successfully generated ")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Successfully generated "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; print(out_path)
+; print(out_path)
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_LOCAL out_path
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; println(" (65536 bytes)")
+; println(" (65536 bytes)")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR " (65536 bytes)"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(0)
+    PUSH_0
+    SYS_EXIT
+    RET_VOID
+.endfunction
+

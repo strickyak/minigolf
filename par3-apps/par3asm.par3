@@ -4,10 +4,12 @@ package main
 const MAX_GLOBALS     = 64
 const MAX_FUNCS       = 64
 const MAX_VARS        = 1024
+const MAX_FUNC_VARS   = 64
 const MAX_LABELS      = 1024
-const MAX_STRING_POOL = 4096
+const MAX_STRING_POOL = 3072
 const MAX_STRINGS     = 256
-const MAX_NAME_POOL   = 16384
+const MAX_NAME_POOL   = 1536
+const MAX_VAR_NAME_POOL = 512
 const NUM_OPCODES     = 139
 
 // Opcode Table (sorted alphabetically for binary search)
@@ -35,16 +37,17 @@ var entry_func_idx   word
 var pending_entry_name string
 var total_code_size  word
 
-// Local Variable Table
-var var_names [MAX_VARS]string
+// Local Variable Table (for binary header)
 var var_sizes [MAX_VARS]byte
-var var_slots [MAX_VARS]byte
 var num_vars  word
 
+// Current Function Variables
+var fn_var_names [MAX_FUNC_VARS]string
+var fn_var_slots [MAX_FUNC_VARS]byte
+var num_cur_vars word
+
 // Labels Table
-var label_names   [MAX_LABELS]string
 var label_offsets [MAX_LABELS]word
-var label_funcs   [MAX_LABELS]byte
 var num_labels    word
 
 // String Pool
@@ -57,6 +60,10 @@ var num_strings  word
 // Name Pool for Symbols
 var name_pool     [MAX_NAME_POOL]byte
 var name_pool_len word
+
+// Name Pool for Current Function Variables (resets per function)
+var var_name_pool     [MAX_VAR_NAME_POOL]byte
+var var_name_pool_len word
 
 // Current Assembly State
 var cur_func_idx       word
@@ -81,7 +88,7 @@ var split_var_name  string
 var split_var_size  word
 
 // Temporary Unescape Buffer
-const MAX_UNESCAPE = 2048
+const MAX_UNESCAPE = 256
 var unescape_buf [MAX_UNESCAPE]byte
 var unescape_len word
 
@@ -124,6 +131,32 @@ func clone_str(s string) string {
         name_pool[name_pool_len + i] = s[i]
     }
     name_pool_len += slen
+    var res string
+    res.Base = p
+    res.Cap = slen
+    res.Len = slen
+    return res
+}
+
+func reset_cur_vars() {
+    num_cur_vars = 0
+    var_name_pool_len = 0
+}
+
+func clone_var_str(s string) string {
+    if len(s) == 0 {
+        return ""
+    }
+    slen := word(len(s))
+    if var_name_pool_len + slen > MAX_VAR_NAME_POOL {
+        println("Error: MAX_VAR_NAME_POOL exceeded")
+        sys_exit(1)
+    }
+    p := word(&var_name_pool[0]) + var_name_pool_len
+    for i := word(0); i < slen; i++ {
+        var_name_pool[var_name_pool_len + i] = s[i]
+    }
+    var_name_pool_len += slen
     var res string
     res.Base = p
     res.Cap = slen
@@ -208,6 +241,21 @@ func parse_int_val(s string) word {
     return res
 }
 
+func parse_label_id(s string) word {
+    s = str_strip(s)
+    if len(s) == 0 {
+        return 0xFFFF
+    }
+    i := word(len(s))
+    for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+        i--
+    }
+    if i == word(len(s)) {
+        return 0xFFFF
+    }
+    return parse_int_val(s[i : len(s)])
+}
+
 func parse_size_desc(s string) word {
     s = str_strip(s)
     if len(s) == 0 {
@@ -233,6 +281,12 @@ func parse_size_desc(s string) word {
 // -----------------------------------------------------------------------------
 
 func strip_comment(line string) string {
+    if len(line) == 0 {
+        return ""
+    }
+    if line[0] == ';' || line[0] == '#' || line[0] == '*' {
+        return ""
+    }
     in_quote := byte(0)
     for i := word(0); i < word(len(line)); i++ {
         c := line[i]
@@ -252,6 +306,11 @@ func strip_comment(line string) string {
 }
 
 func split_label(line string) bool {
+    if len(line) == 0 || isspace(line[0]) {
+        split_label_res = ""
+        split_rest_res = line
+        return false
+    }
     in_quote := byte(0)
     for i := word(0); i < word(len(line)); i++ {
         c := line[i]
@@ -432,6 +491,36 @@ func set_op(idx word, name string, op byte, arg_bytes byte, arg_type byte) {
 }
 
 func find_op(m string) word {
+    if m == "LOAD_LOCAL" { return 50 }
+    if m == "PUSH_I8" { return 87 }
+    if m == "ADD" { return 0 }
+    if m == "STORE_LOCAL" { return 119 }
+    if m == "POKE2" { return 74 }
+    if m == "PUSH_STR" { return 91 }
+    if m == "PUSH_1" { return 84 }
+    if m == "CALL" { return 10 }
+    if m == "POP" { return 79 }
+    if m == "RET" { return 98 }
+    if m == "RET_VOID" { return 100 }
+    if m == "JUMP" { return 41 }
+    if m == "JUMP_IF_FALSE" { return 42 }
+    if m == "PUSH_0" { return 83 }
+    if m == "PEEK1" { return 66 }
+    if m == "PEEK2" { return 67 }
+    if m == "ADDR_OF_GLOBAL" { return 2 }
+    if m == "LOAD_GLOBAL" { return 49 }
+    if m == "STORE_GLOBAL" { return 118 }
+    if m == "PUSH_I16" { return 86 }
+    if m == "SHL1_ADD" { return 107 }
+    if m == "SWAP" { return 135 }
+    if m == "SUB" { return 134 }
+    if m == "CMP_EQ" { return 11 }
+    if m == "CMP_NE" { return 16 }
+    if m == "CMP_LT" { return 15 }
+    if m == "CMP_LE" { return 14 }
+    if m == "CMP_GT" { return 13 }
+    if m == "CMP_GE" { return 12 }
+
     low := word(0)
     high := word(NUM_OPCODES - 1)
     for low <= high {
@@ -618,13 +707,9 @@ func find_func(name string) word {
 }
 
 func find_var_slot(name string) word {
-    if cur_func_idx < num_funcs {
-        start := func_first_var[cur_func_idx]
-        count := word(func_arg_count[cur_func_idx]) + word(func_local_count[cur_func_idx])
-        for i := word(0); i < count; i++ {
-            if var_names[start + i] == name {
-                return word(var_slots[start + i])
-            }
+    for i := word(0); i < num_cur_vars; i++ {
+        if fn_var_names[i] == name {
+            return word(fn_var_slots[i])
         }
     }
     if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
@@ -634,17 +719,9 @@ func find_var_slot(name string) word {
 }
 
 func find_label(name string) word {
-    if cur_func_idx < num_funcs {
-        for i := word(0); i < num_labels; i++ {
-            if label_funcs[i] == byte(cur_func_idx) && label_names[i] == name {
-                return label_offsets[i]
-            }
-        }
-    }
-    for i := word(0); i < num_labels; i++ {
-        if label_names[i] == name {
-            return label_offsets[i]
-        }
+    lid := parse_label_id(name)
+    if lid < MAX_LABELS {
+        return label_offsets[lid]
     }
     return 0xFFFF
 }
@@ -786,13 +863,12 @@ func pass1(in_path string) {
                 println("Error: label outside function:", split_label_res)
                 sys_exit(1)
             }
-            if num_labels >= MAX_LABELS {
+            lid := parse_label_id(split_label_res)
+            if lid >= MAX_LABELS {
                 println("Error: MAX_LABELS exceeded")
                 sys_exit(1)
             }
-            label_names[num_labels] = clone_str(split_label_res)
-            label_offsets[num_labels] = cur_func_code_size
-            label_funcs[num_labels] = byte(cur_func_idx)
+            label_offsets[lid] = cur_func_code_size
             num_labels++
 
             clean_line = split_rest_res
@@ -838,6 +914,7 @@ func pass1(in_path string) {
                 func_frame_size[cur_func_idx] = 0
                 func_first_var[cur_func_idx] = num_vars
                 cur_func_code_size = 0
+                reset_cur_vars()
                 if is_entry {
                     entry_func_idx = cur_func_idx
                 }
@@ -849,6 +926,7 @@ func pass1(in_path string) {
                 }
                 func_code_size[cur_func_idx] = cur_func_code_size
                 cur_func_idx = 0xFFFF
+                reset_cur_vars()
             } else if directive == ".param" {
                 if cur_func_idx == 0xFFFF {
                     println("Error: .param outside function")
@@ -859,10 +937,16 @@ func pass1(in_path string) {
                     println("Error: MAX_VARS exceeded")
                     sys_exit(1)
                 }
-                slot := word(func_arg_count[cur_func_idx]) + word(func_local_count[cur_func_idx])
-                var_names[num_vars] = clone_str(split_var_name)
+                if num_cur_vars >= MAX_FUNC_VARS {
+                    println("Error: MAX_FUNC_VARS exceeded")
+                    sys_exit(1)
+                }
+                slot := num_cur_vars
+                fn_var_names[num_cur_vars] = clone_var_str(split_var_name)
+                fn_var_slots[num_cur_vars] = byte(slot & 255)
+                num_cur_vars++
+
                 var_sizes[num_vars] = byte(split_var_size & 255)
-                var_slots[num_vars] = byte(slot & 255)
                 num_vars++
                 func_arg_count[cur_func_idx]++
                 func_frame_size[cur_func_idx] += split_var_size
@@ -876,10 +960,16 @@ func pass1(in_path string) {
                     println("Error: MAX_VARS exceeded")
                     sys_exit(1)
                 }
-                slot := word(func_arg_count[cur_func_idx]) + word(func_local_count[cur_func_idx])
-                var_names[num_vars] = clone_str(split_var_name)
+                if num_cur_vars >= MAX_FUNC_VARS {
+                    println("Error: MAX_FUNC_VARS exceeded")
+                    sys_exit(1)
+                }
+                slot := num_cur_vars
+                fn_var_names[num_cur_vars] = clone_var_str(split_var_name)
+                fn_var_slots[num_cur_vars] = byte(slot & 255)
+                num_cur_vars++
+
                 var_sizes[num_vars] = byte(split_var_size & 255)
-                var_slots[num_vars] = byte(slot & 255)
                 num_vars++
                 func_local_count[cur_func_idx]++
                 func_frame_size[cur_func_idx] += split_var_size
@@ -981,8 +1071,20 @@ func pass2(in_path string) {
                 fn_name := split_first
                 cur_func_idx = find_func(fn_name)
                 cur_func_pc = 0
+                reset_cur_vars()
+            } else if directive == ".param" || directive == ".local" {
+                split_name_and_size(args)
+                if num_cur_vars >= MAX_FUNC_VARS {
+                    println("Error: MAX_FUNC_VARS exceeded in Pass 2")
+                    sys_exit(1)
+                }
+                slot := num_cur_vars
+                fn_var_names[num_cur_vars] = clone_var_str(split_var_name)
+                fn_var_slots[num_cur_vars] = byte(slot & 255)
+                num_cur_vars++
             } else if directive == ".endfunction" || directive == ".endfunc" || directive == ".end" {
                 cur_func_idx = 0xFFFF
+                reset_cur_vars()
             }
 
             free(line.Base)
@@ -1099,9 +1201,15 @@ func assemble(in_path string, out_path string) {
     num_strings = 0
     str_pool_len = 0
     name_pool_len = 0
+    var_name_pool_len = 0
+    num_cur_vars = 0
     entry_func_idx = 0xFFFF
     pending_entry_name = ""
     bin_buf_len = 0
+
+    for i := word(0); i < MAX_LABELS; i++ {
+        label_offsets[i] = 0xFFFF
+    }
 
     // PASS 1
     pass1(in_path)
@@ -1127,11 +1235,20 @@ func assemble(in_path string, out_path string) {
     println("Assembled", in_path, "->", out_path)
 }
 
+func get_arg(args_base word, idx word) string {
+    addr := args_base + idx * 6
+    var res string
+    res.Base = peek(addr)
+    res.Cap = peek(addr + 2)
+    res.Len = peek(addr + 4)
+    return res
+}
+
 func main() {
     init_opcodes()
 
     args := sys_args()
-    if args.Len() == 0 {
+    if args.Len == 0 {
         println("Usage: par3asm <input.p3a> [-o <output.p3p>]")
         sys_exit(1)
     }
@@ -1140,11 +1257,11 @@ func main() {
     out_file := ""
 
     i := word(0)
-    for i < args.Len() {
-        arg := args.Get(i)
+    for i < args.Len {
+        arg := get_arg(args.Base, i)
         if arg == "-o" {
-            if i + 1 < args.Len() {
-                out_file = args.Get(i + 1)
+            if i + 1 < args.Len {
+                out_file = get_arg(args.Base, i + 1)
                 i += 2
             } else {
                 i++

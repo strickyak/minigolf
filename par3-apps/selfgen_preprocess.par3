@@ -1,9 +1,9 @@
 package main
 
 // Constants
-const MAX_SYMS      = 512
+const MAX_SYMS      = 256
 const MAX_RENAMES   = 128
-const MAX_PROTECTED = 1024
+const MAX_PROTECTED = 256
 const MAX_FILES     = 48
 const MAX_LOCALS    = 32
 
@@ -756,7 +756,7 @@ func write_truncated(out_h word, code_part string, comment_part string) {
     }
     file_write(out_h, code_part)
     file_write(out_h, comment_part)
-    file_write(out_h, "\n")
+    file_write(out_h, "\r")
 }
 
 func transform_line(out_h word, line string) {
@@ -765,7 +765,7 @@ func transform_line(out_h word, line string) {
     // 1. Blank line
     if len(stripped) == 0 {
         num_locals = 0
-        file_write(out_h, "\n")
+        file_write(out_h, "\r")
         return
     }
 
@@ -778,7 +778,7 @@ func transform_line(out_h word, line string) {
         res := buf_str()
         if len(res) > 78 { res = res[0:78] }
         file_write(out_h, res)
-        file_write(out_h, "\n")
+        file_write(out_h, "\r")
         return
     }
     if startswith(stripped, "*") {
@@ -789,7 +789,7 @@ func transform_line(out_h word, line string) {
         res := buf_str()
         if len(res) > 78 { res = res[0:78] }
         file_write(out_h, res)
-        file_write(out_h, "\n")
+        file_write(out_h, "\r")
         return
     }
 
@@ -797,7 +797,7 @@ func transform_line(out_h word, line string) {
 
     // 3. dts
     if (startswith(s_lead, "dts") || startswith(s_lead, "DTS")) && is_word_bound(s_lead, 3) {
-        file_write(out_h, "                    fcc       \"Wed Sep 30 22:41:09 2026\"\n")
+        file_write(out_h, "                    fcc       \"Wed Sep 30 22:41:09 2026\"\r")
         return
     }
 
@@ -805,14 +805,14 @@ func transform_line(out_h word, line string) {
     if (startswith(s_lead, "use") || startswith(s_lead, "USE")) && isspace(s_lead[3]) {
         rem := lstrip(s_lead[3:len(s_lead)], " \t")
         if startswith(rem, "os9.d") || startswith(rem, "scf.d") || startswith(rem, "rbf.d") {
-            file_write(out_h, "                    use       defsfile\n")
+            file_write(out_h, "                    use       defsfile\r")
             return
         }
     }
 
     // 5. in_ifp1_defsfile check
     if in_ifp1_defsfile && (startswith(s_lead, "endc") || startswith(s_lead, "ENDC")) && is_word_bound(s_lead, 4) {
-        file_write(out_h, "* [selfgen: stripped ENDC around defsfile]\n")
+        file_write(out_h, "* [selfgen: stripped ENDC around defsfile]\r")
         in_ifp1_defsfile = false
         return
     }
@@ -848,7 +848,7 @@ func transform_line(out_h word, line string) {
             } else {
                 buf_append(tr)
             }
-            buf_append("\n")
+            buf_append("\r")
             file_write(out_h, buf_str())
             return
         }
@@ -909,7 +909,7 @@ func transform_line(out_h word, line string) {
                 file_write(out_h, val)
                 file_write(out_h, ", ")
                 file_write(out_h, count_str)
-                file_write(out_h, "\n")
+                file_write(out_h, "\r")
                 for c > 0 {
                     chunk := c
                     if chunk > 16 { chunk = 16 }
@@ -919,16 +919,16 @@ func transform_line(out_h word, line string) {
                         if k > 0 { file_write(out_h, ",") }
                         file_write(out_h, val)
                     }
-                    file_write(out_h, "\n")
+                    file_write(out_h, "\r")
                     c -= chunk
                 }
                 return
             } else {
                 if len(lbl) > 0 {
                     file_write(out_h, lbl)
-                    file_write(out_h, " equ *\n")
+                    file_write(out_h, " equ *\r")
                 }
-                file_write(out_h, "* [selfgen: symbolic fill skipped in asm]\n")
+                file_write(out_h, "* [selfgen: symbolic fill skipped in asm]\r")
                 return
             }
         }
@@ -1039,7 +1039,7 @@ func preprocess_file(in_path string, out_path string) {
                     }
                 }
                 if is_defs {
-                    file_write(out_h, "* [selfgen: stripped IFP1 around defsfile]\n")
+                    file_write(out_h, "* [selfgen: stripped IFP1 around defsfile]\r")
                     in_ifp1_defsfile = true
                     transform_line(out_h, next_l)
                     free(next_l.Base)
@@ -1065,9 +1065,18 @@ func preprocess_file(in_path string, out_path string) {
 // -----------------------------------------------------------------------------
 // Main Entry Point
 // -----------------------------------------------------------------------------
+func get_arg(args_base word, idx word) string {
+    addr := args_base + idx * 6
+    var res string
+    res.Base = peek(addr)
+    res.Cap = peek(addr + 2)
+    res.Len = peek(addr + 4)
+    return res
+}
+
 func main() {
     args := sys_args()
-    if args.Len() == 0 {
+    if args.Len == 0 {
         println("Usage:")
         println("  selfgen_preprocess [--defs <defsfile>] <input.asm> [output.asm]")
         println("  selfgen_preprocess --group <out_dir> [--defs <defsfile>] <file1.asm> <file2.asm> ...")
@@ -1088,22 +1097,22 @@ func main() {
     no_collisions := false
 
     i := word(0)
-    for i < args.Len() {
-        arg := args.Get(i)
+    for i < args.Len {
+        arg := get_arg(args.Base, i)
         if arg == "--no-collisions" {
             no_collisions = true
             i++
         } else if arg == "--defs" {
-            if i + 1 < args.Len() {
-                defs_path = args.Get(i + 1)
+            if i + 1 < args.Len {
+                defs_path = get_arg(args.Base, i + 1)
                 i += 2
             } else {
                 i++
             }
         } else if arg == "--group" {
             is_group = true
-            if i + 1 < args.Len() {
-                out_dir = args.Get(i + 1)
+            if i + 1 < args.Len {
+                out_dir = get_arg(args.Base, i + 1)
                 i += 2
             } else {
                 i++

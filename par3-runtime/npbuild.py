@@ -132,35 +132,38 @@ def main():
     try:
         cur_file = input_path
 
-        # Step 1: .golf -> .npasm
-        if ext == ".golf":
-            log(f"Compiling MiniGolf source '{cur_file}' -> NPCode assembly...", args.verbose)
-            npasm_path = os.path.join(build_dir, f"{base_name}.npasm")
+        # Step 1: .golf / .par3 -> .npasm / .p3a
+        if ext in (".golf", ".par3"):
+            mode = "par3" if ext == ".par3" else "np"
+            out_ext = ".p3a" if ext == ".par3" else ".npasm"
+            log(f"Compiling Par3 source '{cur_file}' -> assembly ({out_ext})...", args.verbose)
+            asm_path = os.path.join(build_dir, f"{base_name}{out_ext}")
             minigolf_bin = os.path.join(MINIGOLF_DIR, "minigolf")
             if os.path.exists(minigolf_bin) and os.access(minigolf_bin, os.X_OK):
-                cmd = [minigolf_bin, "-m=np"]
+                cmd = [minigolf_bin, f"-m={mode}"]
             else:
-                cmd = ["go", "run", "main.go", "-m=np"]
+                cmd = ["go", "run", "main.go", f"-m={mode}"]
             for inc in args.include:
                 cmd.extend(["-I", inc])
-            cmd.extend(["-o", npasm_path, cur_file])
+            cmd.extend(["-o", asm_path, cur_file])
             run_cmd(cmd, verbose=args.verbose, cwd=MINIGOLF_DIR)
-            cur_file = npasm_path
-            ext = ".npasm"
+            cur_file = asm_path
+            ext = out_ext
 
-        # Step 2: .npasm -> .npc
-        if ext == ".npasm":
-            log(f"Assembling NPCode assembly '{cur_file}' -> bytecode...", args.verbose)
-            npc_path = os.path.join(build_dir, f"{base_name}.npc")
+        # Step 2: .npasm / .p3a -> .npc / .p3p
+        if ext in (".npasm", ".p3a"):
+            out_ext = ".p3p" if ext == ".p3a" else ".npc"
+            log(f"Assembling assembly '{cur_file}' -> bytecode ({out_ext})...", args.verbose)
+            byte_path = os.path.join(build_dir, f"{base_name}{out_ext}")
             npasm_py = os.path.join(NPCODE_DIR, "npasm.py")
             if not os.path.exists(npasm_py):
                 error(f"npasm.py not found at: {npasm_py}")
-            cmd = [sys.executable, npasm_py, cur_file, "-o", npc_path]
+            cmd = [sys.executable, npasm_py, cur_file, "-o", byte_path]
             run_cmd(cmd, verbose=args.verbose)
-            cur_file = npc_path
-            ext = ".npc"
+            cur_file = byte_path
+            ext = out_ext
 
-        if ext != ".npc":
+        if ext not in (".npc", ".p3p"):
             error(f"Unsupported file format: {ext}")
 
         npc_file = cur_file
