@@ -811,17 +811,10 @@ class NPVM:
             text = bytes(self.memory[s_ptr : s_ptr + s_len])
             # Split lines
             lines = text.splitlines(keepends=False)
-            # Allocate list of string slices
-            # Each entry in list is 3 words: ptr, cap, len
-            # Wait, for a list of string slices, each element is 3 words?
-            # Or list of string pointers?
-            # Standard list elements are 16-bit words. A list of pointers to strings:
-            list_buf = self.heap.alloc(len(lines) * 2)
-            cur = s_ptr
+            list_buf = self.heap.alloc(len(lines) * 6)
             for i, line in enumerate(lines):
-                # Sub-slice or string alloc
                 s_alloc = self._alloc_string_slice(line.decode(errors="replace"))
-                struct.pack_into(">H", self.memory, list_buf + i * 2, s_alloc[0])
+                struct.pack_into(">HHH", self.memory, list_buf + i * 6, s_alloc[0], s_alloc[1], s_alloc[2])
             self._push_slice(list_buf, len(lines), len(lines))
         elif opcode == 0x7F:  # STR_REPLACE_IDENT
             new_ptr, new_cap, new_len = self._pop_slice()
@@ -1014,7 +1007,7 @@ class NPVM:
             path_ptr, path_cap, path_len = self._pop_slice()
             path = self._read_string(path_ptr, path_len)
             try:
-                f = open(path, "r", encoding="utf-8")
+                f = open(path, "rb")
                 h = self.next_file_handle
                 self.next_file_handle += 1
                 self.open_files[h] = f
@@ -1027,7 +1020,7 @@ class NPVM:
             path_ptr, path_cap, path_len = self._pop_slice()
             path = self._read_string(path_ptr, path_len)
             try:
-                f = open(path, "w", encoding="utf-8")
+                f = open(path, "wb")
                 h = self.next_file_handle
                 self.next_file_handle += 1
                 self.open_files[h] = f
@@ -1043,11 +1036,16 @@ class NPVM:
                 self._push_slice(0, 0, 0)
                 self._push(1)  # eof
             else:
-                line = f.readline()
-                if not line:
+                stream = getattr(f, "buffer", f)
+                line_bytes = stream.readline()
+                if not line_bytes:
                     self._push_slice(0, 0, 0)
                     self._push(1)  # eof
                 else:
+                    try:
+                        line = line_bytes.decode("utf-8")
+                    except Exception:
+                        line = line_bytes.decode("latin-1")
                     ptr, cap, length = self._alloc_string_slice(line)
                     self._push_slice(ptr, cap, length)
                     self._push(0)  # not eof
@@ -1056,9 +1054,36 @@ class NPVM:
             handle = self._pop()
             f = self.open_files.get(handle)
             if f:
-                text = self._read_string(s_ptr, s_len)
-                f.write(text)
+                raw = bytes(self.memory[s_ptr : s_ptr + s_len])
+                stream = getattr(f, "buffer", f)
+                stream.write(raw)
                 self._push(1)
+            else:
+                self._push(0)
+        elif opcode == 0xCC:  # FILE_READ (handle, buf_addr, count) -> n_read
+            count = self._pop()
+            buf_addr = self._pop()
+            handle = self._pop()
+            f = self.open_files.get(handle)
+            if f and count > 0:
+                stream = getattr(f, "buffer", f)
+                raw = stream.read(count)
+                n = len(raw)
+                if n > 0:
+                    self.memory[buf_addr : buf_addr + n] = raw
+                self._push(n)
+            else:
+                self._push(0)
+        elif opcode == 0xCD:  # FILE_WRITE_BUF (handle, buf_addr, count) -> n_written
+            count = self._pop()
+            buf_addr = self._pop()
+            handle = self._pop()
+            f = self.open_files.get(handle)
+            if f and count > 0:
+                raw = bytes(self.memory[buf_addr : buf_addr + count])
+                stream = getattr(f, "buffer", f)
+                stream.write(raw)
+                self._push(count)
             else:
                 self._push(0)
         elif opcode == 0xC4:  # FILE_CLOSE
@@ -1081,14 +1106,14 @@ class NPVM:
             except Exception:
                 self._push(0)
         elif opcode == 0xC7:  # SYS_ARGS
-            arg_ptrs = []
+            arg_slices = []
             for arg_text in self.cli_args:
                 p, c, l = self._alloc_string_slice(arg_text)
-                arg_ptrs.append(p)
-            list_buf = self.heap.alloc(len(arg_ptrs) * 2)
-            for i, p in enumerate(arg_ptrs):
-                struct.pack_into(">H", self.memory, list_buf + i * 2, p)
-            self._push_slice(list_buf, len(arg_ptrs), len(arg_ptrs))
+                arg_slices.append((p, c, l))
+            list_buf = self.heap.alloc(len(arg_slices) * 6)
+            for i, (p, c, l) in enumerate(arg_slices):
+                struct.pack_into(">HHH", self.memory, list_buf + i * 6, p, c, l)
+            self._push_slice(list_buf, len(arg_slices), len(arg_slices))
         elif opcode == 0xC8:  # SYS_EXIT
             code = self._pop()
             self.running = False
@@ -1289,6 +1314,9 @@ def main():
             break
         elif not input_file and not arg.startswith("-"):
             input_file = arg
+            i += 1
+        elif input_file:
+            cli_args.append(arg)
             i += 1
         else:
             print(f"Unknown argument: {arg}")

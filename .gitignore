@@ -51,4 +51,5 @@ perf/*/disasm/
 /asm6809
 /asm68k
 __pycache__/
+.mods
 

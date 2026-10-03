@@ -155,6 +155,8 @@ OPCODE_TABLE = {
     0xC9: ("IO_PRINT", 0, "none", "Print string slice followed by newline"),
     0xCA: ("PRINT", 0, "none", "Print Slice[any] arguments without newline"),
     0xCB: ("PRINTLN", 0, "none", "Print Slice[any] arguments with newline"),
+    0xCC: ("FILE_READ", 0, "none", "Read up to N bytes into buffer: (handle, buf, count) -> n_read"),
+    0xCD: ("FILE_WRITE_BUF", 0, "none", "Write N bytes from buffer: (handle, buf, count) -> n_written"),
 }
 
 # Inverse mapping: Mnemonic -> (opcode_byte, arg_bytes, arg_type)
@@ -162,6 +164,9 @@ MNEMONIC_TO_OPCODE = {
     info[0]: (op, info[1], info[2])
     for op, info in OPCODE_TABLE.items()
 }
+
+MNEMONIC_TO_OPCODE["FILE_OPEN"] = MNEMONIC_TO_OPCODE["FILE_OPEN_READ"]
+MNEMONIC_TO_OPCODE["FILE_CREATE"] = MNEMONIC_TO_OPCODE["FILE_OPEN_WRITE"]
 
 # Aliases
 MNEMONIC_TO_OPCODE["PEEK"] = MNEMONIC_TO_OPCODE["PEEK2"]

@@ -189,7 +189,11 @@ func (g *Generator) collectDeclarations(program *ast.Program) {
 				if arr, ok := s.ValueType.(*ast.ArrayType); ok && arr.Length != nil {
 					elemSize := g.getTypeSize(arr.Elt)
 					g.globalElemSizes[qname] = elemSize
-					if intLit, ok := arr.Length.(*ast.IntegerLiteral); ok {
+					count := g.evalIntConst(arr.Length)
+					if count > 0 {
+						size = count * elemSize
+						kind = KindBuffer
+					} else if intLit, ok := arr.Length.(*ast.IntegerLiteral); ok {
 						size = int(intLit.Value) * elemSize
 						kind = KindBuffer
 					}
@@ -1964,12 +1968,12 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    NOT")
 		return
 
-	case "file_open_read":
+	case "file_open_read", "file_open":
 		g.compileExpression(call.Arguments[0])
 		g.emit("    FILE_OPEN_READ")
 		return
 
-	case "file_open_write":
+	case "file_open_write", "file_create":
 		g.compileExpression(call.Arguments[0])
 		g.emit("    FILE_OPEN_WRITE")
 		return
@@ -1979,10 +1983,24 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    FILE_READLINE")
 		return
 
-	case "file_write":
+	case "file_read":
 		g.compileExpression(call.Arguments[0])
 		g.compileExpression(call.Arguments[1])
-		g.emit("    FILE_WRITE")
+		g.compileExpression(call.Arguments[2])
+		g.emit("    FILE_READ")
+		return
+
+	case "file_write":
+		if len(call.Arguments) == 3 {
+			g.compileExpression(call.Arguments[0])
+			g.compileExpression(call.Arguments[1])
+			g.compileExpression(call.Arguments[2])
+			g.emit("    FILE_WRITE_BUF")
+		} else {
+			g.compileExpression(call.Arguments[0])
+			g.compileExpression(call.Arguments[1])
+			g.emit("    FILE_WRITE")
+		}
 		return
 
 	case "file_close":
@@ -2252,6 +2270,9 @@ func (g *Generator) getTypeSize(typ ast.Expression) int {
 		return 2
 	case *ast.ArrayType:
 		if t.Length != nil {
+			if count := g.evalIntConst(t.Length); count > 0 {
+				return count * g.getTypeSize(t.Elt)
+			}
 			if intLit, ok := t.Length.(*ast.IntegerLiteral); ok {
 				return int(intLit.Value) * g.getTypeSize(t.Elt)
 			}
@@ -2541,7 +2562,7 @@ func (g *Generator) inferCallReturnType(expr ast.Expression, retIdx int) TypeKin
 		switch id.Value {
 		case "rstrip", "lstrip", "strip", "replace_ident", "splitlines", "file_readline", "sys_args", "make", "makeslice", "strdup":
 			return KindSlice
-		case "len", "cap", "find", "startswith", "endswith", "strcmp", "streq", "file_open_read", "file_open_write", "file_write", "file_close", "os_isfile", "os_makedirs", "alloc", "free", "peek", "poke", "byte", "word", "int", "uint", "bool":
+		case "len", "cap", "find", "startswith", "endswith", "strcmp", "streq", "file_open", "file_create", "file_open_read", "file_open_write", "file_read", "file_write", "file_close", "os_isfile", "os_makedirs", "alloc", "free", "peek", "poke", "byte", "word", "int", "uint", "bool":
 			return KindScalar
 		}
 
@@ -2964,6 +2985,14 @@ func (g *Generator) getArgTypeString(expr ast.Expression) string {
 			}
 			if id.Value == "string" || id.Value == "strdup" {
 				return "string"
+			}
+			if id.Value == "sys_args" || id.Value == "splitlines" {
+				return "slice[string]"
+			}
+			if id.Value == "make" || id.Value == "makeslice" {
+				if len(e.Arguments) > 0 {
+					return g.exprToString(e.Arguments[0])
+				}
 			}
 			if id.Value == "int" || id.Value == "int16" {
 				panic(fmt.Sprintf("signed 'int' is not supported in MiniGolf-NP (line %d): use unsigned 'word' or 'byte'", e.Token.Line))

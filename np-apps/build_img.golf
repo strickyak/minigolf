@@ -1,0 +1,496 @@
+package main
+
+const MAX_MODS = 64
+
+const SLOT_4   = 4  // $8000..$A000
+const SLOT_5   = 5  // $A000..$C000
+const SLOT_6   = 6  // $C000..$E000
+const SLOT_7L  = 7  // $E000..$EE00
+const SLOT_KRN = 8  // $EE00..$FF00
+
+type ModSpec struct {
+    Role    string
+    Path    string
+    Slot    word
+    Size    word
+    Name    string
+    ExecOff word
+}
+
+// 256-byte sector I/O buffers
+var io_buf     [256]byte
+var zero_buf   [256]byte
+var dec_digits [8]byte
+var name_raw   [32]byte
+
+// Module table (up to 64 modules)
+var mods       [64]ModSpec
+var num_mods   word
+var mod_dir    string
+
+var slot4_first_addr word
+
+func add_mod(slot word, role string, path string) {
+    if num_mods >= MAX_MODS {
+        println("ERROR: Exceeded MAX_MODS (64)")
+        sys_exit(1)
+    }
+    m := &mods[num_mods]
+    m.Slot = slot
+    m.Role = role
+    m.Path = path
+    m.Size = 0
+    m.Name = ""
+    m.ExecOff = 0
+    num_mods++
+}
+
+func print_hex4(v word) {
+    hex := "0123456789ABCDEF"
+    idx := v & 0xF
+    print(hex[idx : idx + 1])
+}
+
+func print_hex16(v word) {
+    print("$")
+    print_hex4(v >> 12)
+    print_hex4(v >> 8)
+    print_hex4(v >> 4)
+    print_hex4(v)
+}
+
+func print_pad(s string, width word) {
+    print(s)
+    slen := word(len(s))
+    for slen < width {
+        print(" ")
+        slen++
+    }
+}
+
+func print_dec_pad(val word, width word) {
+    pos := word(0)
+    if val == 0 {
+        dec_digits[0] = '0'
+        pos = 1
+    } else {
+        temp := val
+        for temp > 0 {
+            dec_digits[pos] = byte('0' + (temp % 10))
+            pos++
+            temp /= 10
+        }
+        for i := word(0); i < pos/2; i++ {
+            j := pos - 1 - i
+            b := dec_digits[i]
+            dec_digits[i] = dec_digits[j]
+            dec_digits[j] = b
+        }
+    }
+    for i := word(0); i < pos; i++ {
+        print(dec_digits[i : i+1])
+    }
+    for pos < width {
+        print(" ")
+        pos++
+    }
+}
+
+func read_be16(buf word, off word) word {
+    hi := word(peekb(buf + off))
+    lo := word(peekb(buf + off + 1))
+    return (hi << 8) | lo
+}
+
+func write_be16(buf word, off word, val word) {
+    pokeb(buf + off, byte((val >> 8) & 0xFF))
+    pokeb(buf + off + 1, byte(val & 0xFF))
+}
+
+func basename(path string) string {
+    i := word(len(path))
+    for i > 0 {
+        i--
+        if path[i] == '/' {
+            return path[i+1 : word(len(path))]
+        }
+    }
+    return path
+}
+
+// extract_os9_name reads the high-bit terminated ASCII name and creates a permanent string
+func extract_os9_name(name_off word, n_read word) string {
+    out_len := word(0)
+    p := name_off
+    for out_len < 31 && p < n_read {
+        b := peekb(word(&io_buf[0]) + p)
+        p++
+        pokeb(word(&name_raw[0]) + out_len, b & 0x7F)
+        out_len++
+        if (b & 0x80) != 0 {
+            break
+        }
+    }
+    var s string
+    s.Base = alloc(out_len + 1)
+    s.Cap = out_len
+    s.Len = out_len
+    for i := word(0); i < out_len; i++ {
+        pokeb(s.Base + i, peekb(word(&name_raw[0]) + i))
+    }
+    pokeb(s.Base + out_len, 0)
+    return s
+}
+
+// inspect_module reads the first 64 bytes to extract size, name, and exec_off
+func inspect_module(m *ModSpec) {
+    h, ok := file_open(m.Path)
+    if !ok {
+        print("ERROR: Cannot open module: ")
+        println(m.Path)
+        sys_exit(1)
+    }
+
+    n := file_read(h, word(&io_buf[0]), 64)
+    file_close(h)
+
+    if n < 16 || peekb(word(&io_buf[0])) != 0x87 || peekb(word(&io_buf[0]) + 1) != 0xCD {
+        print("ERROR: Invalid sync bytes in: ")
+        println(m.Path)
+        sys_exit(1)
+    }
+
+    m.Size = read_be16(word(&io_buf[0]), 2)
+    if m.Slot == SLOT_KRN {
+        m.Size = 0x1100
+    }
+    name_off := read_be16(word(&io_buf[0]), 4)
+    m.ExecOff = read_be16(word(&io_buf[0]), 9)
+
+    m.Name = extract_os9_name(name_off, n)
+}
+
+// write_zeroes streams zero bytes in blocks of up to 256 bytes
+func write_zeroes(out_h word, count word) {
+    for count > 0 {
+        chunk := count
+        if chunk > 256 {
+            chunk = 256
+        }
+        file_write(out_h, word(&zero_buf[0]), chunk)
+        count -= chunk
+    }
+}
+
+// stream_file copies a module file to out_h in 256-byte sector chunks
+func stream_file(out_h word, path string, expected_size word) {
+    in_h, ok := file_open(path)
+    if !ok {
+        print("ERROR: Cannot open for streaming: ")
+        println(path)
+        sys_exit(1)
+    }
+
+    rem := expected_size
+    for rem > 0 {
+        chunk := rem
+        if chunk > 256 {
+            chunk = 256
+        }
+        n := file_read(in_h, word(&io_buf[0]), chunk)
+        if n == 0 {
+            break
+        }
+        file_write(out_h, word(&io_buf[0]), n)
+        rem -= n
+    }
+    file_close(in_h)
+}
+
+// stream_slot calculates leading zero padding and streams all modules in slot_id
+func stream_slot(out_h word, slot_id word, slot_start word, slot_end word) {
+    total_size := word(0)
+    count := word(0)
+
+    for i := word(0); i < num_mods; i++ {
+        if mods[i].Slot == slot_id {
+            total_size += mods[i].Size
+            count++
+        }
+    }
+
+    slot_capacity := slot_end - slot_start
+    if count == 0 {
+        write_zeroes(out_h, slot_capacity)
+        return
+    }
+
+    if total_size > slot_capacity {
+        print("ERROR: Overflow in slot starting at ")
+        print_hex16(slot_start)
+        println("!")
+        sys_exit(1)
+    }
+
+    lead_zeros := slot_capacity - total_size
+    curr_addr := slot_start + lead_zeros
+
+    if slot_id == SLOT_4 {
+        slot4_first_addr = curr_addr
+    }
+
+    // 1. Stream leading zero padding
+    write_zeroes(out_h, lead_zeros)
+
+    // 2. Stream modules in insertion order
+    for i := word(0); i < num_mods; i++ {
+        m := &mods[i]
+        if m.Slot == slot_id {
+            print_pad(m.Role, 18)
+            print(" ")
+            print_pad(basename(m.Path), 25)
+            print(" ")
+            print_hex16(curr_addr)
+            print("   ")
+            print_hex16(m.Size)
+            print(" (")
+            print_dec_pad(m.Size, 5)
+            print(") ")
+            print_pad(m.Name, 10)
+            print(" ")
+            print_hex16(m.ExecOff)
+            println("")
+
+            stream_file(out_h, m.Path, m.Size)
+            curr_addr += m.Size
+        }
+    }
+}
+
+func register_modules() {
+    is_np_apps := os_isfile("np-apps/.mods/krn")
+
+    if is_np_apps {
+        // Slot 4 ($8000..$9FFF): Remaining commands
+        add_mod(SLOT_4, "dir Command",     "np-apps/.mods/dir")
+        add_mod(SLOT_4, "setime Command",  "np-apps/.mods/setime")
+        add_mod(SLOT_4, "date Command",    "np-apps/.mods/date")
+        add_mod(SLOT_4, "stop Command",    "np-apps/.mods/stop")
+
+        // Slot 5 ($A000..$BFFF): SCF, drivers, shell & commands
+        add_mod(SLOT_5, "SCF Manager",     "np-apps/.mods/scf")
+        add_mod(SLOT_5, "ACIA Driver",     "np-apps/.mods/sc6850")
+        add_mod(SLOT_5, "Clock Driver",    "np-apps/.mods/clock")
+        add_mod(SLOT_5, "Term Descriptor", "np-apps/.mods/term")
+        add_mod(SLOT_5, "Shell Command",   "np-apps/.mods/shell_21")
+        add_mod(SLOT_5, "mfree Command",   "np-apps/.mods/mfree")
+        add_mod(SLOT_5, "free Command",    "np-apps/.mods/free")
+        add_mod(SLOT_5, "procs Command",   "np-apps/.mods/procs")
+        add_mod(SLOT_5, "mdir Command",    "np-apps/.mods/mdir")
+
+        // Slot 6 ($C000..$DFFF): Storage subsystem
+        add_mod(SLOT_6, "DD Descriptor",   "np-apps/.mods/dd")
+        add_mod(SLOT_6, "EmuDsk Driver",   "np-apps/.mods/emudsk")
+        add_mod(SLOT_6, "SysGo Module",    "np-apps/.mods/sysgo")
+        add_mod(SLOT_6, "RBF Manager",     "np-apps/.mods/rbf")
+        add_mod(SLOT_6, "I/O Manager",     "np-apps/.mods/ioman")
+
+        // Slot 7 Lower ($E000..$EE00): Configuration & Kernel Part 2
+        add_mod(SLOT_7L, "Configuration",   "np-apps/.mods/init")
+        add_mod(SLOT_7L, "Kernel (part 2)", "np-apps/.mods/krnp2")
+
+        // Slot 7 Kernel ($EE00..$FF00): Kernel Part 1
+        add_mod(SLOT_KRN, "Kernel (part 1)", "np-apps/.mods/krn")
+    } else if os_isfile("recipes/deep65280/.mods/krn") {
+        // Slot 4 ($8000..$9FFF): Remaining commands
+        add_mod(SLOT_4, "dir Command",     "recipes/deep65280/.mods/dir")
+        add_mod(SLOT_4, "setime Command",  "recipes/deep65280/.mods/setime")
+        add_mod(SLOT_4, "date Command",    "recipes/deep65280/.mods/date")
+        add_mod(SLOT_4, "stop Command",    "recipes/deep65280/.mods/stop")
+
+        // Slot 5 ($A000..$BFFF): SCF, drivers, shell & commands
+        add_mod(SLOT_5, "SCF Manager",     "recipes/deep65280/.mods/scf")
+        add_mod(SLOT_5, "ACIA Driver",     "recipes/deep65280/.mods/sc6850")
+        add_mod(SLOT_5, "Clock Driver",    "recipes/deep65280/.mods/clock")
+        add_mod(SLOT_5, "Term Descriptor", "recipes/deep65280/.mods/term")
+        add_mod(SLOT_5, "Shell Command",   "recipes/deep65280/.mods/shell_21")
+        add_mod(SLOT_5, "mfree Command",   "recipes/deep65280/.mods/mfree")
+        add_mod(SLOT_5, "free Command",    "recipes/deep65280/.mods/free")
+        add_mod(SLOT_5, "procs Command",   "recipes/deep65280/.mods/procs")
+        add_mod(SLOT_5, "mdir Command",    "recipes/deep65280/.mods/mdir")
+
+        // Slot 6 ($C000..$DFFF): Storage subsystem
+        add_mod(SLOT_6, "DD Descriptor",   "recipes/deep65280/.mods/dd")
+        add_mod(SLOT_6, "EmuDsk Driver",   "recipes/deep65280/.mods/emudsk")
+        add_mod(SLOT_6, "SysGo Module",    "recipes/deep65280/.mods/sysgo")
+        add_mod(SLOT_6, "RBF Manager",     "recipes/deep65280/.mods/rbf")
+        add_mod(SLOT_6, "I/O Manager",     "recipes/deep65280/.mods/ioman")
+
+        // Slot 7 Lower ($E000..$EE00): Configuration & Kernel Part 2
+        add_mod(SLOT_7L, "Configuration",   "recipes/deep65280/.mods/init")
+        add_mod(SLOT_7L, "Kernel (part 2)", "recipes/deep65280/.mods/krnp2")
+
+        // Slot 7 Kernel ($EE00..$FF00): Kernel Part 1
+        add_mod(SLOT_KRN, "Kernel (part 1)", "recipes/deep65280/.mods/krn")
+    } else {
+        // Slot 4 ($8000..$9FFF): Remaining commands
+        add_mod(SLOT_4, "dir Command",     ".mods/dir")
+        add_mod(SLOT_4, "setime Command",  ".mods/setime")
+        add_mod(SLOT_4, "date Command",    ".mods/date")
+        add_mod(SLOT_4, "stop Command",    ".mods/stop")
+
+        // Slot 5 ($A000..$BFFF): SCF, drivers, shell & commands
+        add_mod(SLOT_5, "SCF Manager",     ".mods/scf")
+        add_mod(SLOT_5, "ACIA Driver",     ".mods/sc6850")
+        add_mod(SLOT_5, "Clock Driver",    ".mods/clock")
+        add_mod(SLOT_5, "Term Descriptor", ".mods/term")
+        add_mod(SLOT_5, "Shell Command",   ".mods/shell_21")
+        add_mod(SLOT_5, "mfree Command",   ".mods/mfree")
+        add_mod(SLOT_5, "free Command",    ".mods/free")
+        add_mod(SLOT_5, "procs Command",   ".mods/procs")
+        add_mod(SLOT_5, "mdir Command",    ".mods/mdir")
+
+        // Slot 6 ($C000..$DFFF): Storage subsystem
+        add_mod(SLOT_6, "DD Descriptor",   ".mods/dd")
+        add_mod(SLOT_6, "EmuDsk Driver",   ".mods/emudsk")
+        add_mod(SLOT_6, "SysGo Module",    ".mods/sysgo")
+        add_mod(SLOT_6, "RBF Manager",     ".mods/rbf")
+        add_mod(SLOT_6, "I/O Manager",     ".mods/ioman")
+
+        // Slot 7 Lower ($E000..$EE00): Configuration & Kernel Part 2
+        add_mod(SLOT_7L, "Configuration",   ".mods/init")
+        add_mod(SLOT_7L, "Kernel (part 2)", ".mods/krnp2")
+
+        // Slot 7 Kernel ($EE00..$FF00): Kernel Part 1
+        add_mod(SLOT_KRN, "Kernel (part 1)", ".mods/krn")
+    }
+}
+
+func main() {
+    out_path := "deep65280.img"
+    args := sys_args()
+    if args.Len() > 0 {
+        out_path = args.Get(0)
+    }
+
+    num_mods = 0
+    register_modules()
+
+    // Pass 1: Inspect all module headers
+    for i := word(0); i < num_mods; i++ {
+        inspect_module(&mods[i])
+    }
+
+    out_h, ok := file_create(out_path)
+    if !ok {
+        print("ERROR: Cannot create output image: ")
+        println(out_path)
+        sys_exit(1)
+    }
+
+    print_pad("Role", 18)
+    print(" ")
+    print_pad("File", 25)
+    print(" ")
+    print_pad("Addr", 8)
+    print(" ")
+    print_pad("Size", 8)
+    print(" ")
+    print_pad("Name", 10)
+    print(" ")
+    print_pad("Exec", 8)
+    println("")
+
+    for i := word(0); i < 80; i++ {
+        print("-")
+    }
+    println("")
+
+    // Pass 2: Stream complete 64KB image sequentially
+    // 1. Slots 0..3 ($0000..$8000): 32KB RAM zeroes
+    write_zeroes(out_h, 0x8000)
+
+    // 2. Slot 4 ($8000..$A000)
+    stream_slot(out_h, SLOT_4, 0x8000, 0xA000)
+
+    // 3. Slot 5 ($A000..$C000)
+    stream_slot(out_h, SLOT_5, 0xA000, 0xC000)
+
+    // 4. Slot 6 ($C000..$E000)
+    stream_slot(out_h, SLOT_6, 0xC000, 0xE000)
+
+    // 5. Slot 7 Lower ($E000..$EE00)
+    stream_slot(out_h, SLOT_7L, 0xE000, 0xEE00)
+
+    // 6. Slot 7 Kernel ($EE00..$FF00)
+    var krn *ModSpec
+    for i := word(0); i < num_mods; i++ {
+        if mods[i].Slot == SLOT_KRN {
+            krn = &mods[i]
+            break
+        }
+    }
+    if krn == nil || krn.Size != 0x1100 {
+        println("ERROR: Kernel missing or size != $1100")
+        sys_exit(1)
+    }
+
+    print_pad(krn.Role, 18)
+    print(" ")
+    print_pad("krn", 25)
+    print(" ")
+    print_hex16(0xEE00)
+    print("   ")
+    print_hex16(krn.Size)
+    print(" (")
+    print_dec_pad(krn.Size, 5)
+    print(") ")
+    print_pad("Krn", 10)
+    print(" ")
+    print_hex16(krn.ExecOff)
+    println("")
+
+    stream_file(out_h, krn.Path, krn.Size)
+    krn_exec := 0xEE00 + krn.ExecOff
+
+    for i := word(0); i < 80; i++ {
+        print("-")
+    }
+    println("")
+
+    println("Slot 0 ($0000..$1FFF): System globals, DP, stack (zeroed)")
+    println("Slots 1..3 ($2000..$7FFF) + lower Slot 4: Free dynamic RAM (31KB)")
+
+    print("Slots 4..7 (")
+    print_hex16(slot4_first_addr)
+    println("..$EDFF): Preloaded modules (high-packed, abutting $EE00)")
+
+    println("Slot 7 ($EE00..$FFFF): Kernel at $EE00, size $1100, ends at $FF00")
+
+    print("Reset vector ($FFFE) set to: ")
+    print_hex16(krn_exec)
+    println("")
+    println("SWI2 vector ($FFF4) set to:  $FEF1")
+    println("IRQ vector ($FFF8) set to:   $FEF7")
+
+    // 7. I/O Page ($FF00..$FFEF): 240 zeroes
+    write_zeroes(out_h, 0xF0)
+
+    // 8. CPU Vectors ($FFF0..$FFFF): 16 bytes
+    write_be16(word(&io_buf[0]), 0,  0xFEEE) // TRAP
+    write_be16(word(&io_buf[0]), 2,  0xFEEE) // SWI3
+    write_be16(word(&io_buf[0]), 4,  0xFEF1) // SWI2
+    write_be16(word(&io_buf[0]), 6,  0xFEF4) // FIRQ
+    write_be16(word(&io_buf[0]), 8,  0xFEF7) // IRQ
+    write_be16(word(&io_buf[0]), 10, 0xFEFA) // SWI
+    write_be16(word(&io_buf[0]), 12, 0xFEFD) // NMI
+    write_be16(word(&io_buf[0]), 14, krn_exec) // RESET
+
+    file_write(out_h, word(&io_buf[0]), 16)
+    file_close(out_h)
+
+    print("Successfully generated ")
+    print(out_path)
+    println(" (65536 bytes)")
+    sys_exit(0)
+}
