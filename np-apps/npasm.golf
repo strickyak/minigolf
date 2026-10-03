@@ -4,9 +4,10 @@ package main
 const MAX_GLOBALS     = 64
 const MAX_FUNCS       = 64
 const MAX_VARS        = 1024
-const MAX_LABELS      = 768
+const MAX_LABELS      = 1024
 const MAX_STRING_POOL = 4096
 const MAX_STRINGS     = 256
+const MAX_NAME_POOL   = 16384
 const NUM_OPCODES     = 139
 
 // Opcode Table (sorted alphabetically for binary search)
@@ -52,6 +53,10 @@ var str_pool_len word
 var str_offsets  [MAX_STRINGS]word
 var str_lengths  [MAX_STRINGS]word
 var num_strings  word
+
+// Name Pool for Symbols
+var name_pool     [MAX_NAME_POOL]byte
+var name_pool_len word
 
 // Current Assembly State
 var cur_func_idx       word
@@ -109,14 +114,20 @@ func clone_str(s string) string {
     if len(s) == 0 {
         return ""
     }
-    p := alloc(word(len(s)))
-    for i := word(0); i < word(len(s)); i++ {
-        pokeb(p + i, s[i])
+    slen := word(len(s))
+    if name_pool_len + slen > MAX_NAME_POOL {
+        println("Error: MAX_NAME_POOL exceeded")
+        sys_exit(1)
     }
+    p := word(&name_pool[0]) + name_pool_len
+    for i := word(0); i < slen; i++ {
+        name_pool[name_pool_len + i] = s[i]
+    }
+    name_pool_len += slen
     var res string
     res.Base = p
-    res.Cap = word(len(s))
-    res.Len = word(len(s))
+    res.Cap = slen
+    res.Len = slen
     return res
 }
 
@@ -1087,6 +1098,7 @@ func assemble(in_path string, out_path string) {
     num_labels = 0
     num_strings = 0
     str_pool_len = 0
+    name_pool_len = 0
     entry_func_idx = 0xFFFF
     pending_entry_name = ""
     bin_buf_len = 0

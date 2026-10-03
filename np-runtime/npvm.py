@@ -189,7 +189,7 @@ class NPVM:
         self.next_file_handle = 3
 
         self._load_binary()
-        self.heap = HeapManager(self.memory, self.heap_base, 0xFFFF)
+        self.heap = HeapManager(self.memory, self.heap_base, 0xF000)
 
     def _load_binary(self):
         if len(self.raw_binary) < HEADER_SIZE:
@@ -292,7 +292,7 @@ class NPVM:
         if not self.functions:
             return 0
 
-        self.frame_sp = 0xE000
+        self.frame_sp = 0xFF00
         entry_func = self.functions[self.entry_func_index]
         self.frame_sp -= entry_func.frame_size
         self.memory[self.frame_sp : self.frame_sp + entry_func.frame_size] = b"\x00" * entry_func.frame_size

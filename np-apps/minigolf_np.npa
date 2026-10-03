@@ -1,0 +1,8630 @@
+; Global Variable Table
+.global const_names: 384
+.global const_vals: 128
+.global num_consts: 2
+.global global_names: 384
+.global global_sizes: 128
+.global global_kinds: 64
+.global global_elem_sizes: 64
+.global num_globals: 2
+.global func_names: 384
+.global func_ret_kinds: 64
+.global func_first_param: 128
+.global func_num_params: 64
+.global func_first_local: 128
+.global func_num_locals: 128
+.global num_funcs: 2
+.global param_names: 768
+.global param_kinds: 128
+.global param_sizes: 256
+.global num_params: 2
+.global local_names: 3072
+.global local_kinds: 512
+.global local_sizes: 1024
+.global local_elem_sizes: 512
+.global num_locals: 2
+.global str_pool: 8192
+.global str_pool_len: 2
+.global str_offsets: 1536
+.global str_lengths: 1536
+.global num_strings: 2
+.global cur_func_idx: 2
+.global cur_func_name: 6
+.global cur_pass: 2
+.global cur_lineno: 2
+.global loop_cont: 64
+.global loop_exit: 64
+.global loop_depth: 2
+.global label_counter: 2
+.global in_file_h: 2
+.global out_file_h: 2
+.global src_file: 6
+.global out_file: 6
+.global out_buf: 256
+.global out_buf_len: 2
+.global cur_line: 6
+.global line_pos: 2
+.global is_eof: 1
+.global cur_tok: 1
+.global cur_int: 2
+.global cur_str: 6
+.global dec_digits: 6
+.global tok_sbuf: 256
+.global tok_ibuf: 64
+.global pt_size: 2
+.global pt_kind: 1
+.global pt_elem_size: 1
+
+; ----------------------------------------------------
+; Function: out_flush
+; ----------------------------------------------------
+.function out_flush
+    .local s: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL out_buf_len
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_1
+    ADDR_OF_LOCAL s
+    ADDR_OF_GLOBAL out_buf
+    PUSH_0
+    ADD
+    POKE2
+    ADDR_OF_LOCAL s
+    PUSH_I8 2
+    ADD
+    PUSH_I16 256
+    POKE2
+    ADDR_OF_LOCAL s
+    PUSH_I8 4
+    ADD
+    LOAD_GLOBAL out_buf_len
+    POKE2
+    LOAD_GLOBAL out_file_h
+    LOAD_LOCAL s
+    FILE_WRITE
+    POP
+    PUSH_0
+    STORE_GLOBAL out_buf_len
+.L_1:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: out_char
+; ----------------------------------------------------
+.function out_char
+    .param c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL out_buf_len
+    PUSH_I16 256
+    CMP_GE
+    JUMP_IF_FALSE .L_3
+    CALL out_flush
+.L_3:
+    ADDR_OF_GLOBAL out_buf
+    LOAD_GLOBAL out_buf_len
+    ADD
+    LOAD_LOCAL c
+    POKE1
+    LOAD_GLOBAL out_buf_len
+    PUSH_1
+    ADD
+    STORE_GLOBAL out_buf_len
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: out_str
+; ----------------------------------------------------
+.function out_str
+    .param s: slice
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_0
+    STORE_LOCAL i
+.L_5:
+    LOAD_LOCAL i
+    LOAD_LOCAL s
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_7
+    JUMP .L_8
+.L_6:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_5
+.L_8:
+    LOAD_LOCAL i
+    ADDR_OF_LOCAL s
+    PEEK2
+    SWAP
+    ADD
+    PEEK1
+    CALL out_char
+    JUMP .L_6
+.L_7:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: out_dec
+; ----------------------------------------------------
+.function out_dec
+    .param v: word
+    .local dlen: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL v
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_9
+    PUSH_I8 48
+    CALL out_char
+    RET_VOID
+.L_9:
+    PUSH_0
+    STORE_LOCAL dlen
+.L_11:
+    LOAD_LOCAL v
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_13
+    ADDR_OF_GLOBAL dec_digits
+    LOAD_LOCAL dlen
+    ADD
+    PUSH_I8 48
+    LOAD_LOCAL v
+    PUSH_I8 10
+    MOD
+    ADD
+    POKE1
+    LOAD_LOCAL dlen
+    PUSH_1
+    ADD
+    STORE_LOCAL dlen
+    LOAD_LOCAL v
+    PUSH_I8 10
+    DIV
+    STORE_LOCAL v
+    JUMP .L_11
+.L_13:
+.L_14:
+    LOAD_LOCAL dlen
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_16
+    LOAD_LOCAL dlen
+    PUSH_1
+    SUB
+    STORE_LOCAL dlen
+    LOAD_LOCAL dlen
+    ADDR_OF_GLOBAL dec_digits
+    SWAP
+    ADD
+    PEEK1
+    CALL out_char
+    JUMP .L_14
+.L_16:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit
+; ----------------------------------------------------
+.function emit
+    .param s: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL s
+    CALL out_str
+    PUSH_I8 10
+    CALL out_char
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit2
+; ----------------------------------------------------
+.function emit2
+    .param s1: slice
+    .param s2: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL s1
+    CALL out_str
+    LOAD_LOCAL s2
+    CALL out_str
+    PUSH_I8 10
+    CALL out_char
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit_u8
+; ----------------------------------------------------
+.function emit_u8
+    .param s: slice
+    .param v: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL s
+    CALL out_str
+    LOAD_LOCAL v
+    CALL out_dec
+    PUSH_I8 10
+    CALL out_char
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit_u16
+; ----------------------------------------------------
+.function emit_u16
+    .param s: slice
+    .param v: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL s
+    CALL out_str
+    LOAD_LOCAL v
+    CALL out_dec
+    PUSH_I8 10
+    CALL out_char
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit_str
+; ----------------------------------------------------
+.function emit_str
+    .param s: slice
+    .param str_val: slice
+    .local i: word
+    .local c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL s
+    CALL out_str
+    PUSH_I8 34
+    CALL out_char
+    PUSH_0
+    STORE_LOCAL i
+.L_17:
+    LOAD_LOCAL i
+    LOAD_LOCAL str_val
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_19
+    JUMP .L_20
+.L_18:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_17
+.L_20:
+    LOAD_LOCAL i
+    ADDR_OF_LOCAL str_val
+    PEEK2
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL c
+    LOAD_LOCAL c
+    PUSH_I8 10
+    CMP_EQ
+    JUMP_IF_FALSE .L_21
+    PUSH_STR "\\n"
+    CALL out_str
+    JUMP .L_22
+.L_21:
+    LOAD_LOCAL c
+    PUSH_I8 9
+    CMP_EQ
+    JUMP_IF_FALSE .L_23
+    PUSH_STR "\\t"
+    CALL out_str
+    JUMP .L_24
+.L_23:
+    LOAD_LOCAL c
+    PUSH_I8 13
+    CMP_EQ
+    JUMP_IF_FALSE .L_25
+    PUSH_STR "\\r"
+    CALL out_str
+    JUMP .L_26
+.L_25:
+    LOAD_LOCAL c
+    PUSH_I8 34
+    CMP_EQ
+    JUMP_IF_FALSE .L_27
+    PUSH_STR "\\\""
+    CALL out_str
+    JUMP .L_28
+.L_27:
+    LOAD_LOCAL c
+    PUSH_I8 92
+    CMP_EQ
+    JUMP_IF_FALSE .L_29
+    PUSH_STR "\\\\"
+    CALL out_str
+    JUMP .L_30
+.L_29:
+    LOAD_LOCAL c
+    CALL out_char
+.L_30:
+.L_28:
+.L_26:
+.L_24:
+.L_22:
+    JUMP .L_18
+.L_19:
+    PUSH_I8 34
+    CALL out_char
+    PUSH_I8 10
+    CALL out_char
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: next_label
+; ----------------------------------------------------
+.function next_label
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL label_counter
+    PUSH_1
+    ADD
+    STORE_GLOBAL label_counter
+    LOAD_GLOBAL label_counter
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit_label
+; ----------------------------------------------------
+.function emit_label
+    .param lbl: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_STR ".L_"
+    CALL out_str
+    LOAD_LOCAL lbl
+    CALL out_dec
+    PUSH_STR ":\n"
+    CALL out_str
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit_jump
+; ----------------------------------------------------
+.function emit_jump
+    .param op: slice
+    .param lbl: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_STR "    "
+    CALL out_str
+    LOAD_LOCAL op
+    CALL out_str
+    PUSH_STR " .L_"
+    CALL out_str
+    LOAD_LOCAL lbl
+    CALL out_dec
+    PUSH_I8 10
+    CALL out_char
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: pool_str
+; ----------------------------------------------------
+.function pool_str
+    .param s: slice
+    .local n: word
+    .local i: word
+    .local off: word
+    .local matched: word
+    .local j: word
+    .local res: slice
+    .local off: word
+    .local i: word
+    .local res: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL s
+    SLICE_LEN
+    STORE_LOCAL n
+    LOAD_LOCAL n
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_31
+    PUSH_STR ""
+    RET_SLICE
+.L_31:
+    PUSH_0
+    STORE_LOCAL i
+.L_33:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_strings
+    CMP_LT
+    JUMP_IF_FALSE .L_35
+    JUMP .L_36
+.L_34:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_33
+.L_36:
+    LOAD_LOCAL i
+    ADDR_OF_GLOBAL str_lengths
+    SWAP
+    SHL1_ADD
+    PEEK2
+    LOAD_LOCAL n
+    CMP_EQ
+    JUMP_IF_FALSE .L_37
+    LOAD_LOCAL i
+    ADDR_OF_GLOBAL str_offsets
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL off
+    PUSH_TRUE
+    STORE_LOCAL matched
+    PUSH_0
+    STORE_LOCAL j
+.L_39:
+    LOAD_LOCAL j
+    LOAD_LOCAL n
+    CMP_LT
+    JUMP_IF_FALSE .L_41
+    JUMP .L_42
+.L_40:
+    LOAD_LOCAL j
+    PUSH_1
+    ADD
+    STORE_LOCAL j
+    JUMP .L_39
+.L_42:
+    LOAD_LOCAL off
+    LOAD_LOCAL j
+    ADD
+    ADDR_OF_GLOBAL str_pool
+    SWAP
+    ADD
+    PEEK1
+    LOAD_LOCAL j
+    ADDR_OF_LOCAL s
+    PEEK2
+    SWAP
+    ADD
+    PEEK1
+    CMP_NE
+    JUMP_IF_FALSE .L_43
+    PUSH_FALSE
+    STORE_LOCAL matched
+    JUMP .L_41
+.L_43:
+    JUMP .L_40
+.L_41:
+    LOAD_LOCAL matched
+    JUMP_IF_FALSE .L_45
+    ADDR_OF_LOCAL res
+    ADDR_OF_GLOBAL str_pool
+    LOAD_LOCAL off
+    ADD
+    POKE2
+    ADDR_OF_LOCAL res
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL n
+    POKE2
+    ADDR_OF_LOCAL res
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL n
+    POKE2
+    LOAD_LOCAL res
+    RET_SLICE
+.L_45:
+.L_37:
+    JUMP .L_34
+.L_35:
+    LOAD_GLOBAL str_pool_len
+    LOAD_LOCAL n
+    ADD
+    PUSH_I16 8192
+    CMP_GT
+    JUMP_IF_FALSE .L_47
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: String pool full"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_47:
+    LOAD_GLOBAL num_strings
+    PUSH_I16 768
+    CMP_GE
+    JUMP_IF_FALSE .L_49
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Exceeded MAX_STRINGS"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_49:
+    LOAD_GLOBAL str_pool_len
+    STORE_LOCAL off
+    PUSH_0
+    STORE_LOCAL i
+.L_51:
+    LOAD_LOCAL i
+    LOAD_LOCAL n
+    CMP_LT
+    JUMP_IF_FALSE .L_53
+    JUMP .L_54
+.L_52:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_51
+.L_54:
+    ADDR_OF_GLOBAL str_pool
+    LOAD_LOCAL off
+    LOAD_LOCAL i
+    ADD
+    ADD
+    LOAD_LOCAL i
+    ADDR_OF_LOCAL s
+    PEEK2
+    SWAP
+    ADD
+    PEEK1
+    POKE1
+    JUMP .L_52
+.L_53:
+    LOAD_GLOBAL str_pool_len
+    LOAD_LOCAL n
+    ADD
+    STORE_GLOBAL str_pool_len
+    ADDR_OF_GLOBAL str_offsets
+    LOAD_GLOBAL num_strings
+    SHL1_ADD
+    LOAD_LOCAL off
+    POKE2
+    ADDR_OF_GLOBAL str_lengths
+    LOAD_GLOBAL num_strings
+    SHL1_ADD
+    LOAD_LOCAL n
+    POKE2
+    LOAD_GLOBAL num_strings
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_strings
+    ADDR_OF_LOCAL res
+    ADDR_OF_GLOBAL str_pool
+    LOAD_LOCAL off
+    ADD
+    POKE2
+    ADDR_OF_LOCAL res
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL n
+    POKE2
+    ADDR_OF_LOCAL res
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL n
+    POKE2
+    LOAD_LOCAL res
+    RET_SLICE
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: find_const
+; ----------------------------------------------------
+.function find_const
+    .param name: slice
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_0
+    STORE_LOCAL i
+.L_55:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_consts
+    CMP_LT
+    JUMP_IF_FALSE .L_57
+    JUMP .L_58
+.L_56:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_55
+.L_58:
+    LOAD_LOCAL i
+    ADDR_OF_GLOBAL const_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    LOAD_LOCAL name
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_59
+    LOAD_LOCAL i
+    RET
+.L_59:
+    JUMP .L_56
+.L_57:
+    PUSH_NEG1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: add_const
+; ----------------------------------------------------
+.function add_const
+    .param name: slice
+    .param val: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL num_consts
+    PUSH_I8 64
+    CMP_GE
+    JUMP_IF_FALSE .L_61
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Exceeded MAX_CONSTS"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_61:
+    ADDR_OF_GLOBAL const_names
+    LOAD_GLOBAL num_consts
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL name
+    CALL pool_str
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    ADDR_OF_GLOBAL const_vals
+    LOAD_GLOBAL num_consts
+    SHL1_ADD
+    LOAD_LOCAL val
+    POKE2
+    LOAD_GLOBAL num_consts
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_consts
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: find_global
+; ----------------------------------------------------
+.function find_global
+    .param name: slice
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_0
+    STORE_LOCAL i
+.L_63:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_globals
+    CMP_LT
+    JUMP_IF_FALSE .L_65
+    JUMP .L_66
+.L_64:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_63
+.L_66:
+    LOAD_LOCAL i
+    ADDR_OF_GLOBAL global_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    LOAD_LOCAL name
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_67
+    LOAD_LOCAL i
+    RET
+.L_67:
+    JUMP .L_64
+.L_65:
+    PUSH_NEG1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: add_global
+; ----------------------------------------------------
+.function add_global
+    .param name: slice
+    .param size: word
+    .param kind: word
+    .param elem_size: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL num_globals
+    PUSH_I8 64
+    CMP_GE
+    JUMP_IF_FALSE .L_69
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Exceeded MAX_GLOBALS"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_69:
+    ADDR_OF_GLOBAL global_names
+    LOAD_GLOBAL num_globals
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL name
+    CALL pool_str
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    ADDR_OF_GLOBAL global_sizes
+    LOAD_GLOBAL num_globals
+    SHL1_ADD
+    LOAD_LOCAL size
+    POKE2
+    ADDR_OF_GLOBAL global_kinds
+    LOAD_GLOBAL num_globals
+    ADD
+    LOAD_LOCAL kind
+    POKE1
+    ADDR_OF_GLOBAL global_elem_sizes
+    LOAD_GLOBAL num_globals
+    ADD
+    LOAD_LOCAL elem_size
+    POKE1
+    LOAD_GLOBAL num_globals
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_globals
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: find_func
+; ----------------------------------------------------
+.function find_func
+    .param name: slice
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_0
+    STORE_LOCAL i
+.L_71:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_funcs
+    CMP_LT
+    JUMP_IF_FALSE .L_73
+    JUMP .L_74
+.L_72:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_71
+.L_74:
+    LOAD_LOCAL i
+    ADDR_OF_GLOBAL func_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    LOAD_LOCAL name
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_75
+    LOAD_LOCAL i
+    RET
+.L_75:
+    JUMP .L_72
+.L_73:
+    PUSH_NEG1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: add_func
+; ----------------------------------------------------
+.function add_func
+    .param name: slice
+    .param ret_kind: word
+    .local idx: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL num_funcs
+    PUSH_I8 64
+    CMP_GE
+    JUMP_IF_FALSE .L_77
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Exceeded MAX_FUNCS"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_77:
+    LOAD_GLOBAL num_funcs
+    STORE_LOCAL idx
+    ADDR_OF_GLOBAL func_names
+    LOAD_LOCAL idx
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL name
+    CALL pool_str
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    ADDR_OF_GLOBAL func_ret_kinds
+    LOAD_LOCAL idx
+    ADD
+    LOAD_LOCAL ret_kind
+    POKE1
+    ADDR_OF_GLOBAL func_first_param
+    LOAD_LOCAL idx
+    SHL1_ADD
+    LOAD_GLOBAL num_params
+    POKE2
+    ADDR_OF_GLOBAL func_num_params
+    LOAD_LOCAL idx
+    ADD
+    PUSH_0
+    POKE1
+    ADDR_OF_GLOBAL func_first_local
+    LOAD_LOCAL idx
+    SHL1_ADD
+    LOAD_GLOBAL num_locals
+    POKE2
+    ADDR_OF_GLOBAL func_num_locals
+    LOAD_LOCAL idx
+    SHL1_ADD
+    PUSH_0
+    POKE2
+    LOAD_GLOBAL num_funcs
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_funcs
+    LOAD_LOCAL idx
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: add_param
+; ----------------------------------------------------
+.function add_param
+    .param name: slice
+    .param kind: word
+    .param size: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL num_params
+    PUSH_I16 128
+    CMP_GE
+    JUMP_IF_FALSE .L_79
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Exceeded MAX_PARAMS"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_79:
+    ADDR_OF_GLOBAL param_names
+    LOAD_GLOBAL num_params
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL name
+    CALL pool_str
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    ADDR_OF_GLOBAL param_kinds
+    LOAD_GLOBAL num_params
+    ADD
+    LOAD_LOCAL kind
+    POKE1
+    ADDR_OF_GLOBAL param_sizes
+    LOAD_GLOBAL num_params
+    SHL1_ADD
+    LOAD_LOCAL size
+    POKE2
+    LOAD_GLOBAL num_params
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_params
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: add_local
+; ----------------------------------------------------
+.function add_local
+    .param name: slice
+    .param kind: word
+    .param size: word
+    .param elem_size: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL num_locals
+    PUSH_I16 512
+    CMP_GE
+    JUMP_IF_FALSE .L_81
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Exceeded MAX_LOCALS"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_81:
+    ADDR_OF_GLOBAL local_names
+    LOAD_GLOBAL num_locals
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL name
+    CALL pool_str
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    ADDR_OF_GLOBAL local_kinds
+    LOAD_GLOBAL num_locals
+    ADD
+    LOAD_LOCAL kind
+    POKE1
+    ADDR_OF_GLOBAL local_sizes
+    LOAD_GLOBAL num_locals
+    SHL1_ADD
+    LOAD_LOCAL size
+    POKE2
+    ADDR_OF_GLOBAL local_elem_sizes
+    LOAD_GLOBAL num_locals
+    ADD
+    LOAD_LOCAL elem_size
+    POKE1
+    LOAD_GLOBAL num_locals
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_locals
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: find_cur_param
+; ----------------------------------------------------
+.function find_cur_param
+    .param name: slice
+    .local start: word
+    .local count: word
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_first_param
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL start
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_num_params
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL count
+    PUSH_0
+    STORE_LOCAL i
+.L_83:
+    LOAD_LOCAL i
+    LOAD_LOCAL count
+    CMP_LT
+    JUMP_IF_FALSE .L_85
+    JUMP .L_86
+.L_84:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_83
+.L_86:
+    LOAD_LOCAL start
+    LOAD_LOCAL i
+    ADD
+    ADDR_OF_GLOBAL param_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    LOAD_LOCAL name
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_87
+    LOAD_LOCAL start
+    LOAD_LOCAL i
+    ADD
+    RET
+.L_87:
+    JUMP .L_84
+.L_85:
+    PUSH_NEG1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: find_cur_local
+; ----------------------------------------------------
+.function find_cur_local
+    .param name: slice
+    .local start: word
+    .local count: word
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_first_local
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL start
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_num_locals
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL count
+    PUSH_0
+    STORE_LOCAL i
+.L_89:
+    LOAD_LOCAL i
+    LOAD_LOCAL count
+    CMP_LT
+    JUMP_IF_FALSE .L_91
+    JUMP .L_92
+.L_90:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_89
+.L_92:
+    LOAD_LOCAL start
+    LOAD_LOCAL i
+    ADD
+    ADDR_OF_GLOBAL local_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    LOAD_LOCAL name
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_93
+    LOAD_LOCAL start
+    LOAD_LOCAL i
+    ADD
+    RET
+.L_93:
+    JUMP .L_90
+.L_91:
+    PUSH_NEG1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: reset_lexer
+; ----------------------------------------------------
+.function reset_lexer
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_STR ""
+    STORE_GLOBAL cur_line
+    PUSH_0
+    STORE_GLOBAL line_pos
+    PUSH_FALSE
+    STORE_GLOBAL is_eof
+    PUSH_0
+    STORE_GLOBAL cur_lineno
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: peek_char
+; ----------------------------------------------------
+.function peek_char
+    .local line: slice
+    .local eof: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+.L_95:
+    LOAD_GLOBAL is_eof
+    NOT
+    DUP
+    JUMP_IF_FALSE .L_98
+    POP
+    LOAD_GLOBAL line_pos
+    LOAD_GLOBAL cur_line
+    SLICE_LEN
+    CMP_GE
+    JUMP .L_99
+.L_98:
+.L_99:
+    JUMP_IF_FALSE .L_97
+    LOAD_GLOBAL in_file_h
+    FILE_READLINE
+    STORE_LOCAL eof
+    STORE_LOCAL line
+    PUSH_0
+    STORE_GLOBAL line_pos
+    LOAD_LOCAL eof
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_100
+    PUSH_TRUE
+    STORE_GLOBAL is_eof
+    PUSH_0
+    RET
+.L_100:
+    LOAD_LOCAL line
+    STORE_GLOBAL cur_line
+    LOAD_GLOBAL cur_lineno
+    PUSH_1
+    ADD
+    STORE_GLOBAL cur_lineno
+    JUMP .L_95
+.L_97:
+    LOAD_GLOBAL is_eof
+    JUMP_IF_FALSE .L_102
+    PUSH_0
+    RET
+.L_102:
+    LOAD_GLOBAL line_pos
+    ADDR_OF_GLOBAL cur_line
+    PEEK2
+    SWAP
+    ADD
+    PEEK1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: next_char
+; ----------------------------------------------------
+.function next_char
+    .local c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    CALL peek_char
+    STORE_LOCAL c
+    LOAD_GLOBAL is_eof
+    NOT
+    JUMP_IF_FALSE .L_104
+    LOAD_GLOBAL line_pos
+    PUSH_1
+    ADD
+    STORE_GLOBAL line_pos
+.L_104:
+    LOAD_LOCAL c
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: is_alpha
+; ----------------------------------------------------
+.function is_alpha
+    .param c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL c
+    PUSH_I8 97
+    CMP_GE
+    DUP
+    JUMP_IF_FALSE .L_106
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 122
+    CMP_LE
+    JUMP .L_107
+.L_106:
+.L_107:
+    DUP
+    JUMP_IF_TRUE .L_108
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 65
+    CMP_GE
+    DUP
+    JUMP_IF_FALSE .L_110
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 90
+    CMP_LE
+    JUMP .L_111
+.L_110:
+.L_111:
+    JUMP .L_109
+.L_108:
+.L_109:
+    DUP
+    JUMP_IF_TRUE .L_112
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 95
+    CMP_EQ
+    JUMP .L_113
+.L_112:
+.L_113:
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: is_digit
+; ----------------------------------------------------
+.function is_digit
+    .param c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL c
+    PUSH_I8 48
+    CMP_GE
+    DUP
+    JUMP_IF_FALSE .L_114
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 57
+    CMP_LE
+    JUMP .L_115
+.L_114:
+.L_115:
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: is_hex_digit
+; ----------------------------------------------------
+.function is_hex_digit
+    .param c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL c
+    CALL is_digit
+    DUP
+    JUMP_IF_TRUE .L_116
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 97
+    CMP_GE
+    DUP
+    JUMP_IF_FALSE .L_118
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 102
+    CMP_LE
+    JUMP .L_119
+.L_118:
+.L_119:
+    JUMP .L_117
+.L_116:
+.L_117:
+    DUP
+    JUMP_IF_TRUE .L_120
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 65
+    CMP_GE
+    DUP
+    JUMP_IF_FALSE .L_122
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 70
+    CMP_LE
+    JUMP .L_123
+.L_122:
+.L_123:
+    JUMP .L_121
+.L_120:
+.L_121:
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: hex_val
+; ----------------------------------------------------
+.function hex_val
+    .param c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL c
+    CALL is_digit
+    JUMP_IF_FALSE .L_124
+    LOAD_LOCAL c
+    PUSH_I8 48
+    SUB
+    RET
+.L_124:
+    LOAD_LOCAL c
+    PUSH_I8 97
+    CMP_GE
+    DUP
+    JUMP_IF_FALSE .L_128
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 102
+    CMP_LE
+    JUMP .L_129
+.L_128:
+.L_129:
+    JUMP_IF_FALSE .L_126
+    LOAD_LOCAL c
+    PUSH_I8 97
+    SUB
+    PUSH_I8 10
+    ADD
+    RET
+.L_126:
+    LOAD_LOCAL c
+    PUSH_I8 65
+    CMP_GE
+    DUP
+    JUMP_IF_FALSE .L_132
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 70
+    CMP_LE
+    JUMP .L_133
+.L_132:
+.L_133:
+    JUMP_IF_FALSE .L_130
+    LOAD_LOCAL c
+    PUSH_I8 65
+    SUB
+    PUSH_I8 10
+    ADD
+    RET
+.L_130:
+    PUSH_0
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: is_space
+; ----------------------------------------------------
+.function is_space
+    .param c: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL c
+    PUSH_I8 32
+    CMP_EQ
+    DUP
+    JUMP_IF_TRUE .L_134
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 9
+    CMP_EQ
+    JUMP .L_135
+.L_134:
+.L_135:
+    DUP
+    JUMP_IF_TRUE .L_136
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 13
+    CMP_EQ
+    JUMP .L_137
+.L_136:
+.L_137:
+    DUP
+    JUMP_IF_TRUE .L_138
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 10
+    CMP_EQ
+    JUMP .L_139
+.L_138:
+.L_139:
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: check_keyword
+; ----------------------------------------------------
+.function check_keyword
+    .param s: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL s
+    PUSH_STR "package"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_142
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "const"
+    STR_CMP
+    NOT
+    JUMP .L_143
+.L_142:
+.L_143:
+    DUP
+    JUMP_IF_TRUE .L_144
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "var"
+    STR_CMP
+    NOT
+    JUMP .L_145
+.L_144:
+.L_145:
+    DUP
+    JUMP_IF_TRUE .L_146
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "func"
+    STR_CMP
+    NOT
+    JUMP .L_147
+.L_146:
+.L_147:
+    JUMP_IF_FALSE .L_140
+    PUSH_TRUE
+    RET
+.L_140:
+    LOAD_LOCAL s
+    PUSH_STR "return"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_150
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "if"
+    STR_CMP
+    NOT
+    JUMP .L_151
+.L_150:
+.L_151:
+    DUP
+    JUMP_IF_TRUE .L_152
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "else"
+    STR_CMP
+    NOT
+    JUMP .L_153
+.L_152:
+.L_153:
+    DUP
+    JUMP_IF_TRUE .L_154
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "for"
+    STR_CMP
+    NOT
+    JUMP .L_155
+.L_154:
+.L_155:
+    JUMP_IF_FALSE .L_148
+    PUSH_TRUE
+    RET
+.L_148:
+    LOAD_LOCAL s
+    PUSH_STR "break"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_158
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "continue"
+    STR_CMP
+    NOT
+    JUMP .L_159
+.L_158:
+.L_159:
+    DUP
+    JUMP_IF_TRUE .L_160
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "true"
+    STR_CMP
+    NOT
+    JUMP .L_161
+.L_160:
+.L_161:
+    DUP
+    JUMP_IF_TRUE .L_162
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "false"
+    STR_CMP
+    NOT
+    JUMP .L_163
+.L_162:
+.L_163:
+    JUMP_IF_FALSE .L_156
+    PUSH_TRUE
+    RET
+.L_156:
+    LOAD_LOCAL s
+    PUSH_STR "byte"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_166
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "word"
+    STR_CMP
+    NOT
+    JUMP .L_167
+.L_166:
+.L_167:
+    DUP
+    JUMP_IF_TRUE .L_168
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "bool"
+    STR_CMP
+    NOT
+    JUMP .L_169
+.L_168:
+.L_169:
+    DUP
+    JUMP_IF_TRUE .L_170
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "string"
+    STR_CMP
+    NOT
+    JUMP .L_171
+.L_170:
+.L_171:
+    JUMP_IF_FALSE .L_164
+    PUSH_TRUE
+    RET
+.L_164:
+    LOAD_LOCAL s
+    PUSH_STR "int"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_174
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "uint8"
+    STR_CMP
+    NOT
+    JUMP .L_175
+.L_174:
+.L_175:
+    DUP
+    JUMP_IF_TRUE .L_176
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "uint16"
+    STR_CMP
+    NOT
+    JUMP .L_177
+.L_176:
+.L_177:
+    JUMP_IF_FALSE .L_172
+    PUSH_TRUE
+    RET
+.L_172:
+    PUSH_FALSE
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: next_tok
+; ----------------------------------------------------
+.function next_tok
+    .local c: word
+    .local c2: word
+    .local bc: word
+    .local c: word
+    .local val: word
+    .local c2: word
+    .local val: word
+    .local val: word
+    .local val: word
+    .local cc: word
+    .local nc: word
+    .local slen: word
+    .local sc: word
+    .local nc: word
+    .local s: slice
+    .local ilen: word
+    .local s: slice
+    .local c2: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+.L_178:
+    CALL peek_char
+    STORE_LOCAL c
+    LOAD_LOCAL c
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_181
+    PUSH_0
+    STORE_GLOBAL cur_tok
+    PUSH_STR ""
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_181:
+    LOAD_LOCAL c
+    CALL is_space
+    JUMP_IF_FALSE .L_183
+    CALL next_char
+    POP
+    JUMP .L_178
+.L_183:
+    LOAD_LOCAL c
+    PUSH_I8 47
+    CMP_EQ
+    JUMP_IF_FALSE .L_185
+    CALL next_char
+    POP
+    CALL peek_char
+    STORE_LOCAL c2
+    LOAD_LOCAL c2
+    PUSH_I8 47
+    CMP_EQ
+    JUMP_IF_FALSE .L_187
+    LOAD_GLOBAL cur_line
+    SLICE_LEN
+    STORE_GLOBAL line_pos
+    JUMP .L_178
+    JUMP .L_188
+.L_187:
+    LOAD_LOCAL c2
+    PUSH_I8 42
+    CMP_EQ
+    JUMP_IF_FALSE .L_189
+    CALL next_char
+    POP
+.L_191:
+    CALL next_char
+    STORE_LOCAL bc
+    LOAD_LOCAL bc
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_194
+    JUMP .L_193
+.L_194:
+    LOAD_LOCAL bc
+    PUSH_I8 42
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_198
+    POP
+    CALL peek_char
+    PUSH_I8 47
+    CMP_EQ
+    JUMP .L_199
+.L_198:
+.L_199:
+    JUMP_IF_FALSE .L_196
+    CALL next_char
+    POP
+    JUMP .L_193
+.L_196:
+    JUMP .L_191
+.L_193:
+    JUMP .L_178
+    JUMP .L_190
+.L_189:
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "/"
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_190:
+.L_188:
+.L_185:
+    JUMP .L_180
+    JUMP .L_178
+.L_180:
+    CALL peek_char
+    STORE_LOCAL c
+    LOAD_LOCAL c
+    CALL is_digit
+    DUP
+    JUMP_IF_TRUE .L_202
+    POP
+    LOAD_LOCAL c
+    PUSH_I8 36
+    CMP_EQ
+    JUMP .L_203
+.L_202:
+.L_203:
+    JUMP_IF_FALSE .L_200
+    LOAD_LOCAL c
+    PUSH_I8 36
+    CMP_EQ
+    JUMP_IF_FALSE .L_204
+    CALL next_char
+    POP
+    PUSH_0
+    STORE_LOCAL val
+.L_206:
+    CALL peek_char
+    CALL is_hex_digit
+    JUMP_IF_FALSE .L_208
+    LOAD_LOCAL val
+    PUSH_I8 4
+    SHL
+    CALL next_char
+    CALL hex_val
+    BIT_OR
+    STORE_LOCAL val
+    JUMP .L_206
+.L_208:
+    PUSH_1
+    STORE_GLOBAL cur_tok
+    LOAD_LOCAL val
+    STORE_GLOBAL cur_int
+    PUSH_STR ""
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_204:
+    LOAD_LOCAL c
+    PUSH_I8 48
+    CMP_EQ
+    JUMP_IF_FALSE .L_209
+    CALL next_char
+    POP
+    CALL peek_char
+    STORE_LOCAL c2
+    LOAD_LOCAL c2
+    PUSH_I8 120
+    CMP_EQ
+    DUP
+    JUMP_IF_TRUE .L_213
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 88
+    CMP_EQ
+    JUMP .L_214
+.L_213:
+.L_214:
+    JUMP_IF_FALSE .L_211
+    CALL next_char
+    POP
+    PUSH_0
+    STORE_LOCAL val
+.L_215:
+    CALL peek_char
+    CALL is_hex_digit
+    JUMP_IF_FALSE .L_217
+    LOAD_LOCAL val
+    PUSH_I8 4
+    SHL
+    CALL next_char
+    CALL hex_val
+    BIT_OR
+    STORE_LOCAL val
+    JUMP .L_215
+.L_217:
+    PUSH_1
+    STORE_GLOBAL cur_tok
+    LOAD_LOCAL val
+    STORE_GLOBAL cur_int
+    PUSH_STR ""
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_211:
+    PUSH_0
+    STORE_LOCAL val
+.L_218:
+    CALL peek_char
+    CALL is_digit
+    JUMP_IF_FALSE .L_220
+    LOAD_LOCAL val
+    PUSH_I8 10
+    MUL
+    CALL next_char
+    PUSH_I8 48
+    SUB
+    ADD
+    STORE_LOCAL val
+    JUMP .L_218
+.L_220:
+    PUSH_1
+    STORE_GLOBAL cur_tok
+    LOAD_LOCAL val
+    STORE_GLOBAL cur_int
+    PUSH_STR ""
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_209:
+    PUSH_0
+    STORE_LOCAL val
+.L_221:
+    CALL peek_char
+    CALL is_digit
+    JUMP_IF_FALSE .L_223
+    LOAD_LOCAL val
+    PUSH_I8 10
+    MUL
+    CALL next_char
+    PUSH_I8 48
+    SUB
+    ADD
+    STORE_LOCAL val
+    JUMP .L_221
+.L_223:
+    PUSH_1
+    STORE_GLOBAL cur_tok
+    LOAD_LOCAL val
+    STORE_GLOBAL cur_int
+    PUSH_STR ""
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_200:
+    LOAD_LOCAL c
+    PUSH_I8 39
+    CMP_EQ
+    JUMP_IF_FALSE .L_224
+    CALL next_char
+    POP
+    CALL next_char
+    STORE_LOCAL cc
+    LOAD_LOCAL cc
+    PUSH_I8 92
+    CMP_EQ
+    JUMP_IF_FALSE .L_226
+    CALL next_char
+    STORE_LOCAL nc
+    LOAD_LOCAL nc
+    PUSH_I8 110
+    CMP_EQ
+    JUMP_IF_FALSE .L_228
+    PUSH_I8 10
+    STORE_LOCAL cc
+    JUMP .L_229
+.L_228:
+    LOAD_LOCAL nc
+    PUSH_I8 116
+    CMP_EQ
+    JUMP_IF_FALSE .L_230
+    PUSH_I8 9
+    STORE_LOCAL cc
+    JUMP .L_231
+.L_230:
+    LOAD_LOCAL nc
+    PUSH_I8 114
+    CMP_EQ
+    JUMP_IF_FALSE .L_232
+    PUSH_I8 13
+    STORE_LOCAL cc
+    JUMP .L_233
+.L_232:
+    LOAD_LOCAL nc
+    PUSH_I8 48
+    CMP_EQ
+    JUMP_IF_FALSE .L_234
+    PUSH_0
+    STORE_LOCAL cc
+    JUMP .L_235
+.L_234:
+    LOAD_LOCAL nc
+    PUSH_I8 39
+    CMP_EQ
+    JUMP_IF_FALSE .L_236
+    PUSH_I8 39
+    STORE_LOCAL cc
+    JUMP .L_237
+.L_236:
+    LOAD_LOCAL nc
+    PUSH_I8 92
+    CMP_EQ
+    JUMP_IF_FALSE .L_238
+    PUSH_I8 92
+    STORE_LOCAL cc
+    JUMP .L_239
+.L_238:
+    LOAD_LOCAL nc
+    STORE_LOCAL cc
+.L_239:
+.L_237:
+.L_235:
+.L_233:
+.L_231:
+.L_229:
+.L_226:
+    CALL peek_char
+    PUSH_I8 39
+    CMP_EQ
+    JUMP_IF_FALSE .L_240
+    CALL next_char
+    POP
+.L_240:
+    PUSH_1
+    STORE_GLOBAL cur_tok
+    LOAD_LOCAL cc
+    STORE_GLOBAL cur_int
+    PUSH_STR ""
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_224:
+    LOAD_LOCAL c
+    PUSH_I8 34
+    CMP_EQ
+    JUMP_IF_FALSE .L_242
+    CALL next_char
+    POP
+    PUSH_0
+    STORE_LOCAL slen
+.L_244:
+    CALL next_char
+    STORE_LOCAL sc
+    LOAD_LOCAL sc
+    PUSH_0
+    CMP_EQ
+    DUP
+    JUMP_IF_TRUE .L_249
+    POP
+    LOAD_LOCAL sc
+    PUSH_I8 34
+    CMP_EQ
+    JUMP .L_250
+.L_249:
+.L_250:
+    JUMP_IF_FALSE .L_247
+    JUMP .L_246
+.L_247:
+    LOAD_LOCAL sc
+    PUSH_I8 92
+    CMP_EQ
+    JUMP_IF_FALSE .L_251
+    CALL next_char
+    STORE_LOCAL nc
+    LOAD_LOCAL nc
+    PUSH_I8 110
+    CMP_EQ
+    JUMP_IF_FALSE .L_253
+    PUSH_I8 10
+    STORE_LOCAL sc
+    JUMP .L_254
+.L_253:
+    LOAD_LOCAL nc
+    PUSH_I8 116
+    CMP_EQ
+    JUMP_IF_FALSE .L_255
+    PUSH_I8 9
+    STORE_LOCAL sc
+    JUMP .L_256
+.L_255:
+    LOAD_LOCAL nc
+    PUSH_I8 114
+    CMP_EQ
+    JUMP_IF_FALSE .L_257
+    PUSH_I8 13
+    STORE_LOCAL sc
+    JUMP .L_258
+.L_257:
+    LOAD_LOCAL nc
+    PUSH_I8 34
+    CMP_EQ
+    JUMP_IF_FALSE .L_259
+    PUSH_I8 34
+    STORE_LOCAL sc
+    JUMP .L_260
+.L_259:
+    LOAD_LOCAL nc
+    PUSH_I8 92
+    CMP_EQ
+    JUMP_IF_FALSE .L_261
+    PUSH_I8 92
+    STORE_LOCAL sc
+    JUMP .L_262
+.L_261:
+    LOAD_LOCAL nc
+    STORE_LOCAL sc
+.L_262:
+.L_260:
+.L_258:
+.L_256:
+.L_254:
+.L_251:
+    LOAD_LOCAL slen
+    PUSH_I16 255
+    CMP_LT
+    JUMP_IF_FALSE .L_263
+    ADDR_OF_GLOBAL tok_sbuf
+    LOAD_LOCAL slen
+    ADD
+    LOAD_LOCAL sc
+    POKE1
+    LOAD_LOCAL slen
+    PUSH_1
+    ADD
+    STORE_LOCAL slen
+.L_263:
+    JUMP .L_244
+.L_246:
+    ADDR_OF_LOCAL s
+    ADDR_OF_GLOBAL tok_sbuf
+    PUSH_0
+    ADD
+    POKE2
+    ADDR_OF_LOCAL s
+    PUSH_I8 2
+    ADD
+    PUSH_I16 256
+    POKE2
+    ADDR_OF_LOCAL s
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL slen
+    POKE2
+    PUSH_I8 2
+    STORE_GLOBAL cur_tok
+    LOAD_LOCAL s
+    CALL pool_str
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_242:
+    LOAD_LOCAL c
+    CALL is_alpha
+    JUMP_IF_FALSE .L_265
+    PUSH_0
+    STORE_LOCAL ilen
+.L_267:
+    CALL peek_char
+    CALL is_alpha
+    DUP
+    JUMP_IF_TRUE .L_270
+    POP
+    CALL peek_char
+    CALL is_digit
+    JUMP .L_271
+.L_270:
+.L_271:
+    JUMP_IF_FALSE .L_269
+    LOAD_LOCAL ilen
+    PUSH_I8 63
+    CMP_LT
+    JUMP_IF_FALSE .L_272
+    ADDR_OF_GLOBAL tok_ibuf
+    LOAD_LOCAL ilen
+    ADD
+    CALL next_char
+    POKE1
+    LOAD_LOCAL ilen
+    PUSH_1
+    ADD
+    STORE_LOCAL ilen
+    JUMP .L_273
+.L_272:
+    CALL next_char
+    POP
+.L_273:
+    JUMP .L_267
+.L_269:
+    ADDR_OF_LOCAL s
+    ADDR_OF_GLOBAL tok_ibuf
+    PUSH_0
+    ADD
+    POKE2
+    ADDR_OF_LOCAL s
+    PUSH_I8 2
+    ADD
+    PUSH_I8 64
+    POKE2
+    ADDR_OF_LOCAL s
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL ilen
+    POKE2
+    LOAD_LOCAL s
+    CALL pool_str
+    STORE_GLOBAL cur_str
+    LOAD_GLOBAL cur_str
+    CALL check_keyword
+    JUMP_IF_FALSE .L_274
+    PUSH_I8 4
+    STORE_GLOBAL cur_tok
+    JUMP .L_275
+.L_274:
+    PUSH_I8 3
+    STORE_GLOBAL cur_tok
+.L_275:
+    RET_VOID
+.L_265:
+    CALL next_char
+    POP
+    CALL peek_char
+    STORE_LOCAL c2
+    LOAD_LOCAL c
+    PUSH_I8 58
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_278
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_279
+.L_278:
+.L_279:
+    JUMP_IF_FALSE .L_276
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR ":="
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_276:
+    LOAD_LOCAL c
+    PUSH_I8 61
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_282
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_283
+.L_282:
+.L_283:
+    JUMP_IF_FALSE .L_280
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "=="
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_280:
+    LOAD_LOCAL c
+    PUSH_I8 33
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_286
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_287
+.L_286:
+.L_287:
+    JUMP_IF_FALSE .L_284
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "!="
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_284:
+    LOAD_LOCAL c
+    PUSH_I8 60
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_290
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_291
+.L_290:
+.L_291:
+    JUMP_IF_FALSE .L_288
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "<="
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_288:
+    LOAD_LOCAL c
+    PUSH_I8 62
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_294
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_295
+.L_294:
+.L_295:
+    JUMP_IF_FALSE .L_292
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR ">="
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_292:
+    LOAD_LOCAL c
+    PUSH_I8 38
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_298
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 38
+    CMP_EQ
+    JUMP .L_299
+.L_298:
+.L_299:
+    JUMP_IF_FALSE .L_296
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "&&"
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_296:
+    LOAD_LOCAL c
+    PUSH_I8 124
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_302
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 124
+    CMP_EQ
+    JUMP .L_303
+.L_302:
+.L_303:
+    JUMP_IF_FALSE .L_300
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "||"
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_300:
+    LOAD_LOCAL c
+    PUSH_I8 60
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_306
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 60
+    CMP_EQ
+    JUMP .L_307
+.L_306:
+.L_307:
+    JUMP_IF_FALSE .L_304
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "<<"
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_304:
+    LOAD_LOCAL c
+    PUSH_I8 62
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_310
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 62
+    CMP_EQ
+    JUMP .L_311
+.L_310:
+.L_311:
+    JUMP_IF_FALSE .L_308
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR ">>"
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_308:
+    LOAD_LOCAL c
+    PUSH_I8 43
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_314
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 43
+    CMP_EQ
+    JUMP .L_315
+.L_314:
+.L_315:
+    JUMP_IF_FALSE .L_312
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "++"
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_312:
+    LOAD_LOCAL c
+    PUSH_I8 45
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_318
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 45
+    CMP_EQ
+    JUMP .L_319
+.L_318:
+.L_319:
+    JUMP_IF_FALSE .L_316
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "--"
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_316:
+    LOAD_LOCAL c
+    PUSH_I8 43
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_322
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_323
+.L_322:
+.L_323:
+    JUMP_IF_FALSE .L_320
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "+="
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_320:
+    LOAD_LOCAL c
+    PUSH_I8 45
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_326
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_327
+.L_326:
+.L_327:
+    JUMP_IF_FALSE .L_324
+    CALL next_char
+    POP
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    PUSH_STR "-="
+    STORE_GLOBAL cur_str
+    RET_VOID
+.L_324:
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+    LOAD_LOCAL c
+    PUSH_I8 43
+    CMP_EQ
+    JUMP_IF_FALSE .L_328
+    PUSH_STR "+"
+    STORE_GLOBAL cur_str
+    JUMP .L_329
+.L_328:
+    LOAD_LOCAL c
+    PUSH_I8 45
+    CMP_EQ
+    JUMP_IF_FALSE .L_330
+    PUSH_STR "-"
+    STORE_GLOBAL cur_str
+    JUMP .L_331
+.L_330:
+    LOAD_LOCAL c
+    PUSH_I8 42
+    CMP_EQ
+    JUMP_IF_FALSE .L_332
+    PUSH_STR "*"
+    STORE_GLOBAL cur_str
+    JUMP .L_333
+.L_332:
+    LOAD_LOCAL c
+    PUSH_I8 37
+    CMP_EQ
+    JUMP_IF_FALSE .L_334
+    PUSH_STR "%"
+    STORE_GLOBAL cur_str
+    JUMP .L_335
+.L_334:
+    LOAD_LOCAL c
+    PUSH_I8 38
+    CMP_EQ
+    JUMP_IF_FALSE .L_336
+    PUSH_STR "&"
+    STORE_GLOBAL cur_str
+    JUMP .L_337
+.L_336:
+    LOAD_LOCAL c
+    PUSH_I8 124
+    CMP_EQ
+    JUMP_IF_FALSE .L_338
+    PUSH_STR "|"
+    STORE_GLOBAL cur_str
+    JUMP .L_339
+.L_338:
+    LOAD_LOCAL c
+    PUSH_I8 94
+    CMP_EQ
+    JUMP_IF_FALSE .L_340
+    PUSH_STR "^"
+    STORE_GLOBAL cur_str
+    JUMP .L_341
+.L_340:
+    LOAD_LOCAL c
+    PUSH_I8 126
+    CMP_EQ
+    JUMP_IF_FALSE .L_342
+    PUSH_STR "~"
+    STORE_GLOBAL cur_str
+    JUMP .L_343
+.L_342:
+    LOAD_LOCAL c
+    PUSH_I8 33
+    CMP_EQ
+    JUMP_IF_FALSE .L_344
+    PUSH_STR "!"
+    STORE_GLOBAL cur_str
+    JUMP .L_345
+.L_344:
+    LOAD_LOCAL c
+    PUSH_I8 60
+    CMP_EQ
+    JUMP_IF_FALSE .L_346
+    PUSH_STR "<"
+    STORE_GLOBAL cur_str
+    JUMP .L_347
+.L_346:
+    LOAD_LOCAL c
+    PUSH_I8 62
+    CMP_EQ
+    JUMP_IF_FALSE .L_348
+    PUSH_STR ">"
+    STORE_GLOBAL cur_str
+    JUMP .L_349
+.L_348:
+    LOAD_LOCAL c
+    PUSH_I8 61
+    CMP_EQ
+    JUMP_IF_FALSE .L_350
+    PUSH_STR "="
+    STORE_GLOBAL cur_str
+    JUMP .L_351
+.L_350:
+    LOAD_LOCAL c
+    PUSH_I8 40
+    CMP_EQ
+    JUMP_IF_FALSE .L_352
+    PUSH_STR "("
+    STORE_GLOBAL cur_str
+    JUMP .L_353
+.L_352:
+    LOAD_LOCAL c
+    PUSH_I8 41
+    CMP_EQ
+    JUMP_IF_FALSE .L_354
+    PUSH_STR ")"
+    STORE_GLOBAL cur_str
+    JUMP .L_355
+.L_354:
+    LOAD_LOCAL c
+    PUSH_I8 91
+    CMP_EQ
+    JUMP_IF_FALSE .L_356
+    PUSH_STR "["
+    STORE_GLOBAL cur_str
+    JUMP .L_357
+.L_356:
+    LOAD_LOCAL c
+    PUSH_I8 93
+    CMP_EQ
+    JUMP_IF_FALSE .L_358
+    PUSH_STR "]"
+    STORE_GLOBAL cur_str
+    JUMP .L_359
+.L_358:
+    LOAD_LOCAL c
+    PUSH_I8 123
+    CMP_EQ
+    JUMP_IF_FALSE .L_360
+    PUSH_STR "{"
+    STORE_GLOBAL cur_str
+    JUMP .L_361
+.L_360:
+    LOAD_LOCAL c
+    PUSH_I8 125
+    CMP_EQ
+    JUMP_IF_FALSE .L_362
+    PUSH_STR "}"
+    STORE_GLOBAL cur_str
+    JUMP .L_363
+.L_362:
+    LOAD_LOCAL c
+    PUSH_I8 44
+    CMP_EQ
+    JUMP_IF_FALSE .L_364
+    PUSH_STR ","
+    STORE_GLOBAL cur_str
+    JUMP .L_365
+.L_364:
+    LOAD_LOCAL c
+    PUSH_I8 59
+    CMP_EQ
+    JUMP_IF_FALSE .L_366
+    PUSH_STR ";"
+    STORE_GLOBAL cur_str
+    JUMP .L_367
+.L_366:
+    LOAD_LOCAL c
+    PUSH_I8 58
+    CMP_EQ
+    JUMP_IF_FALSE .L_368
+    PUSH_STR ":"
+    STORE_GLOBAL cur_str
+    JUMP .L_369
+.L_368:
+    LOAD_LOCAL c
+    PUSH_I8 46
+    CMP_EQ
+    JUMP_IF_FALSE .L_370
+    PUSH_STR "."
+    STORE_GLOBAL cur_str
+    JUMP .L_371
+.L_370:
+    PUSH_STR ""
+    STORE_GLOBAL cur_str
+.L_371:
+.L_369:
+.L_367:
+.L_365:
+.L_363:
+.L_361:
+.L_359:
+.L_357:
+.L_355:
+.L_353:
+.L_351:
+.L_349:
+.L_347:
+.L_345:
+.L_343:
+.L_341:
+.L_339:
+.L_337:
+.L_335:
+.L_333:
+.L_331:
+.L_329:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: match
+; ----------------------------------------------------
+.function match
+    .param s: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL cur_str
+    LOAD_LOCAL s
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_372
+    CALL next_tok
+    PUSH_TRUE
+    RET
+.L_372:
+    PUSH_FALSE
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: expect
+; ----------------------------------------------------
+.function expect
+    .param s: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL cur_str
+    LOAD_LOCAL s
+    STR_CMP
+    JUMP_IF_FALSE .L_374
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    LOAD_GLOBAL src_file
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    PUSH_STR ":"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 32
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 34
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 6
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL cur_lineno
+    LOAD_LOCAL _pbuf
+    PUSH_I8 36
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 8
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 36
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 10
+    ADD
+    PUSH_STR "word"
+    POP
+    POP
+    POKE2
+    PUSH_STR ": Syntax error: expected '"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 42
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 44
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 46
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 12
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 42
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 14
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL s
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 48
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 50
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 52
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 16
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 48
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 18
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 5
+    PUSH_I8 5
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "', got '"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 32
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 34
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 6
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    PUSH_STR "' (pass "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 36
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 38
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 40
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 8
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 36
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 10
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL cur_pass
+    LOAD_LOCAL _pbuf
+    PUSH_I8 42
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 12
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 42
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 14
+    ADD
+    PUSH_STR "word"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    PUSH_I8 4
+    PRINT
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR ", func "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL cur_func_name
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 32
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 34
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 6
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    PUSH_STR ")"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 36
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 38
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 40
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 8
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 36
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 10
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 3
+    PUSH_I8 3
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "  line: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL cur_line
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 32
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 34
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 6
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    PUSH_I8 2
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_374:
+    CALL next_tok
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: parse_type_desc
+; ----------------------------------------------------
+.function parse_type_desc
+    .local count: word
+    .local ci: word
+    .local tname: slice
+    .local tname: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL cur_str
+    PUSH_STR "["
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_376
+    CALL next_tok
+    PUSH_0
+    STORE_LOCAL count
+    LOAD_GLOBAL cur_tok
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_378
+    LOAD_GLOBAL cur_int
+    STORE_LOCAL count
+    CALL next_tok
+    JUMP .L_379
+.L_378:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 3
+    CMP_EQ
+    JUMP_IF_FALSE .L_380
+    LOAD_GLOBAL cur_str
+    CALL find_const
+    STORE_LOCAL ci
+    LOAD_LOCAL ci
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_382
+    LOAD_LOCAL ci
+    ADDR_OF_GLOBAL const_vals
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL count
+    JUMP .L_383
+.L_382:
+    PUSH_1
+    STORE_LOCAL count
+.L_383:
+    CALL next_tok
+.L_380:
+.L_379:
+    PUSH_STR "]"
+    CALL expect
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL tname
+    CALL next_tok
+    LOAD_LOCAL tname
+    PUSH_STR "byte"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_386
+    POP
+    LOAD_LOCAL tname
+    PUSH_STR "bool"
+    STR_CMP
+    NOT
+    JUMP .L_387
+.L_386:
+.L_387:
+    DUP
+    JUMP_IF_TRUE .L_388
+    POP
+    LOAD_LOCAL tname
+    PUSH_STR "uint8"
+    STR_CMP
+    NOT
+    JUMP .L_389
+.L_388:
+.L_389:
+    JUMP_IF_FALSE .L_384
+    LOAD_LOCAL count
+    STORE_GLOBAL pt_size
+    PUSH_1
+    STORE_GLOBAL pt_kind
+    PUSH_1
+    STORE_GLOBAL pt_elem_size
+    JUMP .L_385
+.L_384:
+    LOAD_LOCAL tname
+    PUSH_STR "string"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_392
+    POP
+    LOAD_LOCAL tname
+    PUSH_STR "slice"
+    STR_CMP
+    NOT
+    JUMP .L_393
+.L_392:
+.L_393:
+    JUMP_IF_FALSE .L_390
+    LOAD_LOCAL count
+    PUSH_I8 6
+    MUL
+    STORE_GLOBAL pt_size
+    PUSH_1
+    STORE_GLOBAL pt_kind
+    PUSH_I8 6
+    STORE_GLOBAL pt_elem_size
+    JUMP .L_391
+.L_390:
+    LOAD_LOCAL count
+    PUSH_I8 2
+    MUL
+    STORE_GLOBAL pt_size
+    PUSH_1
+    STORE_GLOBAL pt_kind
+    PUSH_I8 2
+    STORE_GLOBAL pt_elem_size
+.L_391:
+.L_385:
+    JUMP .L_377
+.L_376:
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL tname
+    CALL next_tok
+    LOAD_LOCAL tname
+    PUSH_STR "byte"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_396
+    POP
+    LOAD_LOCAL tname
+    PUSH_STR "bool"
+    STR_CMP
+    NOT
+    JUMP .L_397
+.L_396:
+.L_397:
+    DUP
+    JUMP_IF_TRUE .L_398
+    POP
+    LOAD_LOCAL tname
+    PUSH_STR "uint8"
+    STR_CMP
+    NOT
+    JUMP .L_399
+.L_398:
+.L_399:
+    JUMP_IF_FALSE .L_394
+    PUSH_1
+    STORE_GLOBAL pt_size
+    PUSH_1
+    STORE_GLOBAL pt_kind
+    PUSH_1
+    STORE_GLOBAL pt_elem_size
+    JUMP .L_395
+.L_394:
+    LOAD_LOCAL tname
+    PUSH_STR "string"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_402
+    POP
+    LOAD_LOCAL tname
+    PUSH_STR "slice"
+    STR_CMP
+    NOT
+    JUMP .L_403
+.L_402:
+.L_403:
+    JUMP_IF_FALSE .L_400
+    PUSH_I8 6
+    STORE_GLOBAL pt_size
+    PUSH_I8 2
+    STORE_GLOBAL pt_kind
+    PUSH_1
+    STORE_GLOBAL pt_elem_size
+    JUMP .L_401
+.L_400:
+    PUSH_I8 2
+    STORE_GLOBAL pt_size
+    PUSH_1
+    STORE_GLOBAL pt_kind
+    PUSH_I8 2
+    STORE_GLOBAL pt_elem_size
+.L_401:
+.L_395:
+.L_377:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: run_pass1
+; ----------------------------------------------------
+.function run_pass1
+    .local cname: slice
+    .local is_neg: word
+    .local cval: word
+    .local vname: slice
+    .local fname: slice
+    .local fidx: word
+    .local p_count: word
+    .local pname: slice
+    .local has_body: word
+    .local is_top: word
+    .local rname: slice
+    .local depth: word
+    .local l_count: word
+    .local lname: slice
+    .local lname: slice
+    .local lname2: slice
+    .local lkind: word
+    .local lsz: word
+    .local first_name: slice
+    .local first_tok: word
+    .local gi: word
+    .local li: word
+    .local elem_sz: word
+    .local is_sfn: word
+    .local fi: word
+    .local is_binop: word
+    .local li: word
+    .local pi: word
+    .local gi: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_1
+    STORE_GLOBAL cur_pass
+    PUSH_STR ""
+    STORE_GLOBAL cur_func_name
+    CALL reset_lexer
+    CALL next_tok
+.L_404:
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_406
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_409
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "package"
+    STR_CMP
+    NOT
+    JUMP .L_410
+.L_409:
+.L_410:
+    JUMP_IF_FALSE .L_407
+    CALL next_tok
+    CALL next_tok
+    JUMP .L_408
+.L_407:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_413
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "const"
+    STR_CMP
+    NOT
+    JUMP .L_414
+.L_413:
+.L_414:
+    JUMP_IF_FALSE .L_411
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL cname
+    CALL next_tok
+    PUSH_STR "="
+    CALL expect
+    PUSH_FALSE
+    STORE_LOCAL is_neg
+    LOAD_GLOBAL cur_str
+    PUSH_STR "-"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_415
+    PUSH_TRUE
+    STORE_LOCAL is_neg
+    CALL next_tok
+.L_415:
+    LOAD_GLOBAL cur_int
+    STORE_LOCAL cval
+    CALL next_tok
+    LOAD_LOCAL is_neg
+    JUMP_IF_FALSE .L_417
+    LOAD_LOCAL cval
+    NEG
+    STORE_LOCAL cval
+.L_417:
+    LOAD_LOCAL cname
+    LOAD_LOCAL cval
+    CALL add_const
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_419
+    CALL next_tok
+.L_419:
+    JUMP .L_412
+.L_411:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_423
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "var"
+    STR_CMP
+    NOT
+    JUMP .L_424
+.L_423:
+.L_424:
+    JUMP_IF_FALSE .L_421
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL vname
+    CALL next_tok
+    CALL parse_type_desc
+    LOAD_LOCAL vname
+    LOAD_GLOBAL pt_size
+    LOAD_GLOBAL pt_kind
+    LOAD_GLOBAL pt_elem_size
+    CALL add_global
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_425
+    CALL next_tok
+.L_425:
+    JUMP .L_422
+.L_421:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_429
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "func"
+    STR_CMP
+    NOT
+    JUMP .L_430
+.L_429:
+.L_430:
+    JUMP_IF_FALSE .L_427
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL fname
+    LOAD_LOCAL fname
+    STORE_GLOBAL cur_func_name
+    CALL next_tok
+    PUSH_STR "("
+    CALL expect
+    LOAD_LOCAL fname
+    PUSH_0
+    CALL add_func
+    STORE_LOCAL fidx
+    PUSH_0
+    STORE_LOCAL p_count
+.L_431:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_434
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ")"
+    STR_CMP
+    JUMP .L_435
+.L_434:
+.L_435:
+    DUP
+    JUMP_IF_FALSE .L_436
+    POP
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP .L_437
+.L_436:
+.L_437:
+    JUMP_IF_FALSE .L_433
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL pname
+    CALL next_tok
+    CALL parse_type_desc
+    LOAD_LOCAL pname
+    LOAD_GLOBAL pt_kind
+    LOAD_GLOBAL pt_size
+    CALL add_param
+    LOAD_LOCAL p_count
+    PUSH_1
+    ADD
+    STORE_LOCAL p_count
+    LOAD_GLOBAL cur_str
+    PUSH_STR ","
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_438
+    CALL next_tok
+.L_438:
+    JUMP .L_431
+.L_433:
+    PUSH_STR ")"
+    CALL expect
+    ADDR_OF_GLOBAL func_num_params
+    LOAD_LOCAL fidx
+    ADD
+    LOAD_LOCAL p_count
+    POKE1
+    PUSH_FALSE
+    STORE_LOCAL has_body
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_442
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "{"
+    STR_CMP
+    NOT
+    JUMP .L_443
+.L_442:
+.L_443:
+    JUMP_IF_FALSE .L_440
+    PUSH_TRUE
+    STORE_LOCAL has_body
+    JUMP .L_441
+.L_440:
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    DUP
+    JUMP_IF_FALSE .L_446
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    JUMP .L_447
+.L_446:
+.L_447:
+    JUMP_IF_FALSE .L_444
+    PUSH_FALSE
+    STORE_LOCAL is_top
+    LOAD_GLOBAL cur_str
+    PUSH_STR "func"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_450
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "var"
+    STR_CMP
+    NOT
+    JUMP .L_451
+.L_450:
+.L_451:
+    DUP
+    JUMP_IF_TRUE .L_452
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "const"
+    STR_CMP
+    NOT
+    JUMP .L_453
+.L_452:
+.L_453:
+    JUMP_IF_FALSE .L_448
+    PUSH_TRUE
+    STORE_LOCAL is_top
+.L_448:
+    LOAD_LOCAL is_top
+    NOT
+    JUMP_IF_FALSE .L_454
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL rname
+    CALL next_tok
+    LOAD_LOCAL rname
+    PUSH_STR "string"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_458
+    POP
+    LOAD_LOCAL rname
+    PUSH_STR "slice"
+    STR_CMP
+    NOT
+    JUMP .L_459
+.L_458:
+.L_459:
+    JUMP_IF_FALSE .L_456
+    ADDR_OF_GLOBAL func_ret_kinds
+    LOAD_LOCAL fidx
+    ADD
+    PUSH_I8 2
+    POKE1
+    JUMP .L_457
+.L_456:
+    LOAD_LOCAL rname
+    PUSH_STR "void"
+    STR_CMP
+    JUMP_IF_FALSE .L_460
+    ADDR_OF_GLOBAL func_ret_kinds
+    LOAD_LOCAL fidx
+    ADD
+    PUSH_1
+    POKE1
+.L_460:
+.L_457:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_464
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "{"
+    STR_CMP
+    NOT
+    JUMP .L_465
+.L_464:
+.L_465:
+    JUMP_IF_FALSE .L_462
+    PUSH_TRUE
+    STORE_LOCAL has_body
+.L_462:
+.L_454:
+.L_444:
+.L_441:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_466
+    CALL next_tok
+.L_466:
+    LOAD_LOCAL has_body
+    JUMP_IF_FALSE .L_468
+    PUSH_STR "{"
+    CALL expect
+    PUSH_1
+    STORE_LOCAL depth
+    PUSH_0
+    STORE_LOCAL l_count
+.L_470:
+    LOAD_LOCAL depth
+    PUSH_0
+    CMP_GT
+    DUP
+    JUMP_IF_FALSE .L_473
+    POP
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP .L_474
+.L_473:
+.L_474:
+    JUMP_IF_FALSE .L_472
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_477
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "{"
+    STR_CMP
+    NOT
+    JUMP .L_478
+.L_477:
+.L_478:
+    JUMP_IF_FALSE .L_475
+    LOAD_LOCAL depth
+    PUSH_1
+    ADD
+    STORE_LOCAL depth
+    CALL next_tok
+    JUMP .L_476
+.L_475:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_481
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "}"
+    STR_CMP
+    NOT
+    JUMP .L_482
+.L_481:
+.L_482:
+    JUMP_IF_FALSE .L_479
+    LOAD_LOCAL depth
+    PUSH_1
+    SUB
+    STORE_LOCAL depth
+    CALL next_tok
+    JUMP .L_480
+.L_479:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_485
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "var"
+    STR_CMP
+    NOT
+    JUMP .L_486
+.L_485:
+.L_486:
+    JUMP_IF_FALSE .L_483
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL lname
+    CALL next_tok
+    CALL parse_type_desc
+    LOAD_LOCAL lname
+    LOAD_GLOBAL pt_kind
+    LOAD_GLOBAL pt_size
+    LOAD_GLOBAL pt_elem_size
+    CALL add_local
+    LOAD_LOCAL l_count
+    PUSH_1
+    ADD
+    STORE_LOCAL l_count
+    JUMP .L_484
+.L_483:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 3
+    CMP_EQ
+    JUMP_IF_FALSE .L_487
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL lname
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    PUSH_STR ","
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_489
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL lname2
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    PUSH_STR ":="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_491
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    PUSH_STR "file_readline"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_493
+    LOAD_LOCAL lname
+    PUSH_I8 2
+    PUSH_I8 6
+    PUSH_0
+    CALL add_local
+    LOAD_LOCAL lname2
+    PUSH_1
+    PUSH_I8 2
+    PUSH_0
+    CALL add_local
+    JUMP .L_494
+.L_493:
+    LOAD_LOCAL lname
+    PUSH_1
+    PUSH_I8 2
+    PUSH_0
+    CALL add_local
+    LOAD_LOCAL lname2
+    PUSH_1
+    PUSH_I8 2
+    PUSH_0
+    CALL add_local
+.L_494:
+    LOAD_LOCAL l_count
+    PUSH_I8 2
+    ADD
+    STORE_LOCAL l_count
+.L_491:
+    JUMP .L_490
+.L_489:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ":="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_495
+    CALL next_tok
+    PUSH_1
+    STORE_LOCAL lkind
+    PUSH_I8 2
+    STORE_LOCAL lsz
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL first_name
+    LOAD_GLOBAL cur_tok
+    STORE_LOCAL first_tok
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    PUSH_STR "["
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_497
+    LOAD_LOCAL first_name
+    CALL find_global
+    STORE_LOCAL gi
+    LOAD_LOCAL first_name
+    CALL find_cur_local
+    STORE_LOCAL li
+    PUSH_1
+    STORE_LOCAL elem_sz
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_499
+    LOAD_LOCAL gi
+    ADDR_OF_GLOBAL global_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+    JUMP .L_500
+.L_499:
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_501
+    LOAD_LOCAL li
+    ADDR_OF_GLOBAL local_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+.L_501:
+.L_500:
+    LOAD_LOCAL elem_sz
+    PUSH_I8 6
+    CMP_EQ
+    JUMP_IF_FALSE .L_503
+    PUSH_I8 2
+    STORE_LOCAL lkind
+    PUSH_I8 6
+    STORE_LOCAL lsz
+    JUMP .L_504
+.L_503:
+    PUSH_1
+    STORE_LOCAL lkind
+    PUSH_I8 2
+    STORE_LOCAL lsz
+.L_504:
+    JUMP .L_498
+.L_497:
+    LOAD_LOCAL first_name
+    PUSH_STR "sys_args"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_505
+    POP
+    LOAD_LOCAL first_name
+    PUSH_STR "file_readline"
+    STR_CMP
+    NOT
+    JUMP .L_506
+.L_505:
+.L_506:
+    STORE_LOCAL is_sfn
+    LOAD_LOCAL first_tok
+    PUSH_I8 2
+    CMP_EQ
+    DUP
+    JUMP_IF_TRUE .L_509
+    POP
+    LOAD_LOCAL is_sfn
+    JUMP .L_510
+.L_509:
+.L_510:
+    JUMP_IF_FALSE .L_507
+    PUSH_I8 2
+    STORE_LOCAL lkind
+    PUSH_I8 6
+    STORE_LOCAL lsz
+    JUMP .L_508
+.L_507:
+    LOAD_LOCAL first_name
+    CALL find_func
+    STORE_LOCAL fi
+    LOAD_LOCAL fi
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_FALSE .L_513
+    POP
+    LOAD_LOCAL fi
+    ADDR_OF_GLOBAL func_ret_kinds
+    SWAP
+    ADD
+    PEEK1
+    PUSH_I8 2
+    CMP_EQ
+    JUMP .L_514
+.L_513:
+.L_514:
+    JUMP_IF_FALSE .L_511
+    PUSH_I8 2
+    STORE_LOCAL lkind
+    PUSH_I8 6
+    STORE_LOCAL lsz
+    JUMP .L_512
+.L_511:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "=="
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_515
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "!="
+    STR_CMP
+    NOT
+    JUMP .L_516
+.L_515:
+.L_516:
+    DUP
+    JUMP_IF_TRUE .L_517
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "<"
+    STR_CMP
+    NOT
+    JUMP .L_518
+.L_517:
+.L_518:
+    DUP
+    JUMP_IF_TRUE .L_519
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "<="
+    STR_CMP
+    NOT
+    JUMP .L_520
+.L_519:
+.L_520:
+    DUP
+    JUMP_IF_TRUE .L_521
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ">"
+    STR_CMP
+    NOT
+    JUMP .L_522
+.L_521:
+.L_522:
+    DUP
+    JUMP_IF_TRUE .L_523
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ">="
+    STR_CMP
+    NOT
+    JUMP .L_524
+.L_523:
+.L_524:
+    DUP
+    JUMP_IF_TRUE .L_525
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "."
+    STR_CMP
+    NOT
+    JUMP .L_526
+.L_525:
+.L_526:
+    DUP
+    JUMP_IF_TRUE .L_527
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "&&"
+    STR_CMP
+    NOT
+    JUMP .L_528
+.L_527:
+.L_528:
+    DUP
+    JUMP_IF_TRUE .L_529
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "||"
+    STR_CMP
+    NOT
+    JUMP .L_530
+.L_529:
+.L_530:
+    STORE_LOCAL is_binop
+    LOAD_LOCAL is_binop
+    NOT
+    JUMP_IF_FALSE .L_531
+    LOAD_LOCAL first_name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_FALSE .L_535
+    POP
+    LOAD_LOCAL li
+    ADDR_OF_GLOBAL local_kinds
+    SWAP
+    ADD
+    PEEK1
+    PUSH_I8 2
+    CMP_EQ
+    JUMP .L_536
+.L_535:
+.L_536:
+    JUMP_IF_FALSE .L_533
+    PUSH_I8 2
+    STORE_LOCAL lkind
+    PUSH_I8 6
+    STORE_LOCAL lsz
+    JUMP .L_534
+.L_533:
+    LOAD_LOCAL first_name
+    CALL find_cur_param
+    STORE_LOCAL pi
+    LOAD_LOCAL pi
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_FALSE .L_539
+    POP
+    LOAD_LOCAL pi
+    ADDR_OF_GLOBAL param_kinds
+    SWAP
+    ADD
+    PEEK1
+    PUSH_I8 2
+    CMP_EQ
+    JUMP .L_540
+.L_539:
+.L_540:
+    JUMP_IF_FALSE .L_537
+    PUSH_I8 2
+    STORE_LOCAL lkind
+    PUSH_I8 6
+    STORE_LOCAL lsz
+    JUMP .L_538
+.L_537:
+    LOAD_LOCAL first_name
+    CALL find_global
+    STORE_LOCAL gi
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_FALSE .L_543
+    POP
+    LOAD_LOCAL gi
+    ADDR_OF_GLOBAL global_kinds
+    SWAP
+    ADD
+    PEEK1
+    PUSH_I8 2
+    CMP_EQ
+    JUMP .L_544
+.L_543:
+.L_544:
+    JUMP_IF_FALSE .L_541
+    PUSH_I8 2
+    STORE_LOCAL lkind
+    PUSH_I8 6
+    STORE_LOCAL lsz
+.L_541:
+.L_538:
+.L_534:
+.L_531:
+.L_512:
+.L_508:
+.L_498:
+    LOAD_LOCAL lname
+    LOAD_LOCAL lkind
+    LOAD_LOCAL lsz
+    PUSH_0
+    CALL add_local
+    LOAD_LOCAL l_count
+    PUSH_1
+    ADD
+    STORE_LOCAL l_count
+.L_495:
+.L_490:
+    JUMP .L_488
+.L_487:
+    CALL next_tok
+.L_488:
+.L_484:
+.L_480:
+.L_476:
+    JUMP .L_470
+.L_472:
+    PUSH_STR "_pbuf"
+    PUSH_1
+    PUSH_I8 2
+    PUSH_I8 2
+    CALL add_local
+    PUSH_STR "_tmp_base"
+    PUSH_1
+    PUSH_I8 2
+    PUSH_I8 2
+    CALL add_local
+    PUSH_STR "_tmp_cap"
+    PUSH_1
+    PUSH_I8 2
+    PUSH_I8 2
+    CALL add_local
+    PUSH_STR "_tmp_len"
+    PUSH_1
+    PUSH_I8 2
+    PUSH_I8 2
+    CALL add_local
+    PUSH_STR "_tmp_addr"
+    PUSH_1
+    PUSH_I8 2
+    PUSH_I8 2
+    CALL add_local
+    LOAD_LOCAL l_count
+    PUSH_I8 5
+    ADD
+    STORE_LOCAL l_count
+    ADDR_OF_GLOBAL func_num_locals
+    LOAD_LOCAL fidx
+    SHL1_ADD
+    LOAD_LOCAL l_count
+    POKE2
+    JUMP .L_469
+.L_468:
+    ADDR_OF_GLOBAL func_num_locals
+    LOAD_LOCAL fidx
+    SHL1_ADD
+    PUSH_0
+    POKE2
+.L_469:
+    JUMP .L_428
+.L_427:
+    CALL next_tok
+.L_428:
+.L_422:
+.L_412:
+.L_408:
+    JUMP .L_404
+.L_406:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: get_bin_prec
+; ----------------------------------------------------
+.function get_bin_prec
+    .param op: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL op
+    PUSH_STR "||"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_545
+    PUSH_1
+    RET
+.L_545:
+    LOAD_LOCAL op
+    PUSH_STR "&&"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_547
+    PUSH_I8 2
+    RET
+.L_547:
+    LOAD_LOCAL op
+    PUSH_STR "=="
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_551
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "!="
+    STR_CMP
+    NOT
+    JUMP .L_552
+.L_551:
+.L_552:
+    DUP
+    JUMP_IF_TRUE .L_553
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "<"
+    STR_CMP
+    NOT
+    JUMP .L_554
+.L_553:
+.L_554:
+    DUP
+    JUMP_IF_TRUE .L_555
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "<="
+    STR_CMP
+    NOT
+    JUMP .L_556
+.L_555:
+.L_556:
+    DUP
+    JUMP_IF_TRUE .L_557
+    POP
+    LOAD_LOCAL op
+    PUSH_STR ">"
+    STR_CMP
+    NOT
+    JUMP .L_558
+.L_557:
+.L_558:
+    DUP
+    JUMP_IF_TRUE .L_559
+    POP
+    LOAD_LOCAL op
+    PUSH_STR ">="
+    STR_CMP
+    NOT
+    JUMP .L_560
+.L_559:
+.L_560:
+    JUMP_IF_FALSE .L_549
+    PUSH_I8 3
+    RET
+.L_549:
+    LOAD_LOCAL op
+    PUSH_STR "+"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_563
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "-"
+    STR_CMP
+    NOT
+    JUMP .L_564
+.L_563:
+.L_564:
+    DUP
+    JUMP_IF_TRUE .L_565
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "|"
+    STR_CMP
+    NOT
+    JUMP .L_566
+.L_565:
+.L_566:
+    DUP
+    JUMP_IF_TRUE .L_567
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "^"
+    STR_CMP
+    NOT
+    JUMP .L_568
+.L_567:
+.L_568:
+    JUMP_IF_FALSE .L_561
+    PUSH_I8 4
+    RET
+.L_561:
+    LOAD_LOCAL op
+    PUSH_STR "*"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_571
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "/"
+    STR_CMP
+    NOT
+    JUMP .L_572
+.L_571:
+.L_572:
+    DUP
+    JUMP_IF_TRUE .L_573
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "%"
+    STR_CMP
+    NOT
+    JUMP .L_574
+.L_573:
+.L_574:
+    DUP
+    JUMP_IF_TRUE .L_575
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "<<"
+    STR_CMP
+    NOT
+    JUMP .L_576
+.L_575:
+.L_576:
+    DUP
+    JUMP_IF_TRUE .L_577
+    POP
+    LOAD_LOCAL op
+    PUSH_STR ">>"
+    STR_CMP
+    NOT
+    JUMP .L_578
+.L_577:
+.L_578:
+    DUP
+    JUMP_IF_TRUE .L_579
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "&"
+    STR_CMP
+    NOT
+    JUMP .L_580
+.L_579:
+.L_580:
+    JUMP_IF_FALSE .L_569
+    PUSH_I8 5
+    RET
+.L_569:
+    PUSH_0
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit_bin_op
+; ----------------------------------------------------
+.function emit_bin_op
+    .param op: slice
+    .param lhs_kind: word
+    .param rhs_kind: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL lhs_kind
+    PUSH_I8 2
+    CMP_EQ
+    DUP
+    JUMP_IF_TRUE .L_583
+    POP
+    LOAD_LOCAL rhs_kind
+    PUSH_I8 2
+    CMP_EQ
+    JUMP .L_584
+.L_583:
+.L_584:
+    JUMP_IF_FALSE .L_581
+    PUSH_STR "    STR_CMP"
+    CALL emit
+    LOAD_LOCAL op
+    PUSH_STR "=="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_585
+    PUSH_STR "    NOT"
+    CALL emit
+    JUMP .L_586
+.L_585:
+    LOAD_LOCAL op
+    PUSH_STR "<"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_587
+    PUSH_STR "    PUSH_NEG1"
+    CALL emit
+    PUSH_STR "    CMP_EQ"
+    CALL emit
+    JUMP .L_588
+.L_587:
+    LOAD_LOCAL op
+    PUSH_STR "<="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_589
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    PUSH_STR "    CMP_NE"
+    CALL emit
+    JUMP .L_590
+.L_589:
+    LOAD_LOCAL op
+    PUSH_STR ">"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_591
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    PUSH_STR "    CMP_EQ"
+    CALL emit
+    JUMP .L_592
+.L_591:
+    LOAD_LOCAL op
+    PUSH_STR ">="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_593
+    PUSH_STR "    PUSH_NEG1"
+    CALL emit
+    PUSH_STR "    CMP_NE"
+    CALL emit
+.L_593:
+.L_592:
+.L_590:
+.L_588:
+.L_586:
+    PUSH_1
+    RET
+.L_581:
+    LOAD_LOCAL op
+    PUSH_STR "+"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_595
+    PUSH_STR "    ADD"
+    CALL emit
+    JUMP .L_596
+.L_595:
+    LOAD_LOCAL op
+    PUSH_STR "-"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_597
+    PUSH_STR "    SUB"
+    CALL emit
+    JUMP .L_598
+.L_597:
+    LOAD_LOCAL op
+    PUSH_STR "*"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_599
+    PUSH_STR "    MUL"
+    CALL emit
+    JUMP .L_600
+.L_599:
+    LOAD_LOCAL op
+    PUSH_STR "/"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_601
+    PUSH_STR "    DIV"
+    CALL emit
+    JUMP .L_602
+.L_601:
+    LOAD_LOCAL op
+    PUSH_STR "%"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_603
+    PUSH_STR "    MOD"
+    CALL emit
+    JUMP .L_604
+.L_603:
+    LOAD_LOCAL op
+    PUSH_STR "&"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_605
+    PUSH_STR "    BIT_AND"
+    CALL emit
+    JUMP .L_606
+.L_605:
+    LOAD_LOCAL op
+    PUSH_STR "|"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_607
+    PUSH_STR "    BIT_OR"
+    CALL emit
+    JUMP .L_608
+.L_607:
+    LOAD_LOCAL op
+    PUSH_STR "^"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_609
+    PUSH_STR "    BIT_XOR"
+    CALL emit
+    JUMP .L_610
+.L_609:
+    LOAD_LOCAL op
+    PUSH_STR "<<"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_611
+    PUSH_STR "    SHL"
+    CALL emit
+    JUMP .L_612
+.L_611:
+    LOAD_LOCAL op
+    PUSH_STR ">>"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_613
+    PUSH_STR "    SHR"
+    CALL emit
+    JUMP .L_614
+.L_613:
+    LOAD_LOCAL op
+    PUSH_STR "=="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_615
+    PUSH_STR "    CMP_EQ"
+    CALL emit
+    JUMP .L_616
+.L_615:
+    LOAD_LOCAL op
+    PUSH_STR "!="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_617
+    PUSH_STR "    CMP_NE"
+    CALL emit
+    JUMP .L_618
+.L_617:
+    LOAD_LOCAL op
+    PUSH_STR "<"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_619
+    PUSH_STR "    CMP_LT"
+    CALL emit
+    JUMP .L_620
+.L_619:
+    LOAD_LOCAL op
+    PUSH_STR "<="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_621
+    PUSH_STR "    CMP_LE"
+    CALL emit
+    JUMP .L_622
+.L_621:
+    LOAD_LOCAL op
+    PUSH_STR ">"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_623
+    PUSH_STR "    CMP_GT"
+    CALL emit
+    JUMP .L_624
+.L_623:
+    LOAD_LOCAL op
+    PUSH_STR ">="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_625
+    PUSH_STR "    CMP_GE"
+    CALL emit
+.L_625:
+.L_624:
+.L_622:
+.L_620:
+.L_618:
+.L_616:
+.L_614:
+.L_612:
+.L_610:
+.L_608:
+.L_606:
+.L_604:
+.L_602:
+.L_600:
+.L_598:
+.L_596:
+    PUSH_1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_unary
+; ----------------------------------------------------
+.function compile_unary
+    .local v: word
+    .local s: slice
+    .local v: word
+    .local k: word
+    .local name: slice
+    .local elem_sz: word
+    .local gi: word
+    .local li: word
+    .local li: word
+    .local pi: word
+    .local name: slice
+    .local ci: word
+    .local v: word
+    .local nargs: word
+    .local gi: word
+    .local li: word
+    .local pi: word
+    .local var_kind: word
+    .local elem_sz: word
+    .local field: slice
+    .local gi: word
+    .local li: word
+    .local pi: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL cur_tok
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_627
+    LOAD_GLOBAL cur_int
+    STORE_LOCAL v
+    CALL next_tok
+    LOAD_LOCAL v
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_629
+    PUSH_STR "    PUSH_0"
+    CALL emit
+    JUMP .L_630
+.L_629:
+    LOAD_LOCAL v
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_631
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    JUMP .L_632
+.L_631:
+    LOAD_LOCAL v
+    PUSH_NEG1
+    CMP_EQ
+    JUMP_IF_FALSE .L_633
+    PUSH_STR "    PUSH_NEG1"
+    CALL emit
+    JUMP .L_634
+.L_633:
+    LOAD_LOCAL v
+    PUSH_I8 127
+    CMP_LE
+    JUMP_IF_FALSE .L_635
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL v
+    CALL emit_u8
+    JUMP .L_636
+.L_635:
+    PUSH_STR "    PUSH_I16 "
+    LOAD_LOCAL v
+    CALL emit_u16
+.L_636:
+.L_634:
+.L_632:
+.L_630:
+    PUSH_1
+    RET
+.L_627:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_637
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL s
+    CALL next_tok
+    PUSH_STR "    PUSH_STR "
+    LOAD_LOCAL s
+    CALL emit_str
+    PUSH_I8 2
+    RET
+.L_637:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    JUMP_IF_FALSE .L_639
+    LOAD_GLOBAL cur_str
+    PUSH_STR "true"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_641
+    CALL next_tok
+    PUSH_STR "    PUSH_TRUE"
+    CALL emit
+    PUSH_1
+    RET
+.L_641:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "false"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_643
+    CALL next_tok
+    PUSH_STR "    PUSH_FALSE"
+    CALL emit
+    PUSH_1
+    RET
+.L_643:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "word"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_647
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "byte"
+    STR_CMP
+    NOT
+    JUMP .L_648
+.L_647:
+.L_648:
+    DUP
+    JUMP_IF_TRUE .L_649
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "int"
+    STR_CMP
+    NOT
+    JUMP .L_650
+.L_649:
+.L_650:
+    DUP
+    JUMP_IF_TRUE .L_651
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "uint8"
+    STR_CMP
+    NOT
+    JUMP .L_652
+.L_651:
+.L_652:
+    DUP
+    JUMP_IF_TRUE .L_653
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "uint16"
+    STR_CMP
+    NOT
+    JUMP .L_654
+.L_653:
+.L_654:
+    JUMP_IF_FALSE .L_645
+    CALL next_tok
+    PUSH_STR "("
+    CALL expect
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR ")"
+    CALL expect
+    PUSH_1
+    RET
+.L_645:
+.L_639:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "!"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_655
+    CALL next_tok
+    CALL compile_unary
+    POP
+    PUSH_STR "    NOT"
+    CALL emit
+    PUSH_1
+    RET
+.L_655:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "-"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_657
+    CALL next_tok
+    LOAD_GLOBAL cur_tok
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_659
+    LOAD_GLOBAL cur_int
+    NEG
+    STORE_LOCAL v
+    CALL next_tok
+    LOAD_LOCAL v
+    PUSH_NEG1
+    CMP_EQ
+    JUMP_IF_FALSE .L_661
+    PUSH_STR "    PUSH_NEG1"
+    CALL emit
+    JUMP .L_662
+.L_661:
+    LOAD_LOCAL v
+    PUSH_I8 127
+    CMP_LE
+    JUMP_IF_FALSE .L_663
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL v
+    CALL emit_u8
+    JUMP .L_664
+.L_663:
+    PUSH_STR "    PUSH_I16 "
+    LOAD_LOCAL v
+    CALL emit_u16
+.L_664:
+.L_662:
+    PUSH_1
+    RET
+.L_659:
+    CALL compile_unary
+    POP
+    PUSH_STR "    NEG"
+    CALL emit
+    PUSH_1
+    RET
+.L_657:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "^"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_667
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "~"
+    STR_CMP
+    NOT
+    JUMP .L_668
+.L_667:
+.L_668:
+    JUMP_IF_FALSE .L_665
+    CALL next_tok
+    CALL compile_unary
+    POP
+    PUSH_STR "    BIT_NOT"
+    CALL emit
+    PUSH_1
+    RET
+.L_665:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "("
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_669
+    CALL next_tok
+    PUSH_0
+    CALL compile_expr
+    STORE_LOCAL k
+    PUSH_STR ")"
+    CALL expect
+    LOAD_LOCAL k
+    RET
+.L_669:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "&"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_671
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL name
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    PUSH_STR "["
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_673
+    CALL next_tok
+    PUSH_1
+    STORE_LOCAL elem_sz
+    LOAD_LOCAL name
+    CALL find_global
+    STORE_LOCAL gi
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_675
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL gi
+    ADDR_OF_GLOBAL global_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+    JUMP .L_676
+.L_675:
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_677
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL li
+    ADDR_OF_GLOBAL local_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+.L_677:
+.L_676:
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "]"
+    CALL expect
+    LOAD_LOCAL elem_sz
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_679
+    PUSH_STR "    SHL1_ADD"
+    CALL emit
+    JUMP .L_680
+.L_679:
+    LOAD_LOCAL elem_sz
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_681
+    PUSH_STR "    ADD"
+    CALL emit
+    JUMP .L_682
+.L_681:
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL elem_sz
+    CALL emit_u8
+    PUSH_STR "    MUL"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+.L_682:
+.L_680:
+    PUSH_1
+    RET
+    JUMP .L_674
+.L_673:
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL name
+    CALL find_cur_param
+    STORE_LOCAL pi
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_685
+    POP
+    LOAD_LOCAL pi
+    PUSH_NEG1
+    CMP_NE
+    JUMP .L_686
+.L_685:
+.L_686:
+    JUMP_IF_FALSE .L_683
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_684
+.L_683:
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_684:
+    PUSH_1
+    RET
+.L_674:
+.L_671:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "*"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_687
+    CALL next_tok
+    CALL compile_unary
+    POP
+    PUSH_STR "    PEEK2"
+    CALL emit
+    PUSH_1
+    RET
+.L_687:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 3
+    CMP_EQ
+    JUMP_IF_FALSE .L_689
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL name
+    CALL next_tok
+    LOAD_LOCAL name
+    CALL find_const
+    STORE_LOCAL ci
+    LOAD_LOCAL ci
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_691
+    LOAD_LOCAL ci
+    ADDR_OF_GLOBAL const_vals
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL v
+    LOAD_LOCAL v
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_693
+    PUSH_STR "    PUSH_0"
+    CALL emit
+    JUMP .L_694
+.L_693:
+    LOAD_LOCAL v
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_695
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    JUMP .L_696
+.L_695:
+    LOAD_LOCAL v
+    PUSH_NEG1
+    CMP_EQ
+    JUMP_IF_FALSE .L_697
+    PUSH_STR "    PUSH_NEG1"
+    CALL emit
+    JUMP .L_698
+.L_697:
+    LOAD_LOCAL v
+    PUSH_I8 127
+    CMP_LE
+    JUMP_IF_FALSE .L_699
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL v
+    CALL emit_u8
+    JUMP .L_700
+.L_699:
+    PUSH_STR "    PUSH_I16 "
+    LOAD_LOCAL v
+    CALL emit_u16
+.L_700:
+.L_698:
+.L_696:
+.L_694:
+    PUSH_1
+    RET
+.L_691:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "("
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_701
+    CALL next_tok
+    CALL compile_arg_list
+    STORE_LOCAL nargs
+    LOAD_LOCAL name
+    LOAD_LOCAL nargs
+    CALL emit_call
+    RET
+.L_701:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "["
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_703
+    CALL next_tok
+    LOAD_LOCAL name
+    CALL find_global
+    STORE_LOCAL gi
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL name
+    CALL find_cur_param
+    STORE_LOCAL pi
+    PUSH_1
+    STORE_LOCAL var_kind
+    PUSH_1
+    STORE_LOCAL elem_sz
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_705
+    LOAD_LOCAL gi
+    ADDR_OF_GLOBAL global_kinds
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL var_kind
+    LOAD_LOCAL gi
+    ADDR_OF_GLOBAL global_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+    JUMP .L_706
+.L_705:
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_707
+    LOAD_LOCAL li
+    ADDR_OF_GLOBAL local_kinds
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL var_kind
+    LOAD_LOCAL li
+    ADDR_OF_GLOBAL local_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+    JUMP .L_708
+.L_707:
+    LOAD_LOCAL pi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_709
+    LOAD_LOCAL pi
+    ADDR_OF_GLOBAL param_kinds
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL var_kind
+    PUSH_I8 2
+    STORE_LOCAL elem_sz
+.L_709:
+.L_708:
+.L_706:
+    PUSH_0
+    CALL compile_expr
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ":"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_711
+    CALL next_tok
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "]"
+    CALL expect
+    PUSH_STR "    STORE_LOCAL _tmp_cap"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _tmp_base"
+    CALL emit
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_713
+    PUSH_STR "    LOAD_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_714
+.L_713:
+    PUSH_STR "    LOAD_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_714:
+    PUSH_STR "    LOAD_LOCAL _tmp_base"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_cap"
+    CALL emit
+    PUSH_STR "    SLICE_SUB"
+    CALL emit
+    PUSH_I8 2
+    RET
+    JUMP .L_712
+.L_711:
+    PUSH_STR "]"
+    CALL expect
+    LOAD_LOCAL elem_sz
+    PUSH_I8 6
+    CMP_EQ
+    JUMP_IF_FALSE .L_715
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_717
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_718
+.L_717:
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_718:
+    PUSH_STR "    SWAP"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    PUSH_I8 6
+    CALL emit_u8
+    PUSH_STR "    MUL"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "    PEEK2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "    PUSH_I8 2"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PEEK2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "    PUSH_I8 4"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PEEK2"
+    CALL emit
+    PUSH_I8 2
+    RET
+    JUMP .L_716
+.L_715:
+    LOAD_LOCAL var_kind
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_719
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_721
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_722
+.L_721:
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_722:
+    PUSH_STR "    PEEK2"
+    CALL emit
+    PUSH_STR "    SWAP"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PEEK1"
+    CALL emit
+    PUSH_1
+    RET
+    JUMP .L_720
+.L_719:
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_723
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_724
+.L_723:
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_724:
+    PUSH_STR "    SWAP"
+    CALL emit
+    LOAD_LOCAL elem_sz
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_725
+    PUSH_STR "    SHL1_ADD"
+    CALL emit
+    PUSH_STR "    PEEK2"
+    CALL emit
+    JUMP .L_726
+.L_725:
+    LOAD_LOCAL elem_sz
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_727
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PEEK1"
+    CALL emit
+    JUMP .L_728
+.L_727:
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL elem_sz
+    CALL emit_u8
+    PUSH_STR "    MUL"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PEEK2"
+    CALL emit
+.L_728:
+.L_726:
+    PUSH_1
+    RET
+.L_720:
+.L_716:
+.L_712:
+.L_703:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "."
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_729
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL field
+    CALL next_tok
+    LOAD_LOCAL name
+    CALL find_global
+    STORE_LOCAL gi
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_731
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_732
+.L_731:
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_732:
+    LOAD_LOCAL field
+    PUSH_STR "Base"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_733
+    PUSH_STR "    PEEK2"
+    CALL emit
+    JUMP .L_734
+.L_733:
+    LOAD_LOCAL field
+    PUSH_STR "Cap"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_735
+    PUSH_STR "    PUSH_I8 2"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PEEK2"
+    CALL emit
+    JUMP .L_736
+.L_735:
+    LOAD_LOCAL field
+    PUSH_STR "Len"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_737
+    PUSH_STR "    PUSH_I8 4"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PEEK2"
+    CALL emit
+.L_737:
+.L_736:
+.L_734:
+    PUSH_1
+    RET
+.L_729:
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_739
+    PUSH_STR "    LOAD_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL li
+    ADDR_OF_GLOBAL local_kinds
+    SWAP
+    ADD
+    PEEK1
+    RET
+.L_739:
+    LOAD_LOCAL name
+    CALL find_cur_param
+    STORE_LOCAL pi
+    LOAD_LOCAL pi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_741
+    PUSH_STR "    LOAD_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL pi
+    ADDR_OF_GLOBAL param_kinds
+    SWAP
+    ADD
+    PEEK1
+    RET
+.L_741:
+    LOAD_LOCAL name
+    CALL find_global
+    STORE_LOCAL gi
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_743
+    PUSH_STR "    LOAD_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL gi
+    ADDR_OF_GLOBAL global_kinds
+    SWAP
+    ADD
+    PEEK1
+    RET
+.L_743:
+.L_689:
+    CALL next_tok
+    PUSH_1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_expr
+; ----------------------------------------------------
+.function compile_expr
+    .param min_prec: word
+    .local lhs_kind: word
+    .local op: slice
+    .local prec: word
+    .local lbl_false: word
+    .local lbl_end: word
+    .local lbl_true: word
+    .local lbl_end: word
+    .local rhs_kind: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    CALL compile_unary
+    STORE_LOCAL lhs_kind
+.L_745:
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL op
+    LOAD_LOCAL op
+    CALL get_bin_prec
+    STORE_LOCAL prec
+    LOAD_LOCAL prec
+    LOAD_LOCAL min_prec
+    CMP_LE
+    JUMP_IF_FALSE .L_748
+    JUMP .L_747
+.L_748:
+    CALL next_tok
+    LOAD_LOCAL op
+    PUSH_STR "&&"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_750
+    CALL next_label
+    STORE_LOCAL lbl_false
+    CALL next_label
+    STORE_LOCAL lbl_end
+    PUSH_STR "    DUP"
+    CALL emit
+    PUSH_STR "JUMP_IF_FALSE"
+    LOAD_LOCAL lbl_false
+    CALL emit_jump
+    PUSH_STR "    POP"
+    CALL emit
+    LOAD_LOCAL prec
+    CALL compile_expr
+    POP
+    PUSH_STR "JUMP"
+    LOAD_LOCAL lbl_end
+    CALL emit_jump
+    LOAD_LOCAL lbl_false
+    CALL emit_label
+    LOAD_LOCAL lbl_end
+    CALL emit_label
+    PUSH_1
+    STORE_LOCAL lhs_kind
+    JUMP .L_751
+.L_750:
+    LOAD_LOCAL op
+    PUSH_STR "||"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_752
+    CALL next_label
+    STORE_LOCAL lbl_true
+    CALL next_label
+    STORE_LOCAL lbl_end
+    PUSH_STR "    DUP"
+    CALL emit
+    PUSH_STR "JUMP_IF_TRUE"
+    LOAD_LOCAL lbl_true
+    CALL emit_jump
+    PUSH_STR "    POP"
+    CALL emit
+    LOAD_LOCAL prec
+    CALL compile_expr
+    POP
+    PUSH_STR "JUMP"
+    LOAD_LOCAL lbl_end
+    CALL emit_jump
+    LOAD_LOCAL lbl_true
+    CALL emit_label
+    LOAD_LOCAL lbl_end
+    CALL emit_label
+    PUSH_1
+    STORE_LOCAL lhs_kind
+    JUMP .L_753
+.L_752:
+    LOAD_LOCAL prec
+    CALL compile_expr
+    STORE_LOCAL rhs_kind
+    LOAD_LOCAL op
+    LOAD_LOCAL lhs_kind
+    LOAD_LOCAL rhs_kind
+    CALL emit_bin_op
+    STORE_LOCAL lhs_kind
+.L_753:
+.L_751:
+    JUMP .L_745
+.L_747:
+    LOAD_LOCAL lhs_kind
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_arg_list
+; ----------------------------------------------------
+.function compile_arg_list
+    .local count: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_0
+    STORE_LOCAL count
+.L_754:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_757
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ")"
+    STR_CMP
+    JUMP .L_758
+.L_757:
+.L_758:
+    DUP
+    JUMP_IF_FALSE .L_759
+    POP
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP .L_760
+.L_759:
+.L_760:
+    JUMP_IF_FALSE .L_756
+    PUSH_0
+    CALL compile_expr
+    POP
+    LOAD_LOCAL count
+    PUSH_1
+    ADD
+    STORE_LOCAL count
+    LOAD_GLOBAL cur_str
+    PUSH_STR ","
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_761
+    CALL next_tok
+.L_761:
+    JUMP .L_754
+.L_756:
+    PUSH_STR ")"
+    CALL expect
+    LOAD_LOCAL count
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: emit_call
+; ----------------------------------------------------
+.function emit_call
+    .param name: slice
+    .param nargs: word
+    .local fi: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL name
+    PUSH_STR "len"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_763
+    PUSH_STR "    SLICE_LEN"
+    CALL emit
+    PUSH_1
+    RET
+.L_763:
+    LOAD_LOCAL name
+    PUSH_STR "alloc"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_765
+    PUSH_STR "    BUF_ALLOC"
+    CALL emit
+    PUSH_1
+    RET
+.L_765:
+    LOAD_LOCAL name
+    PUSH_STR "free"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_767
+    PUSH_STR "    BUF_FREE"
+    CALL emit
+    PUSH_0
+    RET
+.L_767:
+    LOAD_LOCAL name
+    PUSH_STR "peek"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_771
+    POP
+    LOAD_LOCAL name
+    PUSH_STR "peek2"
+    STR_CMP
+    NOT
+    JUMP .L_772
+.L_771:
+.L_772:
+    JUMP_IF_FALSE .L_769
+    PUSH_STR "    PEEK2"
+    CALL emit
+    PUSH_1
+    RET
+.L_769:
+    LOAD_LOCAL name
+    PUSH_STR "poke"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_775
+    POP
+    LOAD_LOCAL name
+    PUSH_STR "poke2"
+    STR_CMP
+    NOT
+    JUMP .L_776
+.L_775:
+.L_776:
+    JUMP_IF_FALSE .L_773
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_0
+    RET
+.L_773:
+    LOAD_LOCAL name
+    PUSH_STR "peekb"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_779
+    POP
+    LOAD_LOCAL name
+    PUSH_STR "peek1"
+    STR_CMP
+    NOT
+    JUMP .L_780
+.L_779:
+.L_780:
+    JUMP_IF_FALSE .L_777
+    PUSH_STR "    PEEK1"
+    CALL emit
+    PUSH_1
+    RET
+.L_777:
+    LOAD_LOCAL name
+    PUSH_STR "pokeb"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_783
+    POP
+    LOAD_LOCAL name
+    PUSH_STR "poke1"
+    STR_CMP
+    NOT
+    JUMP .L_784
+.L_783:
+.L_784:
+    JUMP_IF_FALSE .L_781
+    PUSH_STR "    POKE1"
+    CALL emit
+    PUSH_0
+    RET
+.L_781:
+    LOAD_LOCAL name
+    PUSH_STR "file_open_read"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_785
+    PUSH_STR "    FILE_OPEN_READ"
+    CALL emit
+    PUSH_1
+    RET
+.L_785:
+    LOAD_LOCAL name
+    PUSH_STR "file_open_write"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_787
+    PUSH_STR "    FILE_OPEN_WRITE"
+    CALL emit
+    PUSH_1
+    RET
+.L_787:
+    LOAD_LOCAL name
+    PUSH_STR "file_readline"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_789
+    PUSH_STR "    FILE_READLINE"
+    CALL emit
+    PUSH_I8 2
+    RET
+.L_789:
+    LOAD_LOCAL name
+    PUSH_STR "file_write"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_791
+    LOAD_LOCAL nargs
+    PUSH_I8 3
+    CMP_EQ
+    JUMP_IF_FALSE .L_793
+    PUSH_STR "    FILE_WRITE_BUF"
+    CALL emit
+    JUMP .L_794
+.L_793:
+    PUSH_STR "    FILE_WRITE"
+    CALL emit
+.L_794:
+    PUSH_1
+    RET
+.L_791:
+    LOAD_LOCAL name
+    PUSH_STR "file_close"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_795
+    PUSH_STR "    FILE_CLOSE"
+    CALL emit
+    PUSH_0
+    RET
+.L_795:
+    LOAD_LOCAL name
+    PUSH_STR "sys_args"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_797
+    PUSH_STR "    SYS_ARGS"
+    CALL emit
+    PUSH_I8 2
+    RET
+.L_797:
+    LOAD_LOCAL name
+    PUSH_STR "sys_exit"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_799
+    PUSH_STR "    SYS_EXIT"
+    CALL emit
+    PUSH_0
+    RET
+.L_799:
+    LOAD_LOCAL name
+    PUSH_STR "strcmp"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_801
+    PUSH_STR "    STR_CMP"
+    CALL emit
+    PUSH_1
+    RET
+.L_801:
+    PUSH_STR "    CALL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL name
+    CALL find_func
+    STORE_LOCAL fi
+    LOAD_LOCAL fi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_803
+    LOAD_LOCAL fi
+    ADDR_OF_GLOBAL func_ret_kinds
+    SWAP
+    ADD
+    PEEK1
+    RET
+.L_803:
+    PUSH_1
+    RET
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_print
+; ----------------------------------------------------
+.function compile_print
+    .param is_println: word
+    .local nargs: word
+    .local val_off: word
+    .local entry_off: word
+    .local kind: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_STR "("
+    CALL expect
+    LOAD_GLOBAL cur_str
+    PUSH_STR ")"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_805
+    CALL next_tok
+    PUSH_STR "    PUSH_NIL_SLICE"
+    CALL emit
+    LOAD_LOCAL is_println
+    JUMP_IF_FALSE .L_807
+    PUSH_STR "    PRINTLN"
+    CALL emit
+    JUMP .L_808
+.L_807:
+    PUSH_STR "    PRINT"
+    CALL emit
+.L_808:
+    RET_VOID
+.L_805:
+    PUSH_STR "    PUSH_I8 64"
+    CALL emit
+    PUSH_STR "    BUF_ALLOC"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _pbuf"
+    CALL emit
+    PUSH_0
+    STORE_LOCAL nargs
+.L_809:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_812
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ")"
+    STR_CMP
+    JUMP .L_813
+.L_812:
+.L_813:
+    DUP
+    JUMP_IF_FALSE .L_814
+    POP
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP .L_815
+.L_814:
+.L_815:
+    JUMP_IF_FALSE .L_811
+    PUSH_I8 24
+    LOAD_LOCAL nargs
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL val_off
+    LOAD_LOCAL nargs
+    PUSH_I8 4
+    MUL
+    STORE_LOCAL entry_off
+    PUSH_0
+    CALL compile_expr
+    STORE_LOCAL kind
+    LOAD_LOCAL kind
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_816
+    PUSH_STR "    STORE_LOCAL _tmp_len"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _tmp_cap"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _tmp_base"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL val_off
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_base"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL val_off
+    PUSH_I8 2
+    ADD
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_cap"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL val_off
+    PUSH_I8 4
+    ADD
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_len"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    LOAD_LOCAL entry_off
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_818
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL entry_off
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+.L_818:
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL val_off
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL entry_off
+    PUSH_I8 2
+    ADD
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PUSH_STR "
+    PUSH_STR "string"
+    CALL emit_str
+    PUSH_STR "    POP"
+    CALL emit
+    PUSH_STR "    POP"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    JUMP .L_817
+.L_816:
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL val_off
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    SWAP"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    LOAD_LOCAL entry_off
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_820
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL entry_off
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+.L_820:
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL val_off
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL entry_off
+    PUSH_I8 2
+    ADD
+    CALL emit_u8
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    PUSH_STR "
+    PUSH_STR "word"
+    CALL emit_str
+    PUSH_STR "    POP"
+    CALL emit
+    PUSH_STR "    POP"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+.L_817:
+    LOAD_LOCAL nargs
+    PUSH_1
+    ADD
+    STORE_LOCAL nargs
+    LOAD_GLOBAL cur_str
+    PUSH_STR ","
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_822
+    CALL next_tok
+.L_822:
+    JUMP .L_809
+.L_811:
+    PUSH_STR ")"
+    CALL expect
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    LOAD_LOCAL nargs
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_824
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    JUMP .L_825
+.L_824:
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL nargs
+    CALL emit_u8
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL nargs
+    CALL emit_u8
+.L_825:
+    LOAD_LOCAL is_println
+    JUMP_IF_FALSE .L_826
+    PUSH_STR "    PRINTLN"
+    CALL emit
+    JUMP .L_827
+.L_826:
+    PUSH_STR "    PRINT"
+    CALL emit
+.L_827:
+    PUSH_STR "    LOAD_LOCAL _pbuf"
+    CALL emit
+    PUSH_STR "    BUF_FREE"
+    CALL emit
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_block
+; ----------------------------------------------------
+.function compile_block
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_STR "{"
+    CALL expect
+.L_828:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_831
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "}"
+    STR_CMP
+    JUMP .L_832
+.L_831:
+.L_832:
+    DUP
+    JUMP_IF_FALSE .L_833
+    POP
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP .L_834
+.L_833:
+.L_834:
+    JUMP_IF_FALSE .L_830
+    CALL compile_stmt
+    JUMP .L_828
+.L_830:
+    PUSH_STR "}"
+    CALL expect
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_if
+; ----------------------------------------------------
+.function compile_if
+    .local lbl_else: word
+    .local lbl_endif: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_STR "if"
+    CALL expect
+    CALL next_label
+    STORE_LOCAL lbl_else
+    CALL next_label
+    STORE_LOCAL lbl_endif
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "JUMP_IF_FALSE"
+    LOAD_LOCAL lbl_else
+    CALL emit_jump
+    CALL compile_block
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_837
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "else"
+    STR_CMP
+    NOT
+    JUMP .L_838
+.L_837:
+.L_838:
+    JUMP_IF_FALSE .L_835
+    CALL next_tok
+    PUSH_STR "JUMP"
+    LOAD_LOCAL lbl_endif
+    CALL emit_jump
+    LOAD_LOCAL lbl_else
+    CALL emit_label
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_841
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "if"
+    STR_CMP
+    NOT
+    JUMP .L_842
+.L_841:
+.L_842:
+    JUMP_IF_FALSE .L_839
+    CALL compile_if
+    JUMP .L_840
+.L_839:
+    CALL compile_block
+.L_840:
+    LOAD_LOCAL lbl_endif
+    CALL emit_label
+    JUMP .L_836
+.L_835:
+    LOAD_LOCAL lbl_else
+    CALL emit_label
+.L_836:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_for
+; ----------------------------------------------------
+.function compile_for
+    .local lbl_top: word
+    .local lbl_cont: word
+    .local lbl_exit: word
+    .local is_3clause: word
+    .local scan_pos: word
+    .local ch: word
+    .local lbl_body: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_STR "for"
+    CALL expect
+    CALL next_label
+    STORE_LOCAL lbl_top
+    CALL next_label
+    STORE_LOCAL lbl_cont
+    CALL next_label
+    STORE_LOCAL lbl_exit
+    PUSH_FALSE
+    STORE_LOCAL is_3clause
+    LOAD_GLOBAL line_pos
+    STORE_LOCAL scan_pos
+.L_843:
+    LOAD_LOCAL scan_pos
+    LOAD_GLOBAL cur_line
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_845
+    LOAD_LOCAL scan_pos
+    ADDR_OF_GLOBAL cur_line
+    PEEK2
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL ch
+    LOAD_LOCAL ch
+    PUSH_I8 123
+    CMP_EQ
+    JUMP_IF_FALSE .L_846
+    JUMP .L_845
+.L_846:
+    LOAD_LOCAL ch
+    PUSH_I8 59
+    CMP_EQ
+    JUMP_IF_FALSE .L_848
+    PUSH_TRUE
+    STORE_LOCAL is_3clause
+    JUMP .L_845
+.L_848:
+    LOAD_LOCAL scan_pos
+    PUSH_1
+    ADD
+    STORE_LOCAL scan_pos
+    JUMP .L_843
+.L_845:
+    LOAD_LOCAL is_3clause
+    NOT
+    JUMP_IF_FALSE .L_850
+    ADDR_OF_GLOBAL loop_cont
+    LOAD_GLOBAL loop_depth
+    SHL1_ADD
+    LOAD_LOCAL lbl_top
+    POKE2
+    ADDR_OF_GLOBAL loop_exit
+    LOAD_GLOBAL loop_depth
+    SHL1_ADD
+    LOAD_LOCAL lbl_exit
+    POKE2
+    LOAD_GLOBAL loop_depth
+    PUSH_1
+    ADD
+    STORE_GLOBAL loop_depth
+    LOAD_LOCAL lbl_top
+    CALL emit_label
+    LOAD_GLOBAL cur_str
+    PUSH_STR "{"
+    STR_CMP
+    JUMP_IF_FALSE .L_852
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "JUMP_IF_FALSE"
+    LOAD_LOCAL lbl_exit
+    CALL emit_jump
+.L_852:
+    CALL compile_block
+    PUSH_STR "JUMP"
+    LOAD_LOCAL lbl_top
+    CALL emit_jump
+    LOAD_LOCAL lbl_exit
+    CALL emit_label
+    LOAD_GLOBAL loop_depth
+    PUSH_1
+    SUB
+    STORE_GLOBAL loop_depth
+    JUMP .L_851
+.L_850:
+    ADDR_OF_GLOBAL loop_cont
+    LOAD_GLOBAL loop_depth
+    SHL1_ADD
+    LOAD_LOCAL lbl_cont
+    POKE2
+    ADDR_OF_GLOBAL loop_exit
+    LOAD_GLOBAL loop_depth
+    SHL1_ADD
+    LOAD_LOCAL lbl_exit
+    POKE2
+    LOAD_GLOBAL loop_depth
+    PUSH_1
+    ADD
+    STORE_GLOBAL loop_depth
+    CALL next_label
+    STORE_LOCAL lbl_body
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    JUMP_IF_FALSE .L_854
+    CALL compile_stmt
+    JUMP .L_855
+.L_854:
+    CALL next_tok
+.L_855:
+    LOAD_LOCAL lbl_top
+    CALL emit_label
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    JUMP_IF_FALSE .L_856
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "JUMP_IF_FALSE"
+    LOAD_LOCAL lbl_exit
+    CALL emit_jump
+.L_856:
+    PUSH_STR ";"
+    CALL expect
+    PUSH_STR "JUMP"
+    LOAD_LOCAL lbl_body
+    CALL emit_jump
+    LOAD_LOCAL lbl_cont
+    CALL emit_label
+    LOAD_GLOBAL cur_str
+    PUSH_STR "{"
+    STR_CMP
+    JUMP_IF_FALSE .L_858
+    CALL compile_stmt
+.L_858:
+    PUSH_STR "JUMP"
+    LOAD_LOCAL lbl_top
+    CALL emit_jump
+    LOAD_LOCAL lbl_body
+    CALL emit_label
+    CALL compile_block
+    PUSH_STR "JUMP"
+    LOAD_LOCAL lbl_cont
+    CALL emit_jump
+    LOAD_LOCAL lbl_exit
+    CALL emit_label
+    LOAD_GLOBAL loop_depth
+    PUSH_1
+    SUB
+    STORE_GLOBAL loop_depth
+.L_851:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: compile_stmt
+; ----------------------------------------------------
+.function compile_stmt
+    .local k: word
+    .local vname: slice
+    .local name: slice
+    .local nargs: word
+    .local rk: word
+    .local name2: slice
+    .local fn_name: slice
+    .local nargs: word
+    .local field: slice
+    .local li: word
+    .local elem_sz: word
+    .local gi: word
+    .local li: word
+    .local is_inc: word
+    .local li: word
+    .local pi: word
+    .local op: slice
+    .local li: word
+    .local pi: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    JUMP_IF_FALSE .L_860
+    LOAD_GLOBAL cur_str
+    PUSH_STR "return"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_862
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_866
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "}"
+    STR_CMP
+    NOT
+    JUMP .L_867
+.L_866:
+.L_867:
+    JUMP_IF_FALSE .L_864
+    PUSH_STR "    RET_VOID"
+    CALL emit
+    JUMP .L_865
+.L_864:
+    PUSH_0
+    CALL compile_expr
+    STORE_LOCAL k
+    LOAD_LOCAL k
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_868
+    PUSH_STR "    RET_SLICE"
+    CALL emit
+    JUMP .L_869
+.L_868:
+    PUSH_STR "    RET"
+    CALL emit
+.L_869:
+.L_865:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_870
+    CALL next_tok
+.L_870:
+    RET_VOID
+.L_862:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "if"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_872
+    CALL compile_if
+    RET_VOID
+.L_872:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "for"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_874
+    CALL compile_for
+    RET_VOID
+.L_874:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "break"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_876
+    CALL next_tok
+    PUSH_STR "JUMP"
+    LOAD_GLOBAL loop_depth
+    PUSH_1
+    SUB
+    ADDR_OF_GLOBAL loop_exit
+    SWAP
+    SHL1_ADD
+    PEEK2
+    CALL emit_jump
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_878
+    CALL next_tok
+.L_878:
+    RET_VOID
+.L_876:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "continue"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_880
+    CALL next_tok
+    PUSH_STR "JUMP"
+    LOAD_GLOBAL loop_depth
+    PUSH_1
+    SUB
+    ADDR_OF_GLOBAL loop_cont
+    SWAP
+    SHL1_ADD
+    PEEK2
+    CALL emit_jump
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_882
+    CALL next_tok
+.L_882:
+    RET_VOID
+.L_880:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "var"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_884
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL vname
+    CALL next_tok
+    CALL parse_type_desc
+    LOAD_GLOBAL cur_str
+    PUSH_STR "="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_886
+    CALL next_tok
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "    STORE_LOCAL "
+    LOAD_LOCAL vname
+    CALL emit2
+.L_886:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_888
+    CALL next_tok
+.L_888:
+    RET_VOID
+.L_884:
+.L_860:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 3
+    CMP_EQ
+    JUMP_IF_FALSE .L_890
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL name
+    CALL next_tok
+    LOAD_LOCAL name
+    PUSH_STR "print"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_894
+    POP
+    LOAD_LOCAL name
+    PUSH_STR "println"
+    STR_CMP
+    NOT
+    JUMP .L_895
+.L_894:
+.L_895:
+    JUMP_IF_FALSE .L_892
+    LOAD_LOCAL name
+    PUSH_STR "println"
+    STR_CMP
+    NOT
+    CALL compile_print
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_896
+    CALL next_tok
+.L_896:
+    RET_VOID
+.L_892:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "("
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_898
+    CALL next_tok
+    CALL compile_arg_list
+    STORE_LOCAL nargs
+    LOAD_LOCAL name
+    LOAD_LOCAL nargs
+    CALL emit_call
+    STORE_LOCAL rk
+    LOAD_LOCAL rk
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_900
+    PUSH_STR "    POP"
+    CALL emit
+    JUMP .L_901
+.L_900:
+    LOAD_LOCAL rk
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_902
+    PUSH_STR "    POP_SLICE"
+    CALL emit
+.L_902:
+.L_901:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_904
+    CALL next_tok
+.L_904:
+    RET_VOID
+.L_898:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ","
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_906
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL name2
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    PUSH_STR ":="
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_910
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "="
+    STR_CMP
+    NOT
+    JUMP .L_911
+.L_910:
+.L_911:
+    JUMP_IF_FALSE .L_908
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL fn_name
+    CALL next_tok
+    PUSH_STR "("
+    CALL expect
+    CALL compile_arg_list
+    STORE_LOCAL nargs
+    LOAD_LOCAL fn_name
+    LOAD_LOCAL nargs
+    CALL emit_call
+    POP
+    PUSH_STR "    STORE_LOCAL "
+    LOAD_LOCAL name2
+    CALL emit2
+    PUSH_STR "    STORE_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_912
+    CALL next_tok
+.L_912:
+    RET_VOID
+.L_908:
+.L_906:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "."
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_914
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL field
+    CALL next_tok
+    PUSH_STR "="
+    CALL expect
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_916
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_917
+.L_916:
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_917:
+    LOAD_LOCAL field
+    PUSH_STR "Cap"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_918
+    PUSH_STR "    PUSH_I8 2"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    JUMP .L_919
+.L_918:
+    LOAD_LOCAL field
+    PUSH_STR "Len"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_920
+    PUSH_STR "    PUSH_I8 4"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+.L_920:
+.L_919:
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "    POKE2"
+    CALL emit
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_922
+    CALL next_tok
+.L_922:
+    RET_VOID
+.L_914:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ":="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_924
+    CALL next_tok
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "    STORE_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_926
+    CALL next_tok
+.L_926:
+    RET_VOID
+.L_924:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "["
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_928
+    CALL next_tok
+    PUSH_1
+    STORE_LOCAL elem_sz
+    LOAD_LOCAL name
+    CALL find_global
+    STORE_LOCAL gi
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL gi
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_930
+    PUSH_STR "    ADDR_OF_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL gi
+    ADDR_OF_GLOBAL global_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+    JUMP .L_931
+.L_930:
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    JUMP_IF_FALSE .L_932
+    PUSH_STR "    ADDR_OF_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    LOAD_LOCAL li
+    ADDR_OF_GLOBAL local_elem_sizes
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL elem_sz
+.L_932:
+.L_931:
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "]"
+    CALL expect
+    LOAD_LOCAL elem_sz
+    PUSH_I8 6
+    CMP_EQ
+    JUMP_IF_FALSE .L_934
+    PUSH_STR "    PUSH_I8 "
+    PUSH_I8 6
+    CALL emit_u8
+    PUSH_STR "    MUL"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "="
+    CALL expect
+    PUSH_0
+    CALL compile_expr
+    POP
+    PUSH_STR "    STORE_LOCAL _tmp_len"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _tmp_cap"
+    CALL emit
+    PUSH_STR "    STORE_LOCAL _tmp_base"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_base"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "    PUSH_I8 2"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_cap"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_addr"
+    CALL emit
+    PUSH_STR "    PUSH_I8 4"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+    PUSH_STR "    LOAD_LOCAL _tmp_len"
+    CALL emit
+    PUSH_STR "    POKE2"
+    CALL emit
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_936
+    CALL next_tok
+.L_936:
+    RET_VOID
+    JUMP .L_935
+.L_934:
+    LOAD_LOCAL elem_sz
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_938
+    PUSH_STR "    SHL1_ADD"
+    CALL emit
+    JUMP .L_939
+.L_938:
+    LOAD_LOCAL elem_sz
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_940
+    PUSH_STR "    ADD"
+    CALL emit
+    JUMP .L_941
+.L_940:
+    PUSH_STR "    PUSH_I8 "
+    LOAD_LOCAL elem_sz
+    CALL emit_u8
+    PUSH_STR "    MUL"
+    CALL emit
+    PUSH_STR "    ADD"
+    CALL emit
+.L_941:
+.L_939:
+.L_935:
+    PUSH_STR "="
+    CALL expect
+    PUSH_0
+    CALL compile_expr
+    POP
+    LOAD_LOCAL elem_sz
+    PUSH_1
+    CMP_EQ
+    JUMP_IF_FALSE .L_942
+    PUSH_STR "    POKE1"
+    CALL emit
+    JUMP .L_943
+.L_942:
+    PUSH_STR "    POKE2"
+    CALL emit
+.L_943:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_944
+    CALL next_tok
+.L_944:
+    RET_VOID
+.L_928:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "++"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_948
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "--"
+    STR_CMP
+    NOT
+    JUMP .L_949
+.L_948:
+.L_949:
+    JUMP_IF_FALSE .L_946
+    LOAD_GLOBAL cur_str
+    PUSH_STR "++"
+    STR_CMP
+    NOT
+    STORE_LOCAL is_inc
+    CALL next_tok
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL name
+    CALL find_cur_param
+    STORE_LOCAL pi
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_952
+    POP
+    LOAD_LOCAL pi
+    PUSH_NEG1
+    CMP_NE
+    JUMP .L_953
+.L_952:
+.L_953:
+    JUMP_IF_FALSE .L_950
+    PUSH_STR "    LOAD_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    LOAD_LOCAL is_inc
+    JUMP_IF_FALSE .L_954
+    PUSH_STR "    ADD"
+    CALL emit
+    JUMP .L_955
+.L_954:
+    PUSH_STR "    SUB"
+    CALL emit
+.L_955:
+    PUSH_STR "    STORE_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_951
+.L_950:
+    PUSH_STR "    LOAD_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+    PUSH_STR "    PUSH_1"
+    CALL emit
+    LOAD_LOCAL is_inc
+    JUMP_IF_FALSE .L_956
+    PUSH_STR "    ADD"
+    CALL emit
+    JUMP .L_957
+.L_956:
+    PUSH_STR "    SUB"
+    CALL emit
+.L_957:
+    PUSH_STR "    STORE_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_951:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_958
+    CALL next_tok
+.L_958:
+    RET_VOID
+.L_946:
+    LOAD_GLOBAL cur_str
+    PUSH_STR "="
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_962
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "+="
+    STR_CMP
+    NOT
+    JUMP .L_963
+.L_962:
+.L_963:
+    DUP
+    JUMP_IF_TRUE .L_964
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "-="
+    STR_CMP
+    NOT
+    JUMP .L_965
+.L_964:
+.L_965:
+    JUMP_IF_FALSE .L_960
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL op
+    CALL next_tok
+    LOAD_LOCAL name
+    CALL find_cur_local
+    STORE_LOCAL li
+    LOAD_LOCAL name
+    CALL find_cur_param
+    STORE_LOCAL pi
+    LOAD_LOCAL op
+    PUSH_STR "+="
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_968
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "-="
+    STR_CMP
+    NOT
+    JUMP .L_969
+.L_968:
+.L_969:
+    JUMP_IF_FALSE .L_966
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_972
+    POP
+    LOAD_LOCAL pi
+    PUSH_NEG1
+    CMP_NE
+    JUMP .L_973
+.L_972:
+.L_973:
+    JUMP_IF_FALSE .L_970
+    PUSH_STR "    LOAD_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_971
+.L_970:
+    PUSH_STR "    LOAD_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_971:
+.L_966:
+    PUSH_0
+    CALL compile_expr
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "+="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_974
+    PUSH_STR "    ADD"
+    CALL emit
+    JUMP .L_975
+.L_974:
+    LOAD_LOCAL op
+    PUSH_STR "-="
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_976
+    PUSH_STR "    SUB"
+    CALL emit
+.L_976:
+.L_975:
+    LOAD_LOCAL li
+    PUSH_NEG1
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_980
+    POP
+    LOAD_LOCAL pi
+    PUSH_NEG1
+    CMP_NE
+    JUMP .L_981
+.L_980:
+.L_981:
+    JUMP_IF_FALSE .L_978
+    PUSH_STR "    STORE_LOCAL "
+    LOAD_LOCAL name
+    CALL emit2
+    JUMP .L_979
+.L_978:
+    PUSH_STR "    STORE_GLOBAL "
+    LOAD_LOCAL name
+    CALL emit2
+.L_979:
+    LOAD_GLOBAL cur_str
+    PUSH_STR ";"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_982
+    CALL next_tok
+.L_982:
+    RET_VOID
+.L_960:
+.L_890:
+    CALL next_tok
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: run_pass2
+; ----------------------------------------------------
+.function run_pass2
+    .local i: word
+    .local fname: slice
+    .local has_body: word
+    .local p_start: word
+    .local p_num: word
+    .local i: word
+    .local l_start: word
+    .local l_num: word
+    .local i: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    PUSH_I8 2
+    STORE_GLOBAL cur_pass
+    PUSH_STR ""
+    STORE_GLOBAL cur_func_name
+    CALL reset_lexer
+    CALL next_tok
+    LOAD_GLOBAL num_globals
+    PUSH_0
+    CMP_GT
+    JUMP_IF_FALSE .L_984
+    PUSH_STR "; Global Variable Table"
+    CALL emit
+    PUSH_0
+    STORE_LOCAL i
+.L_986:
+    LOAD_LOCAL i
+    LOAD_GLOBAL num_globals
+    CMP_LT
+    JUMP_IF_FALSE .L_988
+    JUMP .L_989
+.L_987:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_986
+.L_989:
+    PUSH_STR ".global "
+    CALL out_str
+    LOAD_LOCAL i
+    ADDR_OF_GLOBAL global_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    CALL out_str
+    PUSH_STR ": "
+    CALL out_str
+    LOAD_LOCAL i
+    ADDR_OF_GLOBAL global_sizes
+    SWAP
+    SHL1_ADD
+    PEEK2
+    CALL out_dec
+    PUSH_I8 10
+    CALL out_char
+    JUMP .L_987
+.L_988:
+    PUSH_STR ""
+    CALL emit
+.L_984:
+.L_990:
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_992
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_995
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "func"
+    STR_CMP
+    NOT
+    JUMP .L_996
+.L_995:
+.L_996:
+    JUMP_IF_FALSE .L_993
+    CALL next_tok
+    LOAD_GLOBAL cur_str
+    STORE_LOCAL fname
+    LOAD_LOCAL fname
+    STORE_GLOBAL cur_func_name
+    LOAD_LOCAL fname
+    CALL find_func
+    STORE_GLOBAL cur_func_idx
+    PUSH_FALSE
+    STORE_LOCAL has_body
+.L_997:
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_999
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_1002
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "{"
+    STR_CMP
+    NOT
+    JUMP .L_1003
+.L_1002:
+.L_1003:
+    JUMP_IF_FALSE .L_1000
+    PUSH_TRUE
+    STORE_LOCAL has_body
+    JUMP .L_999
+.L_1000:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 4
+    CMP_EQ
+    JUMP_IF_FALSE .L_1004
+    LOAD_GLOBAL cur_str
+    PUSH_STR "func"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_1008
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "var"
+    STR_CMP
+    NOT
+    JUMP .L_1009
+.L_1008:
+.L_1009:
+    DUP
+    JUMP_IF_TRUE .L_1010
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "const"
+    STR_CMP
+    NOT
+    JUMP .L_1011
+.L_1010:
+.L_1011:
+    JUMP_IF_FALSE .L_1006
+    JUMP .L_999
+.L_1006:
+.L_1004:
+    CALL next_tok
+    JUMP .L_997
+.L_999:
+    LOAD_LOCAL has_body
+    NOT
+    JUMP_IF_FALSE .L_1012
+    JUMP .L_990
+.L_1012:
+    PUSH_STR "{"
+    CALL expect
+    PUSH_STR "; ----------------------------------------------------"
+    CALL emit
+    PUSH_STR "; Function: "
+    LOAD_LOCAL fname
+    CALL emit2
+    PUSH_STR "; ----------------------------------------------------"
+    CALL emit
+    LOAD_LOCAL fname
+    PUSH_STR "main"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_1014
+    PUSH_STR ".function main entry"
+    CALL emit
+    JUMP .L_1015
+.L_1014:
+    PUSH_STR ".function "
+    LOAD_LOCAL fname
+    CALL emit2
+.L_1015:
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_first_param
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL p_start
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_num_params
+    SWAP
+    ADD
+    PEEK1
+    STORE_LOCAL p_num
+    PUSH_0
+    STORE_LOCAL i
+.L_1016:
+    LOAD_LOCAL i
+    LOAD_LOCAL p_num
+    CMP_LT
+    JUMP_IF_FALSE .L_1018
+    JUMP .L_1019
+.L_1017:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_1016
+.L_1019:
+    PUSH_STR "    .param "
+    CALL out_str
+    LOAD_LOCAL p_start
+    LOAD_LOCAL i
+    ADD
+    ADDR_OF_GLOBAL param_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    CALL out_str
+    PUSH_STR ": "
+    CALL out_str
+    LOAD_LOCAL p_start
+    LOAD_LOCAL i
+    ADD
+    ADDR_OF_GLOBAL param_kinds
+    SWAP
+    ADD
+    PEEK1
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_1020
+    PUSH_STR "slice\n"
+    CALL out_str
+    JUMP .L_1021
+.L_1020:
+    PUSH_STR "word\n"
+    CALL out_str
+.L_1021:
+    JUMP .L_1017
+.L_1018:
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_first_local
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL l_start
+    LOAD_GLOBAL cur_func_idx
+    ADDR_OF_GLOBAL func_num_locals
+    SWAP
+    SHL1_ADD
+    PEEK2
+    STORE_LOCAL l_num
+    PUSH_0
+    STORE_LOCAL i
+.L_1022:
+    LOAD_LOCAL i
+    LOAD_LOCAL l_num
+    CMP_LT
+    JUMP_IF_FALSE .L_1024
+    JUMP .L_1025
+.L_1023:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_1022
+.L_1025:
+    PUSH_STR "    .local "
+    CALL out_str
+    LOAD_LOCAL l_start
+    LOAD_LOCAL i
+    ADD
+    ADDR_OF_GLOBAL local_names
+    SWAP
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    CALL out_str
+    PUSH_STR ": "
+    CALL out_str
+    LOAD_LOCAL l_start
+    LOAD_LOCAL i
+    ADD
+    ADDR_OF_GLOBAL local_kinds
+    SWAP
+    ADD
+    PEEK1
+    PUSH_I8 2
+    CMP_EQ
+    JUMP_IF_FALSE .L_1026
+    PUSH_STR "slice\n"
+    CALL out_str
+    JUMP .L_1027
+.L_1026:
+    PUSH_STR "word\n"
+    CALL out_str
+.L_1027:
+    JUMP .L_1023
+.L_1024:
+    PUSH_STR ""
+    CALL emit
+.L_1028:
+    LOAD_GLOBAL cur_tok
+    PUSH_I8 5
+    CMP_NE
+    DUP
+    JUMP_IF_TRUE .L_1031
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "}"
+    STR_CMP
+    JUMP .L_1032
+.L_1031:
+.L_1032:
+    DUP
+    JUMP_IF_FALSE .L_1033
+    POP
+    LOAD_GLOBAL cur_tok
+    PUSH_0
+    CMP_NE
+    JUMP .L_1034
+.L_1033:
+.L_1034:
+    JUMP_IF_FALSE .L_1030
+    CALL compile_stmt
+    JUMP .L_1028
+.L_1030:
+    PUSH_STR "}"
+    CALL expect
+    PUSH_STR "    RET_VOID"
+    CALL emit
+    PUSH_STR ".endfunction\n"
+    CALL emit
+    JUMP .L_994
+.L_993:
+    CALL next_tok
+.L_994:
+    JUMP .L_990
+.L_992:
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: get_arg
+; ----------------------------------------------------
+.function get_arg
+    .param args_base: word
+    .param idx: word
+    .local addr: word
+    .local res: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    LOAD_LOCAL args_base
+    LOAD_LOCAL idx
+    PUSH_I8 6
+    MUL
+    ADD
+    STORE_LOCAL addr
+    ADDR_OF_LOCAL res
+    LOAD_LOCAL addr
+    PEEK2
+    POKE2
+    ADDR_OF_LOCAL res
+    PUSH_I8 2
+    ADD
+    LOAD_LOCAL addr
+    PUSH_I8 2
+    ADD
+    PEEK2
+    POKE2
+    ADDR_OF_LOCAL res
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL addr
+    PUSH_I8 4
+    ADD
+    PEEK2
+    POKE2
+    LOAD_LOCAL res
+    RET_SLICE
+    RET_VOID
+.endfunction
+
+; ----------------------------------------------------
+; Function: main
+; ----------------------------------------------------
+.function main entry
+    .local args: slice
+    .local i: word
+    .local arg: slice
+    .local in_h: word
+    .local in_ok: word
+    .local in_h2: word
+    .local in_ok2: word
+    .local out_h: word
+    .local out_ok: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+
+    SYS_ARGS
+    STORE_LOCAL args
+    PUSH_STR ""
+    STORE_GLOBAL src_file
+    PUSH_STR ""
+    STORE_GLOBAL out_file
+    PUSH_0
+    STORE_LOCAL i
+.L_1035:
+    LOAD_LOCAL i
+    ADDR_OF_LOCAL args
+    PUSH_I8 4
+    ADD
+    PEEK2
+    CMP_LT
+    JUMP_IF_FALSE .L_1037
+    JUMP .L_1038
+.L_1036:
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_1035
+.L_1038:
+    ADDR_OF_LOCAL args
+    PEEK2
+    LOAD_LOCAL i
+    CALL get_arg
+    STORE_LOCAL arg
+    LOAD_LOCAL arg
+    PUSH_STR "-o"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_FALSE .L_1041
+    POP
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    ADDR_OF_LOCAL args
+    PUSH_I8 4
+    ADD
+    PEEK2
+    CMP_LT
+    JUMP .L_1042
+.L_1041:
+.L_1042:
+    JUMP_IF_FALSE .L_1039
+    ADDR_OF_LOCAL args
+    PEEK2
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    CALL get_arg
+    STORE_GLOBAL out_file
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_1040
+.L_1039:
+    LOAD_GLOBAL src_file
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_1043
+    LOAD_LOCAL arg
+    STORE_GLOBAL src_file
+    JUMP .L_1044
+.L_1043:
+    LOAD_GLOBAL out_file
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_1045
+    LOAD_LOCAL arg
+    STORE_GLOBAL out_file
+.L_1045:
+.L_1044:
+.L_1040:
+    JUMP .L_1036
+.L_1037:
+    LOAD_GLOBAL src_file
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_1047
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Usage: minigolf_np [-o out.npa] source.golf"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_1047:
+    LOAD_GLOBAL out_file
+    SLICE_LEN
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_1049
+    PUSH_STR "a.npa"
+    STORE_GLOBAL out_file
+.L_1049:
+    LOAD_GLOBAL src_file
+    FILE_OPEN_READ
+    STORE_LOCAL in_ok
+    STORE_LOCAL in_h
+    LOAD_LOCAL in_ok
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_1051
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Could not open source file: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL src_file
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 32
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 34
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 6
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    PUSH_I8 2
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_1051:
+    LOAD_LOCAL in_h
+    STORE_GLOBAL in_file_h
+    CALL run_pass1
+    LOAD_GLOBAL in_file_h
+    FILE_CLOSE
+    LOAD_GLOBAL src_file
+    FILE_OPEN_READ
+    STORE_LOCAL in_ok2
+    STORE_LOCAL in_h2
+    LOAD_LOCAL in_ok2
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_1053
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Could not reopen source file: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL src_file
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 32
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 34
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 6
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    PUSH_I8 2
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_1053:
+    LOAD_LOCAL in_h2
+    STORE_GLOBAL in_file_h
+    LOAD_GLOBAL out_file
+    FILE_OPEN_WRITE
+    STORE_LOCAL out_ok
+    STORE_LOCAL out_h
+    LOAD_LOCAL out_ok
+    PUSH_0
+    CMP_EQ
+    JUMP_IF_FALSE .L_1055
+    PUSH_I8 64
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "ERROR: Could not open output file: "
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 26
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 28
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I8 24
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_GLOBAL out_file
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 32
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 34
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 4
+    ADD
+    LOAD_LOCAL _pbuf
+    PUSH_I8 30
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 6
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I8 2
+    PUSH_I8 2
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+    PUSH_1
+    SYS_EXIT
+.L_1055:
+    LOAD_LOCAL out_h
+    STORE_GLOBAL out_file_h
+    CALL run_pass2
+    CALL out_flush
+    LOAD_GLOBAL in_file_h
+    FILE_CLOSE
+    LOAD_GLOBAL out_file_h
+    FILE_CLOSE
+    RET_VOID
+.endfunction
+
