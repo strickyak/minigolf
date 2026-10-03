@@ -1,0 +1,1160 @@
+package main
+
+// Limits for 64K VM Process Space
+const MAX_GLOBALS     = 64
+const MAX_FUNCS       = 64
+const MAX_VARS        = 1024
+const MAX_LABELS      = 768
+const MAX_STRING_POOL = 4096
+const MAX_STRINGS     = 256
+const NUM_OPCODES     = 139
+
+// Opcode Table (sorted alphabetically for binary search)
+var op_names     [NUM_OPCODES]string
+var op_bytes     [NUM_OPCODES]byte
+var op_arg_bytes [NUM_OPCODES]byte
+var op_arg_types [NUM_OPCODES]byte
+
+// Globals Table
+var global_names [MAX_GLOBALS]string
+var global_sizes [MAX_GLOBALS]word
+var num_globals  word
+
+// Functions Table
+var func_names       [MAX_FUNCS]string
+var func_arg_count   [MAX_FUNCS]byte
+var func_local_count [MAX_FUNCS]byte
+var func_frame_size  [MAX_FUNCS]word
+var func_code_offset [MAX_FUNCS]word
+var func_code_size   [MAX_FUNCS]word
+var func_var_offset  [MAX_FUNCS]word
+var func_first_var   [MAX_FUNCS]word
+var num_funcs        word
+var entry_func_idx   word
+var pending_entry_name string
+var total_code_size  word
+
+// Local Variable Table
+var var_names [MAX_VARS]string
+var var_sizes [MAX_VARS]byte
+var var_slots [MAX_VARS]byte
+var num_vars  word
+
+// Labels Table
+var label_names   [MAX_LABELS]string
+var label_offsets [MAX_LABELS]word
+var label_funcs   [MAX_LABELS]byte
+var num_labels    word
+
+// String Pool
+var str_pool     [MAX_STRING_POOL]byte
+var str_pool_len word
+var str_offsets  [MAX_STRINGS]word
+var str_lengths  [MAX_STRINGS]word
+var num_strings  word
+
+// Current Assembly State
+var cur_func_idx       word
+var cur_func_code_size word
+var cur_func_pc        word
+
+// Binary Output Buffering
+var bin_buf     [256]byte
+var bin_buf_len word
+var out_file_h  word
+
+// String Buffer for Line Formatting
+var out_buf [256]byte
+var out_len word
+
+// Split Results
+var split_label_res string
+var split_rest_res  string
+var split_first     string
+var split_second    string
+var split_var_name  string
+var split_var_size  word
+
+// Temporary Unescape Buffer
+const MAX_UNESCAPE = 2048
+var unescape_buf [MAX_UNESCAPE]byte
+var unescape_len word
+
+// -----------------------------------------------------------------------------
+// Buffer and String Utilities
+// -----------------------------------------------------------------------------
+
+func buf_clear() {
+    out_len = 0
+}
+
+func buf_append(s string) {
+    for i := word(0); i < word(len(s)); i++ {
+        if out_len < 255 {
+            out_buf[out_len] = s[i]
+            out_len++
+        }
+    }
+}
+
+func buf_str() string {
+    var res string
+    res.Base = word(&out_buf[0])
+    res.Cap = 256
+    res.Len = out_len
+    return res
+}
+
+func clone_str(s string) string {
+    if len(s) == 0 {
+        return ""
+    }
+    p := alloc(word(len(s)))
+    for i := word(0); i < word(len(s)); i++ {
+        pokeb(p + i, s[i])
+    }
+    var res string
+    res.Base = p
+    res.Cap = word(len(s))
+    res.Len = word(len(s))
+    return res
+}
+
+func isspace(c byte) bool {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+func str_lstrip(s string) string {
+    i := word(0)
+    for i < word(len(s)) && isspace(s[i]) {
+        i++
+    }
+    return s[i : len(s)]
+}
+
+func str_rstrip(s string) string {
+    if len(s) == 0 {
+        return ""
+    }
+    i := word(len(s))
+    for i > 0 && isspace(s[i - 1]) {
+        i--
+    }
+    return s[0:i]
+}
+
+func str_strip(s string) string {
+    return str_rstrip(str_lstrip(s))
+}
+
+func hex_digit(c byte) word {
+    if c >= '0' && c <= '9' { return word(c - '0') }
+    if c >= 'a' && c <= 'f' { return word(c - 'a' + 10) }
+    if c >= 'A' && c <= 'F' { return word(c - 'A' + 10) }
+    return 0
+}
+
+func parse_int_val(s string) word {
+    s = str_strip(s)
+    if len(s) == 0 {
+        return 0
+    }
+    is_neg := false
+    idx := word(0)
+    if s[0] == '-' {
+        is_neg = true
+        idx++
+    } else if s[0] == '+' {
+        idx++
+    }
+    base := word(10)
+    if idx < word(len(s)) && s[idx] == '$' {
+        base = 16
+        idx++
+    } else if idx + 1 < word(len(s)) && s[idx] == '0' && (s[idx+1] == 'x' || s[idx+1] == 'X') {
+        base = 16
+        idx += 2
+    }
+    res := word(0)
+    for idx < word(len(s)) {
+        c := s[idx]
+        d := word(0)
+        if c >= '0' && c <= '9' {
+            d = word(c - '0')
+        } else if base == 16 && c >= 'a' && c <= 'f' {
+            d = word(c - 'a' + 10)
+        } else if base == 16 && c >= 'A' && c <= 'F' {
+            d = word(c - 'A' + 10)
+        } else {
+            break
+        }
+        res = res * base + d
+        idx++
+    }
+    if is_neg {
+        return 0 - res
+    }
+    return res
+}
+
+func parse_size_desc(s string) word {
+    s = str_strip(s)
+    if len(s) == 0 {
+        return 2
+    }
+    if s[0] == ':' {
+        s = str_strip(s[1 : len(s)])
+    }
+    if s == "byte" || s == "uint8" || s == "bool" {
+        return 1
+    }
+    if s == "word" || s == "scalar" || s == "int" || s == "int16" || s == "uint" || s == "uint16" || s == "buf" {
+        return 2
+    }
+    if s == "slice" || s == "str" || s == "string" || s == "list" || s == "dict" {
+        return 6
+    }
+    return parse_int_val(s)
+}
+
+// -----------------------------------------------------------------------------
+// Parsing Line Helpers
+// -----------------------------------------------------------------------------
+
+func strip_comment(line string) string {
+    in_quote := byte(0)
+    for i := word(0); i < word(len(line)); i++ {
+        c := line[i]
+        if in_quote == 0 {
+            if c == '"' || c == ''' {
+                in_quote = c
+            } else if c == ';' || c == '#' || (i == 0 && c == '*') {
+                return str_strip(line[0:i])
+            }
+        } else {
+            if c == in_quote && (i == 0 || line[i-1] != '\\') {
+                in_quote = 0
+            }
+        }
+    }
+    return str_strip(line)
+}
+
+func split_label(line string) bool {
+    in_quote := byte(0)
+    for i := word(0); i < word(len(line)); i++ {
+        c := line[i]
+        if in_quote == 0 {
+            if c == '"' || c == ''' {
+                in_quote = c
+            } else if c == ':' {
+                lbl := str_strip(line[0:i])
+                has_space := false
+                for j := word(0); j < word(len(lbl)); j++ {
+                    if isspace(lbl[j]) {
+                        has_space = true
+                        break
+                    }
+                }
+                if len(lbl) > 0 && !has_space {
+                    split_label_res = lbl
+                    split_rest_res = str_strip(line[i+1 : len(line)])
+                    return true
+                }
+                break
+            }
+        } else {
+            if c == in_quote && (i == 0 || line[i-1] != '\\') {
+                in_quote = 0
+            }
+        }
+    }
+    split_label_res = ""
+    split_rest_res = line
+    return false
+}
+
+func split_two(s string) {
+    s = str_strip(s)
+    pos := word(0)
+    for pos < word(len(s)) && !isspace(s[pos]) {
+        pos++
+    }
+    split_first = s[0:pos]
+    if pos < word(len(s)) {
+        split_second = str_strip(s[pos : len(s)])
+    } else {
+        split_second = ""
+    }
+}
+
+func split_name_and_size(args string) {
+    args = str_strip(args)
+    pos := word(0)
+    for pos < word(len(args)) && !isspace(args[pos]) && args[pos] != ':' && args[pos] != ',' {
+        pos++
+    }
+    split_var_name = args[0:pos]
+    for pos < word(len(args)) && (isspace(args[pos]) || args[pos] == ':' || args[pos] == ',') {
+        pos++
+    }
+    if pos < word(len(args)) {
+        size_str := str_strip(args[pos : len(args)])
+        split_var_size = parse_size_desc(size_str)
+    } else {
+        split_var_size = 2
+    }
+}
+
+func unescape_str(lit string) {
+    unescape_len = 0
+    if len(lit) < 2 {
+        return
+    }
+    body := lit[1 : len(lit)-1]
+    i := word(0)
+    n := word(len(body))
+    for i < n {
+        c := body[i]
+        if c == '\\' && i + 1 < n {
+            nc := body[i+1]
+            if nc == 'n' {
+                unescape_buf[unescape_len] = 0x0A
+                unescape_len++
+                i += 2
+            } else if nc == 'r' {
+                unescape_buf[unescape_len] = 0x0D
+                unescape_len++
+                i += 2
+            } else if nc == 't' {
+                unescape_buf[unescape_len] = 0x09
+                unescape_len++
+                i += 2
+            } else if nc == '\\' {
+                unescape_buf[unescape_len] = 0x5C
+                unescape_len++
+                i += 2
+            } else if nc == '"' {
+                unescape_buf[unescape_len] = 0x22
+                unescape_len++
+                i += 2
+            } else if nc == ''' {
+                unescape_buf[unescape_len] = 0x27
+                unescape_len++
+                i += 2
+            } else if nc == '0' {
+                unescape_buf[unescape_len] = 0x00
+                unescape_len++
+                i += 2
+            } else if nc == 'x' && i + 3 < n {
+                h := (hex_digit(body[i+2]) << 4) | hex_digit(body[i+3])
+                unescape_buf[unescape_len] = byte(h & 255)
+                unescape_len++
+                i += 4
+            } else {
+                unescape_buf[unescape_len] = nc
+                unescape_len++
+                i += 2
+            }
+        } else {
+            unescape_buf[unescape_len] = c
+            unescape_len++
+            i++
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// String Pool Management
+// -----------------------------------------------------------------------------
+
+func add_to_string_pool() word {
+    for i := word(0); i < num_strings; i++ {
+        if str_lengths[i] == unescape_len {
+            off := str_offsets[i] + 2
+            matched := true
+            for j := word(0); j < unescape_len; j++ {
+                if str_pool[off + j] != unescape_buf[j] {
+                    matched = false
+                    break
+                }
+            }
+            if matched {
+                return str_offsets[i]
+            }
+        }
+    }
+    if str_pool_len + 2 + unescape_len + 1 > MAX_STRING_POOL {
+        println("Error: MAX_STRING_POOL exceeded")
+        sys_exit(1)
+    }
+    if num_strings >= MAX_STRINGS {
+        println("Error: MAX_STRINGS exceeded")
+        sys_exit(1)
+    }
+    entry_off := str_pool_len
+    str_pool[str_pool_len] = byte(unescape_len >> 8)
+    str_pool[str_pool_len + 1] = byte(unescape_len & 255)
+    str_pool_len += 2
+    for j := word(0); j < unescape_len; j++ {
+        str_pool[str_pool_len + j] = unescape_buf[j]
+    }
+    str_pool_len += unescape_len
+    str_pool[str_pool_len] = 0
+    str_pool_len += 1
+
+    str_offsets[num_strings] = entry_off
+    str_lengths[num_strings] = unescape_len
+    num_strings++
+    return entry_off
+}
+
+// -----------------------------------------------------------------------------
+// Opcode Table and Binary Search
+// -----------------------------------------------------------------------------
+
+func set_op(idx word, name string, op byte, arg_bytes byte, arg_type byte) {
+    op_names[idx] = name
+    op_bytes[idx] = op
+    op_arg_bytes[idx] = arg_bytes
+    op_arg_types[idx] = arg_type
+}
+
+func find_op(m string) word {
+    low := word(0)
+    high := word(NUM_OPCODES - 1)
+    for low <= high {
+        mid := (low + high) >> 1
+        c := strcmp(m, op_names[mid])
+        if c == 0 {
+            return mid
+        }
+        if c == 0xFFFF || c == -1 {
+            if mid == 0 {
+                break
+            }
+            high = mid - 1
+        } else {
+            low = mid + 1
+        }
+    }
+    return 0xFFFF
+}
+
+func init_opcodes() {
+    set_op(0, "ADD", 0x40, 0, 0)
+    set_op(1, "ADDROFLOCAL", 0x35, 1, 7)
+    set_op(2, "ADDR_OF_GLOBAL", 0x30, 2, 8)
+    set_op(3, "ADDR_OF_LOCAL", 0x35, 1, 7)
+    set_op(4, "BIT_AND", 0x46, 0, 0)
+    set_op(5, "BIT_NOT", 0x49, 0, 0)
+    set_op(6, "BIT_OR", 0x47, 0, 0)
+    set_op(7, "BIT_XOR", 0x48, 0, 0)
+    set_op(8, "BUF_ALLOC", 0x2C, 0, 0)
+    set_op(9, "BUF_FREE", 0x2D, 0, 0)
+    set_op(10, "CALL", 0x63, 2, 6)
+    set_op(11, "CMP_EQ", 0x4C, 0, 0)
+    set_op(12, "CMP_GE", 0x51, 0, 0)
+    set_op(13, "CMP_GT", 0x50, 0, 0)
+    set_op(14, "CMP_LE", 0x4F, 0, 0)
+    set_op(15, "CMP_LT", 0x4E, 0, 0)
+    set_op(16, "CMP_NE", 0x4D, 0, 0)
+    set_op(17, "DICT_GET", 0x91, 0, 0)
+    set_op(18, "DICT_HAS", 0x93, 0, 0)
+    set_op(19, "DICT_KEYS", 0x94, 0, 0)
+    set_op(20, "DICT_LEN", 0x95, 0, 0)
+    set_op(21, "DICT_NEW", 0x90, 2, 3)
+    set_op(22, "DICT_SET", 0x92, 0, 0)
+    set_op(23, "DIV", 0x43, 0, 0)
+    set_op(24, "DUP", 0x0E, 0, 0)
+    set_op(25, "FILE_CLOSE", 0xC4, 0, 0)
+    set_op(26, "FILE_CREATE", 0xC1, 0, 0)
+    set_op(27, "FILE_OPEN", 0xC0, 0, 0)
+    set_op(28, "FILE_OPEN_READ", 0xC0, 0, 0)
+    set_op(29, "FILE_OPEN_WRITE", 0xC1, 0, 0)
+    set_op(30, "FILE_READ", 0xCC, 0, 0)
+    set_op(31, "FILE_READLINE", 0xC2, 0, 0)
+    set_op(32, "FILE_WRITE", 0xC3, 0, 0)
+    set_op(33, "FILE_WRITE_BUF", 0xCD, 0, 0)
+    set_op(34, "GETCHARFIELD", 0x33, 0, 0)
+    set_op(35, "GETWORDFIELD", 0x31, 0, 0)
+    set_op(36, "GET_CHAR_FIELD", 0x33, 0, 0)
+    set_op(37, "GET_WORD_FIELD", 0x31, 0, 0)
+    set_op(38, "HALT", 0x67, 0, 0)
+    set_op(39, "INDEX2", 0x36, 0, 0)
+    set_op(40, "IO_PRINT", 0xC9, 0, 0)
+    set_op(41, "JUMP", 0x60, 2, 4)
+    set_op(42, "JUMP_IF_FALSE", 0x62, 2, 4)
+    set_op(43, "JUMP_IF_TRUE", 0x61, 2, 4)
+    set_op(44, "LIST_APPEND", 0x97, 0, 0)
+    set_op(45, "LIST_NEW", 0x96, 2, 3)
+    set_op(46, "LIST_POP", 0x98, 0, 0)
+    set_op(47, "LIST_SORT_BY_LEN", 0x99, 0, 0)
+    set_op(48, "LOAD_FIELD", 0x2E, 1, 9)
+    set_op(49, "LOAD_GLOBAL", 0x2A, 2, 8)
+    set_op(50, "LOAD_LOCAL", 0x28, 1, 7)
+    set_op(51, "LOAD_LOCAL_0", 0x20, 0, 0)
+    set_op(52, "LOAD_LOCAL_1", 0x21, 0, 0)
+    set_op(53, "LOAD_LOCAL_2", 0x22, 0, 0)
+    set_op(54, "LOAD_LOCAL_3", 0x23, 0, 0)
+    set_op(55, "MAX", 0x54, 0, 0)
+    set_op(56, "MIN", 0x53, 0, 0)
+    set_op(57, "MOD", 0x44, 0, 0)
+    set_op(58, "MUL", 0x42, 0, 0)
+    set_op(59, "NEG", 0x45, 0, 0)
+    set_op(60, "NOP", 0x00, 0, 0)
+    set_op(61, "NOT", 0x52, 0, 0)
+    set_op(62, "OS_ISFILE", 0xC5, 0, 0)
+    set_op(63, "OS_MAKEDIRS", 0xC6, 0, 0)
+    set_op(64, "PARSE_INT", 0x55, 0, 0)
+    set_op(65, "PEEK", 0x31, 0, 0)
+    set_op(66, "PEEK1", 0x33, 0, 0)
+    set_op(67, "PEEK2", 0x31, 0, 0)
+    set_op(68, "PEEKB", 0x33, 0, 0)
+    set_op(69, "PEEKW", 0x31, 0, 0)
+    set_op(70, "PEEK_BYTE", 0x33, 0, 0)
+    set_op(71, "PEEK_WORD", 0x31, 0, 0)
+    set_op(72, "POKE", 0x32, 0, 0)
+    set_op(73, "POKE1", 0x34, 0, 0)
+    set_op(74, "POKE2", 0x32, 0, 0)
+    set_op(75, "POKEB", 0x34, 0, 0)
+    set_op(76, "POKEW", 0x32, 0, 0)
+    set_op(77, "POKE_BYTE", 0x34, 0, 0)
+    set_op(78, "POKE_WORD", 0x32, 0, 0)
+    set_op(79, "POP", 0x0C, 0, 0)
+    set_op(80, "POP_SLICE", 0x0D, 0, 0)
+    set_op(81, "PRINT", 0xCA, 0, 0)
+    set_op(82, "PRINTLN", 0xCB, 0, 0)
+    set_op(83, "PUSH_0", 0x05, 0, 0)
+    set_op(84, "PUSH_1", 0x06, 0, 0)
+    set_op(85, "PUSH_FALSE", 0x04, 0, 0)
+    set_op(86, "PUSH_I16", 0x0A, 2, 3)
+    set_op(87, "PUSH_I8", 0x08, 1, 1)
+    set_op(88, "PUSH_NEG1", 0x07, 0, 0)
+    set_op(89, "PUSH_NIL", 0x01, 0, 0)
+    set_op(90, "PUSH_NIL_SLICE", 0x02, 0, 0)
+    set_op(91, "PUSH_STR", 0x0B, 2, 5)
+    set_op(92, "PUSH_TRUE", 0x03, 0, 0)
+    set_op(93, "PUSH_U8", 0x09, 1, 2)
+    set_op(94, "REG_GROUP", 0xB2, 0, 0)
+    set_op(95, "REG_GROUP_END", 0xB3, 0, 0)
+    set_op(96, "REG_MATCH", 0xB0, 2, 3)
+    set_op(97, "REG_SEARCH", 0xB1, 2, 3)
+    set_op(98, "RET", 0x64, 0, 0)
+    set_op(99, "RET_SLICE", 0x65, 0, 0)
+    set_op(100, "RET_VOID", 0x66, 0, 0)
+    set_op(101, "SETCHARFIELD", 0x34, 0, 0)
+    set_op(102, "SETWORDFIELD", 0x32, 0, 0)
+    set_op(103, "SET_CHAR_FIELD", 0x34, 0, 0)
+    set_op(104, "SET_WORD_FIELD", 0x32, 0, 0)
+    set_op(105, "SHL", 0x4A, 0, 0)
+    set_op(106, "SHL1ADD", 0x36, 0, 0)
+    set_op(107, "SHL1_ADD", 0x36, 0, 0)
+    set_op(108, "SHR", 0x4B, 0, 0)
+    set_op(109, "SLICE_APPEND_STR", 0x9B, 0, 0)
+    set_op(110, "SLICE_CAP", 0x72, 0, 0)
+    set_op(111, "SLICE_GET_BYTE", 0x74, 0, 0)
+    set_op(112, "SLICE_GET_WORD", 0x75, 0, 0)
+    set_op(113, "SLICE_LEN", 0x71, 0, 0)
+    set_op(114, "SLICE_NEW", 0x70, 0, 0)
+    set_op(115, "SLICE_SET_WORD", 0x76, 0, 0)
+    set_op(116, "SLICE_SUB", 0x73, 0, 0)
+    set_op(117, "STORE_FIELD", 0x2F, 1, 9)
+    set_op(118, "STORE_GLOBAL", 0x2B, 2, 8)
+    set_op(119, "STORE_LOCAL", 0x29, 1, 7)
+    set_op(120, "STORE_LOCAL_0", 0x24, 0, 0)
+    set_op(121, "STORE_LOCAL_1", 0x25, 0, 0)
+    set_op(122, "STORE_LOCAL_2", 0x26, 0, 0)
+    set_op(123, "STORE_LOCAL_3", 0x27, 0, 0)
+    set_op(124, "STR_APPEND", 0x9A, 0, 0)
+    set_op(125, "STR_CMP", 0x77, 0, 0)
+    set_op(126, "STR_ENDSWITH", 0x79, 0, 0)
+    set_op(127, "STR_FIND", 0x7A, 0, 0)
+    set_op(128, "STR_LSTRIP", 0x7B, 0, 0)
+    set_op(129, "STR_REPLACE_IDENT", 0x7F, 0, 0)
+    set_op(130, "STR_RSTRIP", 0x7C, 0, 0)
+    set_op(131, "STR_SPLITLINES", 0x7E, 0, 0)
+    set_op(132, "STR_STARTSWITH", 0x78, 0, 0)
+    set_op(133, "STR_STRIP", 0x7D, 0, 0)
+    set_op(134, "SUB", 0x41, 0, 0)
+    set_op(135, "SWAP", 0x0F, 0, 0)
+    set_op(136, "SYS_ARGS", 0xC7, 0, 0)
+    set_op(137, "SYS_EXIT", 0xC8, 0, 0)
+    set_op(138, "ZALLOC", 0x37, 0, 0)
+}
+
+
+// -----------------------------------------------------------------------------
+// Symbol Table Queries and Optimizations
+// -----------------------------------------------------------------------------
+
+func find_global(name string) word {
+    for i := word(0); i < num_globals; i++ {
+        if global_names[i] == name {
+            return i
+        }
+    }
+    return 0xFFFF
+}
+
+func find_func(name string) word {
+    for i := word(0); i < num_funcs; i++ {
+        if func_names[i] == name {
+            return i
+        }
+    }
+    return 0xFFFF
+}
+
+func find_var_slot(name string) word {
+    if cur_func_idx < num_funcs {
+        start := func_first_var[cur_func_idx]
+        count := word(func_arg_count[cur_func_idx]) + word(func_local_count[cur_func_idx])
+        for i := word(0); i < count; i++ {
+            if var_names[start + i] == name {
+                return word(var_slots[start + i])
+            }
+        }
+    }
+    if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+        return parse_int_val(name)
+    }
+    return 0xFFFF
+}
+
+func find_label(name string) word {
+    if cur_func_idx < num_funcs {
+        for i := word(0); i < num_labels; i++ {
+            if label_funcs[i] == byte(cur_func_idx) && label_names[i] == name {
+                return label_offsets[i]
+            }
+        }
+    }
+    for i := word(0); i < num_labels; i++ {
+        if label_names[i] == name {
+            return label_offsets[i]
+        }
+    }
+    return 0xFFFF
+}
+
+func try_optimize_local(m string, op string) word {
+    if m == "LOAD_LOCAL" || m == "STORE_LOCAL" {
+        slot := find_var_slot(op)
+        if slot <= 3 {
+            if m == "LOAD_LOCAL" {
+                return 0x20 + slot
+            } else {
+                return 0x24 + slot
+            }
+        }
+    }
+    return 0xFFFF
+}
+
+func finalize_entry_func() {
+    if len(pending_entry_name) > 0 {
+        idx := find_func(pending_entry_name)
+        if idx != 0xFFFF {
+            entry_func_idx = idx
+            return
+        }
+    }
+    if entry_func_idx != 0xFFFF {
+        return
+    }
+    for i := word(0); i < num_funcs; i++ {
+        if func_names[i] == "main" || func_names[i] == "_start" || func_names[i] == "entry" {
+            entry_func_idx = i
+            return
+        }
+    }
+    if num_funcs > 0 {
+        entry_func_idx = 0
+    } else {
+        entry_func_idx = 0
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Binary Output Buffering
+// -----------------------------------------------------------------------------
+
+func bin_write_byte(b byte) {
+    if bin_buf_len >= 256 {
+        bin_flush()
+    }
+    bin_buf[bin_buf_len] = b
+    bin_buf_len++
+}
+
+func bin_write_word(w word) {
+    bin_write_byte(byte(w >> 8))
+    bin_write_byte(byte(w & 255))
+}
+
+func bin_flush() {
+    if bin_buf_len > 0 {
+        _ = file_write(out_file_h, word(&bin_buf[0]), bin_buf_len)
+        bin_buf_len = 0
+    }
+}
+
+func write_tables() {
+    // 1. Header (16 bytes)
+    bin_write_byte('N')
+    bin_write_byte('P')
+    bin_write_byte('C')
+    bin_write_byte(1)
+    bin_write_byte(1) // FormatVer
+    bin_write_byte(0) // Flags
+    bin_write_word(str_pool_len)
+    bin_write_word(num_globals)
+    bin_write_word(num_funcs)
+    bin_write_word(entry_func_idx)
+    bin_write_word(total_code_size)
+
+    // 2. Globals Table (num_globals * 2 bytes)
+    for i := word(0); i < num_globals; i++ {
+        bin_write_word(global_sizes[i])
+    }
+
+    // 3. String Pool (str_pool_len bytes)
+    for i := word(0); i < str_pool_len; i++ {
+        bin_write_byte(str_pool[i])
+    }
+
+    // 4. Function Table (num_funcs * 10 bytes)
+    for i := word(0); i < num_funcs; i++ {
+        bin_write_byte(func_arg_count[i])
+        bin_write_byte(func_local_count[i])
+        bin_write_word(func_frame_size[i])
+        bin_write_word(func_code_offset[i])
+        bin_write_word(func_code_size[i])
+        bin_write_word(func_var_offset[i])
+    }
+
+    // 5. Local Variable Tables
+    for i := word(0); i < num_funcs; i++ {
+        start := func_first_var[i]
+        count := word(func_arg_count[i]) + word(func_local_count[i])
+        for j := word(0); j < count; j++ {
+            bin_write_byte(var_sizes[start + j])
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Assembler Passes
+// -----------------------------------------------------------------------------
+
+func pass1(in_path string) {
+    h, ok := file_open_read(in_path)
+    if ok == 0 {
+        println("Error: cannot open input file", in_path)
+        sys_exit(1)
+    }
+
+    cur_func_idx = 0xFFFF
+    cur_func_code_size = 0
+
+    for {
+        line, eof := file_readline(h)
+        if eof != 0 {
+            break
+        }
+        clean_line := strip_comment(line)
+        if len(clean_line) == 0 {
+            free(line.Base)
+            continue
+        }
+
+        has_lbl := split_label(clean_line)
+        if has_lbl {
+            if cur_func_idx == 0xFFFF {
+                println("Error: label outside function:", split_label_res)
+                sys_exit(1)
+            }
+            if num_labels >= MAX_LABELS {
+                println("Error: MAX_LABELS exceeded")
+                sys_exit(1)
+            }
+            label_names[num_labels] = clone_str(split_label_res)
+            label_offsets[num_labels] = cur_func_code_size
+            label_funcs[num_labels] = byte(cur_func_idx)
+            num_labels++
+
+            clean_line = split_rest_res
+            if len(clean_line) == 0 {
+                free(line.Base)
+                continue
+            }
+        }
+
+        if clean_line[0] == '.' {
+            split_two(clean_line)
+            directive := split_first
+            args := split_second
+
+            if directive == ".global" {
+                split_name_and_size(args)
+                if num_globals >= MAX_GLOBALS {
+                    println("Error: MAX_GLOBALS exceeded")
+                    sys_exit(1)
+                }
+                global_names[num_globals] = clone_str(split_var_name)
+                global_sizes[num_globals] = split_var_size
+                num_globals++
+            } else if directive == ".function" || directive == ".func" {
+                if cur_func_idx != 0xFFFF {
+                    println("Error: nested function definition")
+                    sys_exit(1)
+                }
+                split_two(args)
+                fn_name := split_first
+                is_entry := false
+                if split_second == "entry" || fn_name == "main" {
+                    is_entry = true
+                }
+                if num_funcs >= MAX_FUNCS {
+                    println("Error: MAX_FUNCS exceeded")
+                    sys_exit(1)
+                }
+                cur_func_idx = num_funcs
+                func_names[cur_func_idx] = clone_str(fn_name)
+                func_arg_count[cur_func_idx] = 0
+                func_local_count[cur_func_idx] = 0
+                func_frame_size[cur_func_idx] = 0
+                func_first_var[cur_func_idx] = num_vars
+                cur_func_code_size = 0
+                if is_entry {
+                    entry_func_idx = cur_func_idx
+                }
+                num_funcs++
+            } else if directive == ".endfunction" || directive == ".endfunc" || directive == ".end" {
+                if cur_func_idx == 0xFFFF {
+                    println("Error: .endfunction outside function")
+                    sys_exit(1)
+                }
+                func_code_size[cur_func_idx] = cur_func_code_size
+                cur_func_idx = 0xFFFF
+            } else if directive == ".param" {
+                if cur_func_idx == 0xFFFF {
+                    println("Error: .param outside function")
+                    sys_exit(1)
+                }
+                split_name_and_size(args)
+                if num_vars >= MAX_VARS {
+                    println("Error: MAX_VARS exceeded")
+                    sys_exit(1)
+                }
+                slot := word(func_arg_count[cur_func_idx]) + word(func_local_count[cur_func_idx])
+                var_names[num_vars] = clone_str(split_var_name)
+                var_sizes[num_vars] = byte(split_var_size & 255)
+                var_slots[num_vars] = byte(slot & 255)
+                num_vars++
+                func_arg_count[cur_func_idx]++
+                func_frame_size[cur_func_idx] += split_var_size
+            } else if directive == ".local" {
+                if cur_func_idx == 0xFFFF {
+                    println("Error: .local outside function")
+                    sys_exit(1)
+                }
+                split_name_and_size(args)
+                if num_vars >= MAX_VARS {
+                    println("Error: MAX_VARS exceeded")
+                    sys_exit(1)
+                }
+                slot := word(func_arg_count[cur_func_idx]) + word(func_local_count[cur_func_idx])
+                var_names[num_vars] = clone_str(split_var_name)
+                var_sizes[num_vars] = byte(split_var_size & 255)
+                var_slots[num_vars] = byte(slot & 255)
+                num_vars++
+                func_local_count[cur_func_idx]++
+                func_frame_size[cur_func_idx] += split_var_size
+            } else if directive == ".entry" {
+                pending_entry_name = clone_str(str_strip(args))
+            }
+
+            free(line.Base)
+            continue
+        }
+
+        // Instruction
+        if cur_func_idx == 0xFFFF {
+            println("Error: instruction outside function:", clean_line)
+            sys_exit(1)
+        }
+        split_two(clean_line)
+        mnemonic := split_first
+        operand := split_second
+
+        opt_op := try_optimize_local(mnemonic, operand)
+        if opt_op != 0xFFFF {
+            cur_func_code_size += 1
+        } else {
+            op_idx := find_op(mnemonic)
+            if op_idx == 0xFFFF {
+                println("Error: unknown mnemonic", mnemonic)
+                sys_exit(1)
+            }
+            cur_func_code_size += 1 + word(op_arg_bytes[op_idx])
+            if op_arg_types[op_idx] == 5 { // str16
+                if len(operand) >= 2 && ((operand[0] == '"' && operand[len(operand)-1] == '"') || (operand[0] == ''' && operand[len(operand)-1] == ''')) {
+                    unescape_str(operand)
+                    add_to_string_pool()
+                }
+            }
+        }
+
+        free(line.Base)
+    }
+
+    file_close(h)
+
+    // Compute code offsets and total code size
+    total_code_size = 0
+    for i := word(0); i < num_funcs; i++ {
+        func_code_offset[i] = total_code_size
+        total_code_size += func_code_size[i]
+    }
+
+    // Compute var table offsets
+    current_var_offset := word(0)
+    for i := word(0); i < num_funcs; i++ {
+        func_var_offset[i] = current_var_offset
+        current_var_offset += word(func_arg_count[i]) + word(func_local_count[i])
+    }
+
+    // Finalize entry function
+    finalize_entry_func()
+}
+
+func pass2(in_path string) {
+    h, ok := file_open_read(in_path)
+    if ok == 0 {
+        println("Error: cannot reopen input file", in_path)
+        sys_exit(1)
+    }
+
+    cur_func_idx = 0xFFFF
+    cur_func_pc = 0
+
+    for {
+        line, eof := file_readline(h)
+        if eof != 0 {
+            break
+        }
+        clean_line := strip_comment(line)
+        if len(clean_line) == 0 {
+            free(line.Base)
+            continue
+        }
+
+        has_lbl := split_label(clean_line)
+        if has_lbl {
+            clean_line = split_rest_res
+            if len(clean_line) == 0 {
+                free(line.Base)
+                continue
+            }
+        }
+
+        if clean_line[0] == '.' {
+            split_two(clean_line)
+            directive := split_first
+            args := split_second
+
+            if directive == ".function" || directive == ".func" {
+                split_two(args)
+                fn_name := split_first
+                cur_func_idx = find_func(fn_name)
+                cur_func_pc = 0
+            } else if directive == ".endfunction" || directive == ".endfunc" || directive == ".end" {
+                cur_func_idx = 0xFFFF
+            }
+
+            free(line.Base)
+            continue
+        }
+
+        // Instruction
+        split_two(clean_line)
+        mnemonic := split_first
+        operand := split_second
+
+        opt_op := try_optimize_local(mnemonic, operand)
+        if opt_op != 0xFFFF {
+            bin_write_byte(byte(opt_op & 255))
+            cur_func_pc += 1
+        } else {
+            op_idx := find_op(mnemonic)
+            if op_idx == 0xFFFF {
+                println("Error in Pass 2: unknown mnemonic", mnemonic)
+                sys_exit(1)
+            }
+            op_byte := op_bytes[op_idx]
+            arg_type := op_arg_types[op_idx]
+            bin_write_byte(op_byte)
+
+            if arg_type == 0 { // none
+                cur_func_pc += 1
+            } else if arg_type == 1 || arg_type == 2 || arg_type == 9 { // imm8_s, imm8_u, field8
+                val := parse_int_val(operand)
+                bin_write_byte(byte(val & 255))
+                cur_func_pc += 2
+            } else if arg_type == 7 { // local8
+                slot := find_var_slot(operand)
+                if slot == 0xFFFF {
+                    println("Error: undefined local variable", operand, "in function", func_names[cur_func_idx])
+                    sys_exit(1)
+                }
+                bin_write_byte(byte(slot & 255))
+                cur_func_pc += 2
+            } else if arg_type == 3 { // imm16
+                val := parse_int_val(operand)
+                bin_write_word(val)
+                cur_func_pc += 3
+            } else if arg_type == 4 { // rel16
+                target_pc := find_label(operand)
+                if target_pc == 0xFFFF {
+                    println("Error: undefined label", operand, "in function", func_names[cur_func_idx])
+                    sys_exit(1)
+                }
+                current_next_pc := cur_func_pc + 3
+                rel := target_pc - current_next_pc
+                bin_write_word(rel)
+                cur_func_pc += 3
+            } else if arg_type == 5 { // str16
+                pool_off := word(0)
+                if len(operand) >= 2 && ((operand[0] == '"' && operand[len(operand)-1] == '"') || (operand[0] == ''' && operand[len(operand)-1] == ''')) {
+                    unescape_str(operand)
+                    pool_off = add_to_string_pool()
+                } else {
+                    pool_off = parse_int_val(operand)
+                }
+                bin_write_word(pool_off)
+                cur_func_pc += 3
+            } else if arg_type == 6 { // func16
+                fn_idx := find_func(operand)
+                if fn_idx == 0xFFFF {
+                    println("Error: undefined function", operand)
+                    sys_exit(1)
+                }
+                bin_write_word(fn_idx)
+                cur_func_pc += 3
+            } else if arg_type == 8 { // global16
+                g_idx := find_global(operand)
+                if g_idx == 0xFFFF {
+                    println("Error: undefined global", operand)
+                    sys_exit(1)
+                }
+                bin_write_word(g_idx)
+                cur_func_pc += 3
+            }
+        }
+
+        free(line.Base)
+    }
+
+    file_close(h)
+}
+
+func default_output_name(path string) string {
+    dot := word(0xFFFF)
+    slash := word(0xFFFF)
+    for i := word(0); i < word(len(path)); i++ {
+        if path[i] == '/' || path[i] == '\\' {
+            slash = i
+        } else if path[i] == '.' {
+            dot = i
+        }
+    }
+    buf_clear()
+    if dot != 0xFFFF && (slash == 0xFFFF || dot > slash) {
+        buf_append(path[0:dot])
+    } else {
+        buf_append(path)
+    }
+    buf_append(".npc")
+    return clone_str(buf_str())
+}
+
+func assemble(in_path string, out_path string) {
+    num_globals = 0
+    num_funcs = 0
+    num_vars = 0
+    num_labels = 0
+    num_strings = 0
+    str_pool_len = 0
+    entry_func_idx = 0xFFFF
+    pending_entry_name = ""
+    bin_buf_len = 0
+
+    // PASS 1
+    pass1(in_path)
+
+    // Open output file
+    h, ok := file_open_write(out_path)
+    if ok == 0 {
+        println("Error: cannot open output file for writing", out_path)
+        sys_exit(1)
+    }
+    out_file_h = h
+
+    // Write tables
+    write_tables()
+
+    // PASS 2
+    pass2(in_path)
+
+    // Flush and close
+    bin_flush()
+    file_close(out_file_h)
+
+    println("Assembled", in_path, "->", out_path)
+}
+
+func main() {
+    init_opcodes()
+
+    args := sys_args()
+    if args.Len() == 0 {
+        println("Usage: npasm <input.npasm> [-o <output.npc>]")
+        sys_exit(1)
+    }
+
+    in_file := ""
+    out_file := ""
+
+    i := word(0)
+    for i < args.Len() {
+        arg := args.Get(i)
+        if arg == "-o" {
+            if i + 1 < args.Len() {
+                out_file = args.Get(i + 1)
+                i += 2
+            } else {
+                i++
+            }
+        } else if arg == "--listing" || arg == "-v" || arg == "--verbose" {
+            i++
+        } else {
+            if len(in_file) == 0 {
+                in_file = arg
+            }
+            i++
+        }
+    }
+
+    if len(in_file) == 0 {
+        println("Error: no input file specified")
+        sys_exit(1)
+    }
+
+    if len(out_file) == 0 {
+        out_file = default_output_name(in_file)
+    }
+
+    assemble(in_file, out_file)
+}
