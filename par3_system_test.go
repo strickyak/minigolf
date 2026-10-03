@@ -52,6 +52,22 @@ func getPar3TestsDir() string {
 	return "par3-tests"
 }
 
+func cleanPar3Output(out string) []string {
+	lines := strings.Split(out, "\n")
+	var result []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
 func testPar3Backend(t *testing.T, sourceFile, expectedStr string, expectCompileError, expectRunError bool) {
 	stem := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(sourceFile), ".par3"), ".golf")
 	variantDir := "par3_" + stem + ".dir"
@@ -108,10 +124,10 @@ func testPar3Backend(t *testing.T, sourceFile, expectedStr string, expectCompile
 		t.Fatalf("Expected run error for %s but execution succeeded", sourceFile)
 	}
 
-	// 4. Compare output using cleanOutput from system_test.go
+	// 4. Compare output
 	out := stdout.String()
-	actualLines := cleanOutput(out)
-	expectedLines := cleanOutput(expectedStr)
+	actualLines := cleanPar3Output(out)
+	expectedLines := cleanPar3Output(expectedStr)
 
 	actual := strings.Join(actualLines, ";")
 	expected := strings.Join(expectedLines, ";")
