@@ -2559,8 +2559,14 @@ func (g *Generator) inferCallReturnType(expr ast.Expression, retIdx int) TypeKin
 	}
 
 	if id, ok := call.Function.(*ast.Identifier); ok {
+		if id.Value == "file_readline" {
+			if retIdx == 0 {
+				return KindSlice
+			}
+			return KindScalar
+		}
 		switch id.Value {
-		case "rstrip", "lstrip", "strip", "replace_ident", "splitlines", "file_readline", "sys_args", "make", "makeslice", "strdup":
+		case "rstrip", "lstrip", "strip", "replace_ident", "splitlines", "sys_args", "make", "makeslice", "strdup":
 			return KindSlice
 		case "len", "cap", "find", "startswith", "endswith", "strcmp", "streq", "file_open", "file_create", "file_open_read", "file_open_write", "file_read", "file_write", "file_close", "os_isfile", "os_makedirs", "alloc", "free", "peek", "poke", "byte", "word", "int", "uint", "bool":
 			return KindScalar

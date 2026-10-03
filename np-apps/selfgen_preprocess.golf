@@ -1,0 +1,1167 @@
+package main
+
+// Constants
+const MAX_SYMS      = 512
+const MAX_RENAMES   = 128
+const MAX_PROTECTED = 1024
+const MAX_FILES     = 48
+const MAX_LOCALS    = 32
+
+// Protected symbol table
+var protected_syms [MAX_PROTECTED]string
+var num_protected  word
+
+// Defined symbols in Pass 1
+var syms     [MAX_SYMS]string
+var sym_pfx  [MAX_SYMS]string
+var num_syms word
+
+var prefixes [MAX_SYMS]string
+var num_pfx  word
+
+// Colliding renames for Pass 2 (parallel arrays)
+var rename_old  [MAX_RENAMES]string
+var rename_new  [MAX_RENAMES]string
+var num_renames word
+
+// Group file list
+var file_paths [MAX_FILES]string
+var num_files  word
+
+// Local label state (parallel arrays)
+var local_name  [MAX_LOCALS]string
+var local_lbl   [MAX_LOCALS]string
+var local_def   [MAX_LOCALS]bool
+var num_locals  word
+var global_inst word
+
+// General line buffer
+var out_buf [256]byte
+var out_len word
+
+func buf_clear() {
+    out_len = 0
+}
+
+func buf_append(s string) {
+    for i := word(0); i < word(len(s)); i++ {
+        if out_len < 255 {
+            out_buf[out_len] = s[i]
+            out_len++
+        }
+    }
+}
+
+func buf_append_byte(b byte) {
+    if out_len < 255 {
+        out_buf[out_len] = b
+        out_len++
+    }
+}
+
+func buf_str() string {
+    var res string
+    res.Base = word(&out_buf[0])
+    res.Cap = 256
+    res.Len = out_len
+    return res
+}
+
+func clone_str(s string) string {
+    if len(s) == 0 {
+        return ""
+    }
+    p := alloc(word(len(s)))
+    for i := word(0); i < word(len(s)); i++ {
+        pokeb(p + i, s[i])
+    }
+    var res string
+    res.Base = p
+    res.Cap = word(len(s))
+    res.Len = word(len(s))
+    return res
+}
+
+func isspace(c byte) bool {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+func toupper(c byte) byte {
+    if c >= 'a' && c <= 'z' {
+        return c - 32
+    }
+    return c
+}
+
+func is_ident_char(c byte) bool {
+    if c >= 'A' && c <= 'Z' { return true }
+    if c >= 'a' && c <= 'z' { return true }
+    if c >= '0' && c <= '9' { return true }
+    if c == '_' || c == '.' { return true }
+    return false
+}
+
+func is_word_bound(s string, pos word) bool {
+    if pos >= word(len(s)) {
+        return true
+    }
+    return !is_ident_char(s[pos])
+}
+
+func is_fcc_or_fcs(op string) bool {
+    if len(op) != 3 {
+        return false
+    }
+    b0 := op[0]
+    b1 := op[1]
+    b2 := op[2]
+    if b0 != 'F' && b0 != 'f' { return false }
+    if b1 != 'C' && b1 != 'c' { return false }
+    if b2 == 'C' || b2 == 'c' || b2 == 'S' || b2 == 's' { return true }
+    return false
+}
+
+func str_case_cmp(s string, upper_s string) word {
+    l1 := word(len(s))
+    l2 := word(len(upper_s))
+    min_l := l1
+    if l2 < min_l {
+        min_l = l2
+    }
+    for i := word(0); i < min_l; i++ {
+        c1 := toupper(s[i])
+        c2 := upper_s[i]
+        if c1 < c2 {
+            return 0xFFFF
+        }
+        if c1 > c2 {
+            return 1
+        }
+    }
+    if l1 == l2 {
+        return 0
+    }
+    if l1 < l2 {
+        return 0xFFFF
+    }
+    return 1
+}
+
+func to_upper_str(s string) string {
+    if len(s) == 0 {
+        return ""
+    }
+    p := alloc(word(len(s)))
+    for i := word(0); i < word(len(s)); i++ {
+        pokeb(p + i, toupper(s[i]))
+    }
+    var res string
+    res.Base = p
+    res.Cap = word(len(s))
+    res.Len = word(len(s))
+    return res
+}
+
+func upper8(s string) string {
+    max_len := word(len(s))
+    if max_len > 8 {
+        max_len = 8
+    }
+    p := alloc(max_len)
+    for i := word(0); i < max_len; i++ {
+        pokeb(p + i, toupper(s[i]))
+    }
+    var res string
+    res.Base = p
+    res.Cap = max_len
+    res.Len = max_len
+    return res
+}
+
+func format_local_label(id word, name string) string {
+    n_len := word(0)
+    for i := word(0); i < word(len(name)) && n_len < 2; i++ {
+        n_len++
+    }
+    tot := 5 + n_len
+    p := alloc(tot)
+    pokeb(p, 'L')
+    pokeb(p + 1, byte('0' + (id / 1000) % 10))
+    pokeb(p + 2, byte('0' + (id / 100) % 10))
+    pokeb(p + 3, byte('0' + (id / 10) % 10))
+    pokeb(p + 4, byte('0' + id % 10))
+    idx := word(0)
+    for i := word(0); i < word(len(name)) && idx < 2; i++ {
+        c := name[i]
+        if c == '.' { c = '_' }
+        pokeb(p + 5 + idx, c)
+        idx++
+    }
+    var res string
+    res.Base = p
+    res.Cap = tot
+    res.Len = tot
+    return res
+}
+
+func format_X(id word) string {
+    p := alloc(6)
+    pokeb(p, 'X')
+    pokeb(p + 1, byte('0' + (id / 10000) % 10))
+    pokeb(p + 2, byte('0' + (id / 1000) % 10))
+    pokeb(p + 3, byte('0' + (id / 100) % 10))
+    pokeb(p + 4, byte('0' + (id / 10) % 10))
+    pokeb(p + 5, byte('0' + id % 10))
+    var res string
+    res.Base = p
+    res.Cap = 6
+    res.Len = 6
+    return res
+}
+
+func path_basename(p string) string {
+    last_slash := word(0xFFFF)
+    for i := word(0); i < word(len(p)); i++ {
+        if p[i] == '/' {
+            last_slash = i
+        }
+    }
+    if last_slash < 0xFFFF {
+        return p[last_slash + 1 : word(len(p))]
+    }
+    return p
+}
+
+func str_replace(s string, old_sub string, new_sub string) string {
+    if find(s, old_sub, 0) >= 0xFFFF {
+        return s
+    }
+    buf_clear()
+    cur := word(0)
+    for {
+        next_pos := find(s, old_sub, cur)
+        if next_pos >= 0xFFFF {
+            buf_append(s[cur:word(len(s))])
+            break
+        }
+        buf_append(s[cur:next_pos])
+        buf_append(new_sub)
+        cur = next_pos + word(len(old_sub))
+    }
+    return clone_str(buf_str())
+}
+
+func replace_char(s string, from_char byte, to_char byte) string {
+    has_char := false
+    for i := word(0); i < word(len(s)); i++ {
+        if s[i] == from_char {
+            has_char = true
+            break
+        }
+    }
+    if !has_char {
+        return s
+    }
+    buf_clear()
+    for i := word(0); i < word(len(s)); i++ {
+        c := s[i]
+        if c == from_char {
+            buf_append_byte(to_char)
+        } else {
+            buf_append_byte(c)
+        }
+    }
+    return clone_str(buf_str())
+}
+
+func strip_char_lit_quotes(s string) string {
+    has_pattern := false
+    if len(s) >= 4 {
+        for i := word(0); i <= word(len(s) - 4); i++ {
+            if s[i] == '#' && s[i+1] == '\'' && s[i+3] == '\'' {
+                has_pattern = true
+                break
+            }
+        }
+    }
+    if !has_pattern {
+        return s
+    }
+    buf_clear()
+    i := word(0)
+    for i < word(len(s)) {
+        if i <= word(len(s) - 4) && s[i] == '#' && s[i+1] == '\'' && s[i+3] == '\'' {
+            buf_append_byte('#')
+            buf_append_byte('\'')
+            buf_append_byte(s[i+2])
+            i += 4
+        } else {
+            buf_append_byte(s[i])
+            i++
+        }
+    }
+    return clone_str(buf_str())
+}
+
+func parse_asm_int(s string) (word, bool) {
+    if len(s) == 0 {
+        return 0, false
+    }
+    val := word(0)
+    pos := word(0)
+    if s[0] == '$' {
+        pos = 1
+        if pos >= word(len(s)) { return 0, false }
+        for pos < word(len(s)) {
+            c := s[pos]
+            d := word(0)
+            if c >= '0' && c <= '9' {
+                d = word(c - '0')
+            } else if c >= 'A' && c <= 'F' {
+                d = word(c - 'A' + 10)
+            } else if c >= 'a' && c <= 'f' {
+                d = word(c - 'a' + 10)
+            } else {
+                return 0, false
+            }
+            val = (val << 4) | d
+            pos++
+        }
+        return val, true
+    }
+    if len(s) >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
+        pos = 2
+        if pos >= word(len(s)) { return 0, false }
+        for pos < word(len(s)) {
+            c := s[pos]
+            d := word(0)
+            if c >= '0' && c <= '9' {
+                d = word(c - '0')
+            } else if c >= 'A' && c <= 'F' {
+                d = word(c - 'A' + 10)
+            } else if c >= 'a' && c <= 'f' {
+                d = word(c - 'a' + 10)
+            } else {
+                return 0, false
+            }
+            val = (val << 4) | d
+            pos++
+        }
+        return val, true
+    }
+    for pos < word(len(s)) {
+        c := s[pos]
+        if c < '0' || c > '9' {
+            return 0, false
+        }
+        val = val * 10 + word(c - '0')
+        pos++
+    }
+    return val, true
+}
+
+// -----------------------------------------------------------------------------
+// Protected Symbols
+// -----------------------------------------------------------------------------
+func add_protected_lit(sym string) {
+    if num_protected < MAX_PROTECTED {
+        protected_syms[num_protected] = sym
+        num_protected++
+    }
+}
+
+func add_protected_defs(sym string) {
+    if num_protected < MAX_PROTECTED {
+        protected_syms[num_protected] = to_upper_str(sym)
+        num_protected++
+    }
+}
+
+func load_default_protected() {
+    add_protected_lit("A"); add_protected_lit("B"); add_protected_lit("CC"); add_protected_lit("D")
+    add_protected_lit("DP"); add_protected_lit("E"); add_protected_lit("F"); add_protected_lit("W")
+    add_protected_lit("X"); add_protected_lit("Y"); add_protected_lit("U"); add_protected_lit("S")
+    add_protected_lit("PC"); add_protected_lit("PCR"); add_protected_lit("EQU"); add_protected_lit("SET")
+    add_protected_lit("RMB"); add_protected_lit("FCB"); add_protected_lit("FDB"); add_protected_lit("FQB")
+    add_protected_lit("FCC"); add_protected_lit("FCS"); add_protected_lit("USE"); add_protected_lit("NAM")
+    add_protected_lit("TTL"); add_protected_lit("MOD"); add_protected_lit("EMOD"); add_protected_lit("END")
+    add_protected_lit("ORG"); add_protected_lit("IFEQ"); add_protected_lit("IFNE"); add_protected_lit("IFGT")
+    add_protected_lit("IFGE"); add_protected_lit("IFLT"); add_protected_lit("IFLE"); add_protected_lit("IFP1")
+    add_protected_lit("IFDEF"); add_protected_lit("IFNDF"); add_protected_lit("IFNDEF"); add_protected_lit("ELSE")
+    add_protected_lit("ENDC"); add_protected_lit("ENDIF")
+}
+
+func sort_protected() {
+    for i := word(1); i < num_protected; i++ {
+        key := protected_syms[i]
+        j := i
+        for j > 0 && strcmp(protected_syms[j-1], key) == 1 {
+            protected_syms[j] = protected_syms[j-1]
+            j--
+        }
+        protected_syms[j] = key
+    }
+    // Remove duplicates
+    if num_protected > 1 {
+        wr := word(1)
+        for rd := word(1); rd < num_protected; rd++ {
+            if protected_syms[rd] != protected_syms[wr-1] {
+                protected_syms[wr] = protected_syms[rd]
+                wr++
+            }
+        }
+        num_protected = wr
+    }
+}
+
+func is_protected(sym string) bool {
+    low := word(0)
+    high := num_protected
+    for low < high {
+        mid := (low + high) / 2
+        cmp := str_case_cmp(sym, protected_syms[mid])
+        if cmp == 0 {
+            return true
+        }
+        if cmp == 0xFFFF {
+            high = mid
+        } else {
+            low = mid + 1
+        }
+    }
+    return false
+}
+
+func load_defs(defs_path string) {
+    h, ok := file_open(defs_path)
+    if !ok {
+        return
+    }
+    for {
+        line, eof := file_readline(h)
+        if eof != 0 {
+            break
+        }
+        lbl := extract_col0_label(line)
+        if len(lbl) > 0 && !is_local_or_l_label(lbl) {
+            add_protected_defs(lbl)
+        }
+        free(line.Base)
+    }
+    file_close(h)
+    sort_protected()
+}
+
+// -----------------------------------------------------------------------------
+// Assembly Line Splitting & Label Extraction
+// -----------------------------------------------------------------------------
+func extract_col0_label(line string) string {
+    s := rstrip(line, "\r\n")
+    if len(s) == 0 || isspace(s[0]) || s[0] == '*' || s[0] == ';' {
+        return ""
+    }
+    pos := word(0)
+    for pos < word(len(s)) && is_ident_char(s[pos]) {
+        pos++
+    }
+    if pos < word(len(s)) && s[pos] == '@' {
+        pos++
+    }
+    return s[0:pos]
+}
+
+func is_local_or_l_label(lbl string) bool {
+    if len(lbl) == 0 {
+        return false
+    }
+    if lbl[len(lbl)-1] == '@' {
+        return true
+    }
+    if lbl[0] == 'L' && len(lbl) >= 5 {
+        all_digits := true
+        for i := word(1); i <= 4; i++ {
+            if lbl[i] < '0' || lbl[i] > '9' {
+                all_digits = false
+                break
+            }
+        }
+        if all_digits {
+            return true
+        }
+    }
+    return false
+}
+
+func split_asm_line(line string) (string, string) {
+    s := rstrip(line, "\r\n")
+    s_strip := lstrip(s, " \t")
+    if len(s) == 0 || s_strip[0] == '*' || s_strip[0] == ';' {
+        return "", line
+    }
+
+    pos := word(0)
+    if !isspace(s[0]) {
+        for pos < word(len(s)) && !isspace(s[pos]) {
+            pos++
+        }
+    }
+
+    for pos < word(len(s)) && isspace(s[pos]) {
+        pos++
+    }
+    if pos >= word(len(s)) {
+        return s, ""
+    }
+
+    op_start := pos
+    for pos < word(len(s)) && !isspace(s[pos]) {
+        pos++
+    }
+    op := s[op_start:pos]
+
+    for pos < word(len(s)) && isspace(s[pos]) {
+        pos++
+    }
+    if pos >= word(len(s)) {
+        return s, ""
+    }
+
+    if is_fcc_or_fcs(op) {
+        delim := s[pos:pos+1]
+        end_pos := find(s, delim, pos + 1)
+        if end_pos < 0xFFFF {
+            pos = end_pos + 1
+        } else {
+            pos = word(len(s))
+        }
+    } else {
+        for pos < word(len(s)) && !isspace(s[pos]) {
+            pos++
+        }
+    }
+
+    return s[0:pos], s[pos:word(len(s))]
+}
+
+// -----------------------------------------------------------------------------
+// Local Label Management (@-labels)
+// -----------------------------------------------------------------------------
+func find_local(name string) word {
+    for i := word(0); i < num_locals; i++ {
+        if local_name[i] == name {
+            return i
+        }
+    }
+    return 0xFFFF
+}
+
+func add_local(name string, label string, def bool) {
+    if num_locals < MAX_LOCALS {
+        local_name[num_locals] = clone_str(name)
+        local_lbl[num_locals] = label
+        local_def[num_locals] = def
+        num_locals++
+    }
+}
+
+func repl_locals(code string) string {
+    // 1. Definition at col 0
+    if len(code) > 0 && !isspace(code[0]) {
+        pos := word(0)
+        for pos < word(len(code)) && is_ident_char(code[pos]) {
+            pos++
+        }
+        if pos < word(len(code)) && code[pos] == '@' {
+            name := code[0:pos]
+            idx := find_local(name)
+            if idx < 0xFFFF && local_def[idx] {
+                global_inst++
+                local_lbl[idx] = format_local_label(global_inst, name)
+                local_def[idx] = true
+            } else if idx < 0xFFFF {
+                local_def[idx] = true
+            } else {
+                global_inst++
+                l_str := format_local_label(global_inst, name)
+                add_local(name, l_str, true)
+            }
+        }
+    }
+
+    if find(code, "@", 0) >= 0xFFFF {
+        return code
+    }
+
+    // 2. Replace all name@ in code
+    buf_clear()
+    pos := word(0)
+    for pos < word(len(code)) {
+        at_idx := find(code, "@", pos)
+        if at_idx >= 0xFFFF {
+            buf_append(code[pos:word(len(code))])
+            break
+        }
+        ident_start := at_idx
+        for ident_start > pos && is_ident_char(code[ident_start-1]) {
+            ident_start--
+        }
+        if ident_start == at_idx {
+            buf_append(code[pos : at_idx+1])
+            pos = at_idx + 1
+            continue
+        }
+        buf_append(code[pos:ident_start])
+        name := code[ident_start:at_idx]
+        idx := find_local(name)
+        var repl string
+        if idx < 0xFFFF {
+            repl = local_lbl[idx]
+        } else {
+            global_inst++
+            repl = format_local_label(global_inst, name)
+            add_local(name, repl, false)
+        }
+        buf_append(repl)
+        pos = at_idx + 1
+    }
+    return clone_str(buf_str())
+}
+
+// -----------------------------------------------------------------------------
+// Pass 1: Symbol Collection & Collision Analysis
+// -----------------------------------------------------------------------------
+func add_defined_symbol(lbl string) {
+    for i := word(0); i < num_syms; i++ {
+        if syms[i] == lbl {
+            return
+        }
+    }
+    if num_syms < MAX_SYMS {
+        syms[num_syms] = clone_str(lbl)
+        sym_pfx[num_syms] = upper8(lbl)
+        num_syms++
+    }
+}
+
+func pass1_scan_file(path string) {
+    h, ok := file_open(path)
+    if !ok {
+        return
+    }
+    for {
+        line, eof := file_readline(h)
+        if eof != 0 {
+            break
+        }
+        lbl := extract_col0_label(line)
+        if len(lbl) > 0 && !is_local_or_l_label(lbl) {
+            if !is_protected(lbl) {
+                add_defined_symbol(lbl)
+            }
+        }
+        free(line.Base)
+    }
+    file_close(h)
+}
+
+func compute_collisions() {
+    num_pfx = 0
+
+    for i := word(0); i < num_syms; i++ {
+        pfx := sym_pfx[i]
+        found := false
+        for p := word(0); p < num_pfx; p++ {
+            if prefixes[p] == pfx {
+                found = true
+                break
+            }
+        }
+        if !found && num_pfx < MAX_SYMS {
+            prefixes[num_pfx] = pfx
+            num_pfx++
+        }
+    }
+
+    // Sort prefixes alphabetically
+    for i := word(1); i < num_pfx; i++ {
+        key := prefixes[i]
+        j := i
+        for j > 0 && strcmp(prefixes[j-1], key) == 1 {
+            prefixes[j] = prefixes[j-1]
+            j--
+        }
+        prefixes[j] = key
+    }
+
+    rename_counter := word(1)
+    num_renames = 0
+
+    for p := word(0); p < num_pfx; p++ {
+        pfx := prefixes[p]
+        count := word(0)
+        for i := word(0); i < num_syms; i++ {
+            if sym_pfx[i] == pfx {
+                count++
+            }
+        }
+        if count > 1 {
+            seen_idx := word(0)
+            for i := word(0); i < num_syms; i++ {
+                if sym_pfx[i] == pfx {
+                    s := syms[i]
+                    if seen_idx == 0 && len(s) <= 8 && sym_pfx[i] == pfx {
+                        seen_idx++
+                        continue
+                    }
+                    if num_renames < MAX_RENAMES {
+                        rename_old[num_renames] = s
+                        rename_new[num_renames] = format_X(rename_counter)
+                        rename_counter++
+                        num_renames++
+                    }
+                    seen_idx++
+                }
+            }
+        }
+    }
+
+    // Sort renames by len(Old) descending
+    for i := word(1); i < num_renames; i++ {
+        k_old := rename_old[i]
+        k_new := rename_new[i]
+        k_len := len(k_old)
+        j := i
+        for j > 0 && len(rename_old[j-1]) < k_len {
+            rename_old[j] = rename_old[j-1]
+            rename_new[j] = rename_new[j-1]
+            j--
+        }
+        rename_old[j] = k_old
+        rename_new[j] = k_new
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Pass 2: Stream-Oriented Line Transformation
+// -----------------------------------------------------------------------------
+var in_ifp1_defsfile bool
+
+func write_truncated(out_h word, code_part string, comment_part string) {
+    avail := 0
+    if len(code_part) < 78 {
+        avail = 78 - len(code_part)
+    }
+    if len(comment_part) > avail {
+        comment_part = comment_part[0:avail]
+    }
+    file_write(out_h, code_part)
+    file_write(out_h, comment_part)
+    file_write(out_h, "\n")
+}
+
+func transform_line(out_h word, line string) {
+    stripped := strip(line, " \t\r\n")
+
+    // 1. Blank line
+    if len(stripped) == 0 {
+        num_locals = 0
+        file_write(out_h, "\n")
+        return
+    }
+
+    // 2. Comments in col 0
+    if startswith(stripped, ";") {
+        clean := lstrip(stripped, "; \t")
+        buf_clear()
+        buf_append("*")
+        buf_append(clean)
+        res := buf_str()
+        if len(res) > 78 { res = res[0:78] }
+        file_write(out_h, res)
+        file_write(out_h, "\n")
+        return
+    }
+    if startswith(stripped, "*") {
+        clean := stripped[1:len(stripped)]
+        buf_clear()
+        buf_append("*")
+        buf_append(clean)
+        res := buf_str()
+        if len(res) > 78 { res = res[0:78] }
+        file_write(out_h, res)
+        file_write(out_h, "\n")
+        return
+    }
+
+    s_lead := lstrip(line, " \t")
+
+    // 3. dts
+    if (startswith(s_lead, "dts") || startswith(s_lead, "DTS")) && is_word_bound(s_lead, 3) {
+        file_write(out_h, "                    fcc       \"Wed Sep 30 22:41:09 2026\"\n")
+        return
+    }
+
+    // 4. use (os9.d|scf.d|rbf.d)
+    if (startswith(s_lead, "use") || startswith(s_lead, "USE")) && isspace(s_lead[3]) {
+        rem := lstrip(s_lead[3:len(s_lead)], " \t")
+        if startswith(rem, "os9.d") || startswith(rem, "scf.d") || startswith(rem, "rbf.d") {
+            file_write(out_h, "                    use       defsfile\n")
+            return
+        }
+    }
+
+    // 5. in_ifp1_defsfile check
+    if in_ifp1_defsfile && (startswith(s_lead, "endc") || startswith(s_lead, "ENDC")) && is_word_bound(s_lead, 4) {
+        file_write(out_h, "* [selfgen: stripped ENDC around defsfile]\n")
+        in_ifp1_defsfile = false
+        return
+    }
+
+    // 6. IFNDEF -> IFNDF
+    if find(line, "IFNDEF", 0) < 0xFFFF {
+        line = replace_ident(line, "IFNDEF", "IFNDF")
+    }
+    if find(line, "ifndef", 0) < 0xFFFF {
+        line = replace_ident(line, "ifndef", "IFNDF")
+    }
+
+    // 7. endif ->  endc
+    if (startswith(s_lead, "endif") || startswith(s_lead, "ENDIF")) && is_word_bound(s_lead, 5) {
+        buf_clear()
+        buf_append(" endc")
+        buf_append(s_lead[5:len(s_lead)])
+        line = buf_str()
+    }
+
+    // 8. Trailing quote on character literals #'0' -> #'0
+    line = strip_char_lit_quotes(line)
+
+    // 9. ERROR directive
+    if isspace(line[0]) {
+        sl := lstrip(line, " \t")
+        if (startswith(sl, "ERROR") || startswith(sl, "error")) && is_word_bound(sl, 5) {
+            buf_clear()
+            buf_append("* [selfgen: ERROR directive skipped in asm]: ")
+            tr := strip(line, " \t\r\n")
+            if len(tr) > 50 {
+                buf_append(tr[0:50])
+            } else {
+                buf_append(tr)
+            }
+            buf_append("\n")
+            file_write(out_h, buf_str())
+            return
+        }
+    }
+
+    // 10. CLOCK_AND_STOP
+    line = str_replace(line, "CLOCK_AND_STOP.Exit0", "CAS.Ex0")
+    line = str_replace(line, "CLOCK_AND_STOP.Exit1", "CAS.Ex1")
+    line = str_replace(line, "CLOCK_AND_STOP.", "CAS.")
+    if find(line, "CAS.Value", 0) < 0xFFFF {
+        line = str_replace(line, "(CAS.R6Hz|CAS.IRQEn|CAS.Tick)", "$23")
+        line = str_replace(line, "(CLOCK_AND_STOP.R6Hz|CLOCK_AND_STOP.IRQEn|CLOCK_AND_STOP.Tick)", "$23")
+    }
+
+    // 11. fill <val>,<count>
+    pos := word(0)
+    for pos < word(len(line)) && isspace(line[pos]) {
+        pos++
+    }
+    indent := line[0:pos]
+    lbl := ""
+    if pos == 0 {
+        for pos < word(len(line)) && !isspace(line[pos]) {
+            pos++
+        }
+        lbl = line[0:pos]
+        for pos < word(len(line)) && isspace(line[pos]) {
+            pos++
+        }
+    }
+    op_start := pos
+    for pos < word(len(line)) && !isspace(line[pos]) {
+        pos++
+    }
+    op := line[op_start:pos]
+    if (op == "fill" || op == "FILL") && is_word_bound(line, pos) {
+        for pos < word(len(line)) && isspace(line[pos]) {
+            pos++
+        }
+        comma := find(line, ",", pos)
+        if comma < 0xFFFF {
+            val := strip(line[pos:comma], " \t")
+            semi := find(line, ";", comma + 1)
+            var count_raw string
+            if semi < 0xFFFF {
+                count_raw = line[comma + 1 : semi]
+            } else {
+                count_raw = line[comma + 1 : word(len(line))]
+            }
+            count_str := strip(count_raw, " \t\r\n")
+            c, ok := parse_asm_int(count_str)
+            if ok {
+                if len(lbl) > 0 {
+                    file_write(out_h, lbl)
+                    file_write(out_h, " ")
+                }
+                file_write(out_h, "* PREPROCESSED FILL: ")
+                file_write(out_h, val)
+                file_write(out_h, ", ")
+                file_write(out_h, count_str)
+                file_write(out_h, "\n")
+                for c > 0 {
+                    chunk := c
+                    if chunk > 16 { chunk = 16 }
+                    file_write(out_h, indent)
+                    file_write(out_h, " fcb ")
+                    for k := word(0); k < chunk; k++ {
+                        if k > 0 { file_write(out_h, ",") }
+                        file_write(out_h, val)
+                    }
+                    file_write(out_h, "\n")
+                    c -= chunk
+                }
+                return
+            } else {
+                if len(lbl) > 0 {
+                    file_write(out_h, lbl)
+                    file_write(out_h, " equ *\n")
+                }
+                file_write(out_h, "* [selfgen: symbolic fill skipped in asm]\n")
+                return
+            }
+        }
+    }
+
+    // 12. Split code and comment
+    code_part, comment_part := split_asm_line(line)
+
+    // 13. Replace local @ labels in code_part
+    code_part = repl_locals(code_part)
+
+    // 14. Convert bitwise OR '|' to '!' in code_part (skip FCC/FCS)
+    s_c := lstrip(code_part, " \t")
+    op_c := ""
+    if len(s_c) > 0 {
+        p := word(0)
+        for p < word(len(s_c)) && !isspace(s_c[p]) { p++ }
+        for p < word(len(s_c)) && isspace(s_c[p]) { p++ }
+        p_start := p
+        for p < word(len(s_c)) && !isspace(s_c[p]) { p++ }
+        op_c = s_c[p_start:p]
+    }
+    if !is_fcc_or_fcs(op_c) {
+        code_part = replace_char(code_part, '|', '!')
+    }
+
+    // Phase 1 comment truncation (matches Python preprocess_content)
+    avail := word(0)
+    if word(len(code_part)) < 78 {
+        avail = 78 - word(len(code_part))
+    }
+    if word(len(comment_part)) > avail {
+        comment_part = comment_part[0:avail]
+    }
+
+    // 15. Collision renaming in code_part
+    for r := word(0); r < num_renames; r++ {
+        if find(code_part, rename_old[r], 0) < 0xFFFF {
+            code_part = replace_ident(code_part, rename_old[r], rename_new[r])
+        }
+    }
+
+    // 16. Output truncated line
+    write_truncated(out_h, code_part, comment_part)
+}
+
+func preprocess_file(in_path string, out_path string) {
+    in_h, ok1 := file_open(in_path)
+    if !ok1 {
+        print("ERROR: Cannot open input file: ")
+        println(in_path)
+        sys_exit(1)
+    }
+    out_h, ok2 := file_create(out_path)
+    if !ok2 {
+        file_close(in_h)
+        print("ERROR: Cannot create output file: ")
+        println(out_path)
+        sys_exit(1)
+    }
+
+    in_ifp1_defsfile = false
+    num_locals = 0
+
+    var pending_line string
+    var pending_base word
+    has_pending := false
+
+    for {
+        var line string
+        var raw_base word
+        if has_pending {
+            line = pending_line
+            raw_base = pending_base
+            has_pending = false
+        } else {
+            l, eof := file_readline(in_h)
+            if eof != 0 {
+                break
+            }
+            line = l
+            raw_base = l.Base
+        }
+
+        s_lead := lstrip(line, " \t")
+
+        // Lookahead check for IFP1 wrapping 'use defsfile'
+        if (startswith(s_lead, "ifp1") || startswith(s_lead, "IFP1")) && is_word_bound(s_lead, 4) {
+            // Read next non-blank line
+            for {
+                next_l, next_eof := file_readline(in_h)
+                if next_eof != 0 {
+                    transform_line(out_h, line)
+                    break
+                }
+                next_s := strip(next_l, " \t\r\n")
+                if len(next_s) == 0 {
+                    transform_line(out_h, next_l)
+                    free(next_l.Base)
+                    continue
+                }
+                next_lead := lstrip(next_l, " \t")
+                is_defs := false
+                if (startswith(next_lead, "use") || startswith(next_lead, "USE")) && isspace(next_lead[3]) {
+                    rem := lstrip(next_lead[3:len(next_lead)], " \t")
+                    if startswith(rem, "defsfile") || startswith(rem, "os9.d") || startswith(rem, "scf.d") || startswith(rem, "rbf.d") {
+                        is_defs = true
+                    }
+                }
+                if is_defs {
+                    file_write(out_h, "* [selfgen: stripped IFP1 around defsfile]\n")
+                    in_ifp1_defsfile = true
+                    transform_line(out_h, next_l)
+                    free(next_l.Base)
+                } else {
+                    transform_line(out_h, line)
+                    pending_line = next_l
+                    pending_base = next_l.Base
+                    has_pending = true
+                }
+                break
+            }
+        } else {
+            transform_line(out_h, line)
+        }
+
+        free(raw_base)
+    }
+
+    file_close(in_h)
+    file_close(out_h)
+}
+
+// -----------------------------------------------------------------------------
+// Main Entry Point
+// -----------------------------------------------------------------------------
+func main() {
+    args := sys_args()
+    if args.Len() == 0 {
+        println("Usage:")
+        println("  selfgen_preprocess [--defs <defsfile>] <input.asm> [output.asm]")
+        println("  selfgen_preprocess --group <out_dir> [--defs <defsfile>] <file1.asm> <file2.asm> ...")
+        sys_exit(1)
+    }
+
+    num_files = 0
+    num_protected = 0
+    num_syms = 0
+    num_renames = 0
+    global_inst = 0
+
+    load_default_protected()
+
+    is_group := false
+    out_dir := ""
+    defs_path := ""
+    no_collisions := false
+
+    i := word(0)
+    for i < args.Len() {
+        arg := args.Get(i)
+        if arg == "--no-collisions" {
+            no_collisions = true
+            i++
+        } else if arg == "--defs" {
+            if i + 1 < args.Len() {
+                defs_path = args.Get(i + 1)
+                i += 2
+            } else {
+                i++
+            }
+        } else if arg == "--group" {
+            is_group = true
+            if i + 1 < args.Len() {
+                out_dir = args.Get(i + 1)
+                i += 2
+            } else {
+                i++
+            }
+        } else {
+            if num_files < MAX_FILES {
+                file_paths[num_files] = arg
+                num_files++
+            }
+            i++
+        }
+    }
+
+    if len(defs_path) > 0 {
+        load_defs(defs_path)
+    } else {
+        sort_protected()
+    }
+
+    if is_group {
+        if len(out_dir) > 0 {
+            os_makedirs(out_dir)
+        }
+        if !no_collisions {
+            for f := word(0); f < num_files; f++ {
+                pass1_scan_file(file_paths[f])
+            }
+            compute_collisions()
+        }
+        for f := word(0); f < num_files; f++ {
+            in_p := file_paths[f]
+            bname := path_basename(in_p)
+            buf_clear()
+            buf_append(out_dir)
+            buf_append("/")
+            buf_append(bname)
+            out_p := strdup(buf_str())
+            preprocess_file(in_p, out_p)
+        }
+        sys_exit(0)
+    }
+
+    // Single file mode
+    if num_files == 0 {
+        println("ERROR: No input file specified")
+        sys_exit(1)
+    }
+    in_file := file_paths[0]
+    out_file := in_file
+    if num_files > 1 {
+        out_file = file_paths[1]
+    }
+
+    if !no_collisions {
+        pass1_scan_file(in_file)
+        compute_collisions()
+    }
+
+    preprocess_file(in_file, out_file)
+    sys_exit(0)
+}

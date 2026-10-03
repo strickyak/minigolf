@@ -825,11 +825,17 @@ class NPVM:
             new_str = self._read_string(new_ptr, new_len)
 
             # Word boundary replace: (?<![A-Za-z0-9_.])OLD(?![A-Za-z0-9_.])
-            import re
-            pattern = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(old_str) + r"(?![A-Za-z0-9_.])")
-            res_str = pattern.sub(new_str, src_str)
-            res_ptr, res_cap, res_len = self._alloc_string_slice(res_str)
-            self._push_slice(res_ptr, res_cap, res_len)
+            if old_str not in src_str:
+                self._push_slice(src_ptr, src_cap, src_len)
+            else:
+                import re
+                pattern = re.compile(r"(?<![A-Za-z0-9_.])" + re.escape(old_str) + r"(?![A-Za-z0-9_.])")
+                res_str = pattern.sub(new_str, src_str)
+                if res_str == src_str:
+                    self._push_slice(src_ptr, src_cap, src_len)
+                else:
+                    res_ptr, res_cap, res_len = self._alloc_string_slice(res_str)
+                    self._push_slice(res_ptr, res_cap, res_len)
 
         # -------------------------------------------------------------
         # Group 6: Collections (Dicts as Linear Alternating Lists) (0x90 .. 0xAF)
