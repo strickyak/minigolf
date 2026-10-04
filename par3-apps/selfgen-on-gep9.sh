@@ -204,7 +204,6 @@ cat << 'STARTUP_EOF' > "$TMP_DIR/startup.raw"
 tmode </term pau=0
 chx /dd/CMDS
 chd /dd
-x
 
 * ====================================================================
 * STAGE RED (Bootstrap -> Red)
