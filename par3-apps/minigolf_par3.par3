@@ -55,8 +55,11 @@ var local_sizes      [MAX_LOCALS]word
 var local_elem_sizes [MAX_LOCALS]byte
 var num_locals       word
 
-// String Pool
+// Maps
 var str_pool_map word
+var const_map    word
+var global_map   word
+var func_map     word
 
 // Current compilation state
 var cur_func_idx word
@@ -229,12 +232,7 @@ func pool_str(s string) string {
 // -----------------------------------------------------------------------------
 
 func find_const(name string) word {
-    for i := word(0); i < num_consts; i++ {
-        if const_names[i] == name {
-            return i
-        }
-    }
-    return 0xFFFF
+    return map_get(const_map, name)
 }
 
 func add_const(name string, val word) {
@@ -244,16 +242,12 @@ func add_const(name string, val word) {
     }
     const_names[num_consts] = pool_str(name)
     const_vals[num_consts] = val
+    map_put(const_map, name, num_consts)
     num_consts++
 }
 
 func find_global(name string) word {
-    for i := word(0); i < num_globals; i++ {
-        if global_names[i] == name {
-            return i
-        }
-    }
-    return 0xFFFF
+    return map_get(global_map, name)
 }
 
 func add_global(name string, size word, kind byte, elem_size byte) {
@@ -265,16 +259,12 @@ func add_global(name string, size word, kind byte, elem_size byte) {
     global_sizes[num_globals] = size
     global_kinds[num_globals] = kind
     global_elem_sizes[num_globals] = elem_size
+    map_put(global_map, name, num_globals)
     num_globals++
 }
 
 func find_func(name string) word {
-    for i := word(0); i < num_funcs; i++ {
-        if func_names[i] == name {
-            return i
-        }
-    }
-    return 0xFFFF
+    return map_get(func_map, name)
 }
 
 func add_func(name string, ret_kind byte) word {
@@ -289,6 +279,7 @@ func add_func(name string, ret_kind byte) word {
     func_num_params[idx] = 0
     func_first_local[idx] = num_locals
     func_num_locals[idx] = 0
+    map_put(func_map, name, idx)
     num_funcs++
     return idx
 }
@@ -2228,7 +2219,10 @@ func get_arg(args_base word, idx word) string {
 }
 
 func main() {
-    str_pool_map = map_new(256)
+    str_pool_map = map_new(128)
+    const_map = map_new(64)
+    global_map = map_new(64)
+    func_map = map_new(64)
     args := sys_args()
     src_file = ""
     out_file = ""

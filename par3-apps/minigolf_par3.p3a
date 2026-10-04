@@ -6,6 +6,7 @@
 ;
 
 ; Global Variable Table
+.global const_map: word
 .global const_names: 576
 .global const_vals: 192
 .global cur_func_idx: word
@@ -19,12 +20,14 @@
 .global dec_digits: 6
 .global func_first_local: 192
 .global func_first_param: 192
+.global func_map: word
 .global func_names: 576
 .global func_num_locals: 192
 .global func_num_params: 96
 .global func_ret_kinds: 96
 .global global_elem_sizes: 96
 .global global_kinds: 96
+.global global_map: word
 .global global_names: 576
 .global global_sizes: 192
 .global in_file_h: word
@@ -816,7 +819,6 @@
 ; ====================================================================
 .function find_const
     .param name: slice
-    .local i: word
     .local _pbuf: word
     .local _tmp_base: word
     .local _tmp_cap: word
@@ -827,50 +829,10 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; for <init>; <cond>; <inc>
-; i := word(0)
-    PUSH_0
-    STORE_LOCAL i
-.L_for3_top_27:
-    LOAD_LOCAL i
-    LOAD_GLOBAL num_consts
-    CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_29
-; if const_names[...] == name
-    ADDR_OF_GLOBAL const_names
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    PEEK2
+; return map_get(const_map, name)
+    LOAD_GLOBAL const_map
     LOAD_LOCAL name
-    STR_CMP
-    NOT
-    JUMP_IF_FALSE .L_endif_30
-; return i
-    LOAD_LOCAL i
-    RET
-.L_endif_30:
-.L_for3_cont_28:
-; i++
-    LOAD_LOCAL i
-    PUSH_1
-    ADD
-    STORE_LOCAL i
-    JUMP .L_for3_top_27
-.L_for3_exit_29:
-; return 65535
-    PUSH_I16 65535
+    MAP_GET
     RET
     RET_VOID
 .endfunction
@@ -895,7 +857,7 @@
     LOAD_GLOBAL num_consts
     PUSH_I8 96
     CMP_GE
-    JUMP_IF_FALSE .L_endif_31
+    JUMP_IF_FALSE .L_endif_27
 ; println("ERROR: Exceeded MAX_CONSTS")
 ; println("ERROR: Exceeded MAX_CONSTS")
     PUSH_I16 10
@@ -941,7 +903,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_31:
+.L_endif_27:
 ; const_names[...] = pool_str(name)
     LOAD_LOCAL name
     CALL pool_str
@@ -971,6 +933,12 @@
     SHL1_ADD
     SWAP
     POKE2
+; map_put(const_map, name, num_consts)
+    LOAD_GLOBAL const_map
+    LOAD_LOCAL name
+    LOAD_GLOBAL num_consts
+    MAP_PUT
+    POP
 ; num_consts++
     LOAD_GLOBAL num_consts
     PUSH_1
@@ -984,7 +952,6 @@
 ; ====================================================================
 .function find_global
     .param name: slice
-    .local i: word
     .local _pbuf: word
     .local _tmp_base: word
     .local _tmp_cap: word
@@ -995,50 +962,10 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; for <init>; <cond>; <inc>
-; i := word(0)
-    PUSH_0
-    STORE_LOCAL i
-.L_for3_top_32:
-    LOAD_LOCAL i
-    LOAD_GLOBAL num_globals
-    CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_34
-; if global_names[...] == name
-    ADDR_OF_GLOBAL global_names
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    PEEK2
+; return map_get(global_map, name)
+    LOAD_GLOBAL global_map
     LOAD_LOCAL name
-    STR_CMP
-    NOT
-    JUMP_IF_FALSE .L_endif_35
-; return i
-    LOAD_LOCAL i
-    RET
-.L_endif_35:
-.L_for3_cont_33:
-; i++
-    LOAD_LOCAL i
-    PUSH_1
-    ADD
-    STORE_LOCAL i
-    JUMP .L_for3_top_32
-.L_for3_exit_34:
-; return 65535
-    PUSH_I16 65535
+    MAP_GET
     RET
     RET_VOID
 .endfunction
@@ -1065,7 +992,7 @@
     LOAD_GLOBAL num_globals
     PUSH_I8 96
     CMP_GE
-    JUMP_IF_FALSE .L_endif_36
+    JUMP_IF_FALSE .L_endif_28
 ; println("ERROR: Exceeded MAX_GLOBALS")
 ; println("ERROR: Exceeded MAX_GLOBALS")
     PUSH_I16 10
@@ -1111,7 +1038,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_36:
+.L_endif_28:
 ; global_names[...] = pool_str(name)
     LOAD_LOCAL name
     CALL pool_str
@@ -1155,6 +1082,12 @@
     ADD
     SWAP
     POKE1
+; map_put(global_map, name, num_globals)
+    LOAD_GLOBAL global_map
+    LOAD_LOCAL name
+    LOAD_GLOBAL num_globals
+    MAP_PUT
+    POP
 ; num_globals++
     LOAD_GLOBAL num_globals
     PUSH_1
@@ -1168,7 +1101,6 @@
 ; ====================================================================
 .function find_func
     .param name: slice
-    .local i: word
     .local _pbuf: word
     .local _tmp_base: word
     .local _tmp_cap: word
@@ -1179,50 +1111,10 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; for <init>; <cond>; <inc>
-; i := word(0)
-    PUSH_0
-    STORE_LOCAL i
-.L_for3_top_37:
-    LOAD_LOCAL i
-    LOAD_GLOBAL num_funcs
-    CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_39
-; if func_names[...] == name
-    ADDR_OF_GLOBAL func_names
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    PEEK2
+; return map_get(func_map, name)
+    LOAD_GLOBAL func_map
     LOAD_LOCAL name
-    STR_CMP
-    NOT
-    JUMP_IF_FALSE .L_endif_40
-; return i
-    LOAD_LOCAL i
-    RET
-.L_endif_40:
-.L_for3_cont_38:
-; i++
-    LOAD_LOCAL i
-    PUSH_1
-    ADD
-    STORE_LOCAL i
-    JUMP .L_for3_top_37
-.L_for3_exit_39:
-; return 65535
-    PUSH_I16 65535
+    MAP_GET
     RET
     RET_VOID
 .endfunction
@@ -1248,7 +1140,7 @@
     LOAD_GLOBAL num_funcs
     PUSH_I8 96
     CMP_GE
-    JUMP_IF_FALSE .L_endif_41
+    JUMP_IF_FALSE .L_endif_29
 ; println("ERROR: Exceeded MAX_FUNCS")
 ; println("ERROR: Exceeded MAX_FUNCS")
     PUSH_I16 10
@@ -1294,7 +1186,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_41:
+.L_endif_29:
 ; idx := num_funcs
     LOAD_GLOBAL num_funcs
     STORE_LOCAL idx
@@ -1355,6 +1247,12 @@
     SHL1_ADD
     SWAP
     POKE2
+; map_put(func_map, name, idx)
+    LOAD_GLOBAL func_map
+    LOAD_LOCAL name
+    LOAD_LOCAL idx
+    MAP_PUT
+    POP
 ; num_funcs++
     LOAD_GLOBAL num_funcs
     PUSH_1
@@ -1387,7 +1285,7 @@
     LOAD_GLOBAL num_params
     PUSH_I8 96
     CMP_GE
-    JUMP_IF_FALSE .L_endif_42
+    JUMP_IF_FALSE .L_endif_30
 ; println("ERROR: Exceeded MAX_PARAMS")
 ; println("ERROR: Exceeded MAX_PARAMS")
     PUSH_I16 10
@@ -1433,7 +1331,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_42:
+.L_endif_30:
 ; param_names[...] = pool_str(name)
     LOAD_LOCAL name
     CALL pool_str
@@ -1507,7 +1405,7 @@
     LOAD_GLOBAL num_funcs
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_43
+    JUMP_IF_FALSE .L_endif_31
 ; start := func_first_local[...]
     ADDR_OF_GLOBAL func_first_local
     LOAD_GLOBAL num_funcs
@@ -1520,11 +1418,11 @@
 ; i := start
     LOAD_LOCAL start
     STORE_LOCAL i
-.L_for3_top_44:
+.L_for3_top_32:
     LOAD_LOCAL i
     LOAD_GLOBAL num_locals
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_46
+    JUMP_IF_FALSE .L_for3_exit_34
 ; if local_names[...] == pname
     ADDR_OF_GLOBAL local_names
     LOAD_LOCAL i
@@ -1545,24 +1443,24 @@
     LOAD_LOCAL pname
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_47
+    JUMP_IF_FALSE .L_endif_35
 ; return 
     RET_VOID
-.L_endif_47:
-.L_for3_cont_45:
+.L_endif_35:
+.L_for3_cont_33:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_44
-.L_for3_exit_46:
-.L_endif_43:
+    JUMP .L_for3_top_32
+.L_for3_exit_34:
+.L_endif_31:
 ; if num_locals >= MAX_LOCALS
     LOAD_GLOBAL num_locals
     PUSH_I16 512
     CMP_GE
-    JUMP_IF_FALSE .L_endif_48
+    JUMP_IF_FALSE .L_endif_36
 ; println("ERROR: Exceeded MAX_LOCALS")
 ; println("ERROR: Exceeded MAX_LOCALS")
     PUSH_I16 10
@@ -1608,7 +1506,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_48:
+.L_endif_36:
 ; local_names[...] = pname
     LOAD_LOCAL pname
     ADDR_OF_GLOBAL local_names
@@ -1693,11 +1591,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_49:
+.L_for3_top_37:
     LOAD_LOCAL i
     LOAD_LOCAL count
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_51
+    JUMP_IF_FALSE .L_for3_exit_39
 ; if param_names[...] == name
     ADDR_OF_GLOBAL param_names
     LOAD_LOCAL start
@@ -1720,21 +1618,21 @@
     LOAD_LOCAL name
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_52
+    JUMP_IF_FALSE .L_endif_40
 ; return start + i
     LOAD_LOCAL start
     LOAD_LOCAL i
     ADD
     RET
-.L_endif_52:
-.L_for3_cont_50:
+.L_endif_40:
+.L_for3_cont_38:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_49
-.L_for3_exit_51:
+    JUMP .L_for3_top_37
+.L_for3_exit_39:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -1775,11 +1673,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_53:
+.L_for3_top_41:
     LOAD_LOCAL i
     LOAD_LOCAL count
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_55
+    JUMP_IF_FALSE .L_for3_exit_43
 ; if local_names[...] == name
     ADDR_OF_GLOBAL local_names
     LOAD_LOCAL start
@@ -1802,21 +1700,21 @@
     LOAD_LOCAL name
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_56
+    JUMP_IF_FALSE .L_endif_44
 ; return start + i
     LOAD_LOCAL start
     LOAD_LOCAL i
     ADD
     RET
-.L_endif_56:
-.L_for3_cont_54:
+.L_endif_44:
+.L_for3_cont_42:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_53
-.L_for3_exit_55:
+    JUMP .L_for3_top_41
+.L_for3_exit_43:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -1842,12 +1740,12 @@
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_57
+    JUMP_IF_FALSE .L_endif_45
 ; free(cur_line.Base)
     ADDR_OF_GLOBAL cur_line
     PEEK2
     BUF_FREE
-.L_endif_57:
+.L_endif_45:
 ; cur_line = ""
     PUSH_STR ""
     STORE_GLOBAL cur_line
@@ -1880,26 +1778,26 @@
     .local _swap_3: slice
 
 ; for !is_eof && line_pos >= word(len(cur_line))
-.L_for_top_58:
+.L_for_top_46:
     LOAD_GLOBAL is_eof
     NOT
     DUP
-    JUMP_IF_FALSE .L_and_false_60
+    JUMP_IF_FALSE .L_and_false_48
     POP
     LOAD_GLOBAL line_pos
     LOAD_GLOBAL cur_line
     SLICE_LEN
     CMP_GE
-    JUMP .L_and_end_61
-.L_and_false_60:
-.L_and_end_61:
-    JUMP_IF_FALSE .L_for_exit_59
+    JUMP .L_and_end_49
+.L_and_false_48:
+.L_and_end_49:
+    JUMP_IF_FALSE .L_for_exit_47
 ; if len(cur_line) > 0
     LOAD_GLOBAL cur_line
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_62
+    JUMP_IF_FALSE .L_endif_50
 ; free(cur_line.Base)
     ADDR_OF_GLOBAL cur_line
     PEEK2
@@ -1907,7 +1805,7 @@
 ; cur_line = ""
     PUSH_STR ""
     STORE_GLOBAL cur_line
-.L_endif_62:
+.L_endif_50:
 ; line, eof := file_readline(in_file_h)
     LOAD_GLOBAL in_file_h
     FILE_READLINE
@@ -1920,14 +1818,14 @@
     LOAD_LOCAL eof
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_63
+    JUMP_IF_FALSE .L_endif_51
 ; is_eof = true
     PUSH_TRUE
     STORE_GLOBAL is_eof
 ; return 0
     PUSH_0
     RET
-.L_endif_63:
+.L_endif_51:
 ; cur_line = line
     LOAD_LOCAL line
     STORE_GLOBAL cur_line
@@ -1936,15 +1834,15 @@
     PUSH_1
     ADD
     STORE_GLOBAL cur_lineno
-    JUMP .L_for_top_58
-.L_for_exit_59:
+    JUMP .L_for_top_46
+.L_for_exit_47:
 ; if is_eof
     LOAD_GLOBAL is_eof
-    JUMP_IF_FALSE .L_endif_64
+    JUMP_IF_FALSE .L_endif_52
 ; return 0
     PUSH_0
     RET
-.L_endif_64:
+.L_endif_52:
 ; return cur_line[...]
     ADDR_OF_GLOBAL cur_line
     PEEK2
@@ -1976,13 +1874,13 @@
 ; if !is_eof
     LOAD_GLOBAL is_eof
     NOT
-    JUMP_IF_FALSE .L_endif_65
+    JUMP_IF_FALSE .L_endif_53
 ; line_pos++
     LOAD_GLOBAL line_pos
     PUSH_1
     ADD
     STORE_GLOBAL line_pos
-.L_endif_65:
+.L_endif_53:
 ; return c
     LOAD_LOCAL c
     RET
@@ -2009,41 +1907,41 @@
     PUSH_I8 97
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_70
+    JUMP_IF_FALSE .L_and_false_58
     POP
     LOAD_LOCAL c
     PUSH_I8 122
     CMP_LE
-    JUMP .L_and_end_71
-.L_and_false_70:
-.L_and_end_71:
+    JUMP .L_and_end_59
+.L_and_false_58:
+.L_and_end_59:
     DUP
-    JUMP_IF_TRUE .L_or_true_68
+    JUMP_IF_TRUE .L_or_true_56
     POP
     LOAD_LOCAL c
     PUSH_I8 65
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_72
+    JUMP_IF_FALSE .L_and_false_60
     POP
     LOAD_LOCAL c
     PUSH_I8 90
     CMP_LE
-    JUMP .L_and_end_73
-.L_and_false_72:
-.L_and_end_73:
-    JUMP .L_or_end_69
-.L_or_true_68:
-.L_or_end_69:
+    JUMP .L_and_end_61
+.L_and_false_60:
+.L_and_end_61:
+    JUMP .L_or_end_57
+.L_or_true_56:
+.L_or_end_57:
     DUP
-    JUMP_IF_TRUE .L_or_true_66
+    JUMP_IF_TRUE .L_or_true_54
     POP
     LOAD_LOCAL c
     PUSH_I8 95
     CMP_EQ
-    JUMP .L_or_end_67
-.L_or_true_66:
-.L_or_end_67:
+    JUMP .L_or_end_55
+.L_or_true_54:
+.L_or_end_55:
     RET
     RET_VOID
 .endfunction
@@ -2068,14 +1966,14 @@
     PUSH_I8 48
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_74
+    JUMP_IF_FALSE .L_and_false_62
     POP
     LOAD_LOCAL c
     PUSH_I8 57
     CMP_LE
-    JUMP .L_and_end_75
-.L_and_false_74:
-.L_and_end_75:
+    JUMP .L_and_end_63
+.L_and_false_62:
+.L_and_end_63:
     RET
     RET_VOID
 .endfunction
@@ -2099,41 +1997,41 @@
     LOAD_LOCAL c
     CALL is_digit
     DUP
-    JUMP_IF_TRUE .L_or_true_78
+    JUMP_IF_TRUE .L_or_true_66
     POP
     LOAD_LOCAL c
     PUSH_I8 97
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_80
+    JUMP_IF_FALSE .L_and_false_68
     POP
     LOAD_LOCAL c
     PUSH_I8 102
     CMP_LE
-    JUMP .L_and_end_81
-.L_and_false_80:
-.L_and_end_81:
-    JUMP .L_or_end_79
-.L_or_true_78:
-.L_or_end_79:
+    JUMP .L_and_end_69
+.L_and_false_68:
+.L_and_end_69:
+    JUMP .L_or_end_67
+.L_or_true_66:
+.L_or_end_67:
     DUP
-    JUMP_IF_TRUE .L_or_true_76
+    JUMP_IF_TRUE .L_or_true_64
     POP
     LOAD_LOCAL c
     PUSH_I8 65
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_82
+    JUMP_IF_FALSE .L_and_false_70
     POP
     LOAD_LOCAL c
     PUSH_I8 70
     CMP_LE
-    JUMP .L_and_end_83
-.L_and_false_82:
-.L_and_end_83:
-    JUMP .L_or_end_77
-.L_or_true_76:
-.L_or_end_77:
+    JUMP .L_and_end_71
+.L_and_false_70:
+.L_and_end_71:
+    JUMP .L_or_end_65
+.L_or_true_64:
+.L_or_end_65:
     RET
     RET_VOID
 .endfunction
@@ -2156,27 +2054,27 @@
 ; if is_digit(c)
     LOAD_LOCAL c
     CALL is_digit
-    JUMP_IF_FALSE .L_endif_84
+    JUMP_IF_FALSE .L_endif_72
 ; return word(c - 48)
     LOAD_LOCAL c
     PUSH_I8 48
     SUB
     RET
-.L_endif_84:
+.L_endif_72:
 ; if c >= 97 && c <= 102
     LOAD_LOCAL c
     PUSH_I8 97
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_85
+    JUMP_IF_FALSE .L_and_false_73
     POP
     LOAD_LOCAL c
     PUSH_I8 102
     CMP_LE
-    JUMP .L_and_end_86
-.L_and_false_85:
-.L_and_end_86:
-    JUMP_IF_FALSE .L_endif_87
+    JUMP .L_and_end_74
+.L_and_false_73:
+.L_and_end_74:
+    JUMP_IF_FALSE .L_endif_75
 ; return word(c - 97 + 10)
     LOAD_LOCAL c
     PUSH_I8 97
@@ -2184,21 +2082,21 @@
     PUSH_I8 10
     ADD
     RET
-.L_endif_87:
+.L_endif_75:
 ; if c >= 65 && c <= 70
     LOAD_LOCAL c
     PUSH_I8 65
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_88
+    JUMP_IF_FALSE .L_and_false_76
     POP
     LOAD_LOCAL c
     PUSH_I8 70
     CMP_LE
-    JUMP .L_and_end_89
-.L_and_false_88:
-.L_and_end_89:
-    JUMP_IF_FALSE .L_endif_90
+    JUMP .L_and_end_77
+.L_and_false_76:
+.L_and_end_77:
+    JUMP_IF_FALSE .L_endif_78
 ; return word(c - 65 + 10)
     LOAD_LOCAL c
     PUSH_I8 65
@@ -2206,7 +2104,7 @@
     PUSH_I8 10
     ADD
     RET
-.L_endif_90:
+.L_endif_78:
 ; return 0
     PUSH_0
     RET
@@ -2233,32 +2131,32 @@
     PUSH_I8 32
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_95
+    JUMP_IF_TRUE .L_or_true_83
     POP
     LOAD_LOCAL c
     PUSH_I8 9
     CMP_EQ
-    JUMP .L_or_end_96
-.L_or_true_95:
-.L_or_end_96:
+    JUMP .L_or_end_84
+.L_or_true_83:
+.L_or_end_84:
     DUP
-    JUMP_IF_TRUE .L_or_true_93
+    JUMP_IF_TRUE .L_or_true_81
     POP
     LOAD_LOCAL c
     PUSH_I8 13
     CMP_EQ
-    JUMP .L_or_end_94
-.L_or_true_93:
-.L_or_end_94:
+    JUMP .L_or_end_82
+.L_or_true_81:
+.L_or_end_82:
     DUP
-    JUMP_IF_TRUE .L_or_true_91
+    JUMP_IF_TRUE .L_or_true_79
     POP
     LOAD_LOCAL c
     PUSH_I8 10
     CMP_EQ
-    JUMP .L_or_end_92
-.L_or_true_91:
-.L_or_end_92:
+    JUMP .L_or_end_80
+.L_or_true_79:
+.L_or_end_80:
     RET
     RET_VOID
 .endfunction
@@ -2284,10 +2182,100 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_101
+    JUMP_IF_TRUE .L_or_true_89
     POP
     LOAD_LOCAL s
     PUSH_STR "const"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_90
+.L_or_true_89:
+.L_or_end_90:
+    DUP
+    JUMP_IF_TRUE .L_or_true_87
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "var"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_88
+.L_or_true_87:
+.L_or_end_88:
+    DUP
+    JUMP_IF_TRUE .L_or_true_85
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "func"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_86
+.L_or_true_85:
+.L_or_end_86:
+    JUMP_IF_FALSE .L_endif_91
+; return true
+    PUSH_TRUE
+    RET
+.L_endif_91:
+; if s == "return" || s == "if" || s == "else" || s == "for"
+    LOAD_LOCAL s
+    PUSH_STR "return"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_or_true_96
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "if"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_97
+.L_or_true_96:
+.L_or_end_97:
+    DUP
+    JUMP_IF_TRUE .L_or_true_94
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "else"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_95
+.L_or_true_94:
+.L_or_end_95:
+    DUP
+    JUMP_IF_TRUE .L_or_true_92
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "for"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_93
+.L_or_true_92:
+.L_or_end_93:
+    JUMP_IF_FALSE .L_endif_98
+; return true
+    PUSH_TRUE
+    RET
+.L_endif_98:
+; if s == "break" || s == "continue" || s == "true" || s == "false"
+    LOAD_LOCAL s
+    PUSH_STR "break"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_or_true_103
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "continue"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_104
+.L_or_true_103:
+.L_or_end_104:
+    DUP
+    JUMP_IF_TRUE .L_or_true_101
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "true"
     STR_CMP
     NOT
     JUMP .L_or_end_102
@@ -2297,37 +2285,37 @@
     JUMP_IF_TRUE .L_or_true_99
     POP
     LOAD_LOCAL s
-    PUSH_STR "var"
+    PUSH_STR "false"
     STR_CMP
     NOT
     JUMP .L_or_end_100
 .L_or_true_99:
 .L_or_end_100:
-    DUP
-    JUMP_IF_TRUE .L_or_true_97
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "func"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_98
-.L_or_true_97:
-.L_or_end_98:
-    JUMP_IF_FALSE .L_endif_103
+    JUMP_IF_FALSE .L_endif_105
 ; return true
     PUSH_TRUE
     RET
-.L_endif_103:
-; if s == "return" || s == "if" || s == "else" || s == "for"
+.L_endif_105:
+; if s == "byte" || s == "word" || s == "bool" || s == "string"
     LOAD_LOCAL s
-    PUSH_STR "return"
+    PUSH_STR "byte"
     STR_CMP
     NOT
+    DUP
+    JUMP_IF_TRUE .L_or_true_110
+    POP
+    LOAD_LOCAL s
+    PUSH_STR "word"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_111
+.L_or_true_110:
+.L_or_end_111:
     DUP
     JUMP_IF_TRUE .L_or_true_108
     POP
     LOAD_LOCAL s
-    PUSH_STR "if"
+    PUSH_STR "bool"
     STR_CMP
     NOT
     JUMP .L_or_end_109
@@ -2337,37 +2325,27 @@
     JUMP_IF_TRUE .L_or_true_106
     POP
     LOAD_LOCAL s
-    PUSH_STR "else"
+    PUSH_STR "string"
     STR_CMP
     NOT
     JUMP .L_or_end_107
 .L_or_true_106:
 .L_or_end_107:
-    DUP
-    JUMP_IF_TRUE .L_or_true_104
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "for"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_105
-.L_or_true_104:
-.L_or_end_105:
-    JUMP_IF_FALSE .L_endif_110
+    JUMP_IF_FALSE .L_endif_112
 ; return true
     PUSH_TRUE
     RET
-.L_endif_110:
-; if s == "break" || s == "continue" || s == "true" || s == "false"
+.L_endif_112:
+; if s == "int" || s == "uint8" || s == "uint16"
     LOAD_LOCAL s
-    PUSH_STR "break"
+    PUSH_STR "int"
     STR_CMP
     NOT
     DUP
     JUMP_IF_TRUE .L_or_true_115
     POP
     LOAD_LOCAL s
-    PUSH_STR "continue"
+    PUSH_STR "uint8"
     STR_CMP
     NOT
     JUMP .L_or_end_116
@@ -2377,97 +2355,17 @@
     JUMP_IF_TRUE .L_or_true_113
     POP
     LOAD_LOCAL s
-    PUSH_STR "true"
+    PUSH_STR "uint16"
     STR_CMP
     NOT
     JUMP .L_or_end_114
 .L_or_true_113:
 .L_or_end_114:
-    DUP
-    JUMP_IF_TRUE .L_or_true_111
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "false"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_112
-.L_or_true_111:
-.L_or_end_112:
     JUMP_IF_FALSE .L_endif_117
 ; return true
     PUSH_TRUE
     RET
 .L_endif_117:
-; if s == "byte" || s == "word" || s == "bool" || s == "string"
-    LOAD_LOCAL s
-    PUSH_STR "byte"
-    STR_CMP
-    NOT
-    DUP
-    JUMP_IF_TRUE .L_or_true_122
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "word"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_123
-.L_or_true_122:
-.L_or_end_123:
-    DUP
-    JUMP_IF_TRUE .L_or_true_120
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "bool"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_121
-.L_or_true_120:
-.L_or_end_121:
-    DUP
-    JUMP_IF_TRUE .L_or_true_118
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "string"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_119
-.L_or_true_118:
-.L_or_end_119:
-    JUMP_IF_FALSE .L_endif_124
-; return true
-    PUSH_TRUE
-    RET
-.L_endif_124:
-; if s == "int" || s == "uint8" || s == "uint16"
-    LOAD_LOCAL s
-    PUSH_STR "int"
-    STR_CMP
-    NOT
-    DUP
-    JUMP_IF_TRUE .L_or_true_127
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "uint8"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_128
-.L_or_true_127:
-.L_or_end_128:
-    DUP
-    JUMP_IF_TRUE .L_or_true_125
-    POP
-    LOAD_LOCAL s
-    PUSH_STR "uint16"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_126
-.L_or_true_125:
-.L_or_end_126:
-    JUMP_IF_FALSE .L_endif_129
-; return true
-    PUSH_TRUE
-    RET
-.L_endif_129:
 ; return false
     PUSH_FALSE
     RET
@@ -2499,7 +2397,7 @@
     .local _swap_3: slice
 
 ; for
-.L_for_top_130:
+.L_for_top_118:
 ; c := peek_char()
     CALL peek_char
     STORE_LOCAL c
@@ -2507,7 +2405,7 @@
     LOAD_LOCAL c
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_132
+    JUMP_IF_FALSE .L_endif_120
 ; cur_tok = TOK_EOF
     PUSH_0
     STORE_GLOBAL cur_tok
@@ -2516,22 +2414,22 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_132:
+.L_endif_120:
 ; if is_space(c)
     LOAD_LOCAL c
     CALL is_space
-    JUMP_IF_FALSE .L_endif_133
+    JUMP_IF_FALSE .L_endif_121
 ; next_char()
     CALL next_char
     POP
 ; continue
-    JUMP .L_for_top_130
-.L_endif_133:
+    JUMP .L_for_top_118
+.L_endif_121:
 ; if c == 47
     LOAD_LOCAL c
     PUSH_I8 47
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_134
+    JUMP_IF_FALSE .L_endif_122
 ; next_char()
     CALL next_char
     POP
@@ -2542,25 +2440,25 @@
     LOAD_LOCAL c2
     PUSH_I8 47
     CMP_EQ
-    JUMP_IF_FALSE .L_else_135
+    JUMP_IF_FALSE .L_else_123
 ; line_pos = word(len(cur_line))
     LOAD_GLOBAL cur_line
     SLICE_LEN
     STORE_GLOBAL line_pos
 ; continue
-    JUMP .L_for_top_130
-    JUMP .L_endif_136
-.L_else_135:
+    JUMP .L_for_top_118
+    JUMP .L_endif_124
+.L_else_123:
 ; if c2 == 42
     LOAD_LOCAL c2
     PUSH_I8 42
     CMP_EQ
-    JUMP_IF_FALSE .L_else_137
+    JUMP_IF_FALSE .L_else_125
 ; next_char()
     CALL next_char
     POP
 ; for
-.L_for_top_139:
+.L_for_top_127:
 ; bc := next_char()
     CALL next_char
     STORE_LOCAL bc
@@ -2568,36 +2466,36 @@
     LOAD_LOCAL bc
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_141
+    JUMP_IF_FALSE .L_endif_129
 ; break
-    JUMP .L_for_exit_140
-.L_endif_141:
+    JUMP .L_for_exit_128
+.L_endif_129:
 ; if bc == 42 && peek_char() == 47
     LOAD_LOCAL bc
     PUSH_I8 42
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_142
+    JUMP_IF_FALSE .L_and_false_130
     POP
     CALL peek_char
     PUSH_I8 47
     CMP_EQ
-    JUMP .L_and_end_143
-.L_and_false_142:
-.L_and_end_143:
-    JUMP_IF_FALSE .L_endif_144
+    JUMP .L_and_end_131
+.L_and_false_130:
+.L_and_end_131:
+    JUMP_IF_FALSE .L_endif_132
 ; next_char()
     CALL next_char
     POP
 ; break
-    JUMP .L_for_exit_140
-.L_endif_144:
-    JUMP .L_for_top_139
-.L_for_exit_140:
+    JUMP .L_for_exit_128
+.L_endif_132:
+    JUMP .L_for_top_127
+.L_for_exit_128:
 ; continue
-    JUMP .L_for_top_130
-    JUMP .L_endif_138
-.L_else_137:
+    JUMP .L_for_top_118
+    JUMP .L_endif_126
+.L_else_125:
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
@@ -2606,13 +2504,13 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_138:
-.L_endif_136:
-.L_endif_134:
+.L_endif_126:
+.L_endif_124:
+.L_endif_122:
 ; break
-    JUMP .L_for_exit_131
-    JUMP .L_for_top_130
-.L_for_exit_131:
+    JUMP .L_for_exit_119
+    JUMP .L_for_top_118
+.L_for_exit_119:
 ; c := peek_char()
     CALL peek_char
     STORE_LOCAL c
@@ -2620,20 +2518,20 @@
     LOAD_LOCAL c
     CALL is_digit
     DUP
-    JUMP_IF_TRUE .L_or_true_145
+    JUMP_IF_TRUE .L_or_true_133
     POP
     LOAD_LOCAL c
     PUSH_I8 36
     CMP_EQ
-    JUMP .L_or_end_146
-.L_or_true_145:
-.L_or_end_146:
-    JUMP_IF_FALSE .L_endif_147
+    JUMP .L_or_end_134
+.L_or_true_133:
+.L_or_end_134:
+    JUMP_IF_FALSE .L_endif_135
 ; if c == 36
     LOAD_LOCAL c
     PUSH_I8 36
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_148
+    JUMP_IF_FALSE .L_endif_136
 ; next_char()
     CALL next_char
     POP
@@ -2641,10 +2539,10 @@
     PUSH_0
     STORE_LOCAL val
 ; for is_hex_digit(peek_char())
-.L_for_top_149:
+.L_for_top_137:
     CALL peek_char
     CALL is_hex_digit
-    JUMP_IF_FALSE .L_for_exit_150
+    JUMP_IF_FALSE .L_for_exit_138
 ; val = val << 4 | hex_val(next_char())
     LOAD_LOCAL val
     PUSH_I8 4
@@ -2653,8 +2551,8 @@
     CALL hex_val
     BIT_OR
     STORE_LOCAL val
-    JUMP .L_for_top_149
-.L_for_exit_150:
+    JUMP .L_for_top_137
+.L_for_exit_138:
 ; cur_tok = TOK_INT
     PUSH_1
     STORE_GLOBAL cur_tok
@@ -2666,12 +2564,12 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_148:
+.L_endif_136:
 ; if c == 48
     LOAD_LOCAL c
     PUSH_I8 48
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_151
+    JUMP_IF_FALSE .L_endif_139
 ; next_char()
     CALL next_char
     POP
@@ -2683,15 +2581,15 @@
     PUSH_I8 120
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_152
+    JUMP_IF_TRUE .L_or_true_140
     POP
     LOAD_LOCAL c2
     PUSH_I8 88
     CMP_EQ
-    JUMP .L_or_end_153
-.L_or_true_152:
-.L_or_end_153:
-    JUMP_IF_FALSE .L_endif_154
+    JUMP .L_or_end_141
+.L_or_true_140:
+.L_or_end_141:
+    JUMP_IF_FALSE .L_endif_142
 ; next_char()
     CALL next_char
     POP
@@ -2699,10 +2597,10 @@
     PUSH_0
     STORE_LOCAL val
 ; for is_hex_digit(peek_char())
-.L_for_top_155:
+.L_for_top_143:
     CALL peek_char
     CALL is_hex_digit
-    JUMP_IF_FALSE .L_for_exit_156
+    JUMP_IF_FALSE .L_for_exit_144
 ; val = val << 4 | hex_val(next_char())
     LOAD_LOCAL val
     PUSH_I8 4
@@ -2711,8 +2609,8 @@
     CALL hex_val
     BIT_OR
     STORE_LOCAL val
-    JUMP .L_for_top_155
-.L_for_exit_156:
+    JUMP .L_for_top_143
+.L_for_exit_144:
 ; cur_tok = TOK_INT
     PUSH_1
     STORE_GLOBAL cur_tok
@@ -2724,15 +2622,15 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_154:
+.L_endif_142:
 ; val := word(0)
     PUSH_0
     STORE_LOCAL val
 ; for is_digit(peek_char())
-.L_for_top_157:
+.L_for_top_145:
     CALL peek_char
     CALL is_digit
-    JUMP_IF_FALSE .L_for_exit_158
+    JUMP_IF_FALSE .L_for_exit_146
 ; val = val * 10 + word(next_char() - 48)
     LOAD_LOCAL val
     PUSH_I8 10
@@ -2742,8 +2640,8 @@
     SUB
     ADD
     STORE_LOCAL val
-    JUMP .L_for_top_157
-.L_for_exit_158:
+    JUMP .L_for_top_145
+.L_for_exit_146:
 ; cur_tok = TOK_INT
     PUSH_1
     STORE_GLOBAL cur_tok
@@ -2755,15 +2653,15 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_151:
+.L_endif_139:
 ; val := word(0)
     PUSH_0
     STORE_LOCAL val
 ; for is_digit(peek_char())
-.L_for_top_159:
+.L_for_top_147:
     CALL peek_char
     CALL is_digit
-    JUMP_IF_FALSE .L_for_exit_160
+    JUMP_IF_FALSE .L_for_exit_148
 ; val = val * 10 + word(next_char() - 48)
     LOAD_LOCAL val
     PUSH_I8 10
@@ -2773,8 +2671,8 @@
     SUB
     ADD
     STORE_LOCAL val
-    JUMP .L_for_top_159
-.L_for_exit_160:
+    JUMP .L_for_top_147
+.L_for_exit_148:
 ; cur_tok = TOK_INT
     PUSH_1
     STORE_GLOBAL cur_tok
@@ -2786,12 +2684,12 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_147:
+.L_endif_135:
 ; if c == 39
     LOAD_LOCAL c
     PUSH_I8 39
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_161
+    JUMP_IF_FALSE .L_endif_149
 ; next_char()
     CALL next_char
     POP
@@ -2802,7 +2700,7 @@
     LOAD_LOCAL cc
     PUSH_I8 92
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_162
+    JUMP_IF_FALSE .L_endif_150
 ; nc := next_char()
     CALL next_char
     STORE_LOCAL nc
@@ -2810,81 +2708,81 @@
     LOAD_LOCAL nc
     PUSH_I8 110
     CMP_EQ
-    JUMP_IF_FALSE .L_else_163
+    JUMP_IF_FALSE .L_else_151
 ; cc = 10
     PUSH_I8 10
     STORE_LOCAL cc
-    JUMP .L_endif_164
-.L_else_163:
+    JUMP .L_endif_152
+.L_else_151:
 ; if nc == 116
     LOAD_LOCAL nc
     PUSH_I8 116
     CMP_EQ
-    JUMP_IF_FALSE .L_else_165
+    JUMP_IF_FALSE .L_else_153
 ; cc = 9
     PUSH_I8 9
     STORE_LOCAL cc
-    JUMP .L_endif_166
-.L_else_165:
+    JUMP .L_endif_154
+.L_else_153:
 ; if nc == 114
     LOAD_LOCAL nc
     PUSH_I8 114
     CMP_EQ
-    JUMP_IF_FALSE .L_else_167
+    JUMP_IF_FALSE .L_else_155
 ; cc = 13
     PUSH_I8 13
     STORE_LOCAL cc
-    JUMP .L_endif_168
-.L_else_167:
+    JUMP .L_endif_156
+.L_else_155:
 ; if nc == 48
     LOAD_LOCAL nc
     PUSH_I8 48
     CMP_EQ
-    JUMP_IF_FALSE .L_else_169
+    JUMP_IF_FALSE .L_else_157
 ; cc = 0
     PUSH_0
     STORE_LOCAL cc
-    JUMP .L_endif_170
-.L_else_169:
+    JUMP .L_endif_158
+.L_else_157:
 ; if nc == 39
     LOAD_LOCAL nc
     PUSH_I8 39
     CMP_EQ
-    JUMP_IF_FALSE .L_else_171
+    JUMP_IF_FALSE .L_else_159
 ; cc = 39
     PUSH_I8 39
     STORE_LOCAL cc
-    JUMP .L_endif_172
-.L_else_171:
+    JUMP .L_endif_160
+.L_else_159:
 ; if nc == 92
     LOAD_LOCAL nc
     PUSH_I8 92
     CMP_EQ
-    JUMP_IF_FALSE .L_else_173
+    JUMP_IF_FALSE .L_else_161
 ; cc = 92
     PUSH_I8 92
     STORE_LOCAL cc
-    JUMP .L_endif_174
-.L_else_173:
+    JUMP .L_endif_162
+.L_else_161:
 ; cc = nc
     LOAD_LOCAL nc
     STORE_LOCAL cc
-.L_endif_174:
-.L_endif_172:
-.L_endif_170:
-.L_endif_168:
-.L_endif_166:
-.L_endif_164:
 .L_endif_162:
+.L_endif_160:
+.L_endif_158:
+.L_endif_156:
+.L_endif_154:
+.L_endif_152:
+.L_endif_150:
 ; if peek_char() == 39
     CALL peek_char
     PUSH_I8 39
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_175
+    JUMP_IF_FALSE .L_endif_163
 ; next_char()
     CALL next_char
     POP
-.L_endif_175:
+.L_endif_163:
 ; cur_tok = TOK_INT
     PUSH_1
     STORE_GLOBAL cur_tok
@@ -2896,12 +2794,12 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_161:
+.L_endif_149:
 ; if c == 34
     LOAD_LOCAL c
     PUSH_I8 34
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_176
+    JUMP_IF_FALSE .L_endif_164
 ; next_char()
     CALL next_char
     POP
@@ -2909,7 +2807,7 @@
     PUSH_0
     STORE_LOCAL slen
 ; for
-.L_for_top_177:
+.L_for_top_165:
 ; sc := next_char()
     CALL next_char
     STORE_LOCAL sc
@@ -2918,23 +2816,23 @@
     PUSH_0
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_179
+    JUMP_IF_TRUE .L_or_true_167
     POP
     LOAD_LOCAL sc
     PUSH_I8 34
     CMP_EQ
-    JUMP .L_or_end_180
-.L_or_true_179:
-.L_or_end_180:
-    JUMP_IF_FALSE .L_endif_181
+    JUMP .L_or_end_168
+.L_or_true_167:
+.L_or_end_168:
+    JUMP_IF_FALSE .L_endif_169
 ; break
-    JUMP .L_for_exit_178
-.L_endif_181:
+    JUMP .L_for_exit_166
+.L_endif_169:
 ; if sc == 92
     LOAD_LOCAL sc
     PUSH_I8 92
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_182
+    JUMP_IF_FALSE .L_endif_170
 ; nc := next_char()
     CALL next_char
     STORE_LOCAL nc
@@ -2942,66 +2840,66 @@
     LOAD_LOCAL nc
     PUSH_I8 110
     CMP_EQ
-    JUMP_IF_FALSE .L_else_183
+    JUMP_IF_FALSE .L_else_171
 ; sc = 10
     PUSH_I8 10
     STORE_LOCAL sc
-    JUMP .L_endif_184
-.L_else_183:
+    JUMP .L_endif_172
+.L_else_171:
 ; if nc == 116
     LOAD_LOCAL nc
     PUSH_I8 116
     CMP_EQ
-    JUMP_IF_FALSE .L_else_185
+    JUMP_IF_FALSE .L_else_173
 ; sc = 9
     PUSH_I8 9
     STORE_LOCAL sc
-    JUMP .L_endif_186
-.L_else_185:
+    JUMP .L_endif_174
+.L_else_173:
 ; if nc == 114
     LOAD_LOCAL nc
     PUSH_I8 114
     CMP_EQ
-    JUMP_IF_FALSE .L_else_187
+    JUMP_IF_FALSE .L_else_175
 ; sc = 13
     PUSH_I8 13
     STORE_LOCAL sc
-    JUMP .L_endif_188
-.L_else_187:
+    JUMP .L_endif_176
+.L_else_175:
 ; if nc == 34
     LOAD_LOCAL nc
     PUSH_I8 34
     CMP_EQ
-    JUMP_IF_FALSE .L_else_189
+    JUMP_IF_FALSE .L_else_177
 ; sc = 34
     PUSH_I8 34
     STORE_LOCAL sc
-    JUMP .L_endif_190
-.L_else_189:
+    JUMP .L_endif_178
+.L_else_177:
 ; if nc == 92
     LOAD_LOCAL nc
     PUSH_I8 92
     CMP_EQ
-    JUMP_IF_FALSE .L_else_191
+    JUMP_IF_FALSE .L_else_179
 ; sc = 92
     PUSH_I8 92
     STORE_LOCAL sc
-    JUMP .L_endif_192
-.L_else_191:
+    JUMP .L_endif_180
+.L_else_179:
 ; sc = nc
     LOAD_LOCAL nc
     STORE_LOCAL sc
-.L_endif_192:
-.L_endif_190:
-.L_endif_188:
-.L_endif_186:
-.L_endif_184:
-.L_endif_182:
+.L_endif_180:
+.L_endif_178:
+.L_endif_176:
+.L_endif_174:
+.L_endif_172:
+.L_endif_170:
 ; if slen < 255
     LOAD_LOCAL slen
     PUSH_I16 255
     CMP_LT
-    JUMP_IF_FALSE .L_endif_193
+    JUMP_IF_FALSE .L_endif_181
 ; tok_sbuf[...] = sc
     LOAD_LOCAL sc
     ADDR_OF_GLOBAL tok_sbuf
@@ -3014,9 +2912,9 @@
     PUSH_1
     ADD
     STORE_LOCAL slen
-.L_endif_193:
-    JUMP .L_for_top_177
-.L_for_exit_178:
+.L_endif_181:
+    JUMP .L_for_top_165
+.L_for_exit_166:
 ; var s
 ; s.Base = word(&tok_sbuf[...])
     ADDR_OF_GLOBAL tok_sbuf
@@ -3048,32 +2946,32 @@
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_176:
+.L_endif_164:
 ; if is_alpha(c)
     LOAD_LOCAL c
     CALL is_alpha
-    JUMP_IF_FALSE .L_endif_194
+    JUMP_IF_FALSE .L_endif_182
 ; ilen := word(0)
     PUSH_0
     STORE_LOCAL ilen
 ; for is_alpha(peek_char()) || is_digit(peek_char())
-.L_for_top_195:
+.L_for_top_183:
     CALL peek_char
     CALL is_alpha
     DUP
-    JUMP_IF_TRUE .L_or_true_197
+    JUMP_IF_TRUE .L_or_true_185
     POP
     CALL peek_char
     CALL is_digit
-    JUMP .L_or_end_198
-.L_or_true_197:
-.L_or_end_198:
-    JUMP_IF_FALSE .L_for_exit_196
+    JUMP .L_or_end_186
+.L_or_true_185:
+.L_or_end_186:
+    JUMP_IF_FALSE .L_for_exit_184
 ; if ilen < 63
     LOAD_LOCAL ilen
     PUSH_I8 63
     CMP_LT
-    JUMP_IF_FALSE .L_else_199
+    JUMP_IF_FALSE .L_else_187
 ; tok_ibuf[...] = next_char()
     CALL next_char
     ADDR_OF_GLOBAL tok_ibuf
@@ -3086,14 +2984,14 @@
     PUSH_1
     ADD
     STORE_LOCAL ilen
-    JUMP .L_endif_200
-.L_else_199:
+    JUMP .L_endif_188
+.L_else_187:
 ; next_char()
     CALL next_char
     POP
-.L_endif_200:
-    JUMP .L_for_top_195
-.L_for_exit_196:
+.L_endif_188:
+    JUMP .L_for_top_183
+.L_for_exit_184:
 ; var s
 ; s.Base = word(&tok_ibuf[...])
     ADDR_OF_GLOBAL tok_ibuf
@@ -3123,19 +3021,19 @@
 ; if check_keyword(cur_str)
     LOAD_GLOBAL cur_str
     CALL check_keyword
-    JUMP_IF_FALSE .L_else_201
+    JUMP_IF_FALSE .L_else_189
 ; cur_tok = TOK_KEYWORD
     PUSH_I8 4
     STORE_GLOBAL cur_tok
-    JUMP .L_endif_202
-.L_else_201:
+    JUMP .L_endif_190
+.L_else_189:
 ; cur_tok = TOK_IDENT
     PUSH_I8 3
     STORE_GLOBAL cur_tok
-.L_endif_202:
+.L_endif_190:
 ; return 
     RET_VOID
-.L_endif_194:
+.L_endif_182:
 ; next_char()
     CALL next_char
     POP
@@ -3145,6 +3043,110 @@
 ; if c == 58 && c2 == 61
     LOAD_LOCAL c
     PUSH_I8 58
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_and_false_191
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_and_end_192
+.L_and_false_191:
+.L_and_end_192:
+    JUMP_IF_FALSE .L_endif_193
+; next_char()
+    CALL next_char
+    POP
+; cur_tok = TOK_PUNCT
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+; cur_str = ":="
+    PUSH_STR ":="
+    STORE_GLOBAL cur_str
+; return 
+    RET_VOID
+.L_endif_193:
+; if c == 61 && c2 == 61
+    LOAD_LOCAL c
+    PUSH_I8 61
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_and_false_194
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_and_end_195
+.L_and_false_194:
+.L_and_end_195:
+    JUMP_IF_FALSE .L_endif_196
+; next_char()
+    CALL next_char
+    POP
+; cur_tok = TOK_PUNCT
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+; cur_str = "=="
+    PUSH_STR "=="
+    STORE_GLOBAL cur_str
+; return 
+    RET_VOID
+.L_endif_196:
+; if c == 33 && c2 == 61
+    LOAD_LOCAL c
+    PUSH_I8 33
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_and_false_197
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_and_end_198
+.L_and_false_197:
+.L_and_end_198:
+    JUMP_IF_FALSE .L_endif_199
+; next_char()
+    CALL next_char
+    POP
+; cur_tok = TOK_PUNCT
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+; cur_str = "!="
+    PUSH_STR "!="
+    STORE_GLOBAL cur_str
+; return 
+    RET_VOID
+.L_endif_199:
+; if c == 60 && c2 == 61
+    LOAD_LOCAL c
+    PUSH_I8 60
+    CMP_EQ
+    DUP
+    JUMP_IF_FALSE .L_and_false_200
+    POP
+    LOAD_LOCAL c2
+    PUSH_I8 61
+    CMP_EQ
+    JUMP .L_and_end_201
+.L_and_false_200:
+.L_and_end_201:
+    JUMP_IF_FALSE .L_endif_202
+; next_char()
+    CALL next_char
+    POP
+; cur_tok = TOK_PUNCT
+    PUSH_I8 5
+    STORE_GLOBAL cur_tok
+; cur_str = "<="
+    PUSH_STR "<="
+    STORE_GLOBAL cur_str
+; return 
+    RET_VOID
+.L_endif_202:
+; if c == 62 && c2 == 61
+    LOAD_LOCAL c
+    PUSH_I8 62
     CMP_EQ
     DUP
     JUMP_IF_FALSE .L_and_false_203
@@ -3162,21 +3164,21 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = ":="
-    PUSH_STR ":="
+; cur_str = ">="
+    PUSH_STR ">="
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_205:
-; if c == 61 && c2 == 61
+; if c == 38 && c2 == 38
     LOAD_LOCAL c
-    PUSH_I8 61
+    PUSH_I8 38
     CMP_EQ
     DUP
     JUMP_IF_FALSE .L_and_false_206
     POP
     LOAD_LOCAL c2
-    PUSH_I8 61
+    PUSH_I8 38
     CMP_EQ
     JUMP .L_and_end_207
 .L_and_false_206:
@@ -3188,21 +3190,21 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = "=="
-    PUSH_STR "=="
+; cur_str = "&&"
+    PUSH_STR "&&"
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_208:
-; if c == 33 && c2 == 61
+; if c == 124 && c2 == 124
     LOAD_LOCAL c
-    PUSH_I8 33
+    PUSH_I8 124
     CMP_EQ
     DUP
     JUMP_IF_FALSE .L_and_false_209
     POP
     LOAD_LOCAL c2
-    PUSH_I8 61
+    PUSH_I8 124
     CMP_EQ
     JUMP .L_and_end_210
 .L_and_false_209:
@@ -3214,13 +3216,13 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = "!="
-    PUSH_STR "!="
+; cur_str = "||"
+    PUSH_STR "||"
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_211:
-; if c == 60 && c2 == 61
+; if c == 60 && c2 == 60
     LOAD_LOCAL c
     PUSH_I8 60
     CMP_EQ
@@ -3228,7 +3230,7 @@
     JUMP_IF_FALSE .L_and_false_212
     POP
     LOAD_LOCAL c2
-    PUSH_I8 61
+    PUSH_I8 60
     CMP_EQ
     JUMP .L_and_end_213
 .L_and_false_212:
@@ -3240,13 +3242,13 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = "<="
-    PUSH_STR "<="
+; cur_str = "<<"
+    PUSH_STR "<<"
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_214:
-; if c == 62 && c2 == 61
+; if c == 62 && c2 == 62
     LOAD_LOCAL c
     PUSH_I8 62
     CMP_EQ
@@ -3254,7 +3256,7 @@
     JUMP_IF_FALSE .L_and_false_215
     POP
     LOAD_LOCAL c2
-    PUSH_I8 61
+    PUSH_I8 62
     CMP_EQ
     JUMP .L_and_end_216
 .L_and_false_215:
@@ -3266,21 +3268,21 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = ">="
-    PUSH_STR ">="
+; cur_str = ">>"
+    PUSH_STR ">>"
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_217:
-; if c == 38 && c2 == 38
+; if c == 43 && c2 == 43
     LOAD_LOCAL c
-    PUSH_I8 38
+    PUSH_I8 43
     CMP_EQ
     DUP
     JUMP_IF_FALSE .L_and_false_218
     POP
     LOAD_LOCAL c2
-    PUSH_I8 38
+    PUSH_I8 43
     CMP_EQ
     JUMP .L_and_end_219
 .L_and_false_218:
@@ -3292,21 +3294,21 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = "&&"
-    PUSH_STR "&&"
+; cur_str = "++"
+    PUSH_STR "++"
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_220:
-; if c == 124 && c2 == 124
+; if c == 45 && c2 == 45
     LOAD_LOCAL c
-    PUSH_I8 124
+    PUSH_I8 45
     CMP_EQ
     DUP
     JUMP_IF_FALSE .L_and_false_221
     POP
     LOAD_LOCAL c2
-    PUSH_I8 124
+    PUSH_I8 45
     CMP_EQ
     JUMP .L_and_end_222
 .L_and_false_221:
@@ -3318,21 +3320,21 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = "||"
-    PUSH_STR "||"
+; cur_str = "--"
+    PUSH_STR "--"
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_223:
-; if c == 60 && c2 == 60
+; if c == 43 && c2 == 61
     LOAD_LOCAL c
-    PUSH_I8 60
+    PUSH_I8 43
     CMP_EQ
     DUP
     JUMP_IF_FALSE .L_and_false_224
     POP
     LOAD_LOCAL c2
-    PUSH_I8 60
+    PUSH_I8 61
     CMP_EQ
     JUMP .L_and_end_225
 .L_and_false_224:
@@ -3344,21 +3346,21 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = "<<"
-    PUSH_STR "<<"
+; cur_str = "+="
+    PUSH_STR "+="
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
 .L_endif_226:
-; if c == 62 && c2 == 62
+; if c == 45 && c2 == 61
     LOAD_LOCAL c
-    PUSH_I8 62
+    PUSH_I8 45
     CMP_EQ
     DUP
     JUMP_IF_FALSE .L_and_false_227
     POP
     LOAD_LOCAL c2
-    PUSH_I8 62
+    PUSH_I8 61
     CMP_EQ
     JUMP .L_and_end_228
 .L_and_false_227:
@@ -3370,116 +3372,12 @@
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
-; cur_str = ">>"
-    PUSH_STR ">>"
-    STORE_GLOBAL cur_str
-; return 
-    RET_VOID
-.L_endif_229:
-; if c == 43 && c2 == 43
-    LOAD_LOCAL c
-    PUSH_I8 43
-    CMP_EQ
-    DUP
-    JUMP_IF_FALSE .L_and_false_230
-    POP
-    LOAD_LOCAL c2
-    PUSH_I8 43
-    CMP_EQ
-    JUMP .L_and_end_231
-.L_and_false_230:
-.L_and_end_231:
-    JUMP_IF_FALSE .L_endif_232
-; next_char()
-    CALL next_char
-    POP
-; cur_tok = TOK_PUNCT
-    PUSH_I8 5
-    STORE_GLOBAL cur_tok
-; cur_str = "++"
-    PUSH_STR "++"
-    STORE_GLOBAL cur_str
-; return 
-    RET_VOID
-.L_endif_232:
-; if c == 45 && c2 == 45
-    LOAD_LOCAL c
-    PUSH_I8 45
-    CMP_EQ
-    DUP
-    JUMP_IF_FALSE .L_and_false_233
-    POP
-    LOAD_LOCAL c2
-    PUSH_I8 45
-    CMP_EQ
-    JUMP .L_and_end_234
-.L_and_false_233:
-.L_and_end_234:
-    JUMP_IF_FALSE .L_endif_235
-; next_char()
-    CALL next_char
-    POP
-; cur_tok = TOK_PUNCT
-    PUSH_I8 5
-    STORE_GLOBAL cur_tok
-; cur_str = "--"
-    PUSH_STR "--"
-    STORE_GLOBAL cur_str
-; return 
-    RET_VOID
-.L_endif_235:
-; if c == 43 && c2 == 61
-    LOAD_LOCAL c
-    PUSH_I8 43
-    CMP_EQ
-    DUP
-    JUMP_IF_FALSE .L_and_false_236
-    POP
-    LOAD_LOCAL c2
-    PUSH_I8 61
-    CMP_EQ
-    JUMP .L_and_end_237
-.L_and_false_236:
-.L_and_end_237:
-    JUMP_IF_FALSE .L_endif_238
-; next_char()
-    CALL next_char
-    POP
-; cur_tok = TOK_PUNCT
-    PUSH_I8 5
-    STORE_GLOBAL cur_tok
-; cur_str = "+="
-    PUSH_STR "+="
-    STORE_GLOBAL cur_str
-; return 
-    RET_VOID
-.L_endif_238:
-; if c == 45 && c2 == 61
-    LOAD_LOCAL c
-    PUSH_I8 45
-    CMP_EQ
-    DUP
-    JUMP_IF_FALSE .L_and_false_239
-    POP
-    LOAD_LOCAL c2
-    PUSH_I8 61
-    CMP_EQ
-    JUMP .L_and_end_240
-.L_and_false_239:
-.L_and_end_240:
-    JUMP_IF_FALSE .L_endif_241
-; next_char()
-    CALL next_char
-    POP
-; cur_tok = TOK_PUNCT
-    PUSH_I8 5
-    STORE_GLOBAL cur_tok
 ; cur_str = "-="
     PUSH_STR "-="
     STORE_GLOBAL cur_str
 ; return 
     RET_VOID
-.L_endif_241:
+.L_endif_229:
 ; cur_tok = TOK_PUNCT
     PUSH_I8 5
     STORE_GLOBAL cur_tok
@@ -3487,231 +3385,225 @@
     LOAD_LOCAL c
     PUSH_I8 43
     CMP_EQ
-    JUMP_IF_FALSE .L_else_242
+    JUMP_IF_FALSE .L_else_230
 ; cur_str = "+"
     PUSH_STR "+"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_243
-.L_else_242:
+    JUMP .L_endif_231
+.L_else_230:
 ; if c == 45
     LOAD_LOCAL c
     PUSH_I8 45
     CMP_EQ
-    JUMP_IF_FALSE .L_else_244
+    JUMP_IF_FALSE .L_else_232
 ; cur_str = "-"
     PUSH_STR "-"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_245
-.L_else_244:
+    JUMP .L_endif_233
+.L_else_232:
 ; if c == 42
     LOAD_LOCAL c
     PUSH_I8 42
     CMP_EQ
-    JUMP_IF_FALSE .L_else_246
+    JUMP_IF_FALSE .L_else_234
 ; cur_str = "*"
     PUSH_STR "*"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_247
-.L_else_246:
+    JUMP .L_endif_235
+.L_else_234:
 ; if c == 37
     LOAD_LOCAL c
     PUSH_I8 37
     CMP_EQ
-    JUMP_IF_FALSE .L_else_248
+    JUMP_IF_FALSE .L_else_236
 ; cur_str = "%!"(MISSING)
     PUSH_STR "%"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_249
-.L_else_248:
+    JUMP .L_endif_237
+.L_else_236:
 ; if c == 38
     LOAD_LOCAL c
     PUSH_I8 38
     CMP_EQ
-    JUMP_IF_FALSE .L_else_250
+    JUMP_IF_FALSE .L_else_238
 ; cur_str = "&"
     PUSH_STR "&"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_251
-.L_else_250:
+    JUMP .L_endif_239
+.L_else_238:
 ; if c == 124
     LOAD_LOCAL c
     PUSH_I8 124
     CMP_EQ
-    JUMP_IF_FALSE .L_else_252
+    JUMP_IF_FALSE .L_else_240
 ; cur_str = "|"
     PUSH_STR "|"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_253
-.L_else_252:
+    JUMP .L_endif_241
+.L_else_240:
 ; if c == 94
     LOAD_LOCAL c
     PUSH_I8 94
     CMP_EQ
-    JUMP_IF_FALSE .L_else_254
+    JUMP_IF_FALSE .L_else_242
 ; cur_str = "^"
     PUSH_STR "^"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_255
-.L_else_254:
+    JUMP .L_endif_243
+.L_else_242:
 ; if c == 126
     LOAD_LOCAL c
     PUSH_I8 126
     CMP_EQ
-    JUMP_IF_FALSE .L_else_256
+    JUMP_IF_FALSE .L_else_244
 ; cur_str = "~"
     PUSH_STR "~"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_257
-.L_else_256:
+    JUMP .L_endif_245
+.L_else_244:
 ; if c == 33
     LOAD_LOCAL c
     PUSH_I8 33
     CMP_EQ
-    JUMP_IF_FALSE .L_else_258
+    JUMP_IF_FALSE .L_else_246
 ; cur_str = "!"
     PUSH_STR "!"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_259
-.L_else_258:
+    JUMP .L_endif_247
+.L_else_246:
 ; if c == 60
     LOAD_LOCAL c
     PUSH_I8 60
     CMP_EQ
-    JUMP_IF_FALSE .L_else_260
+    JUMP_IF_FALSE .L_else_248
 ; cur_str = "<"
     PUSH_STR "<"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_261
-.L_else_260:
+    JUMP .L_endif_249
+.L_else_248:
 ; if c == 62
     LOAD_LOCAL c
     PUSH_I8 62
     CMP_EQ
-    JUMP_IF_FALSE .L_else_262
+    JUMP_IF_FALSE .L_else_250
 ; cur_str = ">"
     PUSH_STR ">"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_263
-.L_else_262:
+    JUMP .L_endif_251
+.L_else_250:
 ; if c == 61
     LOAD_LOCAL c
     PUSH_I8 61
     CMP_EQ
-    JUMP_IF_FALSE .L_else_264
+    JUMP_IF_FALSE .L_else_252
 ; cur_str = "="
     PUSH_STR "="
     STORE_GLOBAL cur_str
-    JUMP .L_endif_265
-.L_else_264:
+    JUMP .L_endif_253
+.L_else_252:
 ; if c == 40
     LOAD_LOCAL c
     PUSH_I8 40
     CMP_EQ
-    JUMP_IF_FALSE .L_else_266
+    JUMP_IF_FALSE .L_else_254
 ; cur_str = "("
     PUSH_STR "("
     STORE_GLOBAL cur_str
-    JUMP .L_endif_267
-.L_else_266:
+    JUMP .L_endif_255
+.L_else_254:
 ; if c == 41
     LOAD_LOCAL c
     PUSH_I8 41
     CMP_EQ
-    JUMP_IF_FALSE .L_else_268
+    JUMP_IF_FALSE .L_else_256
 ; cur_str = ")"
     PUSH_STR ")"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_269
-.L_else_268:
+    JUMP .L_endif_257
+.L_else_256:
 ; if c == 91
     LOAD_LOCAL c
     PUSH_I8 91
     CMP_EQ
-    JUMP_IF_FALSE .L_else_270
+    JUMP_IF_FALSE .L_else_258
 ; cur_str = "["
     PUSH_STR "["
     STORE_GLOBAL cur_str
-    JUMP .L_endif_271
-.L_else_270:
+    JUMP .L_endif_259
+.L_else_258:
 ; if c == 93
     LOAD_LOCAL c
     PUSH_I8 93
     CMP_EQ
-    JUMP_IF_FALSE .L_else_272
+    JUMP_IF_FALSE .L_else_260
 ; cur_str = "]"
     PUSH_STR "]"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_273
-.L_else_272:
+    JUMP .L_endif_261
+.L_else_260:
 ; if c == 123
     LOAD_LOCAL c
     PUSH_I8 123
     CMP_EQ
-    JUMP_IF_FALSE .L_else_274
+    JUMP_IF_FALSE .L_else_262
 ; cur_str = "{"
     PUSH_STR "{"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_275
-.L_else_274:
+    JUMP .L_endif_263
+.L_else_262:
 ; if c == 125
     LOAD_LOCAL c
     PUSH_I8 125
     CMP_EQ
-    JUMP_IF_FALSE .L_else_276
+    JUMP_IF_FALSE .L_else_264
 ; cur_str = "}"
     PUSH_STR "}"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_277
-.L_else_276:
+    JUMP .L_endif_265
+.L_else_264:
 ; if c == 44
     LOAD_LOCAL c
     PUSH_I8 44
     CMP_EQ
-    JUMP_IF_FALSE .L_else_278
+    JUMP_IF_FALSE .L_else_266
 ; cur_str = ","
     PUSH_STR ","
     STORE_GLOBAL cur_str
-    JUMP .L_endif_279
-.L_else_278:
+    JUMP .L_endif_267
+.L_else_266:
 ; if c == 59
     LOAD_LOCAL c
     PUSH_I8 59
     CMP_EQ
-    JUMP_IF_FALSE .L_else_280
+    JUMP_IF_FALSE .L_else_268
 ; cur_str = ";"
     PUSH_STR ";"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_281
-.L_else_280:
+    JUMP .L_endif_269
+.L_else_268:
 ; if c == 58
     LOAD_LOCAL c
     PUSH_I8 58
     CMP_EQ
-    JUMP_IF_FALSE .L_else_282
+    JUMP_IF_FALSE .L_else_270
 ; cur_str = ":"
     PUSH_STR ":"
     STORE_GLOBAL cur_str
-    JUMP .L_endif_283
-.L_else_282:
+    JUMP .L_endif_271
+.L_else_270:
 ; if c == 46
     LOAD_LOCAL c
     PUSH_I8 46
     CMP_EQ
-    JUMP_IF_FALSE .L_else_284
+    JUMP_IF_FALSE .L_else_272
 ; cur_str = "."
     PUSH_STR "."
     STORE_GLOBAL cur_str
-    JUMP .L_endif_285
-.L_else_284:
+    JUMP .L_endif_273
+.L_else_272:
 ; cur_str = ""
     PUSH_STR ""
     STORE_GLOBAL cur_str
-.L_endif_285:
-.L_endif_283:
-.L_endif_281:
-.L_endif_279:
-.L_endif_277:
-.L_endif_275:
 .L_endif_273:
 .L_endif_271:
 .L_endif_269:
@@ -3728,6 +3620,12 @@
 .L_endif_247:
 .L_endif_245:
 .L_endif_243:
+.L_endif_241:
+.L_endif_239:
+.L_endif_237:
+.L_endif_235:
+.L_endif_233:
+.L_endif_231:
     RET_VOID
 .endfunction
 
@@ -3751,13 +3649,13 @@
     LOAD_LOCAL s
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_286
+    JUMP_IF_FALSE .L_endif_274
 ; next_tok()
     CALL next_tok
 ; return true
     PUSH_TRUE
     RET
-.L_endif_286:
+.L_endif_274:
 ; return false
     PUSH_FALSE
     RET
@@ -3783,7 +3681,7 @@
     LOAD_GLOBAL cur_str
     LOAD_LOCAL s
     STR_CMP
-    JUMP_IF_FALSE .L_endif_287
+    JUMP_IF_FALSE .L_endif_275
 ; print(src_file, ":", cur_lineno, ": Syntax error: expected '", s)
 ; print(src_file, ":", cur_lineno, ": Syntax error: expected '", s)
     PUSH_I16 46
@@ -4261,7 +4159,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_287:
+.L_endif_275:
 ; next_tok()
     CALL next_tok
     RET_VOID
@@ -4289,7 +4187,7 @@
     PUSH_STR "["
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_288
+    JUMP_IF_FALSE .L_else_276
 ; next_tok()
     CALL next_tok
 ; count := word(0)
@@ -4299,19 +4197,19 @@
     LOAD_GLOBAL cur_tok
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_290
+    JUMP_IF_FALSE .L_else_278
 ; count = cur_int
     LOAD_GLOBAL cur_int
     STORE_LOCAL count
 ; next_tok()
     CALL next_tok
-    JUMP .L_endif_291
-.L_else_290:
+    JUMP .L_endif_279
+.L_else_278:
 ; if cur_tok == TOK_IDENT
     LOAD_GLOBAL cur_tok
     PUSH_I8 3
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_292
+    JUMP_IF_FALSE .L_endif_280
 ; ci := find_const(cur_str)
     LOAD_GLOBAL cur_str
     CALL find_const
@@ -4320,23 +4218,23 @@
     LOAD_LOCAL ci
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_293
+    JUMP_IF_FALSE .L_else_281
 ; count = const_vals[...]
     ADDR_OF_GLOBAL const_vals
     LOAD_LOCAL ci
     SHL1_ADD
     PEEK2
     STORE_LOCAL count
-    JUMP .L_endif_294
-.L_else_293:
+    JUMP .L_endif_282
+.L_else_281:
 ; count = 1
     PUSH_1
     STORE_LOCAL count
-.L_endif_294:
+.L_endif_282:
 ; next_tok()
     CALL next_tok
-.L_endif_292:
-.L_endif_291:
+.L_endif_280:
+.L_endif_279:
 ; expect("]")
     PUSH_STR "]"
     CALL expect
@@ -4351,26 +4249,26 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_297
+    JUMP_IF_TRUE .L_or_true_285
     POP
     LOAD_LOCAL tname
     PUSH_STR "bool"
     STR_CMP
     NOT
-    JUMP .L_or_end_298
-.L_or_true_297:
-.L_or_end_298:
+    JUMP .L_or_end_286
+.L_or_true_285:
+.L_or_end_286:
     DUP
-    JUMP_IF_TRUE .L_or_true_295
+    JUMP_IF_TRUE .L_or_true_283
     POP
     LOAD_LOCAL tname
     PUSH_STR "uint8"
     STR_CMP
     NOT
-    JUMP .L_or_end_296
-.L_or_true_295:
-.L_or_end_296:
-    JUMP_IF_FALSE .L_else_299
+    JUMP .L_or_end_284
+.L_or_true_283:
+.L_or_end_284:
+    JUMP_IF_FALSE .L_else_287
 ; pt_size = count
     LOAD_LOCAL count
     STORE_GLOBAL pt_size
@@ -4380,24 +4278,24 @@
 ; pt_elem_size = 1
     PUSH_1
     STORE_GLOBAL pt_elem_size
-    JUMP .L_endif_300
-.L_else_299:
+    JUMP .L_endif_288
+.L_else_287:
 ; if tname == "string" || tname == "slice"
     LOAD_LOCAL tname
     PUSH_STR "string"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_301
+    JUMP_IF_TRUE .L_or_true_289
     POP
     LOAD_LOCAL tname
     PUSH_STR "slice"
     STR_CMP
     NOT
-    JUMP .L_or_end_302
-.L_or_true_301:
-.L_or_end_302:
-    JUMP_IF_FALSE .L_else_303
+    JUMP .L_or_end_290
+.L_or_true_289:
+.L_or_end_290:
+    JUMP_IF_FALSE .L_else_291
 ; pt_size = count * 6
     LOAD_LOCAL count
     PUSH_I8 6
@@ -4409,8 +4307,8 @@
 ; pt_elem_size = 6
     PUSH_I8 6
     STORE_GLOBAL pt_elem_size
-    JUMP .L_endif_304
-.L_else_303:
+    JUMP .L_endif_292
+.L_else_291:
 ; pt_size = count * 2
     LOAD_LOCAL count
     PUSH_I8 2
@@ -4422,10 +4320,10 @@
 ; pt_elem_size = 2
     PUSH_I8 2
     STORE_GLOBAL pt_elem_size
-.L_endif_304:
-.L_endif_300:
-    JUMP .L_endif_289
-.L_else_288:
+.L_endif_292:
+.L_endif_288:
+    JUMP .L_endif_277
+.L_else_276:
 ; tname := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL tname
@@ -4437,26 +4335,26 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_307
+    JUMP_IF_TRUE .L_or_true_295
     POP
     LOAD_LOCAL tname
     PUSH_STR "bool"
     STR_CMP
     NOT
-    JUMP .L_or_end_308
-.L_or_true_307:
-.L_or_end_308:
+    JUMP .L_or_end_296
+.L_or_true_295:
+.L_or_end_296:
     DUP
-    JUMP_IF_TRUE .L_or_true_305
+    JUMP_IF_TRUE .L_or_true_293
     POP
     LOAD_LOCAL tname
     PUSH_STR "uint8"
     STR_CMP
     NOT
-    JUMP .L_or_end_306
-.L_or_true_305:
-.L_or_end_306:
-    JUMP_IF_FALSE .L_else_309
+    JUMP .L_or_end_294
+.L_or_true_293:
+.L_or_end_294:
+    JUMP_IF_FALSE .L_else_297
 ; pt_size = 1
     PUSH_1
     STORE_GLOBAL pt_size
@@ -4466,24 +4364,24 @@
 ; pt_elem_size = 1
     PUSH_1
     STORE_GLOBAL pt_elem_size
-    JUMP .L_endif_310
-.L_else_309:
+    JUMP .L_endif_298
+.L_else_297:
 ; if tname == "string" || tname == "slice"
     LOAD_LOCAL tname
     PUSH_STR "string"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_311
+    JUMP_IF_TRUE .L_or_true_299
     POP
     LOAD_LOCAL tname
     PUSH_STR "slice"
     STR_CMP
     NOT
-    JUMP .L_or_end_312
-.L_or_true_311:
-.L_or_end_312:
-    JUMP_IF_FALSE .L_else_313
+    JUMP .L_or_end_300
+.L_or_true_299:
+.L_or_end_300:
+    JUMP_IF_FALSE .L_else_301
 ; pt_size = 6
     PUSH_I8 6
     STORE_GLOBAL pt_size
@@ -4493,8 +4391,8 @@
 ; pt_elem_size = 1
     PUSH_1
     STORE_GLOBAL pt_elem_size
-    JUMP .L_endif_314
-.L_else_313:
+    JUMP .L_endif_302
+.L_else_301:
 ; pt_size = 2
     PUSH_I8 2
     STORE_GLOBAL pt_size
@@ -4504,9 +4402,9 @@
 ; pt_elem_size = 2
     PUSH_I8 2
     STORE_GLOBAL pt_elem_size
-.L_endif_314:
-.L_endif_310:
-.L_endif_289:
+.L_endif_302:
+.L_endif_298:
+.L_endif_277:
     RET_VOID
 .endfunction
 
@@ -4561,47 +4459,47 @@
 ; next_tok()
     CALL next_tok
 ; for cur_tok != TOK_EOF
-.L_for_top_315:
+.L_for_top_303:
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_for_exit_316
+    JUMP_IF_FALSE .L_for_exit_304
 ; if cur_tok == TOK_KEYWORD && cur_str == "package"
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_317
+    JUMP_IF_FALSE .L_and_false_305
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "package"
     STR_CMP
     NOT
-    JUMP .L_and_end_318
-.L_and_false_317:
-.L_and_end_318:
-    JUMP_IF_FALSE .L_else_319
+    JUMP .L_and_end_306
+.L_and_false_305:
+.L_and_end_306:
+    JUMP_IF_FALSE .L_else_307
 ; next_tok()
     CALL next_tok
 ; next_tok()
     CALL next_tok
-    JUMP .L_endif_320
-.L_else_319:
+    JUMP .L_endif_308
+.L_else_307:
 ; if cur_tok == TOK_KEYWORD && cur_str == "const"
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_321
+    JUMP_IF_FALSE .L_and_false_309
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "const"
     STR_CMP
     NOT
-    JUMP .L_and_end_322
-.L_and_false_321:
-.L_and_end_322:
-    JUMP_IF_FALSE .L_else_323
+    JUMP .L_and_end_310
+.L_and_false_309:
+.L_and_end_310:
+    JUMP_IF_FALSE .L_else_311
 ; next_tok()
     CALL next_tok
 ; cname := cur_str
@@ -4620,13 +4518,13 @@
     PUSH_STR "-"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_325
+    JUMP_IF_FALSE .L_endif_313
 ; is_neg = true
     PUSH_TRUE
     STORE_LOCAL is_neg
 ; next_tok()
     CALL next_tok
-.L_endif_325:
+.L_endif_313:
 ; cval := cur_int
     LOAD_GLOBAL cur_int
     STORE_LOCAL cval
@@ -4634,12 +4532,12 @@
     CALL next_tok
 ; if is_neg
     LOAD_LOCAL is_neg
-    JUMP_IF_FALSE .L_endif_326
+    JUMP_IF_FALSE .L_endif_314
 ; cval = word(-cval)
     LOAD_LOCAL cval
     NEG
     STORE_LOCAL cval
-.L_endif_326:
+.L_endif_314:
 ; add_const(cname, cval)
     LOAD_LOCAL cname
     LOAD_LOCAL cval
@@ -4649,27 +4547,27 @@
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_327
+    JUMP_IF_FALSE .L_endif_315
 ; next_tok()
     CALL next_tok
-.L_endif_327:
-    JUMP .L_endif_324
-.L_else_323:
+.L_endif_315:
+    JUMP .L_endif_312
+.L_else_311:
 ; if cur_tok == TOK_KEYWORD && cur_str == "var"
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_328
+    JUMP_IF_FALSE .L_and_false_316
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "var"
     STR_CMP
     NOT
-    JUMP .L_and_end_329
-.L_and_false_328:
-.L_and_end_329:
-    JUMP_IF_FALSE .L_else_330
+    JUMP .L_and_end_317
+.L_and_false_316:
+.L_and_end_317:
+    JUMP_IF_FALSE .L_else_318
 ; next_tok()
     CALL next_tok
 ; vname := cur_str
@@ -4690,27 +4588,27 @@
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_332
+    JUMP_IF_FALSE .L_endif_320
 ; next_tok()
     CALL next_tok
-.L_endif_332:
-    JUMP .L_endif_331
-.L_else_330:
+.L_endif_320:
+    JUMP .L_endif_319
+.L_else_318:
 ; if cur_tok == TOK_KEYWORD && cur_str == "func"
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_333
+    JUMP_IF_FALSE .L_and_false_321
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "func"
     STR_CMP
     NOT
-    JUMP .L_and_end_334
-.L_and_false_333:
-.L_and_end_334:
-    JUMP_IF_FALSE .L_else_335
+    JUMP .L_and_end_322
+.L_and_false_321:
+.L_and_end_322:
+    JUMP_IF_FALSE .L_else_323
 ; next_tok()
     CALL next_tok
 ; fname := cur_str
@@ -4735,29 +4633,29 @@
     BIT_AND
     STORE_LOCAL p_count
 ; for cur_tok != TOK_PUNCT || cur_str != ")" && cur_tok != TOK_EOF
-.L_for_top_337:
+.L_for_top_325:
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_341
+    JUMP_IF_TRUE .L_or_true_329
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR ")"
     STR_CMP
-    JUMP .L_or_end_342
-.L_or_true_341:
-.L_or_end_342:
+    JUMP .L_or_end_330
+.L_or_true_329:
+.L_or_end_330:
     DUP
-    JUMP_IF_FALSE .L_and_false_339
+    JUMP_IF_FALSE .L_and_false_327
     POP
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP .L_and_end_340
-.L_and_false_339:
-.L_and_end_340:
-    JUMP_IF_FALSE .L_for_exit_338
+    JUMP .L_and_end_328
+.L_and_false_327:
+.L_and_end_328:
+    JUMP_IF_FALSE .L_for_exit_326
 ; pname := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL pname
@@ -4780,12 +4678,12 @@
     PUSH_STR ","
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_343
+    JUMP_IF_FALSE .L_endif_331
 ; next_tok()
     CALL next_tok
-.L_endif_343:
-    JUMP .L_for_top_337
-.L_for_exit_338:
+.L_endif_331:
+    JUMP .L_for_top_325
+.L_for_exit_326:
 ; expect(")")
     PUSH_STR ")"
     CALL expect
@@ -4804,35 +4702,35 @@
     PUSH_I8 5
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_344
+    JUMP_IF_FALSE .L_and_false_332
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "{"
     STR_CMP
     NOT
-    JUMP .L_and_end_345
-.L_and_false_344:
-.L_and_end_345:
-    JUMP_IF_FALSE .L_else_346
+    JUMP .L_and_end_333
+.L_and_false_332:
+.L_and_end_333:
+    JUMP_IF_FALSE .L_else_334
 ; has_body = true
     PUSH_TRUE
     STORE_LOCAL has_body
-    JUMP .L_endif_347
-.L_else_346:
+    JUMP .L_endif_335
+.L_else_334:
 ; if cur_tok != TOK_EOF && cur_str != ";"
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
     DUP
-    JUMP_IF_FALSE .L_and_false_348
+    JUMP_IF_FALSE .L_and_false_336
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
-    JUMP .L_and_end_349
-.L_and_false_348:
-.L_and_end_349:
-    JUMP_IF_FALSE .L_endif_350
+    JUMP .L_and_end_337
+.L_and_false_336:
+.L_and_end_337:
+    JUMP_IF_FALSE .L_endif_338
 ; is_top := false
     PUSH_FALSE
     STORE_LOCAL is_top
@@ -4842,34 +4740,34 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_353
+    JUMP_IF_TRUE .L_or_true_341
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "var"
     STR_CMP
     NOT
-    JUMP .L_or_end_354
-.L_or_true_353:
-.L_or_end_354:
+    JUMP .L_or_end_342
+.L_or_true_341:
+.L_or_end_342:
     DUP
-    JUMP_IF_TRUE .L_or_true_351
+    JUMP_IF_TRUE .L_or_true_339
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "const"
     STR_CMP
     NOT
-    JUMP .L_or_end_352
-.L_or_true_351:
-.L_or_end_352:
-    JUMP_IF_FALSE .L_endif_355
+    JUMP .L_or_end_340
+.L_or_true_339:
+.L_or_end_340:
+    JUMP_IF_FALSE .L_endif_343
 ; is_top = true
     PUSH_TRUE
     STORE_LOCAL is_top
-.L_endif_355:
+.L_endif_343:
 ; if !is_top
     LOAD_LOCAL is_top
     NOT
-    JUMP_IF_FALSE .L_endif_356
+    JUMP_IF_FALSE .L_endif_344
 ; rname := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL rname
@@ -4881,16 +4779,16 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_357
+    JUMP_IF_TRUE .L_or_true_345
     POP
     LOAD_LOCAL rname
     PUSH_STR "slice"
     STR_CMP
     NOT
-    JUMP .L_or_end_358
-.L_or_true_357:
-.L_or_end_358:
-    JUMP_IF_FALSE .L_else_359
+    JUMP .L_or_end_346
+.L_or_true_345:
+.L_or_end_346:
+    JUMP_IF_FALSE .L_else_347
 ; func_ret_kinds[...] = KIND_SLICE
     PUSH_I8 2
     ADDR_OF_GLOBAL func_ret_kinds
@@ -4898,13 +4796,13 @@
     ADD
     SWAP
     POKE1
-    JUMP .L_endif_360
-.L_else_359:
+    JUMP .L_endif_348
+.L_else_347:
 ; if rname != "void"
     LOAD_LOCAL rname
     PUSH_STR "void"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_361
+    JUMP_IF_FALSE .L_endif_349
 ; func_ret_kinds[...] = KIND_SCALAR
     PUSH_1
     ADDR_OF_GLOBAL func_ret_kinds
@@ -4912,42 +4810,42 @@
     ADD
     SWAP
     POKE1
-.L_endif_361:
-.L_endif_360:
+.L_endif_349:
+.L_endif_348:
 ; if cur_tok == TOK_PUNCT && cur_str == "{"
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_362
+    JUMP_IF_FALSE .L_and_false_350
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "{"
     STR_CMP
     NOT
-    JUMP .L_and_end_363
-.L_and_false_362:
-.L_and_end_363:
-    JUMP_IF_FALSE .L_endif_364
+    JUMP .L_and_end_351
+.L_and_false_350:
+.L_and_end_351:
+    JUMP_IF_FALSE .L_endif_352
 ; has_body = true
     PUSH_TRUE
     STORE_LOCAL has_body
-.L_endif_364:
-.L_endif_356:
-.L_endif_350:
-.L_endif_347:
+.L_endif_352:
+.L_endif_344:
+.L_endif_338:
+.L_endif_335:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_365
+    JUMP_IF_FALSE .L_endif_353
 ; next_tok()
     CALL next_tok
-.L_endif_365:
+.L_endif_353:
 ; if has_body
     LOAD_LOCAL has_body
-    JUMP_IF_FALSE .L_else_366
+    JUMP_IF_FALSE .L_else_354
 ; expect("{")
     PUSH_STR "{"
     CALL expect
@@ -4958,35 +4856,35 @@
     PUSH_0
     STORE_LOCAL l_count
 ; for depth > 0 && cur_tok != TOK_EOF
-.L_for_top_368:
+.L_for_top_356:
     LOAD_LOCAL depth
     PUSH_0
     CMP_GT
     DUP
-    JUMP_IF_FALSE .L_and_false_370
+    JUMP_IF_FALSE .L_and_false_358
     POP
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP .L_and_end_371
-.L_and_false_370:
-.L_and_end_371:
-    JUMP_IF_FALSE .L_for_exit_369
+    JUMP .L_and_end_359
+.L_and_false_358:
+.L_and_end_359:
+    JUMP_IF_FALSE .L_for_exit_357
 ; if cur_tok == TOK_PUNCT && cur_str == "{"
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_372
+    JUMP_IF_FALSE .L_and_false_360
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "{"
     STR_CMP
     NOT
-    JUMP .L_and_end_373
-.L_and_false_372:
-.L_and_end_373:
-    JUMP_IF_FALSE .L_else_374
+    JUMP .L_and_end_361
+.L_and_false_360:
+.L_and_end_361:
+    JUMP_IF_FALSE .L_else_362
 ; depth++
     LOAD_LOCAL depth
     PUSH_1
@@ -4994,23 +4892,23 @@
     STORE_LOCAL depth
 ; next_tok()
     CALL next_tok
-    JUMP .L_endif_375
-.L_else_374:
+    JUMP .L_endif_363
+.L_else_362:
 ; if cur_tok == TOK_PUNCT && cur_str == "}"
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_376
+    JUMP_IF_FALSE .L_and_false_364
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "}"
     STR_CMP
     NOT
-    JUMP .L_and_end_377
-.L_and_false_376:
-.L_and_end_377:
-    JUMP_IF_FALSE .L_else_378
+    JUMP .L_and_end_365
+.L_and_false_364:
+.L_and_end_365:
+    JUMP_IF_FALSE .L_else_366
 ; depth--
     LOAD_LOCAL depth
     PUSH_1
@@ -5018,23 +4916,23 @@
     STORE_LOCAL depth
 ; next_tok()
     CALL next_tok
-    JUMP .L_endif_379
-.L_else_378:
+    JUMP .L_endif_367
+.L_else_366:
 ; if cur_tok == TOK_KEYWORD && cur_str == "var"
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_380
+    JUMP_IF_FALSE .L_and_false_368
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "var"
     STR_CMP
     NOT
-    JUMP .L_and_end_381
-.L_and_false_380:
-.L_and_end_381:
-    JUMP_IF_FALSE .L_else_382
+    JUMP .L_and_end_369
+.L_and_false_368:
+.L_and_end_369:
+    JUMP_IF_FALSE .L_else_370
 ; next_tok()
     CALL next_tok
 ; lname := cur_str
@@ -5055,13 +4953,13 @@
     PUSH_1
     ADD
     STORE_LOCAL l_count
-    JUMP .L_endif_383
-.L_else_382:
+    JUMP .L_endif_371
+.L_else_370:
 ; if cur_tok == TOK_IDENT
     LOAD_GLOBAL cur_tok
     PUSH_I8 3
     CMP_EQ
-    JUMP_IF_FALSE .L_else_384
+    JUMP_IF_FALSE .L_else_372
 ; lname := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL lname
@@ -5072,7 +4970,7 @@
     PUSH_STR ","
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_386
+    JUMP_IF_FALSE .L_else_374
 ; next_tok()
     CALL next_tok
 ; lname2 := cur_str
@@ -5085,7 +4983,7 @@
     PUSH_STR ":="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_388
+    JUMP_IF_FALSE .L_endif_376
 ; next_tok()
     CALL next_tok
 ; if cur_str == "file_readline"
@@ -5093,12 +4991,12 @@
     PUSH_STR "file_readline"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_389
+    JUMP_IF_FALSE .L_else_377
 ; if lname != "_"
     LOAD_LOCAL lname
     PUSH_STR "_"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_391
+    JUMP_IF_FALSE .L_endif_379
 ; add_local(lname, KIND_SLICE, 6, 0)
     LOAD_LOCAL lname
     PUSH_I8 2
@@ -5110,12 +5008,12 @@
     PUSH_1
     ADD
     STORE_LOCAL l_count
-.L_endif_391:
+.L_endif_379:
 ; if lname2 != "_"
     LOAD_LOCAL lname2
     PUSH_STR "_"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_392
+    JUMP_IF_FALSE .L_endif_380
 ; add_local(lname2, KIND_SCALAR, 2, 0)
     LOAD_LOCAL lname2
     PUSH_1
@@ -5127,14 +5025,14 @@
     PUSH_1
     ADD
     STORE_LOCAL l_count
-.L_endif_392:
-    JUMP .L_endif_390
-.L_else_389:
+.L_endif_380:
+    JUMP .L_endif_378
+.L_else_377:
 ; if lname != "_"
     LOAD_LOCAL lname
     PUSH_STR "_"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_393
+    JUMP_IF_FALSE .L_endif_381
 ; add_local(lname, KIND_SCALAR, 2, 0)
     LOAD_LOCAL lname
     PUSH_1
@@ -5146,12 +5044,12 @@
     PUSH_1
     ADD
     STORE_LOCAL l_count
-.L_endif_393:
+.L_endif_381:
 ; if lname2 != "_"
     LOAD_LOCAL lname2
     PUSH_STR "_"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_394
+    JUMP_IF_FALSE .L_endif_382
 ; add_local(lname2, KIND_SCALAR, 2, 0)
     LOAD_LOCAL lname2
     PUSH_1
@@ -5163,17 +5061,17 @@
     PUSH_1
     ADD
     STORE_LOCAL l_count
-.L_endif_394:
-.L_endif_390:
-.L_endif_388:
-    JUMP .L_endif_387
-.L_else_386:
+.L_endif_382:
+.L_endif_378:
+.L_endif_376:
+    JUMP .L_endif_375
+.L_else_374:
 ; if cur_str == ":="
     LOAD_GLOBAL cur_str
     PUSH_STR ":="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_395
+    JUMP_IF_FALSE .L_endif_383
 ; next_tok()
     CALL next_tok
 ; lkind := byte(KIND_SCALAR)
@@ -5197,7 +5095,7 @@
     PUSH_STR "["
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_396
+    JUMP_IF_FALSE .L_else_384
 ; gi := find_global(first_name)
     LOAD_LOCAL first_name
     CALL find_global
@@ -5215,96 +5113,96 @@
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_398
+    JUMP_IF_FALSE .L_else_386
 ; elem_sz = global_elem_sizes[...]
     ADDR_OF_GLOBAL global_elem_sizes
     LOAD_LOCAL gi
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-    JUMP .L_endif_399
-.L_else_398:
+    JUMP .L_endif_387
+.L_else_386:
 ; if li != 65535
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_400
+    JUMP_IF_FALSE .L_endif_388
 ; elem_sz = local_elem_sizes[...]
     ADDR_OF_GLOBAL local_elem_sizes
     LOAD_LOCAL li
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-.L_endif_400:
-.L_endif_399:
+.L_endif_388:
+.L_endif_387:
 ; if elem_sz == 6
     LOAD_LOCAL elem_sz
     PUSH_I8 6
     CMP_EQ
-    JUMP_IF_FALSE .L_else_401
+    JUMP_IF_FALSE .L_else_389
 ; lkind = KIND_SLICE
     PUSH_I8 2
     STORE_LOCAL lkind
 ; lsz = 6
     PUSH_I8 6
     STORE_LOCAL lsz
-    JUMP .L_endif_402
-.L_else_401:
+    JUMP .L_endif_390
+.L_else_389:
 ; lkind = KIND_SCALAR
     PUSH_1
     STORE_LOCAL lkind
 ; lsz = 2
     PUSH_I8 2
     STORE_LOCAL lsz
-.L_endif_402:
-    JUMP .L_endif_397
-.L_else_396:
+.L_endif_390:
+    JUMP .L_endif_385
+.L_else_384:
 ; is_sfn := first_name == "sys_args" || first_name == "file_readline" || first_name == "map_str"
     LOAD_LOCAL first_name
     PUSH_STR "sys_args"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_405
+    JUMP_IF_TRUE .L_or_true_393
     POP
     LOAD_LOCAL first_name
     PUSH_STR "file_readline"
     STR_CMP
     NOT
-    JUMP .L_or_end_406
-.L_or_true_405:
-.L_or_end_406:
+    JUMP .L_or_end_394
+.L_or_true_393:
+.L_or_end_394:
     DUP
-    JUMP_IF_TRUE .L_or_true_403
+    JUMP_IF_TRUE .L_or_true_391
     POP
     LOAD_LOCAL first_name
     PUSH_STR "map_str"
     STR_CMP
     NOT
-    JUMP .L_or_end_404
-.L_or_true_403:
-.L_or_end_404:
+    JUMP .L_or_end_392
+.L_or_true_391:
+.L_or_end_392:
     STORE_LOCAL is_sfn
 ; if first_tok == TOK_STRING || is_sfn
     LOAD_LOCAL first_tok
     PUSH_I8 2
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_407
+    JUMP_IF_TRUE .L_or_true_395
     POP
     LOAD_LOCAL is_sfn
-    JUMP .L_or_end_408
-.L_or_true_407:
-.L_or_end_408:
-    JUMP_IF_FALSE .L_else_409
+    JUMP .L_or_end_396
+.L_or_true_395:
+.L_or_end_396:
+    JUMP_IF_FALSE .L_else_397
 ; lkind = KIND_SLICE
     PUSH_I8 2
     STORE_LOCAL lkind
 ; lsz = 6
     PUSH_I8 6
     STORE_LOCAL lsz
-    JUMP .L_endif_410
-.L_else_409:
+    JUMP .L_endif_398
+.L_else_397:
 ; fi := find_func(first_name)
     LOAD_LOCAL first_name
     CALL find_func
@@ -5314,7 +5212,7 @@
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_FALSE .L_and_false_411
+    JUMP_IF_FALSE .L_and_false_399
     POP
     ADDR_OF_GLOBAL func_ret_kinds
     LOAD_LOCAL fi
@@ -5322,88 +5220,28 @@
     PEEK1
     PUSH_I8 2
     CMP_EQ
-    JUMP .L_and_end_412
-.L_and_false_411:
-.L_and_end_412:
-    JUMP_IF_FALSE .L_else_413
+    JUMP .L_and_end_400
+.L_and_false_399:
+.L_and_end_400:
+    JUMP_IF_FALSE .L_else_401
 ; lkind = KIND_SLICE
     PUSH_I8 2
     STORE_LOCAL lkind
 ; lsz = 6
     PUSH_I8 6
     STORE_LOCAL lsz
-    JUMP .L_endif_414
-.L_else_413:
+    JUMP .L_endif_402
+.L_else_401:
 ; is_binop := cur_str == "==" || cur_str == "!=" || cur_str == "<" || cur_str == "<=" || cur_str == ">" || cur_str == ">=" || cur_str == "." || cur_str == "&&" || cur_str == "||"
     LOAD_GLOBAL cur_str
     PUSH_STR "=="
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_429
-    POP
-    LOAD_GLOBAL cur_str
-    PUSH_STR "!="
-    STR_CMP
-    NOT
-    JUMP .L_or_end_430
-.L_or_true_429:
-.L_or_end_430:
-    DUP
-    JUMP_IF_TRUE .L_or_true_427
-    POP
-    LOAD_GLOBAL cur_str
-    PUSH_STR "<"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_428
-.L_or_true_427:
-.L_or_end_428:
-    DUP
-    JUMP_IF_TRUE .L_or_true_425
-    POP
-    LOAD_GLOBAL cur_str
-    PUSH_STR "<="
-    STR_CMP
-    NOT
-    JUMP .L_or_end_426
-.L_or_true_425:
-.L_or_end_426:
-    DUP
-    JUMP_IF_TRUE .L_or_true_423
-    POP
-    LOAD_GLOBAL cur_str
-    PUSH_STR ">"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_424
-.L_or_true_423:
-.L_or_end_424:
-    DUP
-    JUMP_IF_TRUE .L_or_true_421
-    POP
-    LOAD_GLOBAL cur_str
-    PUSH_STR ">="
-    STR_CMP
-    NOT
-    JUMP .L_or_end_422
-.L_or_true_421:
-.L_or_end_422:
-    DUP
-    JUMP_IF_TRUE .L_or_true_419
-    POP
-    LOAD_GLOBAL cur_str
-    PUSH_STR "."
-    STR_CMP
-    NOT
-    JUMP .L_or_end_420
-.L_or_true_419:
-.L_or_end_420:
-    DUP
     JUMP_IF_TRUE .L_or_true_417
     POP
     LOAD_GLOBAL cur_str
-    PUSH_STR "&&"
+    PUSH_STR "!="
     STR_CMP
     NOT
     JUMP .L_or_end_418
@@ -5413,17 +5251,77 @@
     JUMP_IF_TRUE .L_or_true_415
     POP
     LOAD_GLOBAL cur_str
-    PUSH_STR "||"
+    PUSH_STR "<"
     STR_CMP
     NOT
     JUMP .L_or_end_416
 .L_or_true_415:
 .L_or_end_416:
+    DUP
+    JUMP_IF_TRUE .L_or_true_413
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "<="
+    STR_CMP
+    NOT
+    JUMP .L_or_end_414
+.L_or_true_413:
+.L_or_end_414:
+    DUP
+    JUMP_IF_TRUE .L_or_true_411
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ">"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_412
+.L_or_true_411:
+.L_or_end_412:
+    DUP
+    JUMP_IF_TRUE .L_or_true_409
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR ">="
+    STR_CMP
+    NOT
+    JUMP .L_or_end_410
+.L_or_true_409:
+.L_or_end_410:
+    DUP
+    JUMP_IF_TRUE .L_or_true_407
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "."
+    STR_CMP
+    NOT
+    JUMP .L_or_end_408
+.L_or_true_407:
+.L_or_end_408:
+    DUP
+    JUMP_IF_TRUE .L_or_true_405
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "&&"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_406
+.L_or_true_405:
+.L_or_end_406:
+    DUP
+    JUMP_IF_TRUE .L_or_true_403
+    POP
+    LOAD_GLOBAL cur_str
+    PUSH_STR "||"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_404
+.L_or_true_403:
+.L_or_end_404:
     STORE_LOCAL is_binop
 ; if !is_binop
     LOAD_LOCAL is_binop
     NOT
-    JUMP_IF_FALSE .L_endif_431
+    JUMP_IF_FALSE .L_endif_419
 ; li := find_cur_local(first_name)
     LOAD_LOCAL first_name
     CALL find_cur_local
@@ -5433,7 +5331,7 @@
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_FALSE .L_and_false_432
+    JUMP_IF_FALSE .L_and_false_420
     POP
     ADDR_OF_GLOBAL local_kinds
     LOAD_LOCAL li
@@ -5441,18 +5339,18 @@
     PEEK1
     PUSH_I8 2
     CMP_EQ
-    JUMP .L_and_end_433
-.L_and_false_432:
-.L_and_end_433:
-    JUMP_IF_FALSE .L_else_434
+    JUMP .L_and_end_421
+.L_and_false_420:
+.L_and_end_421:
+    JUMP_IF_FALSE .L_else_422
 ; lkind = KIND_SLICE
     PUSH_I8 2
     STORE_LOCAL lkind
 ; lsz = 6
     PUSH_I8 6
     STORE_LOCAL lsz
-    JUMP .L_endif_435
-.L_else_434:
+    JUMP .L_endif_423
+.L_else_422:
 ; pi := find_cur_param(first_name)
     LOAD_LOCAL first_name
     CALL find_cur_param
@@ -5462,7 +5360,7 @@
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_FALSE .L_and_false_436
+    JUMP_IF_FALSE .L_and_false_424
     POP
     ADDR_OF_GLOBAL param_kinds
     LOAD_LOCAL pi
@@ -5470,18 +5368,18 @@
     PEEK1
     PUSH_I8 2
     CMP_EQ
-    JUMP .L_and_end_437
-.L_and_false_436:
-.L_and_end_437:
-    JUMP_IF_FALSE .L_else_438
+    JUMP .L_and_end_425
+.L_and_false_424:
+.L_and_end_425:
+    JUMP_IF_FALSE .L_else_426
 ; lkind = KIND_SLICE
     PUSH_I8 2
     STORE_LOCAL lkind
 ; lsz = 6
     PUSH_I8 6
     STORE_LOCAL lsz
-    JUMP .L_endif_439
-.L_else_438:
+    JUMP .L_endif_427
+.L_else_426:
 ; gi := find_global(first_name)
     LOAD_LOCAL first_name
     CALL find_global
@@ -5491,7 +5389,7 @@
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_FALSE .L_and_false_440
+    JUMP_IF_FALSE .L_and_false_428
     POP
     ADDR_OF_GLOBAL global_kinds
     LOAD_LOCAL gi
@@ -5499,28 +5397,28 @@
     PEEK1
     PUSH_I8 2
     CMP_EQ
-    JUMP .L_and_end_441
-.L_and_false_440:
-.L_and_end_441:
-    JUMP_IF_FALSE .L_endif_442
+    JUMP .L_and_end_429
+.L_and_false_428:
+.L_and_end_429:
+    JUMP_IF_FALSE .L_endif_430
 ; lkind = KIND_SLICE
     PUSH_I8 2
     STORE_LOCAL lkind
 ; lsz = 6
     PUSH_I8 6
     STORE_LOCAL lsz
-.L_endif_442:
-.L_endif_439:
-.L_endif_435:
-.L_endif_431:
-.L_endif_414:
-.L_endif_410:
-.L_endif_397:
+.L_endif_430:
+.L_endif_427:
+.L_endif_423:
+.L_endif_419:
+.L_endif_402:
+.L_endif_398:
+.L_endif_385:
 ; if lname != "_"
     LOAD_LOCAL lname
     PUSH_STR "_"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_443
+    JUMP_IF_FALSE .L_endif_431
 ; add_local(lname, lkind, lsz, 0)
     LOAD_LOCAL lname
     LOAD_LOCAL lkind
@@ -5532,19 +5430,19 @@
     PUSH_1
     ADD
     STORE_LOCAL l_count
-.L_endif_443:
-.L_endif_395:
-.L_endif_387:
-    JUMP .L_endif_385
-.L_else_384:
+.L_endif_431:
+.L_endif_383:
+.L_endif_375:
+    JUMP .L_endif_373
+.L_else_372:
 ; next_tok()
     CALL next_tok
-.L_endif_385:
-.L_endif_383:
-.L_endif_379:
-.L_endif_375:
-    JUMP .L_for_top_368
-.L_for_exit_369:
+.L_endif_373:
+.L_endif_371:
+.L_endif_367:
+.L_endif_363:
+    JUMP .L_for_top_356
+.L_for_exit_357:
 ; add_local("_pbuf", KIND_SCALAR, 2, 2)
     PUSH_STR "_pbuf"
     PUSH_1
@@ -5587,8 +5485,8 @@
     SHL1_ADD
     SWAP
     POKE2
-    JUMP .L_endif_367
-.L_else_366:
+    JUMP .L_endif_355
+.L_else_354:
 ; func_num_locals[...] = 0
     PUSH_0
     ADDR_OF_GLOBAL func_num_locals
@@ -5596,17 +5494,17 @@
     SHL1_ADD
     SWAP
     POKE2
-.L_endif_367:
-    JUMP .L_endif_336
-.L_else_335:
+.L_endif_355:
+    JUMP .L_endif_324
+.L_else_323:
 ; next_tok()
     CALL next_tok
-.L_endif_336:
-.L_endif_331:
 .L_endif_324:
-.L_endif_320:
-    JUMP .L_for_top_315
-.L_for_exit_316:
+.L_endif_319:
+.L_endif_312:
+.L_endif_308:
+    JUMP .L_for_top_303
+.L_for_exit_304:
     RET_VOID
 .endfunction
 
@@ -5630,31 +5528,161 @@
     PUSH_STR "||"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_444
+    JUMP_IF_FALSE .L_endif_432
 ; return 1
     PUSH_1
     RET
-.L_endif_444:
+.L_endif_432:
 ; if op == "&&"
     LOAD_LOCAL op
     PUSH_STR "&&"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_445
+    JUMP_IF_FALSE .L_endif_433
 ; return 2
     PUSH_I8 2
     RET
-.L_endif_445:
+.L_endif_433:
 ; if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">="
     LOAD_LOCAL op
     PUSH_STR "=="
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_454
+    JUMP_IF_TRUE .L_or_true_442
     POP
     LOAD_LOCAL op
     PUSH_STR "!="
+    STR_CMP
+    NOT
+    JUMP .L_or_end_443
+.L_or_true_442:
+.L_or_end_443:
+    DUP
+    JUMP_IF_TRUE .L_or_true_440
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "<"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_441
+.L_or_true_440:
+.L_or_end_441:
+    DUP
+    JUMP_IF_TRUE .L_or_true_438
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "<="
+    STR_CMP
+    NOT
+    JUMP .L_or_end_439
+.L_or_true_438:
+.L_or_end_439:
+    DUP
+    JUMP_IF_TRUE .L_or_true_436
+    POP
+    LOAD_LOCAL op
+    PUSH_STR ">"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_437
+.L_or_true_436:
+.L_or_end_437:
+    DUP
+    JUMP_IF_TRUE .L_or_true_434
+    POP
+    LOAD_LOCAL op
+    PUSH_STR ">="
+    STR_CMP
+    NOT
+    JUMP .L_or_end_435
+.L_or_true_434:
+.L_or_end_435:
+    JUMP_IF_FALSE .L_endif_444
+; return 3
+    PUSH_I8 3
+    RET
+.L_endif_444:
+; if op == "+" || op == "-" || op == "|" || op == "^"
+    LOAD_LOCAL op
+    PUSH_STR "+"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_or_true_449
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "-"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_450
+.L_or_true_449:
+.L_or_end_450:
+    DUP
+    JUMP_IF_TRUE .L_or_true_447
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "|"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_448
+.L_or_true_447:
+.L_or_end_448:
+    DUP
+    JUMP_IF_TRUE .L_or_true_445
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "^"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_446
+.L_or_true_445:
+.L_or_end_446:
+    JUMP_IF_FALSE .L_endif_451
+; return 4
+    PUSH_I8 4
+    RET
+.L_endif_451:
+; if op == "*" || op == "/" || op == "%!"(MISSING) || op == "<<" || op == ">>" || op == "&"
+    LOAD_LOCAL op
+    PUSH_STR "*"
+    STR_CMP
+    NOT
+    DUP
+    JUMP_IF_TRUE .L_or_true_460
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "/"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_461
+.L_or_true_460:
+.L_or_end_461:
+    DUP
+    JUMP_IF_TRUE .L_or_true_458
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "%"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_459
+.L_or_true_458:
+.L_or_end_459:
+    DUP
+    JUMP_IF_TRUE .L_or_true_456
+    POP
+    LOAD_LOCAL op
+    PUSH_STR "<<"
+    STR_CMP
+    NOT
+    JUMP .L_or_end_457
+.L_or_true_456:
+.L_or_end_457:
+    DUP
+    JUMP_IF_TRUE .L_or_true_454
+    POP
+    LOAD_LOCAL op
+    PUSH_STR ">>"
     STR_CMP
     NOT
     JUMP .L_or_end_455
@@ -5664,147 +5692,17 @@
     JUMP_IF_TRUE .L_or_true_452
     POP
     LOAD_LOCAL op
-    PUSH_STR "<"
+    PUSH_STR "&"
     STR_CMP
     NOT
     JUMP .L_or_end_453
 .L_or_true_452:
 .L_or_end_453:
-    DUP
-    JUMP_IF_TRUE .L_or_true_450
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "<="
-    STR_CMP
-    NOT
-    JUMP .L_or_end_451
-.L_or_true_450:
-.L_or_end_451:
-    DUP
-    JUMP_IF_TRUE .L_or_true_448
-    POP
-    LOAD_LOCAL op
-    PUSH_STR ">"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_449
-.L_or_true_448:
-.L_or_end_449:
-    DUP
-    JUMP_IF_TRUE .L_or_true_446
-    POP
-    LOAD_LOCAL op
-    PUSH_STR ">="
-    STR_CMP
-    NOT
-    JUMP .L_or_end_447
-.L_or_true_446:
-.L_or_end_447:
-    JUMP_IF_FALSE .L_endif_456
-; return 3
-    PUSH_I8 3
-    RET
-.L_endif_456:
-; if op == "+" || op == "-" || op == "|" || op == "^"
-    LOAD_LOCAL op
-    PUSH_STR "+"
-    STR_CMP
-    NOT
-    DUP
-    JUMP_IF_TRUE .L_or_true_461
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "-"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_462
-.L_or_true_461:
-.L_or_end_462:
-    DUP
-    JUMP_IF_TRUE .L_or_true_459
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "|"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_460
-.L_or_true_459:
-.L_or_end_460:
-    DUP
-    JUMP_IF_TRUE .L_or_true_457
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "^"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_458
-.L_or_true_457:
-.L_or_end_458:
-    JUMP_IF_FALSE .L_endif_463
-; return 4
-    PUSH_I8 4
-    RET
-.L_endif_463:
-; if op == "*" || op == "/" || op == "%!"(MISSING) || op == "<<" || op == ">>" || op == "&"
-    LOAD_LOCAL op
-    PUSH_STR "*"
-    STR_CMP
-    NOT
-    DUP
-    JUMP_IF_TRUE .L_or_true_472
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "/"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_473
-.L_or_true_472:
-.L_or_end_473:
-    DUP
-    JUMP_IF_TRUE .L_or_true_470
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "%"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_471
-.L_or_true_470:
-.L_or_end_471:
-    DUP
-    JUMP_IF_TRUE .L_or_true_468
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "<<"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_469
-.L_or_true_468:
-.L_or_end_469:
-    DUP
-    JUMP_IF_TRUE .L_or_true_466
-    POP
-    LOAD_LOCAL op
-    PUSH_STR ">>"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_467
-.L_or_true_466:
-.L_or_end_467:
-    DUP
-    JUMP_IF_TRUE .L_or_true_464
-    POP
-    LOAD_LOCAL op
-    PUSH_STR "&"
-    STR_CMP
-    NOT
-    JUMP .L_or_end_465
-.L_or_true_464:
-.L_or_end_465:
-    JUMP_IF_FALSE .L_endif_474
+    JUMP_IF_FALSE .L_endif_462
 ; return 5
     PUSH_I8 5
     RET
-.L_endif_474:
+.L_endif_462:
 ; return 0
     PUSH_0
     RET
@@ -5833,15 +5731,15 @@
     PUSH_I8 2
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_475
+    JUMP_IF_TRUE .L_or_true_463
     POP
     LOAD_LOCAL rhs_kind
     PUSH_I8 2
     CMP_EQ
-    JUMP .L_or_end_476
-.L_or_true_475:
-.L_or_end_476:
-    JUMP_IF_FALSE .L_endif_477
+    JUMP .L_or_end_464
+.L_or_true_463:
+.L_or_end_464:
+    JUMP_IF_FALSE .L_endif_465
 ; emit("    STR_CMP")
     PUSH_STR "    STR_CMP"
     CALL emit
@@ -5850,256 +5748,250 @@
     PUSH_STR "=="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_478
+    JUMP_IF_FALSE .L_else_466
 ; emit("    NOT")
     PUSH_STR "    NOT"
     CALL emit
-    JUMP .L_endif_479
-.L_else_478:
+    JUMP .L_endif_467
+.L_else_466:
 ; if op == "<"
     LOAD_LOCAL op
     PUSH_STR "<"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_480
+    JUMP_IF_FALSE .L_else_468
 ; emit("    PUSH_NEG1")
     PUSH_STR "    PUSH_NEG1"
     CALL emit
 ; emit("    CMP_EQ")
     PUSH_STR "    CMP_EQ"
     CALL emit
-    JUMP .L_endif_481
-.L_else_480:
+    JUMP .L_endif_469
+.L_else_468:
 ; if op == "<="
     LOAD_LOCAL op
     PUSH_STR "<="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_482
+    JUMP_IF_FALSE .L_else_470
 ; emit("    PUSH_1")
     PUSH_STR "    PUSH_1"
     CALL emit
 ; emit("    CMP_NE")
     PUSH_STR "    CMP_NE"
     CALL emit
-    JUMP .L_endif_483
-.L_else_482:
+    JUMP .L_endif_471
+.L_else_470:
 ; if op == ">"
     LOAD_LOCAL op
     PUSH_STR ">"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_484
+    JUMP_IF_FALSE .L_else_472
 ; emit("    PUSH_1")
     PUSH_STR "    PUSH_1"
     CALL emit
 ; emit("    CMP_EQ")
     PUSH_STR "    CMP_EQ"
     CALL emit
-    JUMP .L_endif_485
-.L_else_484:
+    JUMP .L_endif_473
+.L_else_472:
 ; if op == ">="
     LOAD_LOCAL op
     PUSH_STR ">="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_486
+    JUMP_IF_FALSE .L_endif_474
 ; emit("    PUSH_NEG1")
     PUSH_STR "    PUSH_NEG1"
     CALL emit
 ; emit("    CMP_NE")
     PUSH_STR "    CMP_NE"
     CALL emit
-.L_endif_486:
-.L_endif_485:
-.L_endif_483:
-.L_endif_481:
-.L_endif_479:
+.L_endif_474:
+.L_endif_473:
+.L_endif_471:
+.L_endif_469:
+.L_endif_467:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_477:
+.L_endif_465:
 ; if op == "+"
     LOAD_LOCAL op
     PUSH_STR "+"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_487
+    JUMP_IF_FALSE .L_else_475
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_488
-.L_else_487:
+    JUMP .L_endif_476
+.L_else_475:
 ; if op == "-"
     LOAD_LOCAL op
     PUSH_STR "-"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_489
+    JUMP_IF_FALSE .L_else_477
 ; emit("    SUB")
     PUSH_STR "    SUB"
     CALL emit
-    JUMP .L_endif_490
-.L_else_489:
+    JUMP .L_endif_478
+.L_else_477:
 ; if op == "*"
     LOAD_LOCAL op
     PUSH_STR "*"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_491
+    JUMP_IF_FALSE .L_else_479
 ; emit("    MUL")
     PUSH_STR "    MUL"
     CALL emit
-    JUMP .L_endif_492
-.L_else_491:
+    JUMP .L_endif_480
+.L_else_479:
 ; if op == "/"
     LOAD_LOCAL op
     PUSH_STR "/"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_493
+    JUMP_IF_FALSE .L_else_481
 ; emit("    DIV")
     PUSH_STR "    DIV"
     CALL emit
-    JUMP .L_endif_494
-.L_else_493:
+    JUMP .L_endif_482
+.L_else_481:
 ; if op == "%!"(MISSING)
     LOAD_LOCAL op
     PUSH_STR "%"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_495
+    JUMP_IF_FALSE .L_else_483
 ; emit("    MOD")
     PUSH_STR "    MOD"
     CALL emit
-    JUMP .L_endif_496
-.L_else_495:
+    JUMP .L_endif_484
+.L_else_483:
 ; if op == "&"
     LOAD_LOCAL op
     PUSH_STR "&"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_497
+    JUMP_IF_FALSE .L_else_485
 ; emit("    BIT_AND")
     PUSH_STR "    BIT_AND"
     CALL emit
-    JUMP .L_endif_498
-.L_else_497:
+    JUMP .L_endif_486
+.L_else_485:
 ; if op == "|"
     LOAD_LOCAL op
     PUSH_STR "|"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_499
+    JUMP_IF_FALSE .L_else_487
 ; emit("    BIT_OR")
     PUSH_STR "    BIT_OR"
     CALL emit
-    JUMP .L_endif_500
-.L_else_499:
+    JUMP .L_endif_488
+.L_else_487:
 ; if op == "^"
     LOAD_LOCAL op
     PUSH_STR "^"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_501
+    JUMP_IF_FALSE .L_else_489
 ; emit("    BIT_XOR")
     PUSH_STR "    BIT_XOR"
     CALL emit
-    JUMP .L_endif_502
-.L_else_501:
+    JUMP .L_endif_490
+.L_else_489:
 ; if op == "<<"
     LOAD_LOCAL op
     PUSH_STR "<<"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_503
+    JUMP_IF_FALSE .L_else_491
 ; emit("    SHL")
     PUSH_STR "    SHL"
     CALL emit
-    JUMP .L_endif_504
-.L_else_503:
+    JUMP .L_endif_492
+.L_else_491:
 ; if op == ">>"
     LOAD_LOCAL op
     PUSH_STR ">>"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_505
+    JUMP_IF_FALSE .L_else_493
 ; emit("    SHR")
     PUSH_STR "    SHR"
     CALL emit
-    JUMP .L_endif_506
-.L_else_505:
+    JUMP .L_endif_494
+.L_else_493:
 ; if op == "=="
     LOAD_LOCAL op
     PUSH_STR "=="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_507
+    JUMP_IF_FALSE .L_else_495
 ; emit("    CMP_EQ")
     PUSH_STR "    CMP_EQ"
     CALL emit
-    JUMP .L_endif_508
-.L_else_507:
+    JUMP .L_endif_496
+.L_else_495:
 ; if op == "!="
     LOAD_LOCAL op
     PUSH_STR "!="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_509
+    JUMP_IF_FALSE .L_else_497
 ; emit("    CMP_NE")
     PUSH_STR "    CMP_NE"
     CALL emit
-    JUMP .L_endif_510
-.L_else_509:
+    JUMP .L_endif_498
+.L_else_497:
 ; if op == "<"
     LOAD_LOCAL op
     PUSH_STR "<"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_511
+    JUMP_IF_FALSE .L_else_499
 ; emit("    CMP_LT")
     PUSH_STR "    CMP_LT"
     CALL emit
-    JUMP .L_endif_512
-.L_else_511:
+    JUMP .L_endif_500
+.L_else_499:
 ; if op == "<="
     LOAD_LOCAL op
     PUSH_STR "<="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_513
+    JUMP_IF_FALSE .L_else_501
 ; emit("    CMP_LE")
     PUSH_STR "    CMP_LE"
     CALL emit
-    JUMP .L_endif_514
-.L_else_513:
+    JUMP .L_endif_502
+.L_else_501:
 ; if op == ">"
     LOAD_LOCAL op
     PUSH_STR ">"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_515
+    JUMP_IF_FALSE .L_else_503
 ; emit("    CMP_GT")
     PUSH_STR "    CMP_GT"
     CALL emit
-    JUMP .L_endif_516
-.L_else_515:
+    JUMP .L_endif_504
+.L_else_503:
 ; if op == ">="
     LOAD_LOCAL op
     PUSH_STR ">="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_517
+    JUMP_IF_FALSE .L_endif_505
 ; emit("    CMP_GE")
     PUSH_STR "    CMP_GE"
     CALL emit
-.L_endif_517:
-.L_endif_516:
-.L_endif_514:
-.L_endif_512:
-.L_endif_510:
-.L_endif_508:
-.L_endif_506:
+.L_endif_505:
 .L_endif_504:
 .L_endif_502:
 .L_endif_500:
@@ -6109,6 +6001,12 @@
 .L_endif_492:
 .L_endif_490:
 .L_endif_488:
+.L_endif_486:
+.L_endif_484:
+.L_endif_482:
+.L_endif_480:
+.L_endif_478:
+.L_endif_476:
 ; return KIND_SCALAR
     PUSH_1
     RET
@@ -6145,7 +6043,7 @@
     LOAD_GLOBAL cur_tok
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_518
+    JUMP_IF_FALSE .L_endif_506
 ; v := cur_int
     LOAD_GLOBAL cur_int
     STORE_LOCAL v
@@ -6155,60 +6053,60 @@
     LOAD_LOCAL v
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_else_519
+    JUMP_IF_FALSE .L_else_507
 ; emit("    PUSH_0")
     PUSH_STR "    PUSH_0"
     CALL emit
-    JUMP .L_endif_520
-.L_else_519:
+    JUMP .L_endif_508
+.L_else_507:
 ; if v == 1
     LOAD_LOCAL v
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_521
+    JUMP_IF_FALSE .L_else_509
 ; emit("    PUSH_1")
     PUSH_STR "    PUSH_1"
     CALL emit
-    JUMP .L_endif_522
-.L_else_521:
+    JUMP .L_endif_510
+.L_else_509:
 ; if v == 65535
     LOAD_LOCAL v
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_else_523
+    JUMP_IF_FALSE .L_else_511
 ; emit("    PUSH_NEG1")
     PUSH_STR "    PUSH_NEG1"
     CALL emit
-    JUMP .L_endif_524
-.L_else_523:
+    JUMP .L_endif_512
+.L_else_511:
 ; if v <= 127
     LOAD_LOCAL v
     PUSH_I8 127
     CMP_LE
-    JUMP_IF_FALSE .L_else_525
+    JUMP_IF_FALSE .L_else_513
 ; emit_u8("    PUSH_I8 ", v)
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL v
     CALL emit_u8
-    JUMP .L_endif_526
-.L_else_525:
+    JUMP .L_endif_514
+.L_else_513:
 ; emit_u16("    PUSH_I16 ", v)
     PUSH_STR "    PUSH_I16 "
     LOAD_LOCAL v
     CALL emit_u16
-.L_endif_526:
-.L_endif_524:
-.L_endif_522:
-.L_endif_520:
+.L_endif_514:
+.L_endif_512:
+.L_endif_510:
+.L_endif_508:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_518:
+.L_endif_506:
 ; if cur_tok == TOK_STRING
     LOAD_GLOBAL cur_tok
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_527
+    JUMP_IF_FALSE .L_endif_515
 ; s := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL s
@@ -6221,18 +6119,18 @@
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_527:
+.L_endif_515:
 ; if cur_tok == TOK_KEYWORD
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_528
+    JUMP_IF_FALSE .L_endif_516
 ; if cur_str == "true"
     LOAD_GLOBAL cur_str
     PUSH_STR "true"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_529
+    JUMP_IF_FALSE .L_endif_517
 ; next_tok()
     CALL next_tok
 ; emit("    PUSH_TRUE")
@@ -6241,13 +6139,13 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_529:
+.L_endif_517:
 ; if cur_str == "false"
     LOAD_GLOBAL cur_str
     PUSH_STR "false"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_530
+    JUMP_IF_FALSE .L_endif_518
 ; next_tok()
     CALL next_tok
 ; emit("    PUSH_FALSE")
@@ -6256,53 +6154,53 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_530:
+.L_endif_518:
 ; if cur_str == "word" || cur_str == "byte" || cur_str == "int" || cur_str == "uint8" || cur_str == "uint16"
     LOAD_GLOBAL cur_str
     PUSH_STR "word"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_537
+    JUMP_IF_TRUE .L_or_true_525
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "byte"
     STR_CMP
     NOT
-    JUMP .L_or_end_538
-.L_or_true_537:
-.L_or_end_538:
+    JUMP .L_or_end_526
+.L_or_true_525:
+.L_or_end_526:
     DUP
-    JUMP_IF_TRUE .L_or_true_535
+    JUMP_IF_TRUE .L_or_true_523
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "int"
     STR_CMP
     NOT
-    JUMP .L_or_end_536
-.L_or_true_535:
-.L_or_end_536:
+    JUMP .L_or_end_524
+.L_or_true_523:
+.L_or_end_524:
     DUP
-    JUMP_IF_TRUE .L_or_true_533
+    JUMP_IF_TRUE .L_or_true_521
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "uint8"
     STR_CMP
     NOT
-    JUMP .L_or_end_534
-.L_or_true_533:
-.L_or_end_534:
+    JUMP .L_or_end_522
+.L_or_true_521:
+.L_or_end_522:
     DUP
-    JUMP_IF_TRUE .L_or_true_531
+    JUMP_IF_TRUE .L_or_true_519
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "uint16"
     STR_CMP
     NOT
-    JUMP .L_or_end_532
-.L_or_true_531:
-.L_or_end_532:
-    JUMP_IF_FALSE .L_endif_539
+    JUMP .L_or_end_520
+.L_or_true_519:
+.L_or_end_520:
+    JUMP_IF_FALSE .L_endif_527
 ; next_tok()
     CALL next_tok
 ; expect("(")
@@ -6318,14 +6216,14 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_539:
-.L_endif_528:
+.L_endif_527:
+.L_endif_516:
 ; if cur_str == "!"
     LOAD_GLOBAL cur_str
     PUSH_STR "!"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_540
+    JUMP_IF_FALSE .L_endif_528
 ; next_tok()
     CALL next_tok
 ; compile_unary()
@@ -6337,20 +6235,20 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_540:
+.L_endif_528:
 ; if cur_str == "-"
     LOAD_GLOBAL cur_str
     PUSH_STR "-"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_541
+    JUMP_IF_FALSE .L_endif_529
 ; next_tok()
     CALL next_tok
 ; if cur_tok == TOK_INT
     LOAD_GLOBAL cur_tok
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_542
+    JUMP_IF_FALSE .L_endif_530
 ; v := word(-cur_int)
     LOAD_GLOBAL cur_int
     NEG
@@ -6361,33 +6259,33 @@
     LOAD_LOCAL v
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_else_543
+    JUMP_IF_FALSE .L_else_531
 ; emit("    PUSH_NEG1")
     PUSH_STR "    PUSH_NEG1"
     CALL emit
-    JUMP .L_endif_544
-.L_else_543:
+    JUMP .L_endif_532
+.L_else_531:
 ; if v <= 127
     LOAD_LOCAL v
     PUSH_I8 127
     CMP_LE
-    JUMP_IF_FALSE .L_else_545
+    JUMP_IF_FALSE .L_else_533
 ; emit_u8("    PUSH_I8 ", v)
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL v
     CALL emit_u8
-    JUMP .L_endif_546
-.L_else_545:
+    JUMP .L_endif_534
+.L_else_533:
 ; emit_u16("    PUSH_I16 ", v)
     PUSH_STR "    PUSH_I16 "
     LOAD_LOCAL v
     CALL emit_u16
-.L_endif_546:
-.L_endif_544:
+.L_endif_534:
+.L_endif_532:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_542:
+.L_endif_530:
 ; compile_unary()
     CALL compile_unary
     POP
@@ -6397,23 +6295,23 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_541:
+.L_endif_529:
 ; if cur_str == "^" || cur_str == "~"
     LOAD_GLOBAL cur_str
     PUSH_STR "^"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_547
+    JUMP_IF_TRUE .L_or_true_535
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "~"
     STR_CMP
     NOT
-    JUMP .L_or_end_548
-.L_or_true_547:
-.L_or_end_548:
-    JUMP_IF_FALSE .L_endif_549
+    JUMP .L_or_end_536
+.L_or_true_535:
+.L_or_end_536:
+    JUMP_IF_FALSE .L_endif_537
 ; next_tok()
     CALL next_tok
 ; compile_unary()
@@ -6425,13 +6323,13 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_549:
+.L_endif_537:
 ; if cur_str == "("
     LOAD_GLOBAL cur_str
     PUSH_STR "("
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_550
+    JUMP_IF_FALSE .L_endif_538
 ; next_tok()
     CALL next_tok
 ; k := compile_expr(0)
@@ -6444,13 +6342,13 @@
 ; return k
     LOAD_LOCAL k
     RET
-.L_endif_550:
+.L_endif_538:
 ; if cur_str == "&"
     LOAD_GLOBAL cur_str
     PUSH_STR "&"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_551
+    JUMP_IF_FALSE .L_endif_539
 ; next_tok()
     CALL next_tok
 ; name := cur_str
@@ -6463,7 +6361,7 @@
     PUSH_STR "["
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_552
+    JUMP_IF_FALSE .L_else_540
 ; next_tok()
     CALL next_tok
 ; elem_sz := byte(1)
@@ -6483,7 +6381,7 @@
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_554
+    JUMP_IF_FALSE .L_else_542
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
@@ -6494,13 +6392,13 @@
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-    JUMP .L_endif_555
-.L_else_554:
+    JUMP .L_endif_543
+.L_else_542:
 ; if li != 65535
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_556
+    JUMP_IF_FALSE .L_endif_544
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
@@ -6511,8 +6409,8 @@
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-.L_endif_556:
-.L_endif_555:
+.L_endif_544:
+.L_endif_543:
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -6524,22 +6422,22 @@
     LOAD_LOCAL elem_sz
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_557
+    JUMP_IF_FALSE .L_else_545
 ; emit("    SHL1_ADD")
     PUSH_STR "    SHL1_ADD"
     CALL emit
-    JUMP .L_endif_558
-.L_else_557:
+    JUMP .L_endif_546
+.L_else_545:
 ; if elem_sz == 1
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_559
+    JUMP_IF_FALSE .L_else_547
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_560
-.L_else_559:
+    JUMP .L_endif_548
+.L_else_547:
 ; emit_u8("    PUSH_I8 ", word(elem_sz))
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL elem_sz
@@ -6550,13 +6448,13 @@
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-.L_endif_560:
-.L_endif_558:
+.L_endif_548:
+.L_endif_546:
 ; return KIND_SCALAR
     PUSH_1
     RET
-    JUMP .L_endif_553
-.L_else_552:
+    JUMP .L_endif_541
+.L_else_540:
 ; li := find_cur_local(name)
     LOAD_LOCAL name
     CALL find_cur_local
@@ -6570,37 +6468,37 @@
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_561
+    JUMP_IF_TRUE .L_or_true_549
     POP
     LOAD_LOCAL pi
     PUSH_I16 65535
     CMP_NE
-    JUMP .L_or_end_562
-.L_or_true_561:
-.L_or_end_562:
-    JUMP_IF_FALSE .L_else_563
+    JUMP .L_or_end_550
+.L_or_true_549:
+.L_or_end_550:
+    JUMP_IF_FALSE .L_else_551
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_564
-.L_else_563:
+    JUMP .L_endif_552
+.L_else_551:
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_564:
+.L_endif_552:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_553:
-.L_endif_551:
+.L_endif_541:
+.L_endif_539:
 ; if cur_str == "*"
     LOAD_GLOBAL cur_str
     PUSH_STR "*"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_565
+    JUMP_IF_FALSE .L_endif_553
 ; next_tok()
     CALL next_tok
 ; compile_unary()
@@ -6612,12 +6510,12 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_565:
+.L_endif_553:
 ; if cur_tok == TOK_IDENT
     LOAD_GLOBAL cur_tok
     PUSH_I8 3
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_566
+    JUMP_IF_FALSE .L_endif_554
 ; name := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL name
@@ -6631,7 +6529,7 @@
     LOAD_LOCAL ci
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_567
+    JUMP_IF_FALSE .L_endif_555
 ; v := const_vals[...]
     ADDR_OF_GLOBAL const_vals
     LOAD_LOCAL ci
@@ -6642,61 +6540,61 @@
     LOAD_LOCAL v
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_else_568
+    JUMP_IF_FALSE .L_else_556
 ; emit("    PUSH_0")
     PUSH_STR "    PUSH_0"
     CALL emit
-    JUMP .L_endif_569
-.L_else_568:
+    JUMP .L_endif_557
+.L_else_556:
 ; if v == 1
     LOAD_LOCAL v
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_570
+    JUMP_IF_FALSE .L_else_558
 ; emit("    PUSH_1")
     PUSH_STR "    PUSH_1"
     CALL emit
-    JUMP .L_endif_571
-.L_else_570:
+    JUMP .L_endif_559
+.L_else_558:
 ; if v == 65535
     LOAD_LOCAL v
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_else_572
+    JUMP_IF_FALSE .L_else_560
 ; emit("    PUSH_NEG1")
     PUSH_STR "    PUSH_NEG1"
     CALL emit
-    JUMP .L_endif_573
-.L_else_572:
+    JUMP .L_endif_561
+.L_else_560:
 ; if v <= 127
     LOAD_LOCAL v
     PUSH_I8 127
     CMP_LE
-    JUMP_IF_FALSE .L_else_574
+    JUMP_IF_FALSE .L_else_562
 ; emit_u8("    PUSH_I8 ", v)
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL v
     CALL emit_u8
-    JUMP .L_endif_575
-.L_else_574:
+    JUMP .L_endif_563
+.L_else_562:
 ; emit_u16("    PUSH_I16 ", v)
     PUSH_STR "    PUSH_I16 "
     LOAD_LOCAL v
     CALL emit_u16
-.L_endif_575:
-.L_endif_573:
-.L_endif_571:
-.L_endif_569:
+.L_endif_563:
+.L_endif_561:
+.L_endif_559:
+.L_endif_557:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_567:
+.L_endif_555:
 ; if cur_str == "("
     LOAD_GLOBAL cur_str
     PUSH_STR "("
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_576
+    JUMP_IF_FALSE .L_endif_564
 ; next_tok()
     CALL next_tok
 ; nargs := compile_arg_list()
@@ -6707,13 +6605,13 @@
     LOAD_LOCAL nargs
     CALL emit_call
     RET
-.L_endif_576:
+.L_endif_564:
 ; if cur_str == "["
     LOAD_GLOBAL cur_str
     PUSH_STR "["
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_577
+    JUMP_IF_FALSE .L_endif_565
 ; next_tok()
     CALL next_tok
 ; gi := find_global(name)
@@ -6742,7 +6640,7 @@
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_578
+    JUMP_IF_FALSE .L_else_566
 ; var_kind = global_kinds[...]
     ADDR_OF_GLOBAL global_kinds
     LOAD_LOCAL gi
@@ -6755,13 +6653,13 @@
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-    JUMP .L_endif_579
-.L_else_578:
+    JUMP .L_endif_567
+.L_else_566:
 ; if li != 65535
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_580
+    JUMP_IF_FALSE .L_else_568
 ; var_kind = local_kinds[...]
     ADDR_OF_GLOBAL local_kinds
     LOAD_LOCAL li
@@ -6774,13 +6672,13 @@
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-    JUMP .L_endif_581
-.L_else_580:
+    JUMP .L_endif_569
+.L_else_568:
 ; if pi != 65535
     LOAD_LOCAL pi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_582
+    JUMP_IF_FALSE .L_endif_570
 ; var_kind = param_kinds[...]
     ADDR_OF_GLOBAL param_kinds
     LOAD_LOCAL pi
@@ -6790,9 +6688,9 @@
 ; elem_sz = 2
     PUSH_I8 2
     STORE_LOCAL elem_sz
-.L_endif_582:
-.L_endif_581:
-.L_endif_579:
+.L_endif_570:
+.L_endif_569:
+.L_endif_567:
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -6802,7 +6700,7 @@
     PUSH_STR ":"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_583
+    JUMP_IF_FALSE .L_else_571
 ; next_tok()
     CALL next_tok
 ; compile_expr(0)
@@ -6822,18 +6720,18 @@
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_585
+    JUMP_IF_FALSE .L_else_573
 ; emit2("    LOAD_GLOBAL ", name)
     PUSH_STR "    LOAD_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_586
-.L_else_585:
+    JUMP .L_endif_574
+.L_else_573:
 ; emit2("    LOAD_LOCAL ", name)
     PUSH_STR "    LOAD_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_586:
+.L_endif_574:
 ; emit("    LOAD_LOCAL _tmp_base")
     PUSH_STR "    LOAD_LOCAL _tmp_base"
     CALL emit
@@ -6846,8 +6744,8 @@
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-    JUMP .L_endif_584
-.L_else_583:
+    JUMP .L_endif_572
+.L_else_571:
 ; expect("]")
     PUSH_STR "]"
     CALL expect
@@ -6855,23 +6753,23 @@
     LOAD_LOCAL elem_sz
     PUSH_I8 6
     CMP_EQ
-    JUMP_IF_FALSE .L_else_587
+    JUMP_IF_FALSE .L_else_575
 ; if gi != 65535
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_589
+    JUMP_IF_FALSE .L_else_577
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_590
-.L_else_589:
+    JUMP .L_endif_578
+.L_else_577:
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_590:
+.L_endif_578:
 ; emit("    SWAP")
     PUSH_STR "    SWAP"
     CALL emit
@@ -6921,29 +6819,29 @@
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-    JUMP .L_endif_588
-.L_else_587:
+    JUMP .L_endif_576
+.L_else_575:
 ; if var_kind == KIND_SLICE
     LOAD_LOCAL var_kind
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_591
+    JUMP_IF_FALSE .L_else_579
 ; if gi != 65535
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_593
+    JUMP_IF_FALSE .L_else_581
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_594
-.L_else_593:
+    JUMP .L_endif_582
+.L_else_581:
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_594:
+.L_endif_582:
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
@@ -6959,24 +6857,24 @@
 ; return KIND_SCALAR
     PUSH_1
     RET
-    JUMP .L_endif_592
-.L_else_591:
+    JUMP .L_endif_580
+.L_else_579:
 ; if gi != 65535
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_595
+    JUMP_IF_FALSE .L_else_583
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_596
-.L_else_595:
+    JUMP .L_endif_584
+.L_else_583:
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_596:
+.L_endif_584:
 ; emit("    SWAP")
     PUSH_STR "    SWAP"
     CALL emit
@@ -6984,28 +6882,28 @@
     LOAD_LOCAL elem_sz
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_597
+    JUMP_IF_FALSE .L_else_585
 ; emit("    SHL1_ADD")
     PUSH_STR "    SHL1_ADD"
     CALL emit
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
-    JUMP .L_endif_598
-.L_else_597:
+    JUMP .L_endif_586
+.L_else_585:
 ; if elem_sz == 1
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_599
+    JUMP_IF_FALSE .L_else_587
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
 ; emit("    PEEK1")
     PUSH_STR "    PEEK1"
     CALL emit
-    JUMP .L_endif_600
-.L_else_599:
+    JUMP .L_endif_588
+.L_else_587:
 ; emit_u8("    PUSH_I8 ", word(elem_sz))
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL elem_sz
@@ -7019,21 +6917,21 @@
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
-.L_endif_600:
-.L_endif_598:
+.L_endif_588:
+.L_endif_586:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_592:
-.L_endif_588:
-.L_endif_584:
-.L_endif_577:
+.L_endif_580:
+.L_endif_576:
+.L_endif_572:
+.L_endif_565:
 ; if cur_str == "."
     LOAD_GLOBAL cur_str
     PUSH_STR "."
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_601
+    JUMP_IF_FALSE .L_endif_589
 ; next_tok()
     CALL next_tok
 ; field := cur_str
@@ -7049,35 +6947,35 @@
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_602
+    JUMP_IF_FALSE .L_else_590
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_603
-.L_else_602:
+    JUMP .L_endif_591
+.L_else_590:
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_603:
+.L_endif_591:
 ; if field == "Base"
     LOAD_LOCAL field
     PUSH_STR "Base"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_604
+    JUMP_IF_FALSE .L_else_592
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
-    JUMP .L_endif_605
-.L_else_604:
+    JUMP .L_endif_593
+.L_else_592:
 ; if field == "Cap"
     LOAD_LOCAL field
     PUSH_STR "Cap"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_606
+    JUMP_IF_FALSE .L_else_594
 ; emit("    PUSH_I8 2")
     PUSH_STR "    PUSH_I8 2"
     CALL emit
@@ -7087,14 +6985,14 @@
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
-    JUMP .L_endif_607
-.L_else_606:
+    JUMP .L_endif_595
+.L_else_594:
 ; if field == "Len"
     LOAD_LOCAL field
     PUSH_STR "Len"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_608
+    JUMP_IF_FALSE .L_endif_596
 ; emit("    PUSH_I8 4")
     PUSH_STR "    PUSH_I8 4"
     CALL emit
@@ -7104,13 +7002,13 @@
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
-.L_endif_608:
-.L_endif_607:
-.L_endif_605:
+.L_endif_596:
+.L_endif_595:
+.L_endif_593:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_601:
+.L_endif_589:
 ; li := find_cur_local(name)
     LOAD_LOCAL name
     CALL find_cur_local
@@ -7119,7 +7017,7 @@
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_609
+    JUMP_IF_FALSE .L_endif_597
 ; emit2("    LOAD_LOCAL ", name)
     PUSH_STR "    LOAD_LOCAL "
     LOAD_LOCAL name
@@ -7130,7 +7028,7 @@
     ADD
     PEEK1
     RET
-.L_endif_609:
+.L_endif_597:
 ; pi := find_cur_param(name)
     LOAD_LOCAL name
     CALL find_cur_param
@@ -7139,7 +7037,7 @@
     LOAD_LOCAL pi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_610
+    JUMP_IF_FALSE .L_endif_598
 ; emit2("    LOAD_LOCAL ", name)
     PUSH_STR "    LOAD_LOCAL "
     LOAD_LOCAL name
@@ -7150,7 +7048,7 @@
     ADD
     PEEK1
     RET
-.L_endif_610:
+.L_endif_598:
 ; gi = find_global(name)
     LOAD_LOCAL name
     CALL find_global
@@ -7159,7 +7057,7 @@
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_611
+    JUMP_IF_FALSE .L_endif_599
 ; emit2("    LOAD_GLOBAL ", name)
     PUSH_STR "    LOAD_GLOBAL "
     LOAD_LOCAL name
@@ -7170,8 +7068,8 @@
     ADD
     PEEK1
     RET
-.L_endif_611:
-.L_endif_566:
+.L_endif_599:
+.L_endif_554:
 ; next_tok()
     CALL next_tok
 ; return KIND_SCALAR
@@ -7206,7 +7104,7 @@
     CALL compile_unary
     STORE_LOCAL lhs_kind
 ; for
-.L_for_top_612:
+.L_for_top_600:
 ; op := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL op
@@ -7218,10 +7116,10 @@
     LOAD_LOCAL prec
     LOAD_LOCAL min_prec
     CMP_LE
-    JUMP_IF_FALSE .L_endif_614
+    JUMP_IF_FALSE .L_endif_602
 ; break
-    JUMP .L_for_exit_613
-.L_endif_614:
+    JUMP .L_for_exit_601
+.L_endif_602:
 ; next_tok()
     CALL next_tok
 ; if op == "&&"
@@ -7229,7 +7127,7 @@
     PUSH_STR "&&"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_615
+    JUMP_IF_FALSE .L_else_603
 ; lbl_false := next_label()
     CALL next_label
     STORE_LOCAL lbl_false
@@ -7263,14 +7161,14 @@
 ; lhs_kind = KIND_SCALAR
     PUSH_1
     STORE_LOCAL lhs_kind
-    JUMP .L_endif_616
-.L_else_615:
+    JUMP .L_endif_604
+.L_else_603:
 ; if op == "||"
     LOAD_LOCAL op
     PUSH_STR "||"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_617
+    JUMP_IF_FALSE .L_else_605
 ; lbl_true := next_label()
     CALL next_label
     STORE_LOCAL lbl_true
@@ -7304,8 +7202,8 @@
 ; lhs_kind = KIND_SCALAR
     PUSH_1
     STORE_LOCAL lhs_kind
-    JUMP .L_endif_618
-.L_else_617:
+    JUMP .L_endif_606
+.L_else_605:
 ; rhs_kind := compile_expr(prec)
     LOAD_LOCAL prec
     CALL compile_expr
@@ -7316,10 +7214,10 @@
     LOAD_LOCAL rhs_kind
     CALL emit_bin_op
     STORE_LOCAL lhs_kind
-.L_endif_618:
-.L_endif_616:
-    JUMP .L_for_top_612
-.L_for_exit_613:
+.L_endif_606:
+.L_endif_604:
+    JUMP .L_for_top_600
+.L_for_exit_601:
 ; return lhs_kind
     LOAD_LOCAL lhs_kind
     RET
@@ -7345,29 +7243,29 @@
     PUSH_0
     STORE_LOCAL count
 ; for cur_tok != TOK_PUNCT || cur_str != ")" && cur_tok != TOK_EOF
-.L_for_top_619:
+.L_for_top_607:
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_623
+    JUMP_IF_TRUE .L_or_true_611
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR ")"
     STR_CMP
-    JUMP .L_or_end_624
-.L_or_true_623:
-.L_or_end_624:
+    JUMP .L_or_end_612
+.L_or_true_611:
+.L_or_end_612:
     DUP
-    JUMP_IF_FALSE .L_and_false_621
+    JUMP_IF_FALSE .L_and_false_609
     POP
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP .L_and_end_622
-.L_and_false_621:
-.L_and_end_622:
-    JUMP_IF_FALSE .L_for_exit_620
+    JUMP .L_and_end_610
+.L_and_false_609:
+.L_and_end_610:
+    JUMP_IF_FALSE .L_for_exit_608
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -7382,12 +7280,12 @@
     PUSH_STR ","
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_625
+    JUMP_IF_FALSE .L_endif_613
 ; next_tok()
     CALL next_tok
-.L_endif_625:
-    JUMP .L_for_top_619
-.L_for_exit_620:
+.L_endif_613:
+    JUMP .L_for_top_607
+.L_for_exit_608:
 ; expect(")")
     PUSH_STR ")"
     CALL expect
@@ -7419,462 +7317,462 @@
     PUSH_STR "len"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_626
+    JUMP_IF_FALSE .L_endif_614
 ; emit("    SLICE_LEN")
     PUSH_STR "    SLICE_LEN"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_626:
+.L_endif_614:
 ; if name == "alloc"
     LOAD_LOCAL name
     PUSH_STR "alloc"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_627
+    JUMP_IF_FALSE .L_endif_615
 ; emit("    BUF_ALLOC")
     PUSH_STR "    BUF_ALLOC"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_627:
+.L_endif_615:
 ; if name == "free"
     LOAD_LOCAL name
     PUSH_STR "free"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_628
+    JUMP_IF_FALSE .L_endif_616
 ; emit("    BUF_FREE")
     PUSH_STR "    BUF_FREE"
     CALL emit
 ; return KIND_VOID
     PUSH_0
     RET
-.L_endif_628:
+.L_endif_616:
 ; if name == "peek" || name == "peek2"
     LOAD_LOCAL name
     PUSH_STR "peek"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_629
+    JUMP_IF_TRUE .L_or_true_617
     POP
     LOAD_LOCAL name
     PUSH_STR "peek2"
     STR_CMP
     NOT
-    JUMP .L_or_end_630
-.L_or_true_629:
-.L_or_end_630:
-    JUMP_IF_FALSE .L_endif_631
+    JUMP .L_or_end_618
+.L_or_true_617:
+.L_or_end_618:
+    JUMP_IF_FALSE .L_endif_619
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_631:
+.L_endif_619:
 ; if name == "poke" || name == "poke2"
     LOAD_LOCAL name
     PUSH_STR "poke"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_632
+    JUMP_IF_TRUE .L_or_true_620
     POP
     LOAD_LOCAL name
     PUSH_STR "poke2"
     STR_CMP
     NOT
-    JUMP .L_or_end_633
-.L_or_true_632:
-.L_or_end_633:
-    JUMP_IF_FALSE .L_endif_634
+    JUMP .L_or_end_621
+.L_or_true_620:
+.L_or_end_621:
+    JUMP_IF_FALSE .L_endif_622
 ; emit("    POKE2")
     PUSH_STR "    POKE2"
     CALL emit
 ; return KIND_VOID
     PUSH_0
     RET
-.L_endif_634:
+.L_endif_622:
 ; if name == "peekb" || name == "peek1"
     LOAD_LOCAL name
     PUSH_STR "peekb"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_635
+    JUMP_IF_TRUE .L_or_true_623
     POP
     LOAD_LOCAL name
     PUSH_STR "peek1"
     STR_CMP
     NOT
-    JUMP .L_or_end_636
-.L_or_true_635:
-.L_or_end_636:
-    JUMP_IF_FALSE .L_endif_637
+    JUMP .L_or_end_624
+.L_or_true_623:
+.L_or_end_624:
+    JUMP_IF_FALSE .L_endif_625
 ; emit("    PEEK1")
     PUSH_STR "    PEEK1"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_637:
+.L_endif_625:
 ; if name == "pokeb" || name == "poke1"
     LOAD_LOCAL name
     PUSH_STR "pokeb"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_638
+    JUMP_IF_TRUE .L_or_true_626
     POP
     LOAD_LOCAL name
     PUSH_STR "poke1"
     STR_CMP
     NOT
-    JUMP .L_or_end_639
-.L_or_true_638:
-.L_or_end_639:
-    JUMP_IF_FALSE .L_endif_640
+    JUMP .L_or_end_627
+.L_or_true_626:
+.L_or_end_627:
+    JUMP_IF_FALSE .L_endif_628
 ; emit("    POKE1")
     PUSH_STR "    POKE1"
     CALL emit
 ; return KIND_VOID
     PUSH_0
     RET
-.L_endif_640:
+.L_endif_628:
 ; if name == "file_open_read" || name == "file_open"
     LOAD_LOCAL name
     PUSH_STR "file_open_read"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_641
+    JUMP_IF_TRUE .L_or_true_629
     POP
     LOAD_LOCAL name
     PUSH_STR "file_open"
     STR_CMP
     NOT
-    JUMP .L_or_end_642
-.L_or_true_641:
-.L_or_end_642:
-    JUMP_IF_FALSE .L_endif_643
+    JUMP .L_or_end_630
+.L_or_true_629:
+.L_or_end_630:
+    JUMP_IF_FALSE .L_endif_631
 ; emit("    FILE_OPEN_READ")
     PUSH_STR "    FILE_OPEN_READ"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_643:
+.L_endif_631:
 ; if name == "file_open_write" || name == "file_create"
     LOAD_LOCAL name
     PUSH_STR "file_open_write"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_644
+    JUMP_IF_TRUE .L_or_true_632
     POP
     LOAD_LOCAL name
     PUSH_STR "file_create"
     STR_CMP
     NOT
-    JUMP .L_or_end_645
-.L_or_true_644:
-.L_or_end_645:
-    JUMP_IF_FALSE .L_endif_646
+    JUMP .L_or_end_633
+.L_or_true_632:
+.L_or_end_633:
+    JUMP_IF_FALSE .L_endif_634
 ; emit("    FILE_OPEN_WRITE")
     PUSH_STR "    FILE_OPEN_WRITE"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_646:
+.L_endif_634:
 ; if name == "file_readline"
     LOAD_LOCAL name
     PUSH_STR "file_readline"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_647
+    JUMP_IF_FALSE .L_endif_635
 ; emit("    FILE_READLINE")
     PUSH_STR "    FILE_READLINE"
     CALL emit
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_647:
+.L_endif_635:
 ; if name == "file_read"
     LOAD_LOCAL name
     PUSH_STR "file_read"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_648
+    JUMP_IF_FALSE .L_endif_636
 ; emit("    FILE_READ")
     PUSH_STR "    FILE_READ"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_648:
+.L_endif_636:
 ; if name == "file_write"
     LOAD_LOCAL name
     PUSH_STR "file_write"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_649
+    JUMP_IF_FALSE .L_endif_637
 ; if nargs == 3
     LOAD_LOCAL nargs
     PUSH_I8 3
     CMP_EQ
-    JUMP_IF_FALSE .L_else_650
+    JUMP_IF_FALSE .L_else_638
 ; emit("    FILE_WRITE_BUF")
     PUSH_STR "    FILE_WRITE_BUF"
     CALL emit
-    JUMP .L_endif_651
-.L_else_650:
+    JUMP .L_endif_639
+.L_else_638:
 ; emit("    FILE_WRITE")
     PUSH_STR "    FILE_WRITE"
     CALL emit
-.L_endif_651:
+.L_endif_639:
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_649:
+.L_endif_637:
 ; if name == "file_close"
     LOAD_LOCAL name
     PUSH_STR "file_close"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_652
+    JUMP_IF_FALSE .L_endif_640
 ; emit("    FILE_CLOSE")
     PUSH_STR "    FILE_CLOSE"
     CALL emit
 ; return KIND_VOID
     PUSH_0
     RET
-.L_endif_652:
+.L_endif_640:
 ; if name == "os_isfile"
     LOAD_LOCAL name
     PUSH_STR "os_isfile"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_653
+    JUMP_IF_FALSE .L_endif_641
 ; emit("    OS_ISFILE")
     PUSH_STR "    OS_ISFILE"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_653:
+.L_endif_641:
 ; if name == "os_makedirs"
     LOAD_LOCAL name
     PUSH_STR "os_makedirs"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_654
+    JUMP_IF_FALSE .L_endif_642
 ; emit("    OS_MAKEDIRS")
     PUSH_STR "    OS_MAKEDIRS"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_654:
+.L_endif_642:
 ; if name == "sys_args"
     LOAD_LOCAL name
     PUSH_STR "sys_args"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_655
+    JUMP_IF_FALSE .L_endif_643
 ; emit("    SYS_ARGS")
     PUSH_STR "    SYS_ARGS"
     CALL emit
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_655:
+.L_endif_643:
 ; if name == "sys_exit"
     LOAD_LOCAL name
     PUSH_STR "sys_exit"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_656
+    JUMP_IF_FALSE .L_endif_644
 ; emit("    SYS_EXIT")
     PUSH_STR "    SYS_EXIT"
     CALL emit
 ; return KIND_VOID
     PUSH_0
     RET
-.L_endif_656:
+.L_endif_644:
 ; if name == "map_new"
     LOAD_LOCAL name
     PUSH_STR "map_new"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_657
+    JUMP_IF_FALSE .L_endif_645
 ; emit("    MAP_NEW")
     PUSH_STR "    MAP_NEW"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_657:
+.L_endif_645:
 ; if name == "map_get"
     LOAD_LOCAL name
     PUSH_STR "map_get"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_658
+    JUMP_IF_FALSE .L_endif_646
 ; emit("    MAP_GET")
     PUSH_STR "    MAP_GET"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_658:
+.L_endif_646:
 ; if name == "map_put"
     LOAD_LOCAL name
     PUSH_STR "map_put"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_659
+    JUMP_IF_FALSE .L_endif_647
 ; emit("    MAP_PUT")
     PUSH_STR "    MAP_PUT"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_659:
+.L_endif_647:
 ; if name == "map_str"
     LOAD_LOCAL name
     PUSH_STR "map_str"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_660
+    JUMP_IF_FALSE .L_endif_648
 ; emit("    MAP_STR")
     PUSH_STR "    MAP_STR"
     CALL emit
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_660:
+.L_endif_648:
 ; if name == "map_count"
     LOAD_LOCAL name
     PUSH_STR "map_count"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_661
+    JUMP_IF_FALSE .L_endif_649
 ; emit("    MAP_COUNT")
     PUSH_STR "    MAP_COUNT"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_661:
+.L_endif_649:
 ; if name == "strcmp"
     LOAD_LOCAL name
     PUSH_STR "strcmp"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_662
+    JUMP_IF_FALSE .L_endif_650
 ; emit("    STR_CMP")
     PUSH_STR "    STR_CMP"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_662:
+.L_endif_650:
 ; if name == "startswith"
     LOAD_LOCAL name
     PUSH_STR "startswith"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_663
+    JUMP_IF_FALSE .L_endif_651
 ; emit("    STR_STARTSWITH")
     PUSH_STR "    STR_STARTSWITH"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_663:
+.L_endif_651:
 ; if name == "endswith"
     LOAD_LOCAL name
     PUSH_STR "endswith"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_664
+    JUMP_IF_FALSE .L_endif_652
 ; emit("    STR_ENDSWITH")
     PUSH_STR "    STR_ENDSWITH"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_664:
+.L_endif_652:
 ; if name == "find"
     LOAD_LOCAL name
     PUSH_STR "find"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_665
+    JUMP_IF_FALSE .L_endif_653
 ; emit("    STR_FIND")
     PUSH_STR "    STR_FIND"
     CALL emit
 ; return KIND_SCALAR
     PUSH_1
     RET
-.L_endif_665:
+.L_endif_653:
 ; if name == "lstrip"
     LOAD_LOCAL name
     PUSH_STR "lstrip"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_666
+    JUMP_IF_FALSE .L_endif_654
 ; emit("    STR_LSTRIP")
     PUSH_STR "    STR_LSTRIP"
     CALL emit
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_666:
+.L_endif_654:
 ; if name == "rstrip"
     LOAD_LOCAL name
     PUSH_STR "rstrip"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_667
+    JUMP_IF_FALSE .L_endif_655
 ; emit("    STR_RSTRIP")
     PUSH_STR "    STR_RSTRIP"
     CALL emit
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_667:
+.L_endif_655:
 ; if name == "strip"
     LOAD_LOCAL name
     PUSH_STR "strip"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_668
+    JUMP_IF_FALSE .L_endif_656
 ; emit("    STR_STRIP")
     PUSH_STR "    STR_STRIP"
     CALL emit
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_668:
+.L_endif_656:
 ; if name == "replace_ident"
     LOAD_LOCAL name
     PUSH_STR "replace_ident"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_669
+    JUMP_IF_FALSE .L_endif_657
 ; emit("    STR_REPLACE_IDENT")
     PUSH_STR "    STR_REPLACE_IDENT"
     CALL emit
 ; return KIND_SLICE
     PUSH_I8 2
     RET
-.L_endif_669:
+.L_endif_657:
 ; emit2("    CALL ", name)
     PUSH_STR "    CALL "
     LOAD_LOCAL name
@@ -7887,14 +7785,14 @@
     LOAD_LOCAL fi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_670
+    JUMP_IF_FALSE .L_endif_658
 ; return word(func_ret_kinds[...])
     ADDR_OF_GLOBAL func_ret_kinds
     LOAD_LOCAL fi
     ADD
     PEEK1
     RET
-.L_endif_670:
+.L_endif_658:
 ; return KIND_SCALAR
     PUSH_1
     RET
@@ -7928,7 +7826,7 @@
     PUSH_STR ")"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_671
+    JUMP_IF_FALSE .L_endif_659
 ; next_tok()
     CALL next_tok
 ; emit("    PUSH_NIL_SLICE")
@@ -7936,19 +7834,19 @@
     CALL emit
 ; if is_println
     LOAD_LOCAL is_println
-    JUMP_IF_FALSE .L_else_672
+    JUMP_IF_FALSE .L_else_660
 ; emit("    PRINTLN")
     PUSH_STR "    PRINTLN"
     CALL emit
-    JUMP .L_endif_673
-.L_else_672:
+    JUMP .L_endif_661
+.L_else_660:
 ; emit("    PRINT")
     PUSH_STR "    PRINT"
     CALL emit
-.L_endif_673:
+.L_endif_661:
 ; return 
     RET_VOID
-.L_endif_671:
+.L_endif_659:
 ; emit("    PUSH_I8 64")
     PUSH_STR "    PUSH_I8 64"
     CALL emit
@@ -7962,29 +7860,29 @@
     PUSH_0
     STORE_LOCAL nargs
 ; for cur_tok != TOK_PUNCT || cur_str != ")" && cur_tok != TOK_EOF
-.L_for_top_674:
+.L_for_top_662:
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_678
+    JUMP_IF_TRUE .L_or_true_666
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR ")"
     STR_CMP
-    JUMP .L_or_end_679
-.L_or_true_678:
-.L_or_end_679:
+    JUMP .L_or_end_667
+.L_or_true_666:
+.L_or_end_667:
     DUP
-    JUMP_IF_FALSE .L_and_false_676
+    JUMP_IF_FALSE .L_and_false_664
     POP
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP .L_and_end_677
-.L_and_false_676:
-.L_and_end_677:
-    JUMP_IF_FALSE .L_for_exit_675
+    JUMP .L_and_end_665
+.L_and_false_664:
+.L_and_end_665:
+    JUMP_IF_FALSE .L_for_exit_663
 ; val_off := 24 + nargs * 6
     PUSH_I8 24
     LOAD_LOCAL nargs
@@ -8005,7 +7903,7 @@
     LOAD_LOCAL kind
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_680
+    JUMP_IF_FALSE .L_else_668
 ; emit("    STORE_LOCAL _tmp_len")
     PUSH_STR "    STORE_LOCAL _tmp_len"
     CALL emit
@@ -8074,7 +7972,7 @@
     LOAD_LOCAL entry_off
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_682
+    JUMP_IF_FALSE .L_endif_670
 ; emit_u8("    PUSH_I8 ", entry_off)
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL entry_off
@@ -8082,7 +7980,7 @@
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-.L_endif_682:
+.L_endif_670:
 ; emit("    LOAD_LOCAL _pbuf")
     PUSH_STR "    LOAD_LOCAL _pbuf"
     CALL emit
@@ -8121,8 +8019,8 @@
 ; emit("    POKE2")
     PUSH_STR "    POKE2"
     CALL emit
-    JUMP .L_endif_681
-.L_else_680:
+    JUMP .L_endif_669
+.L_else_668:
 ; emit("    LOAD_LOCAL _pbuf")
     PUSH_STR "    LOAD_LOCAL _pbuf"
     CALL emit
@@ -8146,7 +8044,7 @@
     LOAD_LOCAL entry_off
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_683
+    JUMP_IF_FALSE .L_endif_671
 ; emit_u8("    PUSH_I8 ", entry_off)
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL entry_off
@@ -8154,7 +8052,7 @@
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-.L_endif_683:
+.L_endif_671:
 ; emit("    LOAD_LOCAL _pbuf")
     PUSH_STR "    LOAD_LOCAL _pbuf"
     CALL emit
@@ -8193,7 +8091,7 @@
 ; emit("    POKE2")
     PUSH_STR "    POKE2"
     CALL emit
-.L_endif_681:
+.L_endif_669:
 ; nargs++
     LOAD_LOCAL nargs
     PUSH_1
@@ -8204,12 +8102,12 @@
     PUSH_STR ","
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_684
+    JUMP_IF_FALSE .L_endif_672
 ; next_tok()
     CALL next_tok
-.L_endif_684:
-    JUMP .L_for_top_674
-.L_for_exit_675:
+.L_endif_672:
+    JUMP .L_for_top_662
+.L_for_exit_663:
 ; expect(")")
     PUSH_STR ")"
     CALL expect
@@ -8220,15 +8118,15 @@
     LOAD_LOCAL nargs
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_685
+    JUMP_IF_FALSE .L_else_673
 ; emit("    PUSH_1")
     PUSH_STR "    PUSH_1"
     CALL emit
 ; emit("    PUSH_1")
     PUSH_STR "    PUSH_1"
     CALL emit
-    JUMP .L_endif_686
-.L_else_685:
+    JUMP .L_endif_674
+.L_else_673:
 ; emit_u8("    PUSH_I8 ", nargs)
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL nargs
@@ -8237,19 +8135,19 @@
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL nargs
     CALL emit_u8
-.L_endif_686:
+.L_endif_674:
 ; if is_println
     LOAD_LOCAL is_println
-    JUMP_IF_FALSE .L_else_687
+    JUMP_IF_FALSE .L_else_675
 ; emit("    PRINTLN")
     PUSH_STR "    PRINTLN"
     CALL emit
-    JUMP .L_endif_688
-.L_else_687:
+    JUMP .L_endif_676
+.L_else_675:
 ; emit("    PRINT")
     PUSH_STR "    PRINT"
     CALL emit
-.L_endif_688:
+.L_endif_676:
 ; emit("    LOAD_LOCAL _pbuf")
     PUSH_STR "    LOAD_LOCAL _pbuf"
     CALL emit
@@ -8277,33 +8175,33 @@
     PUSH_STR "{"
     CALL expect
 ; for cur_tok != TOK_PUNCT || cur_str != "}" && cur_tok != TOK_EOF
-.L_for_top_689:
+.L_for_top_677:
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_693
+    JUMP_IF_TRUE .L_or_true_681
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "}"
     STR_CMP
-    JUMP .L_or_end_694
-.L_or_true_693:
-.L_or_end_694:
+    JUMP .L_or_end_682
+.L_or_true_681:
+.L_or_end_682:
     DUP
-    JUMP_IF_FALSE .L_and_false_691
+    JUMP_IF_FALSE .L_and_false_679
     POP
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP .L_and_end_692
-.L_and_false_691:
-.L_and_end_692:
-    JUMP_IF_FALSE .L_for_exit_690
+    JUMP .L_and_end_680
+.L_and_false_679:
+.L_and_end_680:
+    JUMP_IF_FALSE .L_for_exit_678
 ; compile_stmt()
     CALL compile_stmt
-    JUMP .L_for_top_689
-.L_for_exit_690:
+    JUMP .L_for_top_677
+.L_for_exit_678:
 ; expect("}")
     PUSH_STR "}"
     CALL expect
@@ -8350,16 +8248,16 @@
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_695
+    JUMP_IF_FALSE .L_and_false_683
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "else"
     STR_CMP
     NOT
-    JUMP .L_and_end_696
-.L_and_false_695:
-.L_and_end_696:
-    JUMP_IF_FALSE .L_else_697
+    JUMP .L_and_end_684
+.L_and_false_683:
+.L_and_end_684:
+    JUMP_IF_FALSE .L_else_685
 ; next_tok()
     CALL next_tok
 ; emit_jump("JUMP", lbl_endif)
@@ -8374,32 +8272,32 @@
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_699
+    JUMP_IF_FALSE .L_and_false_687
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "if"
     STR_CMP
     NOT
-    JUMP .L_and_end_700
-.L_and_false_699:
-.L_and_end_700:
-    JUMP_IF_FALSE .L_else_701
+    JUMP .L_and_end_688
+.L_and_false_687:
+.L_and_end_688:
+    JUMP_IF_FALSE .L_else_689
 ; compile_if()
     CALL compile_if
-    JUMP .L_endif_702
-.L_else_701:
+    JUMP .L_endif_690
+.L_else_689:
 ; compile_block()
     CALL compile_block
-.L_endif_702:
+.L_endif_690:
 ; emit_label(lbl_endif)
     LOAD_LOCAL lbl_endif
     CALL emit_label
-    JUMP .L_endif_698
-.L_else_697:
+    JUMP .L_endif_686
+.L_else_685:
 ; emit_label(lbl_else)
     LOAD_LOCAL lbl_else
     CALL emit_label
-.L_endif_698:
+.L_endif_686:
     RET_VOID
 .endfunction
 
@@ -8443,12 +8341,12 @@
     LOAD_GLOBAL line_pos
     STORE_LOCAL scan_pos
 ; for scan_pos < word(len(cur_line))
-.L_for_top_703:
+.L_for_top_691:
     LOAD_LOCAL scan_pos
     LOAD_GLOBAL cur_line
     SLICE_LEN
     CMP_LT
-    JUMP_IF_FALSE .L_for_exit_704
+    JUMP_IF_FALSE .L_for_exit_692
 ; ch := cur_line[...]
     ADDR_OF_GLOBAL cur_line
     PEEK2
@@ -8460,32 +8358,32 @@
     LOAD_LOCAL ch
     PUSH_I8 123
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_705
+    JUMP_IF_FALSE .L_endif_693
 ; break
-    JUMP .L_for_exit_704
-.L_endif_705:
+    JUMP .L_for_exit_692
+.L_endif_693:
 ; if ch == 59
     LOAD_LOCAL ch
     PUSH_I8 59
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_706
+    JUMP_IF_FALSE .L_endif_694
 ; is_3clause = true
     PUSH_TRUE
     STORE_LOCAL is_3clause
 ; break
-    JUMP .L_for_exit_704
-.L_endif_706:
+    JUMP .L_for_exit_692
+.L_endif_694:
 ; scan_pos++
     LOAD_LOCAL scan_pos
     PUSH_1
     ADD
     STORE_LOCAL scan_pos
-    JUMP .L_for_top_703
-.L_for_exit_704:
+    JUMP .L_for_top_691
+.L_for_exit_692:
 ; if !is_3clause
     LOAD_LOCAL is_3clause
     NOT
-    JUMP_IF_FALSE .L_else_707
+    JUMP_IF_FALSE .L_else_695
 ; loop_cont[...] = lbl_top
     LOAD_LOCAL lbl_top
     ADDR_OF_GLOBAL loop_cont
@@ -8512,7 +8410,7 @@
     LOAD_GLOBAL cur_str
     PUSH_STR "{"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_709
+    JUMP_IF_FALSE .L_endif_697
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -8521,7 +8419,7 @@
     PUSH_STR "JUMP_IF_FALSE"
     LOAD_LOCAL lbl_exit
     CALL emit_jump
-.L_endif_709:
+.L_endif_697:
 ; compile_block()
     CALL compile_block
 ; emit_jump("JUMP", lbl_top)
@@ -8536,8 +8434,8 @@
     PUSH_1
     SUB
     STORE_GLOBAL loop_depth
-    JUMP .L_endif_708
-.L_else_707:
+    JUMP .L_endif_696
+.L_else_695:
 ; loop_cont[...] = lbl_cont
     LOAD_LOCAL lbl_cont
     ADDR_OF_GLOBAL loop_cont
@@ -8564,14 +8462,14 @@
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
-    JUMP_IF_FALSE .L_else_710
+    JUMP_IF_FALSE .L_else_698
 ; compile_stmt()
     CALL compile_stmt
-    JUMP .L_endif_711
-.L_else_710:
+    JUMP .L_endif_699
+.L_else_698:
 ; next_tok()
     CALL next_tok
-.L_endif_711:
+.L_endif_699:
 ; emit_label(lbl_top)
     LOAD_LOCAL lbl_top
     CALL emit_label
@@ -8579,7 +8477,7 @@
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_712
+    JUMP_IF_FALSE .L_endif_700
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -8588,7 +8486,7 @@
     PUSH_STR "JUMP_IF_FALSE"
     LOAD_LOCAL lbl_exit
     CALL emit_jump
-.L_endif_712:
+.L_endif_700:
 ; expect(";")
     PUSH_STR ";"
     CALL expect
@@ -8603,10 +8501,10 @@
     LOAD_GLOBAL cur_str
     PUSH_STR "{"
     STR_CMP
-    JUMP_IF_FALSE .L_endif_713
+    JUMP_IF_FALSE .L_endif_701
 ; compile_stmt()
     CALL compile_stmt
-.L_endif_713:
+.L_endif_701:
 ; emit_jump("JUMP", lbl_top)
     PUSH_STR "JUMP"
     LOAD_LOCAL lbl_top
@@ -8628,7 +8526,7 @@
     PUSH_1
     SUB
     STORE_GLOBAL loop_depth
-.L_endif_708:
+.L_endif_696:
     RET_VOID
 .endfunction
 
@@ -8665,13 +8563,13 @@
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_714
+    JUMP_IF_FALSE .L_endif_702
 ; if cur_str == "return"
     LOAD_GLOBAL cur_str
     PUSH_STR "return"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_715
+    JUMP_IF_FALSE .L_endif_703
 ; next_tok()
     CALL next_tok
 ; if cur_str == ";" || cur_str == "}"
@@ -8680,21 +8578,21 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_716
+    JUMP_IF_TRUE .L_or_true_704
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "}"
     STR_CMP
     NOT
-    JUMP .L_or_end_717
-.L_or_true_716:
-.L_or_end_717:
-    JUMP_IF_FALSE .L_else_718
+    JUMP .L_or_end_705
+.L_or_true_704:
+.L_or_end_705:
+    JUMP_IF_FALSE .L_else_706
 ; emit("    RET_VOID")
     PUSH_STR "    RET_VOID"
     CALL emit
-    JUMP .L_endif_719
-.L_else_718:
+    JUMP .L_endif_707
+.L_else_706:
 ; k := compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -8703,57 +8601,57 @@
     LOAD_LOCAL k
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_720
+    JUMP_IF_FALSE .L_else_708
 ; emit("    RET_SLICE")
     PUSH_STR "    RET_SLICE"
     CALL emit
-    JUMP .L_endif_721
-.L_else_720:
+    JUMP .L_endif_709
+.L_else_708:
 ; emit("    RET")
     PUSH_STR "    RET"
     CALL emit
-.L_endif_721:
-.L_endif_719:
+.L_endif_709:
+.L_endif_707:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_722
+    JUMP_IF_FALSE .L_endif_710
 ; next_tok()
     CALL next_tok
-.L_endif_722:
+.L_endif_710:
 ; return 
     RET_VOID
-.L_endif_715:
+.L_endif_703:
 ; if cur_str == "if"
     LOAD_GLOBAL cur_str
     PUSH_STR "if"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_723
+    JUMP_IF_FALSE .L_endif_711
 ; compile_if()
     CALL compile_if
 ; return 
     RET_VOID
-.L_endif_723:
+.L_endif_711:
 ; if cur_str == "for"
     LOAD_GLOBAL cur_str
     PUSH_STR "for"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_724
+    JUMP_IF_FALSE .L_endif_712
 ; compile_for()
     CALL compile_for
 ; return 
     RET_VOID
-.L_endif_724:
+.L_endif_712:
 ; if cur_str == "break"
     LOAD_GLOBAL cur_str
     PUSH_STR "break"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_725
+    JUMP_IF_FALSE .L_endif_713
 ; next_tok()
     CALL next_tok
 ; emit_jump("JUMP", loop_exit[...])
@@ -8770,19 +8668,19 @@
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_726
+    JUMP_IF_FALSE .L_endif_714
 ; next_tok()
     CALL next_tok
-.L_endif_726:
+.L_endif_714:
 ; return 
     RET_VOID
-.L_endif_725:
+.L_endif_713:
 ; if cur_str == "continue"
     LOAD_GLOBAL cur_str
     PUSH_STR "continue"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_727
+    JUMP_IF_FALSE .L_endif_715
 ; next_tok()
     CALL next_tok
 ; emit_jump("JUMP", loop_cont[...])
@@ -8799,19 +8697,19 @@
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_728
+    JUMP_IF_FALSE .L_endif_716
 ; next_tok()
     CALL next_tok
-.L_endif_728:
+.L_endif_716:
 ; return 
     RET_VOID
-.L_endif_727:
+.L_endif_715:
 ; if cur_str == "var"
     LOAD_GLOBAL cur_str
     PUSH_STR "var"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_729
+    JUMP_IF_FALSE .L_endif_717
 ; next_tok()
     CALL next_tok
 ; vname := cur_str
@@ -8826,7 +8724,7 @@
     PUSH_STR "="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_730
+    JUMP_IF_FALSE .L_endif_718
 ; next_tok()
     CALL next_tok
 ; compile_expr(0)
@@ -8837,25 +8735,25 @@
     PUSH_STR "    STORE_LOCAL "
     LOAD_LOCAL vname
     CALL emit2
-.L_endif_730:
+.L_endif_718:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_731
+    JUMP_IF_FALSE .L_endif_719
 ; next_tok()
     CALL next_tok
-.L_endif_731:
+.L_endif_719:
 ; return 
     RET_VOID
-.L_endif_729:
-.L_endif_714:
+.L_endif_717:
+.L_endif_702:
 ; if cur_tok == TOK_IDENT
     LOAD_GLOBAL cur_tok
     PUSH_I8 3
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_732
+    JUMP_IF_FALSE .L_endif_720
 ; name := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL name
@@ -8867,16 +8765,16 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_733
+    JUMP_IF_TRUE .L_or_true_721
     POP
     LOAD_LOCAL name
     PUSH_STR "println"
     STR_CMP
     NOT
-    JUMP .L_or_end_734
-.L_or_true_733:
-.L_or_end_734:
-    JUMP_IF_FALSE .L_endif_735
+    JUMP .L_or_end_722
+.L_or_true_721:
+.L_or_end_722:
+    JUMP_IF_FALSE .L_endif_723
 ; compile_print(name == "println")
     LOAD_LOCAL name
     PUSH_STR "println"
@@ -8888,19 +8786,19 @@
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_736
+    JUMP_IF_FALSE .L_endif_724
 ; next_tok()
     CALL next_tok
-.L_endif_736:
+.L_endif_724:
 ; return 
     RET_VOID
-.L_endif_735:
+.L_endif_723:
 ; if cur_str == "("
     LOAD_GLOBAL cur_str
     PUSH_STR "("
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_737
+    JUMP_IF_FALSE .L_endif_725
 ; next_tok()
     CALL next_tok
 ; nargs := compile_arg_list()
@@ -8915,40 +8813,40 @@
     LOAD_LOCAL rk
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_738
+    JUMP_IF_FALSE .L_else_726
 ; emit("    POP")
     PUSH_STR "    POP"
     CALL emit
-    JUMP .L_endif_739
-.L_else_738:
+    JUMP .L_endif_727
+.L_else_726:
 ; if rk == KIND_SLICE
     LOAD_LOCAL rk
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_740
+    JUMP_IF_FALSE .L_endif_728
 ; emit("    POP_SLICE")
     PUSH_STR "    POP_SLICE"
     CALL emit
-.L_endif_740:
-.L_endif_739:
+.L_endif_728:
+.L_endif_727:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_741
+    JUMP_IF_FALSE .L_endif_729
 ; next_tok()
     CALL next_tok
-.L_endif_741:
+.L_endif_729:
 ; return 
     RET_VOID
-.L_endif_737:
+.L_endif_725:
 ; if cur_str == ","
     LOAD_GLOBAL cur_str
     PUSH_STR ","
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_742
+    JUMP_IF_FALSE .L_endif_730
 ; next_tok()
     CALL next_tok
 ; name2 := cur_str
@@ -8962,16 +8860,16 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_743
+    JUMP_IF_TRUE .L_or_true_731
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "="
     STR_CMP
     NOT
-    JUMP .L_or_end_744
-.L_or_true_743:
-.L_or_end_744:
-    JUMP_IF_FALSE .L_endif_745
+    JUMP .L_or_end_732
+.L_or_true_731:
+.L_or_end_732:
+    JUMP_IF_FALSE .L_endif_733
 ; next_tok()
     CALL next_tok
 ; fn_name := cur_str
@@ -8995,52 +8893,52 @@
     PUSH_STR "_"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_746
+    JUMP_IF_FALSE .L_else_734
 ; emit("    POP")
     PUSH_STR "    POP"
     CALL emit
-    JUMP .L_endif_747
-.L_else_746:
+    JUMP .L_endif_735
+.L_else_734:
 ; emit2("    STORE_LOCAL ", name2)
     PUSH_STR "    STORE_LOCAL "
     LOAD_LOCAL name2
     CALL emit2
-.L_endif_747:
+.L_endif_735:
 ; if name == "_"
     LOAD_LOCAL name
     PUSH_STR "_"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_748
+    JUMP_IF_FALSE .L_else_736
 ; emit("    POP")
     PUSH_STR "    POP"
     CALL emit
-    JUMP .L_endif_749
-.L_else_748:
+    JUMP .L_endif_737
+.L_else_736:
 ; emit2("    STORE_LOCAL ", name)
     PUSH_STR "    STORE_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_749:
+.L_endif_737:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_750
+    JUMP_IF_FALSE .L_endif_738
 ; next_tok()
     CALL next_tok
-.L_endif_750:
+.L_endif_738:
 ; return 
     RET_VOID
-.L_endif_745:
-.L_endif_742:
+.L_endif_733:
+.L_endif_730:
 ; if cur_str == "."
     LOAD_GLOBAL cur_str
     PUSH_STR "."
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_751
+    JUMP_IF_FALSE .L_endif_739
 ; next_tok()
     CALL next_tok
 ; field := cur_str
@@ -9059,46 +8957,46 @@
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_752
+    JUMP_IF_FALSE .L_else_740
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_753
-.L_else_752:
+    JUMP .L_endif_741
+.L_else_740:
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_753:
+.L_endif_741:
 ; if field == "Cap"
     LOAD_LOCAL field
     PUSH_STR "Cap"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_754
+    JUMP_IF_FALSE .L_else_742
 ; emit("    PUSH_I8 2")
     PUSH_STR "    PUSH_I8 2"
     CALL emit
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_755
-.L_else_754:
+    JUMP .L_endif_743
+.L_else_742:
 ; if field == "Len"
     LOAD_LOCAL field
     PUSH_STR "Len"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_756
+    JUMP_IF_FALSE .L_endif_744
 ; emit("    PUSH_I8 4")
     PUSH_STR "    PUSH_I8 4"
     CALL emit
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-.L_endif_756:
-.L_endif_755:
+.L_endif_744:
+.L_endif_743:
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -9111,19 +9009,19 @@
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_757
+    JUMP_IF_FALSE .L_endif_745
 ; next_tok()
     CALL next_tok
-.L_endif_757:
+.L_endif_745:
 ; return 
     RET_VOID
-.L_endif_751:
+.L_endif_739:
 ; if cur_str == ":="
     LOAD_GLOBAL cur_str
     PUSH_STR ":="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_758
+    JUMP_IF_FALSE .L_endif_746
 ; next_tok()
     CALL next_tok
 ; rk := compile_expr(0)
@@ -9135,46 +9033,46 @@
     PUSH_STR "_"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_759
+    JUMP_IF_FALSE .L_else_747
 ; if rk == KIND_SLICE
     LOAD_LOCAL rk
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_761
+    JUMP_IF_FALSE .L_else_749
 ; emit("    POP_SLICE")
     PUSH_STR "    POP_SLICE"
     CALL emit
-    JUMP .L_endif_762
-.L_else_761:
+    JUMP .L_endif_750
+.L_else_749:
 ; emit("    POP")
     PUSH_STR "    POP"
     CALL emit
-.L_endif_762:
-    JUMP .L_endif_760
-.L_else_759:
+.L_endif_750:
+    JUMP .L_endif_748
+.L_else_747:
 ; emit2("    STORE_LOCAL ", name)
     PUSH_STR "    STORE_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_760:
+.L_endif_748:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_763
+    JUMP_IF_FALSE .L_endif_751
 ; next_tok()
     CALL next_tok
-.L_endif_763:
+.L_endif_751:
 ; return 
     RET_VOID
-.L_endif_758:
+.L_endif_746:
 ; if cur_str == "["
     LOAD_GLOBAL cur_str
     PUSH_STR "["
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_764
+    JUMP_IF_FALSE .L_endif_752
 ; next_tok()
     CALL next_tok
 ; elem_sz := byte(1)
@@ -9194,7 +9092,7 @@
     LOAD_LOCAL gi
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_765
+    JUMP_IF_FALSE .L_else_753
 ; emit2("    ADDR_OF_GLOBAL ", name)
     PUSH_STR "    ADDR_OF_GLOBAL "
     LOAD_LOCAL name
@@ -9205,13 +9103,13 @@
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-    JUMP .L_endif_766
-.L_else_765:
+    JUMP .L_endif_754
+.L_else_753:
 ; if li != 65535
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_767
+    JUMP_IF_FALSE .L_endif_755
 ; emit2("    ADDR_OF_LOCAL ", name)
     PUSH_STR "    ADDR_OF_LOCAL "
     LOAD_LOCAL name
@@ -9222,8 +9120,8 @@
     ADD
     PEEK1
     STORE_LOCAL elem_sz
-.L_endif_767:
-.L_endif_766:
+.L_endif_755:
+.L_endif_754:
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -9235,7 +9133,7 @@
     LOAD_LOCAL elem_sz
     PUSH_I8 6
     CMP_EQ
-    JUMP_IF_FALSE .L_else_768
+    JUMP_IF_FALSE .L_else_756
 ; emit_u8("    PUSH_I8 ", 6)
     PUSH_STR "    PUSH_I8 "
     PUSH_I8 6
@@ -9309,34 +9207,34 @@
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_770
+    JUMP_IF_FALSE .L_endif_758
 ; next_tok()
     CALL next_tok
-.L_endif_770:
+.L_endif_758:
 ; return 
     RET_VOID
-    JUMP .L_endif_769
-.L_else_768:
+    JUMP .L_endif_757
+.L_else_756:
 ; if elem_sz == 2
     LOAD_LOCAL elem_sz
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_771
+    JUMP_IF_FALSE .L_else_759
 ; emit("    SHL1_ADD")
     PUSH_STR "    SHL1_ADD"
     CALL emit
-    JUMP .L_endif_772
-.L_else_771:
+    JUMP .L_endif_760
+.L_else_759:
 ; if elem_sz == 1
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_773
+    JUMP_IF_FALSE .L_else_761
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_774
-.L_else_773:
+    JUMP .L_endif_762
+.L_else_761:
 ; emit_u8("    PUSH_I8 ", word(elem_sz))
     PUSH_STR "    PUSH_I8 "
     LOAD_LOCAL elem_sz
@@ -9347,25 +9245,25 @@
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-.L_endif_774:
-.L_endif_772:
-.L_endif_769:
+.L_endif_762:
+.L_endif_760:
+.L_endif_757:
 ; if cur_str == "++" || cur_str == "--"
     LOAD_GLOBAL cur_str
     PUSH_STR "++"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_775
+    JUMP_IF_TRUE .L_or_true_763
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "--"
     STR_CMP
     NOT
-    JUMP .L_or_end_776
-.L_or_true_775:
-.L_or_end_776:
-    JUMP_IF_FALSE .L_endif_777
+    JUMP .L_or_end_764
+.L_or_true_763:
+.L_or_end_764:
+    JUMP_IF_FALSE .L_endif_765
 ; is_inc := cur_str == "++"
     LOAD_GLOBAL cur_str
     PUSH_STR "++"
@@ -9381,73 +9279,73 @@
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_778
+    JUMP_IF_FALSE .L_else_766
 ; emit("    PEEK1")
     PUSH_STR "    PEEK1"
     CALL emit
-    JUMP .L_endif_779
-.L_else_778:
+    JUMP .L_endif_767
+.L_else_766:
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
-.L_endif_779:
+.L_endif_767:
 ; emit("    PUSH_1")
     PUSH_STR "    PUSH_1"
     CALL emit
 ; if is_inc
     LOAD_LOCAL is_inc
-    JUMP_IF_FALSE .L_else_780
+    JUMP_IF_FALSE .L_else_768
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_781
-.L_else_780:
+    JUMP .L_endif_769
+.L_else_768:
 ; emit("    SUB")
     PUSH_STR "    SUB"
     CALL emit
-.L_endif_781:
+.L_endif_769:
 ; if elem_sz == 1
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_782
+    JUMP_IF_FALSE .L_else_770
 ; emit("    POKE1")
     PUSH_STR "    POKE1"
     CALL emit
-    JUMP .L_endif_783
-.L_else_782:
+    JUMP .L_endif_771
+.L_else_770:
 ; emit("    POKE2")
     PUSH_STR "    POKE2"
     CALL emit
-.L_endif_783:
+.L_endif_771:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_784
+    JUMP_IF_FALSE .L_endif_772
 ; next_tok()
     CALL next_tok
-.L_endif_784:
+.L_endif_772:
 ; return 
     RET_VOID
-.L_endif_777:
+.L_endif_765:
 ; if cur_str == "+=" || cur_str == "-="
     LOAD_GLOBAL cur_str
     PUSH_STR "+="
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_785
+    JUMP_IF_TRUE .L_or_true_773
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "-="
     STR_CMP
     NOT
-    JUMP .L_or_end_786
-.L_or_true_785:
-.L_or_end_786:
-    JUMP_IF_FALSE .L_endif_787
+    JUMP .L_or_end_774
+.L_or_true_773:
+.L_or_end_774:
+    JUMP_IF_FALSE .L_endif_775
 ; is_add := cur_str == "+="
     LOAD_GLOBAL cur_str
     PUSH_STR "+="
@@ -9463,58 +9361,58 @@
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_788
+    JUMP_IF_FALSE .L_else_776
 ; emit("    PEEK1")
     PUSH_STR "    PEEK1"
     CALL emit
-    JUMP .L_endif_789
-.L_else_788:
+    JUMP .L_endif_777
+.L_else_776:
 ; emit("    PEEK2")
     PUSH_STR "    PEEK2"
     CALL emit
-.L_endif_789:
+.L_endif_777:
 ; compile_expr(0)
     PUSH_0
     CALL compile_expr
     POP
 ; if is_add
     LOAD_LOCAL is_add
-    JUMP_IF_FALSE .L_else_790
+    JUMP_IF_FALSE .L_else_778
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_791
-.L_else_790:
+    JUMP .L_endif_779
+.L_else_778:
 ; emit("    SUB")
     PUSH_STR "    SUB"
     CALL emit
-.L_endif_791:
+.L_endif_779:
 ; if elem_sz == 1
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_792
+    JUMP_IF_FALSE .L_else_780
 ; emit("    POKE1")
     PUSH_STR "    POKE1"
     CALL emit
-    JUMP .L_endif_793
-.L_else_792:
+    JUMP .L_endif_781
+.L_else_780:
 ; emit("    POKE2")
     PUSH_STR "    POKE2"
     CALL emit
-.L_endif_793:
+.L_endif_781:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_794
+    JUMP_IF_FALSE .L_endif_782
 ; next_tok()
     CALL next_tok
-.L_endif_794:
+.L_endif_782:
 ; return 
     RET_VOID
-.L_endif_787:
+.L_endif_775:
 ; expect("=")
     PUSH_STR "="
     CALL expect
@@ -9526,44 +9424,44 @@
     LOAD_LOCAL elem_sz
     PUSH_1
     CMP_EQ
-    JUMP_IF_FALSE .L_else_795
+    JUMP_IF_FALSE .L_else_783
 ; emit("    POKE1")
     PUSH_STR "    POKE1"
     CALL emit
-    JUMP .L_endif_796
-.L_else_795:
+    JUMP .L_endif_784
+.L_else_783:
 ; emit("    POKE2")
     PUSH_STR "    POKE2"
     CALL emit
-.L_endif_796:
+.L_endif_784:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_797
+    JUMP_IF_FALSE .L_endif_785
 ; next_tok()
     CALL next_tok
-.L_endif_797:
+.L_endif_785:
 ; return 
     RET_VOID
-.L_endif_764:
+.L_endif_752:
 ; if cur_str == "++" || cur_str == "--"
     LOAD_GLOBAL cur_str
     PUSH_STR "++"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_798
+    JUMP_IF_TRUE .L_or_true_786
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "--"
     STR_CMP
     NOT
-    JUMP .L_or_end_799
-.L_or_true_798:
-.L_or_end_799:
-    JUMP_IF_FALSE .L_endif_800
+    JUMP .L_or_end_787
+.L_or_true_786:
+.L_or_end_787:
+    JUMP_IF_FALSE .L_endif_788
 ; is_inc := cur_str == "++"
     LOAD_GLOBAL cur_str
     PUSH_STR "++"
@@ -9585,15 +9483,15 @@
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_801
+    JUMP_IF_TRUE .L_or_true_789
     POP
     LOAD_LOCAL pi
     PUSH_I16 65535
     CMP_NE
-    JUMP .L_or_end_802
-.L_or_true_801:
-.L_or_end_802:
-    JUMP_IF_FALSE .L_else_803
+    JUMP .L_or_end_790
+.L_or_true_789:
+.L_or_end_790:
+    JUMP_IF_FALSE .L_else_791
 ; emit2("    LOAD_LOCAL ", name)
     PUSH_STR "    LOAD_LOCAL "
     LOAD_LOCAL name
@@ -9603,22 +9501,22 @@
     CALL emit
 ; if is_inc
     LOAD_LOCAL is_inc
-    JUMP_IF_FALSE .L_else_805
+    JUMP_IF_FALSE .L_else_793
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_806
-.L_else_805:
+    JUMP .L_endif_794
+.L_else_793:
 ; emit("    SUB")
     PUSH_STR "    SUB"
     CALL emit
-.L_endif_806:
+.L_endif_794:
 ; emit2("    STORE_LOCAL ", name)
     PUSH_STR "    STORE_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_804
-.L_else_803:
+    JUMP .L_endif_792
+.L_else_791:
 ; emit2("    LOAD_GLOBAL ", name)
     PUSH_STR "    LOAD_GLOBAL "
     LOAD_LOCAL name
@@ -9628,59 +9526,59 @@
     CALL emit
 ; if is_inc
     LOAD_LOCAL is_inc
-    JUMP_IF_FALSE .L_else_807
+    JUMP_IF_FALSE .L_else_795
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_808
-.L_else_807:
+    JUMP .L_endif_796
+.L_else_795:
 ; emit("    SUB")
     PUSH_STR "    SUB"
     CALL emit
-.L_endif_808:
+.L_endif_796:
 ; emit2("    STORE_GLOBAL ", name)
     PUSH_STR "    STORE_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_804:
+.L_endif_792:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_809
+    JUMP_IF_FALSE .L_endif_797
 ; next_tok()
     CALL next_tok
-.L_endif_809:
+.L_endif_797:
 ; return 
     RET_VOID
-.L_endif_800:
+.L_endif_788:
 ; if cur_str == "=" || cur_str == "+=" || cur_str == "-="
     LOAD_GLOBAL cur_str
     PUSH_STR "="
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_812
+    JUMP_IF_TRUE .L_or_true_800
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "+="
     STR_CMP
     NOT
-    JUMP .L_or_end_813
-.L_or_true_812:
-.L_or_end_813:
+    JUMP .L_or_end_801
+.L_or_true_800:
+.L_or_end_801:
     DUP
-    JUMP_IF_TRUE .L_or_true_810
+    JUMP_IF_TRUE .L_or_true_798
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "-="
     STR_CMP
     NOT
-    JUMP .L_or_end_811
-.L_or_true_810:
-.L_or_end_811:
-    JUMP_IF_FALSE .L_endif_814
+    JUMP .L_or_end_799
+.L_or_true_798:
+.L_or_end_799:
+    JUMP_IF_FALSE .L_endif_802
 ; op := cur_str
     LOAD_GLOBAL cur_str
     STORE_LOCAL op
@@ -9700,42 +9598,42 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_815
+    JUMP_IF_TRUE .L_or_true_803
     POP
     LOAD_LOCAL op
     PUSH_STR "-="
     STR_CMP
     NOT
-    JUMP .L_or_end_816
-.L_or_true_815:
-.L_or_end_816:
-    JUMP_IF_FALSE .L_endif_817
+    JUMP .L_or_end_804
+.L_or_true_803:
+.L_or_end_804:
+    JUMP_IF_FALSE .L_endif_805
 ; if li != 65535 || pi != 65535
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_818
+    JUMP_IF_TRUE .L_or_true_806
     POP
     LOAD_LOCAL pi
     PUSH_I16 65535
     CMP_NE
-    JUMP .L_or_end_819
-.L_or_true_818:
-.L_or_end_819:
-    JUMP_IF_FALSE .L_else_820
+    JUMP .L_or_end_807
+.L_or_true_806:
+.L_or_end_807:
+    JUMP_IF_FALSE .L_else_808
 ; emit2("    LOAD_LOCAL ", name)
     PUSH_STR "    LOAD_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_821
-.L_else_820:
+    JUMP .L_endif_809
+.L_else_808:
 ; emit2("    LOAD_GLOBAL ", name)
     PUSH_STR "    LOAD_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_821:
-.L_endif_817:
+.L_endif_809:
+.L_endif_805:
 ; rk := compile_expr(0)
     PUSH_0
     CALL compile_expr
@@ -9745,84 +9643,84 @@
     PUSH_STR "+="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_822
+    JUMP_IF_FALSE .L_else_810
 ; emit("    ADD")
     PUSH_STR "    ADD"
     CALL emit
-    JUMP .L_endif_823
-.L_else_822:
+    JUMP .L_endif_811
+.L_else_810:
 ; if op == "-="
     LOAD_LOCAL op
     PUSH_STR "-="
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_824
+    JUMP_IF_FALSE .L_endif_812
 ; emit("    SUB")
     PUSH_STR "    SUB"
     CALL emit
-.L_endif_824:
-.L_endif_823:
+.L_endif_812:
+.L_endif_811:
 ; if name == "_"
     LOAD_LOCAL name
     PUSH_STR "_"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_825
+    JUMP_IF_FALSE .L_else_813
 ; if rk == KIND_SLICE
     LOAD_LOCAL rk
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_827
+    JUMP_IF_FALSE .L_else_815
 ; emit("    POP_SLICE")
     PUSH_STR "    POP_SLICE"
     CALL emit
-    JUMP .L_endif_828
-.L_else_827:
+    JUMP .L_endif_816
+.L_else_815:
 ; emit("    POP")
     PUSH_STR "    POP"
     CALL emit
-.L_endif_828:
-    JUMP .L_endif_826
-.L_else_825:
+.L_endif_816:
+    JUMP .L_endif_814
+.L_else_813:
 ; if li != 65535 || pi != 65535
     LOAD_LOCAL li
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_829
+    JUMP_IF_TRUE .L_or_true_817
     POP
     LOAD_LOCAL pi
     PUSH_I16 65535
     CMP_NE
-    JUMP .L_or_end_830
-.L_or_true_829:
-.L_or_end_830:
-    JUMP_IF_FALSE .L_else_831
+    JUMP .L_or_end_818
+.L_or_true_817:
+.L_or_end_818:
+    JUMP_IF_FALSE .L_else_819
 ; emit2("    STORE_LOCAL ", name)
     PUSH_STR "    STORE_LOCAL "
     LOAD_LOCAL name
     CALL emit2
-    JUMP .L_endif_832
-.L_else_831:
+    JUMP .L_endif_820
+.L_else_819:
 ; emit2("    STORE_GLOBAL ", name)
     PUSH_STR "    STORE_GLOBAL "
     LOAD_LOCAL name
     CALL emit2
-.L_endif_832:
-.L_endif_826:
+.L_endif_820:
+.L_endif_814:
 ; if cur_str == ";"
     LOAD_GLOBAL cur_str
     PUSH_STR ";"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_833
+    JUMP_IF_FALSE .L_endif_821
 ; next_tok()
     CALL next_tok
-.L_endif_833:
+.L_endif_821:
 ; return 
     RET_VOID
-.L_endif_814:
-.L_endif_732:
+.L_endif_802:
+.L_endif_720:
 ; next_tok()
     CALL next_tok
     RET_VOID
@@ -9863,7 +9761,7 @@
     LOAD_GLOBAL num_globals
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_834
+    JUMP_IF_FALSE .L_endif_822
 ; emit("; Global Variable Table")
     PUSH_STR "; Global Variable Table"
     CALL emit
@@ -9871,11 +9769,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_835:
+.L_for3_top_823:
     LOAD_LOCAL i
     LOAD_GLOBAL num_globals
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_837
+    JUMP_IF_FALSE .L_for3_exit_825
 ; out_str(".global ")
     PUSH_STR ".global "
     CALL out_str
@@ -9908,39 +9806,39 @@
     CALL out_dec
 ; emit_nl()
     CALL emit_nl
-.L_for3_cont_836:
+.L_for3_cont_824:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_835
-.L_for3_exit_837:
+    JUMP .L_for3_top_823
+.L_for3_exit_825:
 ; emit("")
     PUSH_STR ""
     CALL emit
-.L_endif_834:
+.L_endif_822:
 ; for cur_tok != TOK_EOF
-.L_for_top_838:
+.L_for_top_826:
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_for_exit_839
+    JUMP_IF_FALSE .L_for_exit_827
 ; if cur_tok == TOK_KEYWORD && cur_str == "func"
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_840
+    JUMP_IF_FALSE .L_and_false_828
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "func"
     STR_CMP
     NOT
-    JUMP .L_and_end_841
-.L_and_false_840:
-.L_and_end_841:
-    JUMP_IF_FALSE .L_else_842
+    JUMP .L_and_end_829
+.L_and_false_828:
+.L_and_end_829:
+    JUMP_IF_FALSE .L_else_830
 ; next_tok()
     CALL next_tok
 ; fname := cur_str
@@ -9957,78 +9855,78 @@
     PUSH_FALSE
     STORE_LOCAL has_body
 ; for cur_tok != TOK_EOF
-.L_for_top_844:
+.L_for_top_832:
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_for_exit_845
+    JUMP_IF_FALSE .L_for_exit_833
 ; if cur_tok == TOK_PUNCT && cur_str == "{"
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_846
+    JUMP_IF_FALSE .L_and_false_834
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "{"
     STR_CMP
     NOT
-    JUMP .L_and_end_847
-.L_and_false_846:
-.L_and_end_847:
-    JUMP_IF_FALSE .L_endif_848
+    JUMP .L_and_end_835
+.L_and_false_834:
+.L_and_end_835:
+    JUMP_IF_FALSE .L_endif_836
 ; has_body = true
     PUSH_TRUE
     STORE_LOCAL has_body
 ; break
-    JUMP .L_for_exit_845
-.L_endif_848:
+    JUMP .L_for_exit_833
+.L_endif_836:
 ; if cur_tok == TOK_KEYWORD
     LOAD_GLOBAL cur_tok
     PUSH_I8 4
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_849
+    JUMP_IF_FALSE .L_endif_837
 ; if cur_str == "func" || cur_str == "var" || cur_str == "const"
     LOAD_GLOBAL cur_str
     PUSH_STR "func"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_852
+    JUMP_IF_TRUE .L_or_true_840
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "var"
     STR_CMP
     NOT
-    JUMP .L_or_end_853
-.L_or_true_852:
-.L_or_end_853:
+    JUMP .L_or_end_841
+.L_or_true_840:
+.L_or_end_841:
     DUP
-    JUMP_IF_TRUE .L_or_true_850
+    JUMP_IF_TRUE .L_or_true_838
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "const"
     STR_CMP
     NOT
-    JUMP .L_or_end_851
-.L_or_true_850:
-.L_or_end_851:
-    JUMP_IF_FALSE .L_endif_854
+    JUMP .L_or_end_839
+.L_or_true_838:
+.L_or_end_839:
+    JUMP_IF_FALSE .L_endif_842
 ; break
-    JUMP .L_for_exit_845
-.L_endif_854:
-.L_endif_849:
+    JUMP .L_for_exit_833
+.L_endif_842:
+.L_endif_837:
 ; next_tok()
     CALL next_tok
-    JUMP .L_for_top_844
-.L_for_exit_845:
+    JUMP .L_for_top_832
+.L_for_exit_833:
 ; if !has_body
     LOAD_LOCAL has_body
     NOT
-    JUMP_IF_FALSE .L_endif_855
+    JUMP_IF_FALSE .L_endif_843
 ; continue
-    JUMP .L_for_top_838
-.L_endif_855:
+    JUMP .L_for_top_826
+.L_endif_843:
 ; expect("{")
     PUSH_STR "{"
     CALL expect
@@ -10047,17 +9945,17 @@
     PUSH_STR "main"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_856
+    JUMP_IF_FALSE .L_else_844
 ; emit(".function main entry")
     PUSH_STR ".function main entry"
     CALL emit
-    JUMP .L_endif_857
-.L_else_856:
+    JUMP .L_endif_845
+.L_else_844:
 ; emit2(".function ", fname)
     PUSH_STR ".function "
     LOAD_LOCAL fname
     CALL emit2
-.L_endif_857:
+.L_endif_845:
 ; p_start := func_first_param[...]
     ADDR_OF_GLOBAL func_first_param
     LOAD_GLOBAL cur_func_idx
@@ -10074,11 +9972,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_858:
+.L_for3_top_846:
     LOAD_LOCAL i
     LOAD_LOCAL p_num
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_860
+    JUMP_IF_FALSE .L_for3_exit_848
 ; out_str("    .param ")
     PUSH_STR "    .param "
     CALL out_str
@@ -10114,26 +10012,26 @@
     PEEK1
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_861
+    JUMP_IF_FALSE .L_else_849
 ; out_str("slice")
     PUSH_STR "slice"
     CALL out_str
-    JUMP .L_endif_862
-.L_else_861:
+    JUMP .L_endif_850
+.L_else_849:
 ; out_str("word")
     PUSH_STR "word"
     CALL out_str
-.L_endif_862:
+.L_endif_850:
 ; emit_nl()
     CALL emit_nl
-.L_for3_cont_859:
+.L_for3_cont_847:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_858
-.L_for3_exit_860:
+    JUMP .L_for3_top_846
+.L_for3_exit_848:
 ; l_start := func_first_local[...]
     ADDR_OF_GLOBAL func_first_local
     LOAD_GLOBAL cur_func_idx
@@ -10150,11 +10048,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_863:
+.L_for3_top_851:
     LOAD_LOCAL i
     LOAD_LOCAL l_num
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_865
+    JUMP_IF_FALSE .L_for3_exit_853
 ; out_str("    .local ")
     PUSH_STR "    .local "
     CALL out_str
@@ -10190,57 +10088,57 @@
     PEEK1
     PUSH_I8 2
     CMP_EQ
-    JUMP_IF_FALSE .L_else_866
+    JUMP_IF_FALSE .L_else_854
 ; out_str("slice")
     PUSH_STR "slice"
     CALL out_str
-    JUMP .L_endif_867
-.L_else_866:
+    JUMP .L_endif_855
+.L_else_854:
 ; out_str("word")
     PUSH_STR "word"
     CALL out_str
-.L_endif_867:
+.L_endif_855:
 ; emit_nl()
     CALL emit_nl
-.L_for3_cont_864:
+.L_for3_cont_852:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_863
-.L_for3_exit_865:
+    JUMP .L_for3_top_851
+.L_for3_exit_853:
 ; emit("")
     PUSH_STR ""
     CALL emit
 ; for cur_tok != TOK_PUNCT || cur_str != "}" && cur_tok != TOK_EOF
-.L_for_top_868:
+.L_for_top_856:
     LOAD_GLOBAL cur_tok
     PUSH_I8 5
     CMP_NE
     DUP
-    JUMP_IF_TRUE .L_or_true_872
+    JUMP_IF_TRUE .L_or_true_860
     POP
     LOAD_GLOBAL cur_str
     PUSH_STR "}"
     STR_CMP
-    JUMP .L_or_end_873
-.L_or_true_872:
-.L_or_end_873:
+    JUMP .L_or_end_861
+.L_or_true_860:
+.L_or_end_861:
     DUP
-    JUMP_IF_FALSE .L_and_false_870
+    JUMP_IF_FALSE .L_and_false_858
     POP
     LOAD_GLOBAL cur_tok
     PUSH_0
     CMP_NE
-    JUMP .L_and_end_871
-.L_and_false_870:
-.L_and_end_871:
-    JUMP_IF_FALSE .L_for_exit_869
+    JUMP .L_and_end_859
+.L_and_false_858:
+.L_and_end_859:
+    JUMP_IF_FALSE .L_for_exit_857
 ; compile_stmt()
     CALL compile_stmt
-    JUMP .L_for_top_868
-.L_for_exit_869:
+    JUMP .L_for_top_856
+.L_for_exit_857:
 ; expect("}")
     PUSH_STR "}"
     CALL expect
@@ -10250,13 +10148,13 @@
 ; emit(".endfunction")
     PUSH_STR ".endfunction"
     CALL emit
-    JUMP .L_endif_843
-.L_else_842:
+    JUMP .L_endif_831
+.L_else_830:
 ; next_tok()
     CALL next_tok
-.L_endif_843:
-    JUMP .L_for_top_838
-.L_for_exit_839:
+.L_endif_831:
+    JUMP .L_for_top_826
+.L_for_exit_827:
     RET_VOID
 .endfunction
 
@@ -10341,10 +10239,22 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; str_pool_map = map_new(256)
-    PUSH_I16 256
+; str_pool_map = map_new(128)
+    PUSH_I16 128
     MAP_NEW
     STORE_GLOBAL str_pool_map
+; const_map = map_new(64)
+    PUSH_I8 64
+    MAP_NEW
+    STORE_GLOBAL const_map
+; global_map = map_new(64)
+    PUSH_I8 64
+    MAP_NEW
+    STORE_GLOBAL global_map
+; func_map = map_new(64)
+    PUSH_I8 64
+    MAP_NEW
+    STORE_GLOBAL func_map
 ; args := sys_args()
     SYS_ARGS
     STORE_LOCAL args
@@ -10358,14 +10268,14 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_874:
+.L_for3_top_862:
     LOAD_LOCAL i
     ADDR_OF_LOCAL args
     PUSH_I16 4
     ADD
     PEEK2
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_876
+    JUMP_IF_FALSE .L_for3_exit_864
 ; arg := get_arg(args.Base, i)
     ADDR_OF_LOCAL args
     PEEK2
@@ -10378,7 +10288,7 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_FALSE .L_and_false_877
+    JUMP_IF_FALSE .L_and_false_865
     POP
     LOAD_LOCAL i
     PUSH_1
@@ -10388,10 +10298,10 @@
     ADD
     PEEK2
     CMP_LT
-    JUMP .L_and_end_878
-.L_and_false_877:
-.L_and_end_878:
-    JUMP_IF_FALSE .L_else_879
+    JUMP .L_and_end_866
+.L_and_false_865:
+.L_and_end_866:
+    JUMP_IF_FALSE .L_else_867
 ; out_file = get_arg(args.Base, i + 1)
     ADDR_OF_LOCAL args
     PEEK2
@@ -10405,45 +10315,45 @@
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_880
-.L_else_879:
+    JUMP .L_endif_868
+.L_else_867:
 ; if len(src_file) == 0
     LOAD_GLOBAL src_file
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_else_881
+    JUMP_IF_FALSE .L_else_869
 ; src_file = arg
     LOAD_LOCAL arg
     STORE_GLOBAL src_file
-    JUMP .L_endif_882
-.L_else_881:
+    JUMP .L_endif_870
+.L_else_869:
 ; if len(out_file) == 0
     LOAD_GLOBAL out_file
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_883
+    JUMP_IF_FALSE .L_endif_871
 ; out_file = arg
     LOAD_LOCAL arg
     STORE_GLOBAL out_file
-.L_endif_883:
-.L_endif_882:
-.L_endif_880:
-.L_for3_cont_875:
+.L_endif_871:
+.L_endif_870:
+.L_endif_868:
+.L_for3_cont_863:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_874
-.L_for3_exit_876:
+    JUMP .L_for3_top_862
+.L_for3_exit_864:
 ; if len(src_file) == 0
     LOAD_GLOBAL src_file
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_884
+    JUMP_IF_FALSE .L_endif_872
 ; println("Usage: minigolf_par3 [-o out.p3a] source.par3")
 ; println("Usage: minigolf_par3 [-o out.p3a] source.par3")
     PUSH_I16 10
@@ -10489,17 +10399,17 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_884:
+.L_endif_872:
 ; if len(out_file) == 0
     LOAD_GLOBAL out_file
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_885
+    JUMP_IF_FALSE .L_endif_873
 ; out_file = "a.p3a"
     PUSH_STR "a.p3a"
     STORE_GLOBAL out_file
-.L_endif_885:
+.L_endif_873:
 ; in_h, in_ok := file_open_read(src_file)
     LOAD_GLOBAL src_file
     FILE_OPEN_READ
@@ -10509,7 +10419,7 @@
     LOAD_LOCAL in_ok
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_886
+    JUMP_IF_FALSE .L_endif_874
 ; println("ERROR: Could not open source file: ", src_file)
 ; println("ERROR: Could not open source file: ", src_file)
     PUSH_I16 20
@@ -10588,7 +10498,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_886:
+.L_endif_874:
 ; in_file_h = in_h
     LOAD_LOCAL in_h
     STORE_GLOBAL in_file_h
@@ -10606,7 +10516,7 @@
     LOAD_LOCAL in_ok2
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_887
+    JUMP_IF_FALSE .L_endif_875
 ; println("ERROR: Could not reopen source file: ", src_file)
 ; println("ERROR: Could not reopen source file: ", src_file)
     PUSH_I16 20
@@ -10685,7 +10595,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_887:
+.L_endif_875:
 ; in_file_h = in_h2
     LOAD_LOCAL in_h2
     STORE_GLOBAL in_file_h
@@ -10698,7 +10608,7 @@
     LOAD_LOCAL out_ok
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_888
+    JUMP_IF_FALSE .L_endif_876
 ; println("ERROR: Could not open output file: ", out_file)
 ; println("ERROR: Could not open output file: ", out_file)
     PUSH_I16 20
@@ -10777,7 +10687,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_888:
+.L_endif_876:
 ; out_file_h = out_h
     LOAD_LOCAL out_h
     STORE_GLOBAL out_file_h
