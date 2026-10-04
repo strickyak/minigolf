@@ -2040,6 +2040,35 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    SYS_ARGS")
 		return
 
+	case "map_new":
+		g.compileExpression(call.Arguments[0])
+		g.emit("    MAP_NEW")
+		return
+
+	case "map_get":
+		g.compileExpression(call.Arguments[0])
+		g.compileExpression(call.Arguments[1])
+		g.emit("    MAP_GET")
+		return
+
+	case "map_put":
+		g.compileExpression(call.Arguments[0])
+		g.compileExpression(call.Arguments[1])
+		g.compileExpression(call.Arguments[2])
+		g.emit("    MAP_PUT")
+		return
+
+	case "map_str":
+		g.compileExpression(call.Arguments[0])
+		g.compileExpression(call.Arguments[1])
+		g.emit("    MAP_STR")
+		return
+
+	case "map_count":
+		g.compileExpression(call.Arguments[0])
+		g.emit("    MAP_COUNT")
+		return
+
 	case "make", "makeslice", "makelist":
 		n := 8
 		if len(call.Arguments) > 1 {
@@ -2584,9 +2613,9 @@ func (g *Generator) inferCallReturnType(expr ast.Expression, retIdx int) TypeKin
 			return KindScalar
 		}
 		switch id.Value {
-		case "rstrip", "lstrip", "strip", "replace_ident", "splitlines", "sys_args", "make", "makeslice", "strdup":
+		case "rstrip", "lstrip", "strip", "replace_ident", "splitlines", "sys_args", "make", "makeslice", "strdup", "map_str":
 			return KindSlice
-		case "len", "cap", "find", "startswith", "endswith", "strcmp", "streq", "file_open", "file_create", "file_open_read", "file_open_write", "file_read", "file_write", "file_close", "os_isfile", "os_makedirs", "alloc", "free", "peek", "poke", "byte", "word", "int", "uint", "bool":
+		case "len", "cap", "find", "startswith", "endswith", "strcmp", "streq", "file_open", "file_create", "file_open_read", "file_open_write", "file_read", "file_write", "file_close", "os_isfile", "os_makedirs", "alloc", "free", "peek", "poke", "byte", "word", "int", "uint", "bool", "map_new", "map_get", "map_put", "map_count":
 			return KindScalar
 		}
 

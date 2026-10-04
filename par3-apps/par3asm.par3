@@ -10,7 +10,7 @@ const MAX_STRING_POOL = 4096
 const MAX_STRINGS     = 384
 const MAX_NAME_POOL   = 2048
 const MAX_VAR_NAME_POOL = 512
-const NUM_OPCODES     = 139
+const NUM_OPCODES     = 144
 
 // Opcode Table (sorted alphabetically for binary search)
 var op_names     [NUM_OPCODES]string
@@ -520,9 +520,14 @@ func find_op(m string) word {
     if m == "CMP_LE" { return 14 }
     if m == "CMP_GT" { return 13 }
     if m == "CMP_GE" { return 12 }
+    if m == "MAP_NEW" { return 139 }
+    if m == "MAP_GET" { return 140 }
+    if m == "MAP_PUT" { return 141 }
+    if m == "MAP_STR" { return 142 }
+    if m == "MAP_COUNT" { return 143 }
 
     low := word(0)
-    high := word(NUM_OPCODES - 1)
+    high := word(138)
     for low <= high {
         mid := (low + high) >> 1
         c := strcmp(m, op_names[mid])
@@ -681,6 +686,11 @@ func init_opcodes() {
     set_op(136, "SYS_ARGS", 0xC7, 0, 0)
     set_op(137, "SYS_EXIT", 0xC8, 0, 0)
     set_op(138, "ZALLOC", 0x37, 0, 0)
+    set_op(139, "MAP_NEW", 0xD0, 0, 0)
+    set_op(140, "MAP_GET", 0xD1, 0, 0)
+    set_op(141, "MAP_PUT", 0xD2, 0, 0)
+    set_op(142, "MAP_STR", 0xD3, 0, 0)
+    set_op(143, "MAP_COUNT", 0xD4, 0, 0)
 }
 
 

@@ -42,7 +42,9 @@ vm_sp           rmb     2       ; saved VM evaluation stack pointer
 vm_len          rmb     2       ; length of any slice
 vm_any          rmb     2       ; current any pointer
 vm_is_println   rmb     1       ; 1 = println, 0 = print
-heap_ptr        rmb     2       ; current allocation pointer in heap_buf
+heap_ptr        rmb     2       ; current allocation pointer in heap
+heap_start      rmb     2       ; start of heap (just past globals)
+heap_limit      rmb     2       ; limit of heap (end of unified_arena)
 free_buckets    rmb     16      ; 8 free list bucket pointers (16,32,64,128,256,512,1024,2048)
 param_ptr       rmb     2       ; CLI parameter pointer
 param_len       rmb     2       ; CLI parameter length
@@ -50,9 +52,9 @@ path_scratch    rmb     64      ; scratch buffer for OS-9 pathnames
 dp_pad          rmb     1       ; align following buffers to 16-bit word boundary
 
 pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
-heap_buf        rmb     10240   ; heap buffer for dynamic allocations (10KB)
 line_buf        rmb     256     ; output line buffer for PRINTLN
-globals_buf     rmb     22528   ; storage buffer for global variables (22KB)
+unified_arena   rmb     32768   ; unified arena for globals + heap (32KB)
+globals_buf     equ     unified_arena
 global_ptrs     rmb     256     ; pointers to each global variable (up to 128 globals)
 dispatch_tbl    rmb     512     ; 256 opcode function pointers
 
@@ -73,9 +75,9 @@ start
         sts     <init_os9_sp
         stx     <param_ptr
         sty     <param_len
-        ldx     <data_base
-        leax    heap_buf,x
-        stx     <heap_ptr
+        ldd     <data_base
+        addd    #unified_arena+32768
+        std     <heap_limit
 
 * Clear free_buckets:
         ldx     <data_base
@@ -380,13 +382,28 @@ init_tbl
         leay    op_file_write_buf,pcr
         sty     $CD*2,x
 
+        leay    op_map_new,pcr
+        sty     $D0*2,x
+
+        leay    op_map_get,pcr
+        sty     $D1*2,x
+
+        leay    op_map_put,pcr
+        sty     $D2*2,x
+
+        leay    op_map_str,pcr
+        sty     $D3*2,x
+
+        leay    op_map_count,pcr
+        sty     $D4*2,x
+
 * Initialize VM state by parsing NPC binary header:
         leax    npc_binary,pcr  ; X = binary start
 
-* Clear globals_buf:
+* Clear unified_arena:
         ldu     <data_base
-        leau    globals_buf,u
-        ldd     #22528/2
+        leau    unified_arena,u
+        ldd     #32768/2
 clr_g_loop
         clr     ,u+
         clr     ,u+
@@ -395,13 +412,14 @@ clr_g_loop
 
 * 1. Initialize globals pointers in global_ptrs:
 * globals_count is at npc_binary + 8
-        ldd     8,x             ; D = globals_count
-        beq     init_globals_done
-        pshs    d               ; 0,s = count of globals
         ldx     <data_base
         leau    global_ptrs,x   ; U = pointer into global_ptrs
         leay    globals_buf,x   ; Y = pointer into globals_buf
-        leax    npc_binary+16,pcr ; X = pointer to global sizes in binary
+        leax    npc_binary,pcr  ; X = binary start
+        ldd     8,x             ; D = globals_count
+        beq     init_globals_done
+        pshs    d               ; 0,s = count of globals
+        leax    16,x            ; X = pointer to global sizes in binary
 init_g_loop
         sty     ,u++            ; global_ptrs[i] = Y
         ldd     ,x++            ; D = size of this global
@@ -412,6 +430,12 @@ init_g_loop
         bne     init_g_loop
         leas    2,s             ; drop count
 init_globals_done
+* Y is the end of globals. Set heap_ptr and heap_start:
+        tfr     y,d
+        addd    #1
+        andb    #$FE            ; round up to 16-bit word boundary
+        std     <heap_ptr
+        std     <heap_start
 
 * 2. spool_ptr = npc_binary + 16 + globals_count * 2
         leax    npc_binary,pcr
@@ -883,10 +907,7 @@ heap_alloc
         ldx     <heap_ptr
         pshs    x               ; save block address
         leax    d,x             ; X = new heap_ptr
-        ldd     <data_base
-        addd    #heap_buf+10240 ; D = heap limit
-        pshs    d
-        cmpx    ,s++            ; compare new heap_ptr (X) with limit
+        cmpx    <heap_limit     ; compare new heap_ptr (X) with limit
         bhi     ha_oom_ov
         stx     <heap_ptr       ; save valid new heap_ptr
         puls    x               ; X = block address
@@ -946,10 +967,7 @@ ha_bump
         pshs    x               ; save block address
         tfr     y,d
         leax    d,x             ; X = new heap_ptr
-        ldd     <data_base
-        addd    #heap_buf+10240 ; D = heap limit
-        pshs    d
-        cmpx    ,s++            ; compare new heap_ptr (X) with limit
+        cmpx    <heap_limit     ; compare new heap_ptr (X) with limit
         bhi     ha_oom
         stx     <heap_ptr       ; save valid new heap_ptr
         puls    x               ; X = block address
@@ -985,31 +1003,25 @@ heap_free
         beq     hf_done
         tfr     d,x
         leax    -2,x            ; X = block header
-* Bounds check against heap_buf:
-        pshs    y
-        ldd     <data_base
-        addd    #heap_buf       ; D = heap_buf start
-        pshs    d
-        cmpx    ,s++
-        blo     hf_done_y       ; before heap_buf: ignore
-        addd    #10240          ; D = heap_buf end
-        pshs    d
-        cmpx    ,s++
-        bhs     hf_done_y       ; at or after heap_buf end: ignore
+* Bounds check against heap range:
+        cmpx    <heap_start
+        blo     hf_done         ; before heap: ignore
+        cmpx    <heap_limit
+        bhs     hf_done         ; at or after heap limit: ignore
         ldb     ,x              ; B = bucket index
         cmpb    #7
-        bhi     hf_done_y       ; > 7 (oversized or invalid): ignore
+        bhi     hf_done         ; > 7 (oversized or invalid): ignore
 * Valid bucket block! Link onto free_buckets[B]:
         clra
         aslb
         rola                    ; D = B * 2
+        pshs    y
         ldy     <data_base
         leay    free_buckets,y  ; Y = &free_buckets[0]
         leay    d,y             ; Y = &free_buckets[B]
         ldd     ,y              ; D = current head
         std     2,x             ; block->next = current head
         stx     ,y              ; free_buckets[B] = block
-hf_done_y
         puls    y
 hf_done
         rts
@@ -2966,6 +2978,426 @@ sa_empty
         pshu    d               ; Cap = 0
         pshu    d               ; Len = 0
         ldy     <vm_pc
+        lbra    dispatch
+
+********************************************************************
+* Dynamic Hash Map Implementation
+********************************************************************
+
+* DJB2 16-bit hash routine:
+* Input:  Y = key_ptr, D = key_len
+* Output: D = 16-bit hash
+* Preserves X
+ht_calc_hash
+        pshs    x,y,u
+        ldx     #5381           ; X = hash
+        tfr     d,u             ; U = loop counter (key_len)
+        cmpu    #0
+        beq     hch_done
+hch_loop
+        ldb     ,y+             ; B = next character
+        clra                    ; D = character value
+        pshs    d               ; save char on S
+        tfr     x,d             ; D = hash
+        aslb
+        rola
+        aslb
+        rola
+        aslb
+        rola
+        aslb
+        rola
+        aslb
+        rola                    ; D = hash << 5
+        addd    ,s++            ; D = (hash << 5) + char
+        leax    d,x             ; X = (hash << 5) + hash + char
+        leau    -1,u
+        cmpu    #0
+        bne     hch_loop
+hch_done
+        tfr     x,d             ; D = hash
+        puls    x,y,u,pc
+
+* Helper: ht_find_node
+* Inputs:
+*   X = map_ptr
+*   Y = key_ptr
+*   D = key_len
+* Outputs:
+*   If found:
+*     Z=1 (EQ)
+*     X = node_ptr
+*     D = node.val
+*   If not found:
+*     Z=0 (NE)
+*     X = 0
+*     D = bucket_offset (from map_ptr)
+* Preserves U
+ht_find_node
+        pshs    u
+        pshs    y               ; 8,s = key_ptr
+        pshs    x               ; 6,s = map_ptr
+        pshs    d               ; 4,s = key_len
+        leas    -4,s            ; 0,s = hash, 2,s = bucket_offset
+* Stack offsets:
+* 0,s = hash
+* 2,s = bucket_offset
+* 4,s = key_len
+* 6,s = map_ptr
+* 8,s = key_ptr
+* 10,s = saved U
+* 12,s = return PC
+        ldy     8,s             ; Y = key_ptr
+        ldd     4,s             ; D = key_len
+        lbsr    ht_calc_hash
+        std     0,s             ; save hash
+* Compute bucket = hash & map.mask:
+        ldx     6,s             ; X = map_ptr
+        anda    2,x             ; mask high byte
+        andb    3,x             ; mask low byte
+* D = bucket_index
+        aslb
+        rola                    ; D = bucket_index * 2
+        addd    #8              ; D = bucket_offset in map
+        std     2,s             ; save bucket_offset
+* X = &map.buckets[bucket]:
+        ldx     6,s             ; X = map_ptr
+        leax    d,x             ; X = &map.buckets[bucket]
+        ldx     ,x              ; X = head node (0 if empty)
+fn_loop
+        cmpx    #0
+        beq     fn_not_found
+* Check node.hash == hash:
+        ldd     8,x             ; node.hash
+        cmpd    0,s             ; compare with hash
+        bne     fn_next
+* Check node.key_len == key_len:
+        ldd     4,x             ; node.key_len
+        cmpd    4,s             ; compare with key_len
+        bne     fn_next
+* Check characters:
+        cmpd    #0              ; if len == 0, match!
+        beq     fn_found
+        pshs    x               ; save node_ptr on S
+        ldy     8+2,s           ; Y = search key_ptr
+        ldx     6,x             ; X = node.key_ptr
+        ldd     4+2,s           ; D = key_len
+fn_cmp_l
+        lda     ,x+
+        cmpa    ,y+
+        bne     fn_cmp_diff
+        subd    #1
+        bne     fn_cmp_l
+* Match!
+        puls    x               ; restore X = node_ptr
+        bra     fn_found
+fn_cmp_diff
+        puls    x               ; restore X = node_ptr
+fn_next
+        ldx     ,x              ; X = node.next
+        bra     fn_loop
+
+fn_found
+        ldd     2,x             ; D = node.val
+        leas    8,s             ; drop locals
+        puls    y               ; restore Y
+        puls    u               ; restore U
+        orcc    #$04            ; SET Z flag (Z=1, beq branches!)
+        rts
+
+fn_not_found
+        ldd     2,s             ; D = bucket_offset
+        leas    8,s             ; drop locals
+        puls    y               ; restore Y
+        puls    u               ; restore U
+        ldx     #0
+        andcc   #$FB            ; CLEAR Z flag (Z=0, bne branches!)
+        rts
+
+op_map_new
+        sty     <vm_pc
+        pulu    d               ; D = requested buckets
+        cmpd    #64
+        bhs     mn_chk128
+        ldd     #64
+        bra     mn_got_b
+mn_chk128
+        cmpd    #128
+        bhs     mn_chk256
+        ldd     #128
+        bra     mn_got_b
+mn_chk256
+        cmpd    #256
+        bhs     mn_chk512
+        ldd     #256
+        bra     mn_got_b
+mn_chk512
+        cmpd    #512
+        bhs     mn_chk1024
+        ldd     #512
+        bra     mn_got_b
+mn_chk1024
+        ldd     #1024
+mn_got_b
+        pshs    d               ; 0,s = num_buckets
+        aslb
+        rola                    ; D = num_buckets * 2
+        addd    #8              ; D = total_bytes = 8 + num_buckets * 2
+        pshs    d               ; 0,s = total_bytes, 2,s = num_buckets
+        lbsr    heap_alloc      ; X = map_ptr
+* Zero the allocated map block:
+        ldd     ,s              ; D = total_bytes
+        pshs    x               ; 0,s = map_ptr, 2,s = total_bytes, 4,s = num_buckets
+mn_clr
+        clr     ,x+
+        subd    #1
+        bne     mn_clr
+        ldx     ,s              ; X = map_ptr
+        ldd     4,s             ; D = num_buckets
+        std     ,x              ; map.num_buckets = D
+        subd    #1
+        std     2,x             ; map.mask = num_buckets - 1
+* count is at 4,x, already 0
+        leas    6,s             ; clean up stack
+        pshu    x               ; push map_ptr onto U
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_map_get
+        sty     <vm_pc
+        pulu    d               ; D = key_len
+        pulu    x               ; discard key_cap
+        pulu    y               ; Y = key_ptr
+        pulu    x               ; X = map_ptr
+        cmpx    #0
+        beq     mg_not_found
+        lbsr    ht_find_node
+        bne     mg_not_found
+* Found: X = node_ptr, D = node.val
+        pshu    d               ; push val
+        ldy     <vm_pc
+        lbra    dispatch
+mg_not_found
+        ldd     #$FFFF
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_map_put
+        sty     <vm_pc
+        pulu    d               ; D = val
+        pshs    d               ; 6,s = val
+        pulu    d               ; D = key_len
+        pulu    x               ; discard key_cap
+        pulu    y               ; Y = key_ptr
+        pulu    x               ; X = map_ptr
+        cmpx    #0
+        lbeq    mp_null_map
+        pshs    y               ; 4,s = key_ptr
+        pshs    x               ; 2,s = map_ptr
+        pshs    d               ; 0,s = key_len
+        lbsr    ht_find_node
+        bne     mp_insert
+* Found: X = node_ptr. Update val:
+        ldd     6,s             ; D = val
+        std     2,x             ; node.val = val
+        leas    8,s             ; drop stack temps
+        pshu    d               ; push val (for statement POP)
+        ldy     <vm_pc
+        lbra    dispatch
+mp_insert
+* Not found:
+* D = bucket_offset
+* 0,s = key_len, 2,s = map_ptr, 4,s = key_ptr, 6,s = val
+        pshs    d               ; 0,s = bucket_offset
+* 1. Allocate 12-byte node:
+        ldd     #12
+        lbsr    heap_alloc      ; X = new_node
+        pshs    x               ; 0,s = new_node
+* Stack:
+* 0,s = new_node (2 bytes)
+* 2,s = bucket_offset (2 bytes)
+* 4,s = key_len (2 bytes)
+* 6,s = map_ptr (2 bytes)
+* 8,s = key_ptr (2 bytes)
+* 10,s = val (2 bytes)
+* 2. Allocate heap copy of key:
+        ldd     4,s             ; D = key_len
+        addd    #1              ; +1 for null terminator
+        lbsr    heap_alloc      ; X = key_copy_ptr
+* 3. Copy key bytes:
+        ldy     8,s             ; Y = key_ptr
+        ldd     4,s             ; D = key_len
+        pshs    x               ; save key_copy_ptr
+mp_cp_k
+        cmpd    #0
+        beq     mp_cp_kd
+        lda     ,y+
+        sta     ,x+
+        subd    #1
+        bra     mp_cp_k
+mp_cp_kd
+        clr     ,x              ; null terminator
+        puls    x               ; X = key_copy_ptr
+* 4. Populate new_node:
+        ldu     0,s             ; U = new_node
+        stx     6,u             ; node.key_ptr = key_copy_ptr
+        ldd     4,s             ; D = key_len
+        std     4,u             ; node.key_len = key_len
+        ldd     10,s            ; D = val
+        std     2,u             ; node.val = val
+* Calculate hash and store:
+        ldy     6,u             ; Y = key_copy_ptr
+        ldd     4,u             ; D = key_len
+        lbsr    ht_calc_hash    ; D = hash
+        std     8,u             ; node.hash = hash
+* 5. Link into bucket:
+        ldx     6,s             ; X = map_ptr
+        ldd     2,s             ; D = bucket_offset
+        leax    d,x             ; X = &map.buckets[bucket]
+        ldd     ,x              ; D = old_head
+        std     ,u              ; node.next = old_head
+        stu     ,x              ; map.buckets[bucket] = new_node
+* 6. Increment map.count:
+        ldx     6,s             ; X = map_ptr
+        ldd     4,x             ; D = map.count
+        addd    #1
+        std     4,x
+* Done! Return val:
+        ldd     10,s            ; D = val
+        leas    12,s            ; clean up all stack temps
+        pshu    d               ; push val (for statement POP)
+        ldy     <vm_pc
+        lbra    dispatch
+mp_null_map
+        puls    d               ; D = val
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_map_str
+        sty     <vm_pc
+        pulu    d               ; D = key_len
+        pulu    x               ; discard key_cap
+        pulu    y               ; Y = key_ptr
+        pulu    x               ; X = map_ptr
+        cmpx    #0
+        lbeq    ms_null_map
+* If key_len == 0:
+        cmpd    #0
+        bne     ms_not_empty
+        clra
+        clrb
+        pshu    d               ; Base = 0
+        pshu    d               ; Cap = 0
+        pshu    d               ; Len = 0
+        ldy     <vm_pc
+        lbra    dispatch
+ms_not_empty
+        pshs    y               ; 4,s = key_ptr
+        pshs    x               ; 2,s = map_ptr
+        pshs    d               ; 0,s = key_len
+        lbsr    ht_find_node
+        bne     ms_insert
+* Found! X = node_ptr
+* Push node.key_ptr, node.key_len, node.key_len onto U:
+        ldy     6,x             ; Y = node.key_ptr
+        ldd     4,x             ; D = node.key_len
+        leas    6,s             ; drop stack temps
+        pshu    y               ; Base = key_ptr
+        pshu    d               ; Cap = key_len
+        pshu    d               ; Len = key_len
+        ldy     <vm_pc
+        lbra    dispatch
+ms_insert
+* Not found:
+* D = bucket_offset
+* 0,s = key_len, 2,s = map_ptr, 4,s = key_ptr
+        pshs    d               ; 0,s = bucket_offset
+* Stack:
+* 0,s = bucket_offset (2 bytes)
+* 2,s = key_len (2 bytes)
+* 4,s = map_ptr (2 bytes)
+* 6,s = key_ptr (2 bytes)
+* 1. Allocate 12-byte node:
+        ldd     #12
+        lbsr    heap_alloc      ; X = new_node
+        pshs    x               ; 0,s = new_node
+* Stack:
+* 0,s = new_node (2 bytes)
+* 2,s = bucket_offset (2 bytes)
+* 4,s = key_len (2 bytes)
+* 6,s = map_ptr (2 bytes)
+* 8,s = key_ptr (2 bytes)
+* 2. Allocate heap copy of key:
+        ldd     4,s             ; D = key_len
+        addd    #1              ; +1 for null terminator
+        lbsr    heap_alloc      ; X = key_copy_ptr
+* 3. Copy key bytes:
+        ldy     8,s             ; Y = key_ptr
+        ldd     4,s             ; D = key_len
+        pshs    x               ; save key_copy_ptr
+ms_cp_k
+        cmpd    #0
+        beq     ms_cp_kd
+        lda     ,y+
+        sta     ,x+
+        subd    #1
+        bra     ms_cp_k
+ms_cp_kd
+        clr     ,x              ; null terminator
+        puls    x               ; X = key_copy_ptr
+* 4. Populate new_node:
+        ldu     0,s             ; U = new_node
+        stx     6,u             ; node.key_ptr = key_copy_ptr
+        ldd     4,s             ; D = key_len
+        std     4,u             ; node.key_len = key_len
+        ldx     6,s             ; X = map_ptr
+        ldd     4,x             ; D = map.count
+        std     2,u             ; node.val = map.count (assign sequential ID)
+        addd    #1
+        std     4,x             ; map.count += 1
+* Calculate hash and store:
+        ldy     6,u             ; Y = key_copy_ptr
+        ldd     4,u             ; D = key_len
+        lbsr    ht_calc_hash    ; D = hash
+        std     8,u             ; node.hash = hash
+* 5. Link into bucket:
+        ldx     6,s             ; X = map_ptr
+        ldd     2,s             ; D = bucket_offset
+        leax    d,x             ; X = &map.buckets[bucket]
+        ldd     ,x              ; D = old_head
+        std     ,u              ; node.next = old_head
+        stu     ,x              ; map.buckets[bucket] = new_node
+* 6. Push result slice: Base = key_copy_ptr, Cap = key_len, Len = key_len
+        ldy     6,u             ; Y = key_copy_ptr
+        ldd     4,u             ; D = key_len
+        leas    10,s            ; clean up all stack temps
+        pshu    y               ; Base
+        pshu    d               ; Cap
+        pshu    d               ; Len
+        ldy     <vm_pc
+        lbra    dispatch
+ms_null_map
+        clra
+        clrb
+        pshu    d
+        pshu    d
+        pshu    d
+        ldy     <vm_pc
+        lbra    dispatch
+
+op_map_count
+        pulu    x               ; X = map_ptr
+        cmpx    #0
+        beq     mc_zero
+        ldd     4,x             ; D = map.count
+        pshu    d
+        lbra    dispatch
+mc_zero
+        clra
+        clrb
+        pshu    d
         lbra    dispatch
 
 ********************************************************************

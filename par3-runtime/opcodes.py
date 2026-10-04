@@ -159,6 +159,13 @@ OPCODE_TABLE = {
     0xCB: ("PRINTLN", 0, "none", "Print Slice[any] arguments with newline"),
     0xCC: ("FILE_READ", 0, "none", "Read up to N bytes into buffer: (handle, buf, count) -> n_read"),
     0xCD: ("FILE_WRITE_BUF", 0, "none", "Write N bytes from buffer: (handle, buf, count) -> n_written"),
+
+    # Group 9: Dynamic Hash Maps & Interning (0xD0 .. 0xDF)
+    0xD0: ("MAP_NEW", 0, "none", "Allocate new hash map with N buckets: (buckets) -> map_ptr"),
+    0xD1: ("MAP_GET", 0, "none", "Lookup key in map: (map_ptr, key_slice) -> val (or $FFFF)"),
+    0xD2: ("MAP_PUT", 0, "none", "Insert/update key in map: (map_ptr, key_slice, val) -> ()"),
+    0xD3: ("MAP_STR", 0, "none", "Intern string in map: (map_ptr, key_slice) -> interned_slice"),
+    0xD4: ("MAP_COUNT", 0, "none", "Get entry count of map: (map_ptr) -> count"),
 }
 
 # Inverse mapping: Mnemonic -> (opcode_byte, arg_bytes, arg_type)

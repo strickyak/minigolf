@@ -6,8 +6,6 @@ const MAX_GLOBALS     = 96
 const MAX_FUNCS       = 96
 const MAX_PARAMS      = 96
 const MAX_LOCALS      = 512
-const MAX_STRING_POOL = 8192
-const MAX_STRINGS     = 768
 
 // Token Kinds
 const TOK_EOF     = 0
@@ -58,11 +56,7 @@ var local_elem_sizes [MAX_LOCALS]byte
 var num_locals       word
 
 // String Pool
-var str_pool     [MAX_STRING_POOL]byte
-var str_pool_len word
-var str_offsets  [MAX_STRINGS]word
-var str_lengths  [MAX_STRINGS]word
-var num_strings  word
+var str_pool_map word
 
 // Current compilation state
 var cur_func_idx word
@@ -224,51 +218,10 @@ func emit_jump(op string, lbl word) {
 // -----------------------------------------------------------------------------
 
 func pool_str(s string) string {
-    n := word(len(s))
-    if n == 0 {
+    if len(s) == 0 {
         return ""
     }
-    for i := word(0); i < num_strings; i++ {
-        if str_lengths[i] == n {
-            off := str_offsets[i]
-            matched := true
-            for j := word(0); j < n; j++ {
-                if str_pool[off + j] != s[j] {
-                    matched = false
-                    break
-                }
-            }
-            if matched {
-                var res string
-                res.Base = word(&str_pool[off])
-                res.Cap = n
-                res.Len = n
-                return res
-            }
-        }
-    }
-    if str_pool_len + n > MAX_STRING_POOL {
-        println("ERROR: String pool full")
-        sys_exit(1)
-    }
-    if num_strings >= MAX_STRINGS {
-        println("ERROR: Exceeded MAX_STRINGS")
-        sys_exit(1)
-    }
-    off := str_pool_len
-    for i := word(0); i < n; i++ {
-        str_pool[off + i] = s[i]
-    }
-    str_pool_len += n
-    str_offsets[num_strings] = off
-    str_lengths[num_strings] = n
-    num_strings++
-
-    var res string
-    res.Base = word(&str_pool[off])
-    res.Cap = n
-    res.Len = n
-    return res
+    return map_str(str_pool_map, s)
 }
 
 // -----------------------------------------------------------------------------
@@ -1030,7 +983,7 @@ func run_pass1() {
                                     lsz = 2
                                 }
                             } else {
-                                is_sfn := first_name == "sys_args" || first_name == "file_readline"
+                                is_sfn := first_name == "sys_args" || first_name == "file_readline" || first_name == "map_str"
                                 if first_tok == TOK_STRING || is_sfn {
                                     lkind = KIND_SLICE
                                     lsz = 6
@@ -1592,6 +1545,26 @@ func emit_call(name string, nargs word) word {
     if name == "sys_exit" {
         emit("    SYS_EXIT")
         return KIND_VOID
+    }
+    if name == "map_new" {
+        emit("    MAP_NEW")
+        return KIND_SCALAR
+    }
+    if name == "map_get" {
+        emit("    MAP_GET")
+        return KIND_SCALAR
+    }
+    if name == "map_put" {
+        emit("    MAP_PUT")
+        return KIND_SCALAR
+    }
+    if name == "map_str" {
+        emit("    MAP_STR")
+        return KIND_SLICE
+    }
+    if name == "map_count" {
+        emit("    MAP_COUNT")
+        return KIND_SCALAR
     }
     if name == "strcmp" {
         emit("    STR_CMP")
@@ -2255,6 +2228,7 @@ func get_arg(args_base word, idx word) string {
 }
 
 func main() {
+    str_pool_map = map_new(256)
     args := sys_args()
     src_file = ""
     out_file = ""

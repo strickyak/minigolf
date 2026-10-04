@@ -188,6 +188,11 @@ class NPVM:
         }
         self.next_file_handle = 3
 
+        # Map state for MAP_NEW, MAP_GET, MAP_PUT, MAP_STR, MAP_COUNT
+        self.maps: Dict[int, Dict[bytes, int]] = {}
+        self.map_strs: Dict[int, Dict[bytes, Tuple[int, int, int]]] = {}
+        self.next_map_handle = 1
+
         self._load_binary()
         self.heap = HeapManager(self.memory, self.heap_base, 0xF000)
 
@@ -1166,6 +1171,53 @@ class NPVM:
             else:
                 sys.stdout.write(out_text)
                 sys.stdout.flush()
+        elif opcode == 0xD0:  # MAP_NEW (buckets) -> map_ptr
+            buckets = self._pop()
+            h = self.next_map_handle
+            self.next_map_handle += 1
+            self.maps[h] = {}
+            self.map_strs[h] = {}
+            self._push(h)
+        elif opcode == 0xD1:  # MAP_GET (map_ptr, key_slice) -> val
+            k_ptr, k_cap, k_len = self._pop_slice()
+            m = self._pop()
+            key = bytes(self.memory[k_ptr : k_ptr + k_len])
+            mp = self.maps.get(m)
+            if mp is not None and key in mp:
+                self._push(mp[key])
+            else:
+                self._push(0xFFFF)
+        elif opcode == 0xD2:  # MAP_PUT (map_ptr, key_slice, val) -> (val)
+            val = self._pop()
+            k_ptr, k_cap, k_len = self._pop_slice()
+            m = self._pop()
+            key = bytes(self.memory[k_ptr : k_ptr + k_len])
+            mp = self.maps.get(m)
+            if mp is not None:
+                mp[key] = val
+            self._push(val)
+        elif opcode == 0xD3:  # MAP_STR (map_ptr, key_slice) -> interned_slice
+            k_ptr, k_cap, k_len = self._pop_slice()
+            m = self._pop()
+            key = bytes(self.memory[k_ptr : k_ptr + k_len])
+            ms = self.map_strs.get(m)
+            if ms is None:
+                self._push_slice(k_ptr, k_cap, k_len)
+            elif key in ms:
+                ptr, cap, length = ms[key]
+                self._push_slice(ptr, cap, length)
+            else:
+                s_str = self._read_string(k_ptr, k_len)
+                ptr, cap, length = self._alloc_string_slice(s_str)
+                ms[key] = (ptr, cap, length)
+                if m in self.maps and key not in self.maps[m]:
+                    self.maps[m][key] = len(self.maps[m])
+                self._push_slice(ptr, cap, length)
+        elif opcode == 0xD4:  # MAP_COUNT (map_ptr) -> count
+            m = self._pop()
+            mp = self.maps.get(m)
+            count = len(mp) if mp is not None else 0
+            self._push(count)
 
     def _load_local(self, slot: int):
         offset = sum(self.current_frame.func.var_sizes[:slot])

@@ -33,10 +33,10 @@
 .global num_labels: word
 .global num_strings: word
 .global num_vars: word
-.global op_arg_bytes: 139
-.global op_arg_types: 139
-.global op_bytes: 139
-.global op_names: 834
+.global op_arg_bytes: 144
+.global op_arg_types: 144
+.global op_bytes: 144
+.global op_names: 864
 .global out_buf: 256
 .global out_file_h: word
 .global out_len: word
@@ -3305,20 +3305,68 @@
     PUSH_I8 12
     RET
 .L_endif_255:
+; if m == "MAP_NEW"
+    LOAD_LOCAL m
+    PUSH_STR "MAP_NEW"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_endif_256
+; return 139
+    PUSH_I16 139
+    RET
+.L_endif_256:
+; if m == "MAP_GET"
+    LOAD_LOCAL m
+    PUSH_STR "MAP_GET"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_endif_257
+; return 140
+    PUSH_I16 140
+    RET
+.L_endif_257:
+; if m == "MAP_PUT"
+    LOAD_LOCAL m
+    PUSH_STR "MAP_PUT"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_endif_258
+; return 141
+    PUSH_I16 141
+    RET
+.L_endif_258:
+; if m == "MAP_STR"
+    LOAD_LOCAL m
+    PUSH_STR "MAP_STR"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_endif_259
+; return 142
+    PUSH_I16 142
+    RET
+.L_endif_259:
+; if m == "MAP_COUNT"
+    LOAD_LOCAL m
+    PUSH_STR "MAP_COUNT"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_endif_260
+; return 143
+    PUSH_I16 143
+    RET
+.L_endif_260:
 ; low := word(0)
     PUSH_0
     STORE_LOCAL low
-; high := word(NUM_OPCODES - 1)
-    PUSH_I16 139
-    PUSH_1
-    SUB
+; high := word(138)
+    PUSH_I16 138
     STORE_LOCAL high
 ; for low <= high
-.L_for_top_256:
+.L_for_top_261:
     LOAD_LOCAL low
     LOAD_LOCAL high
     CMP_LE
-    JUMP_IF_FALSE .L_for_exit_257
+    JUMP_IF_FALSE .L_for_exit_262
 ; mid := low + high >> 1
     LOAD_LOCAL low
     LOAD_LOCAL high
@@ -3350,49 +3398,49 @@
     LOAD_LOCAL c
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_258
+    JUMP_IF_FALSE .L_endif_263
 ; return mid
     LOAD_LOCAL mid
     RET
-.L_endif_258:
+.L_endif_263:
 ; if c == 65535 || c == -1
     LOAD_LOCAL c
     PUSH_I16 65535
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_259
+    JUMP_IF_TRUE .L_or_true_264
     POP
     LOAD_LOCAL c
     PUSH_1
     NEG
     CMP_EQ
-    JUMP .L_or_end_260
-.L_or_true_259:
-.L_or_end_260:
-    JUMP_IF_FALSE .L_else_261
+    JUMP .L_or_end_265
+.L_or_true_264:
+.L_or_end_265:
+    JUMP_IF_FALSE .L_else_266
 ; if mid == 0
     LOAD_LOCAL mid
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_263
+    JUMP_IF_FALSE .L_endif_268
 ; break
-    JUMP .L_for_exit_257
-.L_endif_263:
+    JUMP .L_for_exit_262
+.L_endif_268:
 ; high = mid - 1
     LOAD_LOCAL mid
     PUSH_1
     SUB
     STORE_LOCAL high
-    JUMP .L_endif_262
-.L_else_261:
+    JUMP .L_endif_267
+.L_else_266:
 ; low = mid + 1
     LOAD_LOCAL mid
     PUSH_1
     ADD
     STORE_LOCAL low
-.L_endif_262:
-    JUMP .L_for_top_256
-.L_for_exit_257:
+.L_endif_267:
+    JUMP .L_for_top_261
+.L_for_exit_262:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -4386,6 +4434,41 @@
     PUSH_0
     PUSH_0
     CALL set_op
+; set_op(139, "MAP_NEW", 208, 0, 0)
+    PUSH_I16 139
+    PUSH_STR "MAP_NEW"
+    PUSH_I16 208
+    PUSH_0
+    PUSH_0
+    CALL set_op
+; set_op(140, "MAP_GET", 209, 0, 0)
+    PUSH_I16 140
+    PUSH_STR "MAP_GET"
+    PUSH_I16 209
+    PUSH_0
+    PUSH_0
+    CALL set_op
+; set_op(141, "MAP_PUT", 210, 0, 0)
+    PUSH_I16 141
+    PUSH_STR "MAP_PUT"
+    PUSH_I16 210
+    PUSH_0
+    PUSH_0
+    CALL set_op
+; set_op(142, "MAP_STR", 211, 0, 0)
+    PUSH_I16 142
+    PUSH_STR "MAP_STR"
+    PUSH_I16 211
+    PUSH_0
+    PUSH_0
+    CALL set_op
+; set_op(143, "MAP_COUNT", 212, 0, 0)
+    PUSH_I16 143
+    PUSH_STR "MAP_COUNT"
+    PUSH_I16 212
+    PUSH_0
+    PUSH_0
+    CALL set_op
     RET_VOID
 .endfunction
 
@@ -4409,11 +4492,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_264:
+.L_for3_top_269:
     LOAD_LOCAL i
     LOAD_GLOBAL num_globals
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_266
+    JUMP_IF_FALSE .L_for3_exit_271
 ; if global_names[...] == name
     ADDR_OF_GLOBAL global_names
     LOAD_LOCAL i
@@ -4434,19 +4517,19 @@
     LOAD_LOCAL name
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_267
+    JUMP_IF_FALSE .L_endif_272
 ; return i
     LOAD_LOCAL i
     RET
-.L_endif_267:
-.L_for3_cont_265:
+.L_endif_272:
+.L_for3_cont_270:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_264
-.L_for3_exit_266:
+    JUMP .L_for3_top_269
+.L_for3_exit_271:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -4473,11 +4556,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_268:
+.L_for3_top_273:
     LOAD_LOCAL i
     LOAD_GLOBAL num_funcs
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_270
+    JUMP_IF_FALSE .L_for3_exit_275
 ; if func_names[...] == name
     ADDR_OF_GLOBAL func_names
     LOAD_LOCAL i
@@ -4498,19 +4581,19 @@
     LOAD_LOCAL name
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_271
+    JUMP_IF_FALSE .L_endif_276
 ; return i
     LOAD_LOCAL i
     RET
-.L_endif_271:
-.L_for3_cont_269:
+.L_endif_276:
+.L_for3_cont_274:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_268
-.L_for3_exit_270:
+    JUMP .L_for3_top_273
+.L_for3_exit_275:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -4537,11 +4620,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_272:
+.L_for3_top_277:
     LOAD_LOCAL i
     LOAD_GLOBAL num_cur_vars
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_274
+    JUMP_IF_FALSE .L_for3_exit_279
 ; if fn_var_names[...] == name
     ADDR_OF_GLOBAL fn_var_names
     LOAD_LOCAL i
@@ -4562,29 +4645,29 @@
     LOAD_LOCAL name
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_275
+    JUMP_IF_FALSE .L_endif_280
 ; return word(fn_var_slots[...])
     ADDR_OF_GLOBAL fn_var_slots
     LOAD_LOCAL i
     ADD
     PEEK1
     RET
-.L_endif_275:
-.L_for3_cont_273:
+.L_endif_280:
+.L_for3_cont_278:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_272
-.L_for3_exit_274:
+    JUMP .L_for3_top_277
+.L_for3_exit_279:
 ; if len(name) > 0 && name[...] >= 48 && name[...] <= 57
     LOAD_LOCAL name
     SLICE_LEN
     PUSH_0
     CMP_GT
     DUP
-    JUMP_IF_FALSE .L_and_false_278
+    JUMP_IF_FALSE .L_and_false_283
     POP
     ADDR_OF_LOCAL name
     PEEK2
@@ -4593,11 +4676,11 @@
     PEEK1
     PUSH_I8 48
     CMP_GE
-    JUMP .L_and_end_279
-.L_and_false_278:
-.L_and_end_279:
+    JUMP .L_and_end_284
+.L_and_false_283:
+.L_and_end_284:
     DUP
-    JUMP_IF_FALSE .L_and_false_276
+    JUMP_IF_FALSE .L_and_false_281
     POP
     ADDR_OF_LOCAL name
     PEEK2
@@ -4606,15 +4689,15 @@
     PEEK1
     PUSH_I8 57
     CMP_LE
-    JUMP .L_and_end_277
-.L_and_false_276:
-.L_and_end_277:
-    JUMP_IF_FALSE .L_endif_280
+    JUMP .L_and_end_282
+.L_and_false_281:
+.L_and_end_282:
+    JUMP_IF_FALSE .L_endif_285
 ; return parse_int_val(name)
     LOAD_LOCAL name
     CALL parse_int_val
     RET
-.L_endif_280:
+.L_endif_285:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -4645,14 +4728,14 @@
     LOAD_LOCAL lid
     PUSH_I16 2048
     CMP_LT
-    JUMP_IF_FALSE .L_endif_281
+    JUMP_IF_FALSE .L_endif_286
 ; return label_offsets[...]
     ADDR_OF_GLOBAL label_offsets
     LOAD_LOCAL lid
     SHL1_ADD
     PEEK2
     RET
-.L_endif_281:
+.L_endif_286:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -4682,16 +4765,16 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_282
+    JUMP_IF_TRUE .L_or_true_287
     POP
     LOAD_LOCAL m
     PUSH_STR "STORE_LOCAL"
     STR_CMP
     NOT
-    JUMP .L_or_end_283
-.L_or_true_282:
-.L_or_end_283:
-    JUMP_IF_FALSE .L_endif_284
+    JUMP .L_or_end_288
+.L_or_true_287:
+.L_or_end_288:
+    JUMP_IF_FALSE .L_endif_289
 ; slot := find_var_slot(op)
     LOAD_LOCAL op
     CALL find_var_slot
@@ -4700,28 +4783,28 @@
     LOAD_LOCAL slot
     PUSH_I8 3
     CMP_LE
-    JUMP_IF_FALSE .L_endif_285
+    JUMP_IF_FALSE .L_endif_290
 ; if m == "LOAD_LOCAL"
     LOAD_LOCAL m
     PUSH_STR "LOAD_LOCAL"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_286
+    JUMP_IF_FALSE .L_else_291
 ; return 32 + slot
     PUSH_I8 32
     LOAD_LOCAL slot
     ADD
     RET
-    JUMP .L_endif_287
-.L_else_286:
+    JUMP .L_endif_292
+.L_else_291:
 ; return 36 + slot
     PUSH_I8 36
     LOAD_LOCAL slot
     ADD
     RET
-.L_endif_287:
-.L_endif_285:
-.L_endif_284:
+.L_endif_292:
+.L_endif_290:
+.L_endif_289:
 ; return 65535
     PUSH_I16 65535
     RET
@@ -4749,7 +4832,7 @@
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_288
+    JUMP_IF_FALSE .L_endif_293
 ; idx := find_func(pending_entry_name)
     LOAD_GLOBAL pending_entry_name
     CALL find_func
@@ -4758,31 +4841,31 @@
     LOAD_LOCAL idx
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_289
+    JUMP_IF_FALSE .L_endif_294
 ; entry_func_idx = idx
     LOAD_LOCAL idx
     STORE_GLOBAL entry_func_idx
 ; return 
     RET_VOID
-.L_endif_289:
-.L_endif_288:
+.L_endif_294:
+.L_endif_293:
 ; if entry_func_idx != 65535
     LOAD_GLOBAL entry_func_idx
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_290
+    JUMP_IF_FALSE .L_endif_295
 ; return 
     RET_VOID
-.L_endif_290:
+.L_endif_295:
 ; for <init>; <cond>; <inc>
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_291:
+.L_for3_top_296:
     LOAD_LOCAL i
     LOAD_GLOBAL num_funcs
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_293
+    JUMP_IF_FALSE .L_for3_exit_298
 ; if func_names[...] == "main" || func_names[...] == "_start" || func_names[...] == "entry"
     ADDR_OF_GLOBAL func_names
     LOAD_LOCAL i
@@ -4804,7 +4887,7 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_296
+    JUMP_IF_TRUE .L_or_true_301
     POP
     ADDR_OF_GLOBAL func_names
     LOAD_LOCAL i
@@ -4825,11 +4908,11 @@
     PUSH_STR "_start"
     STR_CMP
     NOT
-    JUMP .L_or_end_297
-.L_or_true_296:
-.L_or_end_297:
+    JUMP .L_or_end_302
+.L_or_true_301:
+.L_or_end_302:
     DUP
-    JUMP_IF_TRUE .L_or_true_294
+    JUMP_IF_TRUE .L_or_true_299
     POP
     ADDR_OF_GLOBAL func_names
     LOAD_LOCAL i
@@ -4850,38 +4933,38 @@
     PUSH_STR "entry"
     STR_CMP
     NOT
-    JUMP .L_or_end_295
-.L_or_true_294:
-.L_or_end_295:
-    JUMP_IF_FALSE .L_endif_298
+    JUMP .L_or_end_300
+.L_or_true_299:
+.L_or_end_300:
+    JUMP_IF_FALSE .L_endif_303
 ; entry_func_idx = i
     LOAD_LOCAL i
     STORE_GLOBAL entry_func_idx
 ; return 
     RET_VOID
-.L_endif_298:
-.L_for3_cont_292:
+.L_endif_303:
+.L_for3_cont_297:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_291
-.L_for3_exit_293:
+    JUMP .L_for3_top_296
+.L_for3_exit_298:
 ; if num_funcs > 0
     LOAD_GLOBAL num_funcs
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_else_299
+    JUMP_IF_FALSE .L_else_304
 ; entry_func_idx = 0
     PUSH_0
     STORE_GLOBAL entry_func_idx
-    JUMP .L_endif_300
-.L_else_299:
+    JUMP .L_endif_305
+.L_else_304:
 ; entry_func_idx = 0
     PUSH_0
     STORE_GLOBAL entry_func_idx
-.L_endif_300:
+.L_endif_305:
     RET_VOID
 .endfunction
 
@@ -4904,10 +4987,10 @@
     LOAD_GLOBAL bin_buf_len
     PUSH_I16 256
     CMP_GE
-    JUMP_IF_FALSE .L_endif_301
+    JUMP_IF_FALSE .L_endif_306
 ; bin_flush()
     CALL bin_flush
-.L_endif_301:
+.L_endif_306:
 ; bin_buf[...] = b
     LOAD_LOCAL b
     ADDR_OF_GLOBAL bin_buf
@@ -4973,7 +5056,7 @@
     LOAD_GLOBAL bin_buf_len
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_302
+    JUMP_IF_FALSE .L_endif_307
 ; file_write(out_file_h, word(&bin_buf[...]), bin_buf_len)
     LOAD_GLOBAL out_file_h
     ADDR_OF_GLOBAL bin_buf
@@ -4985,7 +5068,7 @@
 ; bin_buf_len = 0
     PUSH_0
     STORE_GLOBAL bin_buf_len
-.L_endif_302:
+.L_endif_307:
     RET_VOID
 .endfunction
 
@@ -5044,57 +5127,57 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_303:
+.L_for3_top_308:
     LOAD_LOCAL i
     LOAD_GLOBAL num_globals
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_305
+    JUMP_IF_FALSE .L_for3_exit_310
 ; bin_write_word(global_sizes[...])
     ADDR_OF_GLOBAL global_sizes
     LOAD_LOCAL i
     SHL1_ADD
     PEEK2
     CALL bin_write_word
-.L_for3_cont_304:
+.L_for3_cont_309:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_303
-.L_for3_exit_305:
+    JUMP .L_for3_top_308
+.L_for3_exit_310:
 ; for <init>; <cond>; <inc>
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_306:
+.L_for3_top_311:
     LOAD_LOCAL i
     LOAD_GLOBAL str_pool_len
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_308
+    JUMP_IF_FALSE .L_for3_exit_313
 ; bin_write_byte(str_pool[...])
     ADDR_OF_GLOBAL str_pool
     LOAD_LOCAL i
     ADD
     PEEK1
     CALL bin_write_byte
-.L_for3_cont_307:
+.L_for3_cont_312:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_306
-.L_for3_exit_308:
+    JUMP .L_for3_top_311
+.L_for3_exit_313:
 ; for <init>; <cond>; <inc>
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_309:
+.L_for3_top_314:
     LOAD_LOCAL i
     LOAD_GLOBAL num_funcs
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_311
+    JUMP_IF_FALSE .L_for3_exit_316
 ; bin_write_byte(func_arg_count[...])
     ADDR_OF_GLOBAL func_arg_count
     LOAD_LOCAL i
@@ -5131,23 +5214,23 @@
     SHL1_ADD
     PEEK2
     CALL bin_write_word
-.L_for3_cont_310:
+.L_for3_cont_315:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_309
-.L_for3_exit_311:
+    JUMP .L_for3_top_314
+.L_for3_exit_316:
 ; for <init>; <cond>; <inc>
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_312:
+.L_for3_top_317:
     LOAD_LOCAL i
     LOAD_GLOBAL num_funcs
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_314
+    JUMP_IF_FALSE .L_for3_exit_319
 ; start := func_first_var[...]
     ADDR_OF_GLOBAL func_first_var
     LOAD_LOCAL i
@@ -5169,11 +5252,11 @@
 ; j := word(0)
     PUSH_0
     STORE_LOCAL j
-.L_for3_top_315:
+.L_for3_top_320:
     LOAD_LOCAL j
     LOAD_LOCAL count
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_317
+    JUMP_IF_FALSE .L_for3_exit_322
 ; bin_write_byte(var_sizes[...])
     ADDR_OF_GLOBAL var_sizes
     LOAD_LOCAL start
@@ -5182,22 +5265,22 @@
     ADD
     PEEK1
     CALL bin_write_byte
-.L_for3_cont_316:
+.L_for3_cont_321:
 ; j++
     LOAD_LOCAL j
     PUSH_1
     ADD
     STORE_LOCAL j
-    JUMP .L_for3_top_315
-.L_for3_exit_317:
-.L_for3_cont_313:
+    JUMP .L_for3_top_320
+.L_for3_exit_322:
+.L_for3_cont_318:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_312
-.L_for3_exit_314:
+    JUMP .L_for3_top_317
+.L_for3_exit_319:
     RET_VOID
 .endfunction
 
@@ -5243,7 +5326,7 @@
     LOAD_LOCAL ok
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_318
+    JUMP_IF_FALSE .L_endif_323
 ; println("Error: cannot open input file", in_path)
 ; println("Error: cannot open input file", in_path)
     PUSH_I16 20
@@ -5322,7 +5405,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_318:
+.L_endif_323:
 ; cur_func_idx = 65535
     PUSH_I16 65535
     STORE_GLOBAL cur_func_idx
@@ -5330,7 +5413,7 @@
     PUSH_0
     STORE_GLOBAL cur_func_code_size
 ; for
-.L_for_top_319:
+.L_for_top_324:
 ; line, eof := file_readline(h)
     LOAD_LOCAL h
     FILE_READLINE
@@ -5340,10 +5423,10 @@
     LOAD_LOCAL eof
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_321
+    JUMP_IF_FALSE .L_endif_326
 ; break
-    JUMP .L_for_exit_320
-.L_endif_321:
+    JUMP .L_for_exit_325
+.L_endif_326:
 ; clean_line := strip_comment(line)
     LOAD_LOCAL line
     CALL strip_comment
@@ -5353,26 +5436,26 @@
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_322
+    JUMP_IF_FALSE .L_endif_327
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
 ; continue
-    JUMP .L_for_top_319
-.L_endif_322:
+    JUMP .L_for_top_324
+.L_endif_327:
 ; has_lbl := split_label(clean_line)
     LOAD_LOCAL clean_line
     CALL split_label
     STORE_LOCAL has_lbl
 ; if has_lbl
     LOAD_LOCAL has_lbl
-    JUMP_IF_FALSE .L_endif_323
+    JUMP_IF_FALSE .L_endif_328
 ; if cur_func_idx == 65535
     LOAD_GLOBAL cur_func_idx
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_324
+    JUMP_IF_FALSE .L_endif_329
 ; println("Error: label outside function:", split_label_res)
 ; println("Error: label outside function:", split_label_res)
     PUSH_I16 20
@@ -5451,7 +5534,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_324:
+.L_endif_329:
 ; lid := parse_label_id(split_label_res)
     LOAD_GLOBAL split_label_res
     CALL parse_label_id
@@ -5460,7 +5543,7 @@
     LOAD_LOCAL lid
     PUSH_I16 2048
     CMP_GE
-    JUMP_IF_FALSE .L_endif_325
+    JUMP_IF_FALSE .L_endif_330
 ; println("Error: MAX_LABELS exceeded")
 ; println("Error: MAX_LABELS exceeded")
     PUSH_I16 10
@@ -5506,7 +5589,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_325:
+.L_endif_330:
 ; label_offsets[...] = cur_func_code_size
     LOAD_GLOBAL cur_func_code_size
     ADDR_OF_GLOBAL label_offsets
@@ -5527,15 +5610,15 @@
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_326
+    JUMP_IF_FALSE .L_endif_331
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
 ; continue
-    JUMP .L_for_top_319
-.L_endif_326:
-.L_endif_323:
+    JUMP .L_for_top_324
+.L_endif_331:
+.L_endif_328:
 ; if clean_line[...] == 46
     ADDR_OF_LOCAL clean_line
     PEEK2
@@ -5544,7 +5627,7 @@
     PEEK1
     PUSH_I8 46
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_327
+    JUMP_IF_FALSE .L_endif_332
 ; split_two(clean_line)
     LOAD_LOCAL clean_line
     CALL split_two
@@ -5559,7 +5642,7 @@
     PUSH_STR ".global"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_328
+    JUMP_IF_FALSE .L_else_333
 ; split_name_and_size(args)
     LOAD_LOCAL args
     CALL split_name_and_size
@@ -5567,7 +5650,7 @@
     LOAD_GLOBAL num_globals
     PUSH_I8 96
     CMP_GE
-    JUMP_IF_FALSE .L_endif_330
+    JUMP_IF_FALSE .L_endif_335
 ; println("Error: MAX_GLOBALS exceeded")
 ; println("Error: MAX_GLOBALS exceeded")
     PUSH_I16 10
@@ -5613,7 +5696,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_330:
+.L_endif_335:
 ; global_names[...] = clone_str(split_var_name)
     LOAD_GLOBAL split_var_name
     CALL clone_str
@@ -5648,29 +5731,29 @@
     PUSH_1
     ADD
     STORE_GLOBAL num_globals
-    JUMP .L_endif_329
-.L_else_328:
+    JUMP .L_endif_334
+.L_else_333:
 ; if directive == ".function" || directive == ".func"
     LOAD_LOCAL directive
     PUSH_STR ".function"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_331
+    JUMP_IF_TRUE .L_or_true_336
     POP
     LOAD_LOCAL directive
     PUSH_STR ".func"
     STR_CMP
     NOT
-    JUMP .L_or_end_332
-.L_or_true_331:
-.L_or_end_332:
-    JUMP_IF_FALSE .L_else_333
+    JUMP .L_or_end_337
+.L_or_true_336:
+.L_or_end_337:
+    JUMP_IF_FALSE .L_else_338
 ; if cur_func_idx != 65535
     LOAD_GLOBAL cur_func_idx
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_335
+    JUMP_IF_FALSE .L_endif_340
 ; println("Error: nested function definition")
 ; println("Error: nested function definition")
     PUSH_I16 10
@@ -5716,7 +5799,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_335:
+.L_endif_340:
 ; split_two(args)
     LOAD_LOCAL args
     CALL split_two
@@ -5732,25 +5815,25 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_336
+    JUMP_IF_TRUE .L_or_true_341
     POP
     LOAD_LOCAL fn_name
     PUSH_STR "main"
     STR_CMP
     NOT
-    JUMP .L_or_end_337
-.L_or_true_336:
-.L_or_end_337:
-    JUMP_IF_FALSE .L_endif_338
+    JUMP .L_or_end_342
+.L_or_true_341:
+.L_or_end_342:
+    JUMP_IF_FALSE .L_endif_343
 ; is_entry = true
     PUSH_TRUE
     STORE_LOCAL is_entry
-.L_endif_338:
+.L_endif_343:
 ; if num_funcs >= MAX_FUNCS
     LOAD_GLOBAL num_funcs
     PUSH_I8 80
     CMP_GE
-    JUMP_IF_FALSE .L_endif_339
+    JUMP_IF_FALSE .L_endif_344
 ; println("Error: MAX_FUNCS exceeded")
 ; println("Error: MAX_FUNCS exceeded")
     PUSH_I16 10
@@ -5796,7 +5879,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_339:
+.L_endif_344:
 ; cur_func_idx = num_funcs
     LOAD_GLOBAL num_funcs
     STORE_GLOBAL cur_func_idx
@@ -5857,49 +5940,49 @@
     CALL reset_cur_vars
 ; if is_entry
     LOAD_LOCAL is_entry
-    JUMP_IF_FALSE .L_endif_340
+    JUMP_IF_FALSE .L_endif_345
 ; entry_func_idx = cur_func_idx
     LOAD_GLOBAL cur_func_idx
     STORE_GLOBAL entry_func_idx
-.L_endif_340:
+.L_endif_345:
 ; num_funcs++
     LOAD_GLOBAL num_funcs
     PUSH_1
     ADD
     STORE_GLOBAL num_funcs
-    JUMP .L_endif_334
-.L_else_333:
+    JUMP .L_endif_339
+.L_else_338:
 ; if directive == ".endfunction" || directive == ".endfunc" || directive == ".end"
     LOAD_LOCAL directive
     PUSH_STR ".endfunction"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_343
+    JUMP_IF_TRUE .L_or_true_348
     POP
     LOAD_LOCAL directive
     PUSH_STR ".endfunc"
     STR_CMP
     NOT
-    JUMP .L_or_end_344
-.L_or_true_343:
-.L_or_end_344:
+    JUMP .L_or_end_349
+.L_or_true_348:
+.L_or_end_349:
     DUP
-    JUMP_IF_TRUE .L_or_true_341
+    JUMP_IF_TRUE .L_or_true_346
     POP
     LOAD_LOCAL directive
     PUSH_STR ".end"
     STR_CMP
     NOT
-    JUMP .L_or_end_342
-.L_or_true_341:
-.L_or_end_342:
-    JUMP_IF_FALSE .L_else_345
+    JUMP .L_or_end_347
+.L_or_true_346:
+.L_or_end_347:
+    JUMP_IF_FALSE .L_else_350
 ; if cur_func_idx == 65535
     LOAD_GLOBAL cur_func_idx
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_347
+    JUMP_IF_FALSE .L_endif_352
 ; println("Error: .endfunction outside function")
 ; println("Error: .endfunction outside function")
     PUSH_I16 10
@@ -5945,7 +6028,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_347:
+.L_endif_352:
 ; func_code_size[...] = cur_func_code_size
     LOAD_GLOBAL cur_func_code_size
     ADDR_OF_GLOBAL func_code_size
@@ -5958,253 +6041,11 @@
     STORE_GLOBAL cur_func_idx
 ; reset_cur_vars()
     CALL reset_cur_vars
-    JUMP .L_endif_346
-.L_else_345:
+    JUMP .L_endif_351
+.L_else_350:
 ; if directive == ".param"
     LOAD_LOCAL directive
     PUSH_STR ".param"
-    STR_CMP
-    NOT
-    JUMP_IF_FALSE .L_else_348
-; if cur_func_idx == 65535
-    LOAD_GLOBAL cur_func_idx
-    PUSH_I16 65535
-    CMP_EQ
-    JUMP_IF_FALSE .L_endif_350
-; println("Error: .param outside function")
-; println("Error: .param outside function")
-    PUSH_I16 10
-    BUF_ALLOC
-    STORE_LOCAL _pbuf
-    PUSH_STR "Error: .param outside function"
-    STORE_LOCAL _tmp_len
-    STORE_LOCAL _tmp_cap
-    STORE_LOCAL _tmp_base
-    LOAD_LOCAL _pbuf
-    PUSH_I16 4
-    ADD
-    LOAD_LOCAL _tmp_base
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 6
-    ADD
-    LOAD_LOCAL _tmp_cap
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 8
-    ADD
-    LOAD_LOCAL _tmp_len
-    POKE2
-    LOAD_LOCAL _pbuf
-    LOAD_LOCAL _pbuf
-    PUSH_I16 4
-    ADD
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 2
-    ADD
-    PUSH_STR "string"
-    POP
-    POP
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_1
-    PUSH_1
-    PRINTLN
-    LOAD_LOCAL _pbuf
-    BUF_FREE
-; sys_exit(1)
-    PUSH_1
-    SYS_EXIT
-.L_endif_350:
-; split_name_and_size(args)
-    LOAD_LOCAL args
-    CALL split_name_and_size
-; if num_vars >= MAX_VARS
-    LOAD_GLOBAL num_vars
-    PUSH_I16 1024
-    CMP_GE
-    JUMP_IF_FALSE .L_endif_351
-; println("Error: MAX_VARS exceeded")
-; println("Error: MAX_VARS exceeded")
-    PUSH_I16 10
-    BUF_ALLOC
-    STORE_LOCAL _pbuf
-    PUSH_STR "Error: MAX_VARS exceeded"
-    STORE_LOCAL _tmp_len
-    STORE_LOCAL _tmp_cap
-    STORE_LOCAL _tmp_base
-    LOAD_LOCAL _pbuf
-    PUSH_I16 4
-    ADD
-    LOAD_LOCAL _tmp_base
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 6
-    ADD
-    LOAD_LOCAL _tmp_cap
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 8
-    ADD
-    LOAD_LOCAL _tmp_len
-    POKE2
-    LOAD_LOCAL _pbuf
-    LOAD_LOCAL _pbuf
-    PUSH_I16 4
-    ADD
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 2
-    ADD
-    PUSH_STR "string"
-    POP
-    POP
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_1
-    PUSH_1
-    PRINTLN
-    LOAD_LOCAL _pbuf
-    BUF_FREE
-; sys_exit(1)
-    PUSH_1
-    SYS_EXIT
-.L_endif_351:
-; if num_cur_vars >= MAX_FUNC_VARS
-    LOAD_GLOBAL num_cur_vars
-    PUSH_I8 64
-    CMP_GE
-    JUMP_IF_FALSE .L_endif_352
-; println("Error: MAX_FUNC_VARS exceeded")
-; println("Error: MAX_FUNC_VARS exceeded")
-    PUSH_I16 10
-    BUF_ALLOC
-    STORE_LOCAL _pbuf
-    PUSH_STR "Error: MAX_FUNC_VARS exceeded"
-    STORE_LOCAL _tmp_len
-    STORE_LOCAL _tmp_cap
-    STORE_LOCAL _tmp_base
-    LOAD_LOCAL _pbuf
-    PUSH_I16 4
-    ADD
-    LOAD_LOCAL _tmp_base
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 6
-    ADD
-    LOAD_LOCAL _tmp_cap
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 8
-    ADD
-    LOAD_LOCAL _tmp_len
-    POKE2
-    LOAD_LOCAL _pbuf
-    LOAD_LOCAL _pbuf
-    PUSH_I16 4
-    ADD
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_I16 2
-    ADD
-    PUSH_STR "string"
-    POP
-    POP
-    POKE2
-    LOAD_LOCAL _pbuf
-    PUSH_1
-    PUSH_1
-    PRINTLN
-    LOAD_LOCAL _pbuf
-    BUF_FREE
-; sys_exit(1)
-    PUSH_1
-    SYS_EXIT
-.L_endif_352:
-; slot := num_cur_vars
-    LOAD_GLOBAL num_cur_vars
-    STORE_LOCAL slot
-; fn_var_names[...] = clone_var_str(split_var_name)
-    LOAD_GLOBAL split_var_name
-    CALL clone_var_str
-    ADDR_OF_GLOBAL fn_var_names
-    LOAD_GLOBAL num_cur_vars
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    SWAP
-    POKE2
-; fn_var_slots[...] = byte(slot & 255)
-    LOAD_LOCAL slot
-    PUSH_I16 255
-    BIT_AND
-    PUSH_I16 255
-    BIT_AND
-    ADDR_OF_GLOBAL fn_var_slots
-    LOAD_GLOBAL num_cur_vars
-    ADD
-    SWAP
-    POKE1
-; num_cur_vars++
-    LOAD_GLOBAL num_cur_vars
-    PUSH_1
-    ADD
-    STORE_GLOBAL num_cur_vars
-; var_sizes[...] = byte(split_var_size & 255)
-    LOAD_GLOBAL split_var_size
-    PUSH_I16 255
-    BIT_AND
-    PUSH_I16 255
-    BIT_AND
-    ADDR_OF_GLOBAL var_sizes
-    LOAD_GLOBAL num_vars
-    ADD
-    SWAP
-    POKE1
-; num_vars++
-    LOAD_GLOBAL num_vars
-    PUSH_1
-    ADD
-    STORE_GLOBAL num_vars
-; func_arg_count[...]++
-    ADDR_OF_GLOBAL func_arg_count
-    LOAD_GLOBAL cur_func_idx
-    ADD
-    DUP
-    PEEK1
-    PUSH_1
-    ADD
-    POKE1
-; func_frame_size[...] += split_var_size
-    ADDR_OF_GLOBAL func_frame_size
-    LOAD_GLOBAL cur_func_idx
-    SHL1_ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PEEK2
-    LOAD_GLOBAL split_var_size
-    ADD
-    LOAD_LOCAL _tmp_addr
-    SWAP
-    POKE2
-    JUMP .L_endif_349
-.L_else_348:
-; if directive == ".local"
-    LOAD_LOCAL directive
-    PUSH_STR ".local"
     STR_CMP
     NOT
     JUMP_IF_FALSE .L_else_353
@@ -6213,12 +6054,12 @@
     PUSH_I16 65535
     CMP_EQ
     JUMP_IF_FALSE .L_endif_355
-; println("Error: .local outside function")
-; println("Error: .local outside function")
+; println("Error: .param outside function")
+; println("Error: .param outside function")
     PUSH_I16 10
     BUF_ALLOC
     STORE_LOCAL _pbuf
-    PUSH_STR "Error: .local outside function"
+    PUSH_STR "Error: .param outside function"
     STORE_LOCAL _tmp_len
     STORE_LOCAL _tmp_cap
     STORE_LOCAL _tmp_base
@@ -6421,8 +6262,8 @@
     PUSH_1
     ADD
     STORE_GLOBAL num_vars
-; func_local_count[...]++
-    ADDR_OF_GLOBAL func_local_count
+; func_arg_count[...]++
+    ADDR_OF_GLOBAL func_arg_count
     LOAD_GLOBAL cur_func_idx
     ADD
     DUP
@@ -6444,35 +6285,277 @@
     POKE2
     JUMP .L_endif_354
 .L_else_353:
+; if directive == ".local"
+    LOAD_LOCAL directive
+    PUSH_STR ".local"
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_else_358
+; if cur_func_idx == 65535
+    LOAD_GLOBAL cur_func_idx
+    PUSH_I16 65535
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_360
+; println("Error: .local outside function")
+; println("Error: .local outside function")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Error: .local outside function"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_360:
+; split_name_and_size(args)
+    LOAD_LOCAL args
+    CALL split_name_and_size
+; if num_vars >= MAX_VARS
+    LOAD_GLOBAL num_vars
+    PUSH_I16 1024
+    CMP_GE
+    JUMP_IF_FALSE .L_endif_361
+; println("Error: MAX_VARS exceeded")
+; println("Error: MAX_VARS exceeded")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Error: MAX_VARS exceeded"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_361:
+; if num_cur_vars >= MAX_FUNC_VARS
+    LOAD_GLOBAL num_cur_vars
+    PUSH_I8 64
+    CMP_GE
+    JUMP_IF_FALSE .L_endif_362
+; println("Error: MAX_FUNC_VARS exceeded")
+; println("Error: MAX_FUNC_VARS exceeded")
+    PUSH_I16 10
+    BUF_ALLOC
+    STORE_LOCAL _pbuf
+    PUSH_STR "Error: MAX_FUNC_VARS exceeded"
+    STORE_LOCAL _tmp_len
+    STORE_LOCAL _tmp_cap
+    STORE_LOCAL _tmp_base
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    LOAD_LOCAL _tmp_base
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 6
+    ADD
+    LOAD_LOCAL _tmp_cap
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 8
+    ADD
+    LOAD_LOCAL _tmp_len
+    POKE2
+    LOAD_LOCAL _pbuf
+    LOAD_LOCAL _pbuf
+    PUSH_I16 4
+    ADD
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_I16 2
+    ADD
+    PUSH_STR "string"
+    POP
+    POP
+    POKE2
+    LOAD_LOCAL _pbuf
+    PUSH_1
+    PUSH_1
+    PRINTLN
+    LOAD_LOCAL _pbuf
+    BUF_FREE
+; sys_exit(1)
+    PUSH_1
+    SYS_EXIT
+.L_endif_362:
+; slot := num_cur_vars
+    LOAD_GLOBAL num_cur_vars
+    STORE_LOCAL slot
+; fn_var_names[...] = clone_var_str(split_var_name)
+    LOAD_GLOBAL split_var_name
+    CALL clone_var_str
+    ADDR_OF_GLOBAL fn_var_names
+    LOAD_GLOBAL num_cur_vars
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+; fn_var_slots[...] = byte(slot & 255)
+    LOAD_LOCAL slot
+    PUSH_I16 255
+    BIT_AND
+    PUSH_I16 255
+    BIT_AND
+    ADDR_OF_GLOBAL fn_var_slots
+    LOAD_GLOBAL num_cur_vars
+    ADD
+    SWAP
+    POKE1
+; num_cur_vars++
+    LOAD_GLOBAL num_cur_vars
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_cur_vars
+; var_sizes[...] = byte(split_var_size & 255)
+    LOAD_GLOBAL split_var_size
+    PUSH_I16 255
+    BIT_AND
+    PUSH_I16 255
+    BIT_AND
+    ADDR_OF_GLOBAL var_sizes
+    LOAD_GLOBAL num_vars
+    ADD
+    SWAP
+    POKE1
+; num_vars++
+    LOAD_GLOBAL num_vars
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_vars
+; func_local_count[...]++
+    ADDR_OF_GLOBAL func_local_count
+    LOAD_GLOBAL cur_func_idx
+    ADD
+    DUP
+    PEEK1
+    PUSH_1
+    ADD
+    POKE1
+; func_frame_size[...] += split_var_size
+    ADDR_OF_GLOBAL func_frame_size
+    LOAD_GLOBAL cur_func_idx
+    SHL1_ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_GLOBAL split_var_size
+    ADD
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+    JUMP .L_endif_359
+.L_else_358:
 ; if directive == ".entry"
     LOAD_LOCAL directive
     PUSH_STR ".entry"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_endif_358
+    JUMP_IF_FALSE .L_endif_363
 ; pending_entry_name = clone_str(str_strip(args))
     LOAD_LOCAL args
     CALL str_strip
     CALL clone_str
     STORE_GLOBAL pending_entry_name
-.L_endif_358:
+.L_endif_363:
+.L_endif_359:
 .L_endif_354:
-.L_endif_349:
-.L_endif_346:
+.L_endif_351:
+.L_endif_339:
 .L_endif_334:
-.L_endif_329:
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
 ; continue
-    JUMP .L_for_top_319
-.L_endif_327:
+    JUMP .L_for_top_324
+.L_endif_332:
 ; if cur_func_idx == 65535
     LOAD_GLOBAL cur_func_idx
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_359
+    JUMP_IF_FALSE .L_endif_364
 ; println("Error: instruction outside function:", clean_line)
 ; println("Error: instruction outside function:", clean_line)
     PUSH_I16 20
@@ -6551,7 +6634,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_359:
+.L_endif_364:
 ; split_two(clean_line)
     LOAD_LOCAL clean_line
     CALL split_two
@@ -6570,14 +6653,14 @@
     LOAD_LOCAL opt_op
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_360
+    JUMP_IF_FALSE .L_else_365
 ; cur_func_code_size += 1
     LOAD_GLOBAL cur_func_code_size
     PUSH_1
     ADD
     STORE_GLOBAL cur_func_code_size
-    JUMP .L_endif_361
-.L_else_360:
+    JUMP .L_endif_366
+.L_else_365:
 ; op_idx := find_op(mnemonic)
     LOAD_LOCAL mnemonic
     CALL find_op
@@ -6586,7 +6669,7 @@
     LOAD_LOCAL op_idx
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_362
+    JUMP_IF_FALSE .L_endif_367
 ; println("Error: unknown mnemonic", mnemonic)
 ; println("Error: unknown mnemonic", mnemonic)
     PUSH_I16 20
@@ -6665,7 +6748,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_362:
+.L_endif_367:
 ; cur_func_code_size += 1 + word(op_arg_bytes[...])
     LOAD_GLOBAL cur_func_code_size
     PUSH_1
@@ -6683,14 +6766,14 @@
     PEEK1
     PUSH_I8 5
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_363
+    JUMP_IF_FALSE .L_endif_368
 ; if len(operand) >= 2 && operand[...] == 34 && operand[...] == 34 || operand[...] == 39 && operand[...] == 39
     LOAD_LOCAL operand
     SLICE_LEN
     PUSH_I8 2
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_364
+    JUMP_IF_FALSE .L_and_false_369
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -6700,7 +6783,7 @@
     PUSH_I8 34
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_368
+    JUMP_IF_FALSE .L_and_false_373
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -6712,11 +6795,11 @@
     PEEK1
     PUSH_I8 34
     CMP_EQ
-    JUMP .L_and_end_369
-.L_and_false_368:
-.L_and_end_369:
+    JUMP .L_and_end_374
+.L_and_false_373:
+.L_and_end_374:
     DUP
-    JUMP_IF_TRUE .L_or_true_366
+    JUMP_IF_TRUE .L_or_true_371
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -6726,7 +6809,7 @@
     PUSH_I8 39
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_370
+    JUMP_IF_FALSE .L_and_false_375
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -6738,31 +6821,31 @@
     PEEK1
     PUSH_I8 39
     CMP_EQ
-    JUMP .L_and_end_371
-.L_and_false_370:
-.L_and_end_371:
-    JUMP .L_or_end_367
-.L_or_true_366:
-.L_or_end_367:
-    JUMP .L_and_end_365
-.L_and_false_364:
-.L_and_end_365:
-    JUMP_IF_FALSE .L_endif_372
+    JUMP .L_and_end_376
+.L_and_false_375:
+.L_and_end_376:
+    JUMP .L_or_end_372
+.L_or_true_371:
+.L_or_end_372:
+    JUMP .L_and_end_370
+.L_and_false_369:
+.L_and_end_370:
+    JUMP_IF_FALSE .L_endif_377
 ; unescape_str(operand)
     LOAD_LOCAL operand
     CALL unescape_str
 ; add_to_string_pool()
     CALL add_to_string_pool
     POP
-.L_endif_372:
-.L_endif_363:
-.L_endif_361:
+.L_endif_377:
+.L_endif_368:
+.L_endif_366:
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
-    JUMP .L_for_top_319
-.L_for_exit_320:
+    JUMP .L_for_top_324
+.L_for_exit_325:
 ; file_close(h)
     LOAD_LOCAL h
     FILE_CLOSE
@@ -6773,11 +6856,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_373:
+.L_for3_top_378:
     LOAD_LOCAL i
     LOAD_GLOBAL num_funcs
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_375
+    JUMP_IF_FALSE .L_for3_exit_380
 ; func_code_offset[...] = total_code_size
     LOAD_GLOBAL total_code_size
     ADDR_OF_GLOBAL func_code_offset
@@ -6793,14 +6876,14 @@
     PEEK2
     ADD
     STORE_GLOBAL total_code_size
-.L_for3_cont_374:
+.L_for3_cont_379:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_373
-.L_for3_exit_375:
+    JUMP .L_for3_top_378
+.L_for3_exit_380:
 ; current_var_offset := word(0)
     PUSH_0
     STORE_LOCAL current_var_offset
@@ -6808,11 +6891,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_376:
+.L_for3_top_381:
     LOAD_LOCAL i
     LOAD_GLOBAL num_funcs
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_378
+    JUMP_IF_FALSE .L_for3_exit_383
 ; func_var_offset[...] = current_var_offset
     LOAD_LOCAL current_var_offset
     ADDR_OF_GLOBAL func_var_offset
@@ -6833,14 +6916,14 @@
     ADD
     ADD
     STORE_LOCAL current_var_offset
-.L_for3_cont_377:
+.L_for3_cont_382:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_376
-.L_for3_exit_378:
+    JUMP .L_for3_top_381
+.L_for3_exit_383:
 ; finalize_entry_func()
     CALL finalize_entry_func
     RET_VOID
@@ -6893,7 +6976,7 @@
     LOAD_LOCAL ok
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_379
+    JUMP_IF_FALSE .L_endif_384
 ; println("Error: cannot reopen input file", in_path)
 ; println("Error: cannot reopen input file", in_path)
     PUSH_I16 20
@@ -6972,7 +7055,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_379:
+.L_endif_384:
 ; cur_func_idx = 65535
     PUSH_I16 65535
     STORE_GLOBAL cur_func_idx
@@ -6980,7 +7063,7 @@
     PUSH_0
     STORE_GLOBAL cur_func_pc
 ; for
-.L_for_top_380:
+.L_for_top_385:
 ; line, eof := file_readline(h)
     LOAD_LOCAL h
     FILE_READLINE
@@ -6990,10 +7073,10 @@
     LOAD_LOCAL eof
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_382
+    JUMP_IF_FALSE .L_endif_387
 ; break
-    JUMP .L_for_exit_381
-.L_endif_382:
+    JUMP .L_for_exit_386
+.L_endif_387:
 ; clean_line := strip_comment(line)
     LOAD_LOCAL line
     CALL strip_comment
@@ -7003,21 +7086,21 @@
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_383
+    JUMP_IF_FALSE .L_endif_388
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
 ; continue
-    JUMP .L_for_top_380
-.L_endif_383:
+    JUMP .L_for_top_385
+.L_endif_388:
 ; has_lbl := split_label(clean_line)
     LOAD_LOCAL clean_line
     CALL split_label
     STORE_LOCAL has_lbl
 ; if has_lbl
     LOAD_LOCAL has_lbl
-    JUMP_IF_FALSE .L_endif_384
+    JUMP_IF_FALSE .L_endif_389
 ; clean_line = split_rest_res
     LOAD_GLOBAL split_rest_res
     STORE_LOCAL clean_line
@@ -7026,15 +7109,15 @@
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_385
+    JUMP_IF_FALSE .L_endif_390
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
 ; continue
-    JUMP .L_for_top_380
-.L_endif_385:
-.L_endif_384:
+    JUMP .L_for_top_385
+.L_endif_390:
+.L_endif_389:
 ; if clean_line[...] == 46
     ADDR_OF_LOCAL clean_line
     PEEK2
@@ -7043,7 +7126,7 @@
     PEEK1
     PUSH_I8 46
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_386
+    JUMP_IF_FALSE .L_endif_391
 ; split_two(clean_line)
     LOAD_LOCAL clean_line
     CALL split_two
@@ -7059,16 +7142,16 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_387
+    JUMP_IF_TRUE .L_or_true_392
     POP
     LOAD_LOCAL directive
     PUSH_STR ".func"
     STR_CMP
     NOT
-    JUMP .L_or_end_388
-.L_or_true_387:
-.L_or_end_388:
-    JUMP_IF_FALSE .L_else_389
+    JUMP .L_or_end_393
+.L_or_true_392:
+.L_or_end_393:
+    JUMP_IF_FALSE .L_else_394
 ; split_two(args)
     LOAD_LOCAL args
     CALL split_two
@@ -7084,24 +7167,24 @@
     STORE_GLOBAL cur_func_pc
 ; reset_cur_vars()
     CALL reset_cur_vars
-    JUMP .L_endif_390
-.L_else_389:
+    JUMP .L_endif_395
+.L_else_394:
 ; if directive == ".param" || directive == ".local"
     LOAD_LOCAL directive
     PUSH_STR ".param"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_391
+    JUMP_IF_TRUE .L_or_true_396
     POP
     LOAD_LOCAL directive
     PUSH_STR ".local"
     STR_CMP
     NOT
-    JUMP .L_or_end_392
-.L_or_true_391:
-.L_or_end_392:
-    JUMP_IF_FALSE .L_else_393
+    JUMP .L_or_end_397
+.L_or_true_396:
+.L_or_end_397:
+    JUMP_IF_FALSE .L_else_398
 ; split_name_and_size(args)
     LOAD_LOCAL args
     CALL split_name_and_size
@@ -7109,7 +7192,7 @@
     LOAD_GLOBAL num_cur_vars
     PUSH_I8 64
     CMP_GE
-    JUMP_IF_FALSE .L_endif_395
+    JUMP_IF_FALSE .L_endif_400
 ; println("Error: MAX_FUNC_VARS exceeded in Pass 2")
 ; println("Error: MAX_FUNC_VARS exceeded in Pass 2")
     PUSH_I16 10
@@ -7155,7 +7238,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_395:
+.L_endif_400:
 ; slot := num_cur_vars
     LOAD_GLOBAL num_cur_vars
     STORE_LOCAL slot
@@ -7197,49 +7280,49 @@
     PUSH_1
     ADD
     STORE_GLOBAL num_cur_vars
-    JUMP .L_endif_394
-.L_else_393:
+    JUMP .L_endif_399
+.L_else_398:
 ; if directive == ".endfunction" || directive == ".endfunc" || directive == ".end"
     LOAD_LOCAL directive
     PUSH_STR ".endfunction"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_398
+    JUMP_IF_TRUE .L_or_true_403
     POP
     LOAD_LOCAL directive
     PUSH_STR ".endfunc"
     STR_CMP
     NOT
-    JUMP .L_or_end_399
-.L_or_true_398:
-.L_or_end_399:
+    JUMP .L_or_end_404
+.L_or_true_403:
+.L_or_end_404:
     DUP
-    JUMP_IF_TRUE .L_or_true_396
+    JUMP_IF_TRUE .L_or_true_401
     POP
     LOAD_LOCAL directive
     PUSH_STR ".end"
     STR_CMP
     NOT
-    JUMP .L_or_end_397
-.L_or_true_396:
-.L_or_end_397:
-    JUMP_IF_FALSE .L_endif_400
+    JUMP .L_or_end_402
+.L_or_true_401:
+.L_or_end_402:
+    JUMP_IF_FALSE .L_endif_405
 ; cur_func_idx = 65535
     PUSH_I16 65535
     STORE_GLOBAL cur_func_idx
 ; reset_cur_vars()
     CALL reset_cur_vars
-.L_endif_400:
-.L_endif_394:
-.L_endif_390:
+.L_endif_405:
+.L_endif_399:
+.L_endif_395:
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
 ; continue
-    JUMP .L_for_top_380
-.L_endif_386:
+    JUMP .L_for_top_385
+.L_endif_391:
 ; split_two(clean_line)
     LOAD_LOCAL clean_line
     CALL split_two
@@ -7258,7 +7341,7 @@
     LOAD_LOCAL opt_op
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_else_401
+    JUMP_IF_FALSE .L_else_406
 ; bin_write_byte(byte(opt_op & 255))
     LOAD_LOCAL opt_op
     PUSH_I16 255
@@ -7271,8 +7354,8 @@
     PUSH_1
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_402
-.L_else_401:
+    JUMP .L_endif_407
+.L_else_406:
 ; op_idx := find_op(mnemonic)
     LOAD_LOCAL mnemonic
     CALL find_op
@@ -7281,7 +7364,7 @@
     LOAD_LOCAL op_idx
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_403
+    JUMP_IF_FALSE .L_endif_408
 ; println("Error in Pass 2: unknown mnemonic", mnemonic)
 ; println("Error in Pass 2: unknown mnemonic", mnemonic)
     PUSH_I16 20
@@ -7360,7 +7443,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_403:
+.L_endif_408:
 ; op_byte := op_bytes[...]
     ADDR_OF_GLOBAL op_bytes
     LOAD_LOCAL op_idx
@@ -7380,37 +7463,37 @@
     LOAD_LOCAL arg_type
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_else_404
+    JUMP_IF_FALSE .L_else_409
 ; cur_func_pc += 1
     LOAD_GLOBAL cur_func_pc
     PUSH_1
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_405
-.L_else_404:
+    JUMP .L_endif_410
+.L_else_409:
 ; if arg_type == 1 || arg_type == 2 || arg_type == 9
     LOAD_LOCAL arg_type
     PUSH_1
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_408
+    JUMP_IF_TRUE .L_or_true_413
     POP
     LOAD_LOCAL arg_type
     PUSH_I8 2
     CMP_EQ
-    JUMP .L_or_end_409
-.L_or_true_408:
-.L_or_end_409:
+    JUMP .L_or_end_414
+.L_or_true_413:
+.L_or_end_414:
     DUP
-    JUMP_IF_TRUE .L_or_true_406
+    JUMP_IF_TRUE .L_or_true_411
     POP
     LOAD_LOCAL arg_type
     PUSH_I8 9
     CMP_EQ
-    JUMP .L_or_end_407
-.L_or_true_406:
-.L_or_end_407:
-    JUMP_IF_FALSE .L_else_410
+    JUMP .L_or_end_412
+.L_or_true_411:
+.L_or_end_412:
+    JUMP_IF_FALSE .L_else_415
 ; val := parse_int_val(operand)
     LOAD_LOCAL operand
     CALL parse_int_val
@@ -7427,13 +7510,13 @@
     PUSH_I8 2
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_411
-.L_else_410:
+    JUMP .L_endif_416
+.L_else_415:
 ; if arg_type == 7
     LOAD_LOCAL arg_type
     PUSH_I8 7
     CMP_EQ
-    JUMP_IF_FALSE .L_else_412
+    JUMP_IF_FALSE .L_else_417
 ; slot := find_var_slot(operand)
     LOAD_LOCAL operand
     CALL find_var_slot
@@ -7442,7 +7525,7 @@
     LOAD_LOCAL slot
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_414
+    JUMP_IF_FALSE .L_endif_419
 ; println("Error: undefined local variable", operand, "in function", func_names[...])
 ; println("Error: undefined local variable", operand, "in function", func_names[...])
     PUSH_I16 40
@@ -7602,7 +7685,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_414:
+.L_endif_419:
 ; bin_write_byte(byte(slot & 255))
     LOAD_LOCAL slot
     PUSH_I16 255
@@ -7615,13 +7698,13 @@
     PUSH_I8 2
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_413
-.L_else_412:
+    JUMP .L_endif_418
+.L_else_417:
 ; if arg_type == 3
     LOAD_LOCAL arg_type
     PUSH_I8 3
     CMP_EQ
-    JUMP_IF_FALSE .L_else_415
+    JUMP_IF_FALSE .L_else_420
 ; val := parse_int_val(operand)
     LOAD_LOCAL operand
     CALL parse_int_val
@@ -7634,13 +7717,13 @@
     PUSH_I8 3
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_416
-.L_else_415:
+    JUMP .L_endif_421
+.L_else_420:
 ; if arg_type == 4
     LOAD_LOCAL arg_type
     PUSH_I8 4
     CMP_EQ
-    JUMP_IF_FALSE .L_else_417
+    JUMP_IF_FALSE .L_else_422
 ; target_pc := find_label(operand)
     LOAD_LOCAL operand
     CALL find_label
@@ -7649,7 +7732,7 @@
     LOAD_LOCAL target_pc
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_419
+    JUMP_IF_FALSE .L_endif_424
 ; println("Error: undefined label", operand, "in function", func_names[...])
 ; println("Error: undefined label", operand, "in function", func_names[...])
     PUSH_I16 40
@@ -7809,7 +7892,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_419:
+.L_endif_424:
 ; current_next_pc := cur_func_pc + 3
     LOAD_GLOBAL cur_func_pc
     PUSH_I8 3
@@ -7828,13 +7911,13 @@
     PUSH_I8 3
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_418
-.L_else_417:
+    JUMP .L_endif_423
+.L_else_422:
 ; if arg_type == 5
     LOAD_LOCAL arg_type
     PUSH_I8 5
     CMP_EQ
-    JUMP_IF_FALSE .L_else_420
+    JUMP_IF_FALSE .L_else_425
 ; pool_off := word(0)
     PUSH_0
     STORE_LOCAL pool_off
@@ -7844,7 +7927,7 @@
     PUSH_I8 2
     CMP_GE
     DUP
-    JUMP_IF_FALSE .L_and_false_422
+    JUMP_IF_FALSE .L_and_false_427
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -7854,7 +7937,7 @@
     PUSH_I8 34
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_426
+    JUMP_IF_FALSE .L_and_false_431
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -7866,11 +7949,11 @@
     PEEK1
     PUSH_I8 34
     CMP_EQ
-    JUMP .L_and_end_427
-.L_and_false_426:
-.L_and_end_427:
+    JUMP .L_and_end_432
+.L_and_false_431:
+.L_and_end_432:
     DUP
-    JUMP_IF_TRUE .L_or_true_424
+    JUMP_IF_TRUE .L_or_true_429
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -7880,7 +7963,7 @@
     PUSH_I8 39
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_428
+    JUMP_IF_FALSE .L_and_false_433
     POP
     ADDR_OF_LOCAL operand
     PEEK2
@@ -7892,29 +7975,29 @@
     PEEK1
     PUSH_I8 39
     CMP_EQ
-    JUMP .L_and_end_429
-.L_and_false_428:
-.L_and_end_429:
-    JUMP .L_or_end_425
-.L_or_true_424:
-.L_or_end_425:
-    JUMP .L_and_end_423
-.L_and_false_422:
-.L_and_end_423:
-    JUMP_IF_FALSE .L_else_430
+    JUMP .L_and_end_434
+.L_and_false_433:
+.L_and_end_434:
+    JUMP .L_or_end_430
+.L_or_true_429:
+.L_or_end_430:
+    JUMP .L_and_end_428
+.L_and_false_427:
+.L_and_end_428:
+    JUMP_IF_FALSE .L_else_435
 ; unescape_str(operand)
     LOAD_LOCAL operand
     CALL unescape_str
 ; pool_off = add_to_string_pool()
     CALL add_to_string_pool
     STORE_LOCAL pool_off
-    JUMP .L_endif_431
-.L_else_430:
+    JUMP .L_endif_436
+.L_else_435:
 ; pool_off = parse_int_val(operand)
     LOAD_LOCAL operand
     CALL parse_int_val
     STORE_LOCAL pool_off
-.L_endif_431:
+.L_endif_436:
 ; bin_write_word(pool_off)
     LOAD_LOCAL pool_off
     CALL bin_write_word
@@ -7923,13 +8006,13 @@
     PUSH_I8 3
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_421
-.L_else_420:
+    JUMP .L_endif_426
+.L_else_425:
 ; if arg_type == 6
     LOAD_LOCAL arg_type
     PUSH_I8 6
     CMP_EQ
-    JUMP_IF_FALSE .L_else_432
+    JUMP_IF_FALSE .L_else_437
 ; fn_idx := find_func(operand)
     LOAD_LOCAL operand
     CALL find_func
@@ -7938,7 +8021,7 @@
     LOAD_LOCAL fn_idx
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_434
+    JUMP_IF_FALSE .L_endif_439
 ; println("Error: undefined function", operand)
 ; println("Error: undefined function", operand)
     PUSH_I16 20
@@ -8017,7 +8100,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_434:
+.L_endif_439:
 ; bin_write_word(fn_idx)
     LOAD_LOCAL fn_idx
     CALL bin_write_word
@@ -8026,13 +8109,13 @@
     PUSH_I8 3
     ADD
     STORE_GLOBAL cur_func_pc
-    JUMP .L_endif_433
-.L_else_432:
+    JUMP .L_endif_438
+.L_else_437:
 ; if arg_type == 8
     LOAD_LOCAL arg_type
     PUSH_I8 8
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_435
+    JUMP_IF_FALSE .L_endif_440
 ; g_idx := find_global(operand)
     LOAD_LOCAL operand
     CALL find_global
@@ -8041,7 +8124,7 @@
     LOAD_LOCAL g_idx
     PUSH_I16 65535
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_436
+    JUMP_IF_FALSE .L_endif_441
 ; println("Error: undefined global", operand)
 ; println("Error: undefined global", operand)
     PUSH_I16 20
@@ -8120,7 +8203,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_436:
+.L_endif_441:
 ; bin_write_word(g_idx)
     LOAD_LOCAL g_idx
     CALL bin_write_word
@@ -8129,21 +8212,21 @@
     PUSH_I8 3
     ADD
     STORE_GLOBAL cur_func_pc
-.L_endif_435:
-.L_endif_433:
+.L_endif_440:
+.L_endif_438:
+.L_endif_426:
+.L_endif_423:
 .L_endif_421:
 .L_endif_418:
 .L_endif_416:
-.L_endif_413:
-.L_endif_411:
-.L_endif_405:
-.L_endif_402:
+.L_endif_410:
+.L_endif_407:
 ; free(line.Base)
     ADDR_OF_LOCAL line
     PEEK2
     BUF_FREE
-    JUMP .L_for_top_380
-.L_for_exit_381:
+    JUMP .L_for_top_385
+.L_for_exit_386:
 ; file_close(h)
     LOAD_LOCAL h
     FILE_CLOSE
@@ -8178,12 +8261,12 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_437:
+.L_for3_top_442:
     LOAD_LOCAL i
     LOAD_LOCAL path
     SLICE_LEN
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_439
+    JUMP_IF_FALSE .L_for3_exit_444
 ; if path[...] == 47 || path[...] == 92
     ADDR_OF_LOCAL path
     PEEK2
@@ -8193,7 +8276,7 @@
     PUSH_I8 47
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_440
+    JUMP_IF_TRUE .L_or_true_445
     POP
     ADDR_OF_LOCAL path
     PEEK2
@@ -8202,15 +8285,15 @@
     PEEK1
     PUSH_I8 92
     CMP_EQ
-    JUMP .L_or_end_441
-.L_or_true_440:
-.L_or_end_441:
-    JUMP_IF_FALSE .L_else_442
+    JUMP .L_or_end_446
+.L_or_true_445:
+.L_or_end_446:
+    JUMP_IF_FALSE .L_else_447
 ; slash = i
     LOAD_LOCAL i
     STORE_LOCAL slash
-    JUMP .L_endif_443
-.L_else_442:
+    JUMP .L_endif_448
+.L_else_447:
 ; if path[...] == 46
     ADDR_OF_LOCAL path
     PEEK2
@@ -8219,20 +8302,20 @@
     PEEK1
     PUSH_I8 46
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_444
+    JUMP_IF_FALSE .L_endif_449
 ; dot = i
     LOAD_LOCAL i
     STORE_LOCAL dot
-.L_endif_444:
-.L_endif_443:
-.L_for3_cont_438:
+.L_endif_449:
+.L_endif_448:
+.L_for3_cont_443:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_437
-.L_for3_exit_439:
+    JUMP .L_for3_top_442
+.L_for3_exit_444:
 ; buf_clear()
     CALL buf_clear
 ; if dot != 65535 && slash == 65535 || dot > slash
@@ -8240,36 +8323,36 @@
     PUSH_I16 65535
     CMP_NE
     DUP
-    JUMP_IF_FALSE .L_and_false_445
+    JUMP_IF_FALSE .L_and_false_450
     POP
     LOAD_LOCAL slash
     PUSH_I16 65535
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_447
+    JUMP_IF_TRUE .L_or_true_452
     POP
     LOAD_LOCAL dot
     LOAD_LOCAL slash
     CMP_GT
-    JUMP .L_or_end_448
-.L_or_true_447:
-.L_or_end_448:
-    JUMP .L_and_end_446
-.L_and_false_445:
-.L_and_end_446:
-    JUMP_IF_FALSE .L_else_449
+    JUMP .L_or_end_453
+.L_or_true_452:
+.L_or_end_453:
+    JUMP .L_and_end_451
+.L_and_false_450:
+.L_and_end_451:
+    JUMP_IF_FALSE .L_else_454
 ; buf_append(path[...])
     LOAD_LOCAL path
     PUSH_0
     LOAD_LOCAL dot
     SLICE_SUB
     CALL buf_append
-    JUMP .L_endif_450
-.L_else_449:
+    JUMP .L_endif_455
+.L_else_454:
 ; buf_append(path)
     LOAD_LOCAL path
     CALL buf_append
-.L_endif_450:
+.L_endif_455:
 ; buf_append(".p3p")
     PUSH_STR ".p3p"
     CALL buf_append
@@ -8339,11 +8422,11 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_451:
+.L_for3_top_456:
     LOAD_LOCAL i
     PUSH_I16 2048
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_453
+    JUMP_IF_FALSE .L_for3_exit_458
 ; label_offsets[...] = 65535
     PUSH_I16 65535
     ADDR_OF_GLOBAL label_offsets
@@ -8351,14 +8434,14 @@
     SHL1_ADD
     SWAP
     POKE2
-.L_for3_cont_452:
+.L_for3_cont_457:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_451
-.L_for3_exit_453:
+    JUMP .L_for3_top_456
+.L_for3_exit_458:
 ; pass1(in_path)
     LOAD_LOCAL in_path
     CALL pass1
@@ -8371,7 +8454,7 @@
     LOAD_LOCAL ok
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_454
+    JUMP_IF_FALSE .L_endif_459
 ; println("Error: cannot open output file for writing", out_path)
 ; println("Error: cannot open output file for writing", out_path)
     PUSH_I16 20
@@ -8450,7 +8533,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_454:
+.L_endif_459:
 ; out_file_h = h
     LOAD_LOCAL h
     STORE_GLOBAL out_file_h
@@ -8697,7 +8780,7 @@
     PEEK2
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_455
+    JUMP_IF_FALSE .L_endif_460
 ; println("Usage: par3asm <input.p3a> [-o <output.p3p>]")
 ; println("Usage: par3asm <input.p3a> [-o <output.p3p>]")
     PUSH_I16 10
@@ -8743,7 +8826,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_455:
+.L_endif_460:
 ; in_file := ""
     PUSH_STR ""
     STORE_LOCAL in_file
@@ -8754,14 +8837,14 @@
     PUSH_0
     STORE_LOCAL i
 ; for i < args.Len
-.L_for_top_456:
+.L_for_top_461:
     LOAD_LOCAL i
     ADDR_OF_LOCAL args
     PUSH_I16 4
     ADD
     PEEK2
     CMP_LT
-    JUMP_IF_FALSE .L_for_exit_457
+    JUMP_IF_FALSE .L_for_exit_462
 ; arg := get_arg(args.Base, i)
     ADDR_OF_LOCAL args
     PEEK2
@@ -8773,7 +8856,7 @@
     PUSH_STR "-o"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_458
+    JUMP_IF_FALSE .L_else_463
 ; if i + 1 < args.Len
     LOAD_LOCAL i
     PUSH_1
@@ -8783,7 +8866,7 @@
     ADD
     PEEK2
     CMP_LT
-    JUMP_IF_FALSE .L_else_460
+    JUMP_IF_FALSE .L_else_465
 ; out_file = get_arg(args.Base, i + 1)
     ADDR_OF_LOCAL args
     PEEK2
@@ -8797,74 +8880,74 @@
     PUSH_I8 2
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_461
-.L_else_460:
+    JUMP .L_endif_466
+.L_else_465:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-.L_endif_461:
-    JUMP .L_endif_459
-.L_else_458:
+.L_endif_466:
+    JUMP .L_endif_464
+.L_else_463:
 ; if arg == "--listing" || arg == "-v" || arg == "--verbose"
     LOAD_LOCAL arg
     PUSH_STR "--listing"
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_464
+    JUMP_IF_TRUE .L_or_true_469
     POP
     LOAD_LOCAL arg
     PUSH_STR "-v"
     STR_CMP
     NOT
-    JUMP .L_or_end_465
-.L_or_true_464:
-.L_or_end_465:
+    JUMP .L_or_end_470
+.L_or_true_469:
+.L_or_end_470:
     DUP
-    JUMP_IF_TRUE .L_or_true_462
+    JUMP_IF_TRUE .L_or_true_467
     POP
     LOAD_LOCAL arg
     PUSH_STR "--verbose"
     STR_CMP
     NOT
-    JUMP .L_or_end_463
-.L_or_true_462:
-.L_or_end_463:
-    JUMP_IF_FALSE .L_else_466
+    JUMP .L_or_end_468
+.L_or_true_467:
+.L_or_end_468:
+    JUMP_IF_FALSE .L_else_471
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_467
-.L_else_466:
+    JUMP .L_endif_472
+.L_else_471:
 ; if len(in_file) == 0
     LOAD_LOCAL in_file
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_468
+    JUMP_IF_FALSE .L_endif_473
 ; in_file = arg
     LOAD_LOCAL arg
     STORE_LOCAL in_file
-.L_endif_468:
+.L_endif_473:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-.L_endif_467:
-.L_endif_459:
-    JUMP .L_for_top_456
-.L_for_exit_457:
+.L_endif_472:
+.L_endif_464:
+    JUMP .L_for_top_461
+.L_for_exit_462:
 ; if len(in_file) == 0
     LOAD_LOCAL in_file
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_469
+    JUMP_IF_FALSE .L_endif_474
 ; println("Error: no input file specified")
 ; println("Error: no input file specified")
     PUSH_I16 10
@@ -8910,18 +8993,18 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_469:
+.L_endif_474:
 ; if len(out_file) == 0
     LOAD_LOCAL out_file
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_470
+    JUMP_IF_FALSE .L_endif_475
 ; out_file = default_output_name(in_file)
     LOAD_LOCAL in_file
     CALL default_output_name
     STORE_LOCAL out_file
-.L_endif_470:
+.L_endif_475:
 ; assemble(in_file, out_file)
     LOAD_LOCAL in_file
     LOAD_LOCAL out_file
