@@ -7,7 +7,6 @@ const MAX_VARS        = 1024
 const MAX_FUNC_VARS   = 64
 const MAX_LABELS      = 2048
 const MAX_STRING_POOL = 4096
-const MAX_STRINGS     = 384
 const MAX_NAME_POOL   = 2048
 const MAX_VAR_NAME_POOL = 512
 const NUM_OPCODES     = 144
@@ -53,9 +52,11 @@ var num_labels    word
 // String Pool
 var str_pool     [MAX_STRING_POOL]byte
 var str_pool_len word
-var str_offsets  [MAX_STRINGS]word
-var str_lengths  [MAX_STRINGS]word
 var num_strings  word
+var str_pool_map word
+var op_map       word
+var global_map   word
+var func_map     word
 
 // Name Pool for Symbols
 var name_pool     [MAX_NAME_POOL]byte
@@ -439,27 +440,18 @@ func unescape_str(lit string) {
 // -----------------------------------------------------------------------------
 
 func add_to_string_pool() word {
-    for i := word(0); i < num_strings; i++ {
-        if str_lengths[i] == unescape_len {
-            off := str_offsets[i] + 2
-            matched := true
-            for j := word(0); j < unescape_len; j++ {
-                if str_pool[off + j] != unescape_buf[j] {
-                    matched = false
-                    break
-                }
-            }
-            if matched {
-                return str_offsets[i]
-            }
-        }
+    var unescaped_str string
+    unescaped_str.Base = word(&unescape_buf[0])
+    unescaped_str.Cap = unescape_len
+    unescaped_str.Len = unescape_len
+
+    off := map_get(str_pool_map, unescaped_str)
+    if off != 0xFFFF {
+        return off
     }
+
     if str_pool_len + 2 + unescape_len + 1 > MAX_STRING_POOL {
         println("Error: MAX_STRING_POOL exceeded")
-        sys_exit(1)
-    }
-    if num_strings >= MAX_STRINGS {
-        println("Error: MAX_STRINGS exceeded")
         sys_exit(1)
     }
     entry_off := str_pool_len
@@ -473,9 +465,8 @@ func add_to_string_pool() word {
     str_pool[str_pool_len] = 0
     str_pool_len += 1
 
-    str_offsets[num_strings] = entry_off
-    str_lengths[num_strings] = unescape_len
     num_strings++
+    map_put(str_pool_map, unescaped_str, entry_off)
     return entry_off
 }
 
@@ -488,62 +479,11 @@ func set_op(idx word, name string, op byte, arg_bytes byte, arg_type byte) {
     op_bytes[idx] = op
     op_arg_bytes[idx] = arg_bytes
     op_arg_types[idx] = arg_type
+    map_put(op_map, name, idx)
 }
 
 func find_op(m string) word {
-    if m == "LOAD_LOCAL" { return 50 }
-    if m == "PUSH_I8" { return 87 }
-    if m == "ADD" { return 0 }
-    if m == "STORE_LOCAL" { return 119 }
-    if m == "POKE2" { return 74 }
-    if m == "PUSH_STR" { return 91 }
-    if m == "PUSH_1" { return 84 }
-    if m == "CALL" { return 10 }
-    if m == "POP" { return 79 }
-    if m == "RET" { return 98 }
-    if m == "RET_VOID" { return 100 }
-    if m == "JUMP" { return 41 }
-    if m == "JUMP_IF_FALSE" { return 42 }
-    if m == "PUSH_0" { return 83 }
-    if m == "PEEK1" { return 66 }
-    if m == "PEEK2" { return 67 }
-    if m == "ADDR_OF_GLOBAL" { return 2 }
-    if m == "LOAD_GLOBAL" { return 49 }
-    if m == "STORE_GLOBAL" { return 118 }
-    if m == "PUSH_I16" { return 86 }
-    if m == "SHL1_ADD" { return 107 }
-    if m == "SWAP" { return 135 }
-    if m == "SUB" { return 134 }
-    if m == "CMP_EQ" { return 11 }
-    if m == "CMP_NE" { return 16 }
-    if m == "CMP_LT" { return 15 }
-    if m == "CMP_LE" { return 14 }
-    if m == "CMP_GT" { return 13 }
-    if m == "CMP_GE" { return 12 }
-    if m == "MAP_NEW" { return 139 }
-    if m == "MAP_GET" { return 140 }
-    if m == "MAP_PUT" { return 141 }
-    if m == "MAP_STR" { return 142 }
-    if m == "MAP_COUNT" { return 143 }
-
-    low := word(0)
-    high := word(138)
-    for low <= high {
-        mid := (low + high) >> 1
-        c := strcmp(m, op_names[mid])
-        if c == 0 {
-            return mid
-        }
-        if c == 0xFFFF || c == -1 {
-            if mid == 0 {
-                break
-            }
-            high = mid - 1
-        } else {
-            low = mid + 1
-        }
-    }
-    return 0xFFFF
+    return map_get(op_map, m)
 }
 
 func init_opcodes() {
@@ -699,21 +639,11 @@ func init_opcodes() {
 // -----------------------------------------------------------------------------
 
 func find_global(name string) word {
-    for i := word(0); i < num_globals; i++ {
-        if global_names[i] == name {
-            return i
-        }
-    }
-    return 0xFFFF
+    return map_get(global_map, name)
 }
 
 func find_func(name string) word {
-    for i := word(0); i < num_funcs; i++ {
-        if func_names[i] == name {
-            return i
-        }
-    }
-    return 0xFFFF
+    return map_get(func_map, name)
 }
 
 func find_var_slot(name string) word {
@@ -901,6 +831,7 @@ func pass1(in_path string) {
                 }
                 global_names[num_globals] = clone_str(split_var_name)
                 global_sizes[num_globals] = split_var_size
+                map_put(global_map, split_var_name, num_globals)
                 num_globals++
             } else if directive == ".function" || directive == ".func" {
                 if cur_func_idx != 0xFFFF {
@@ -925,6 +856,7 @@ func pass1(in_path string) {
                 func_first_var[cur_func_idx] = num_vars
                 cur_func_code_size = 0
                 reset_cur_vars()
+                map_put(func_map, fn_name, cur_func_idx)
                 if is_entry {
                     entry_func_idx = cur_func_idx
                 }
@@ -1217,6 +1149,10 @@ func assemble(in_path string, out_path string) {
     pending_entry_name = ""
     bin_buf_len = 0
 
+    str_pool_map = map_new(128)
+    global_map = map_new(64)
+    func_map = map_new(64)
+
     for i := word(0); i < MAX_LABELS; i++ {
         label_offsets[i] = 0xFFFF
     }
@@ -1255,6 +1191,7 @@ func get_arg(args_base word, idx word) string {
 }
 
 func main() {
+    op_map = map_new(128)
     init_opcodes()
 
     args := sys_args()

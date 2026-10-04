@@ -3080,22 +3080,23 @@ fn_loop
         beq     fn_found
         pshs    x               ; save node_ptr on S
         ldy     8+2,s           ; Y = search key_ptr
+        ldu     4+2,s           ; U = loop counter (key_len)
         ldx     6,x             ; X = node.key_ptr
-        ldd     4+2,s           ; D = key_len
 fn_cmp_l
+        cmpu    #0
+        beq     fn_cmp_ok
+        leau    -1,u
         lda     ,x+
         cmpa    ,y+
-        bne     fn_cmp_diff
-        subd    #1
-        bne     fn_cmp_l
-* Match!
-        puls    x               ; restore X = node_ptr
-        bra     fn_found
-fn_cmp_diff
-        puls    x               ; restore X = node_ptr
+        beq     fn_cmp_l
+* Differs:
+        puls    x               ; restore node_ptr
 fn_next
         ldx     ,x              ; X = node.next
         bra     fn_loop
+fn_cmp_ok
+        puls    x               ; restore node_ptr
+        bra     fn_found
 
 fn_found
         ldd     2,x             ; D = node.val
@@ -3118,26 +3119,26 @@ op_map_new
         sty     <vm_pc
         pulu    d               ; D = requested buckets
         cmpd    #64
-        bhs     mn_chk128
+        bls     mn_is64
+        cmpd    #128
+        bls     mn_is128
+        cmpd    #256
+        bls     mn_is256
+        cmpd    #512
+        bls     mn_is512
+        ldd     #1024
+        bra     mn_got_b
+mn_is64
         ldd     #64
         bra     mn_got_b
-mn_chk128
-        cmpd    #128
-        bhs     mn_chk256
+mn_is128
         ldd     #128
         bra     mn_got_b
-mn_chk256
-        cmpd    #256
-        bhs     mn_chk512
+mn_is256
         ldd     #256
         bra     mn_got_b
-mn_chk512
-        cmpd    #512
-        bhs     mn_chk1024
+mn_is512
         ldd     #512
-        bra     mn_got_b
-mn_chk1024
-        ldd     #1024
 mn_got_b
         pshs    d               ; 0,s = num_buckets
         aslb
@@ -3191,6 +3192,7 @@ op_map_put
         pulu    x               ; discard key_cap
         pulu    y               ; Y = key_ptr
         pulu    x               ; X = map_ptr
+        stu     <vm_sp          ; save VM stack pointer
         cmpx    #0
         lbeq    mp_null_map
         pshs    y               ; 4,s = key_ptr
@@ -3202,6 +3204,7 @@ op_map_put
         ldd     6,s             ; D = val
         std     2,x             ; node.val = val
         leas    8,s             ; drop stack temps
+        ldu     <vm_sp          ; restore VM stack pointer
         pshu    d               ; push val (for statement POP)
         ldy     <vm_pc
         lbra    dispatch
@@ -3229,12 +3232,13 @@ mp_insert
         ldy     8,s             ; Y = key_ptr
         ldd     4,s             ; D = key_len
         pshs    x               ; save key_copy_ptr
+        tfr     d,u             ; U = loop counter (key_len)
 mp_cp_k
-        cmpd    #0
+        cmpu    #0
         beq     mp_cp_kd
         lda     ,y+
         sta     ,x+
-        subd    #1
+        leau    -1,u
         bra     mp_cp_k
 mp_cp_kd
         clr     ,x              ; null terminator
@@ -3266,11 +3270,13 @@ mp_cp_kd
 * Done! Return val:
         ldd     10,s            ; D = val
         leas    12,s            ; clean up all stack temps
+        ldu     <vm_sp          ; restore VM stack pointer
         pshu    d               ; push val (for statement POP)
         ldy     <vm_pc
         lbra    dispatch
 mp_null_map
         puls    d               ; D = val
+        ldu     <vm_sp          ; restore VM stack pointer
         pshu    d
         ldy     <vm_pc
         lbra    dispatch
@@ -3281,6 +3287,7 @@ op_map_str
         pulu    x               ; discard key_cap
         pulu    y               ; Y = key_ptr
         pulu    x               ; X = map_ptr
+        stu     <vm_sp          ; save VM stack pointer
         cmpx    #0
         lbeq    ms_null_map
 * If key_len == 0:
@@ -3288,6 +3295,7 @@ op_map_str
         bne     ms_not_empty
         clra
         clrb
+        ldu     <vm_sp          ; restore VM stack pointer
         pshu    d               ; Base = 0
         pshu    d               ; Cap = 0
         pshu    d               ; Len = 0
@@ -3304,6 +3312,7 @@ ms_not_empty
         ldy     6,x             ; Y = node.key_ptr
         ldd     4,x             ; D = node.key_len
         leas    6,s             ; drop stack temps
+        ldu     <vm_sp          ; restore VM stack pointer
         pshu    y               ; Base = key_ptr
         pshu    d               ; Cap = key_len
         pshu    d               ; Len = key_len
@@ -3337,12 +3346,13 @@ ms_insert
         ldy     8,s             ; Y = key_ptr
         ldd     4,s             ; D = key_len
         pshs    x               ; save key_copy_ptr
+        tfr     d,u             ; U = loop counter (key_len)
 ms_cp_k
-        cmpd    #0
+        cmpu    #0
         beq     ms_cp_kd
         lda     ,y+
         sta     ,x+
-        subd    #1
+        leau    -1,u
         bra     ms_cp_k
 ms_cp_kd
         clr     ,x              ; null terminator
@@ -3373,6 +3383,7 @@ ms_cp_kd
         ldy     6,u             ; Y = key_copy_ptr
         ldd     4,u             ; D = key_len
         leas    10,s            ; clean up all stack temps
+        ldu     <vm_sp          ; restore VM stack pointer
         pshu    y               ; Base
         pshu    d               ; Cap
         pshu    d               ; Len
@@ -3381,6 +3392,7 @@ ms_cp_kd
 ms_null_map
         clra
         clrb
+        ldu     <vm_sp          ; restore VM stack pointer
         pshu    d
         pshu    d
         pshu    d
