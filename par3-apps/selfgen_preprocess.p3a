@@ -1,8 +1,8 @@
 ;
 ; Starting whole-program compilation (Par3 Backend)
 ; Target architecture: PAR3
-; Output object file: /home/strick/github.com/strickyak/minigolf/par3-apps/selfgen_preprocess.p3a
-; Source files: [/home/strick/github.com/strickyak/minigolf/par3-apps/selfgen_preprocess.par3]
+; Output object file: par3-apps/selfgen_preprocess.p3a
+; Source files: [par3-apps/selfgen_preprocess.par3]
 ;
 
 ; Global Variable Table
@@ -23,6 +23,7 @@
 .global num_protected: word
 .global num_renames: word
 .global num_syms: word
+.global parse_asm_int_val: word
 .global pbuf1: 256
 .global pbuf2: 256
 .global pbuf_active: word
@@ -32,6 +33,8 @@
 .global rename_has_first_char: 256
 .global rename_new: 768
 .global rename_old: 768
+.global split_code_part: slice
+.global split_comment_part: slice
 .global sym_pfx: 2400
 .global sym_pfx_buf: 3200
 .global syms: 2400
@@ -2171,8 +2174,7 @@
     PUSH_0
     CMP_EQ
     JUMP_IF_FALSE .L_endif_127
-; return 0, false
-    PUSH_0
+; return false
     PUSH_FALSE
     RET
 .L_endif_127:
@@ -2200,8 +2202,7 @@
     SLICE_LEN
     CMP_GE
     JUMP_IF_FALSE .L_endif_129
-; return 0, false
-    PUSH_0
+; return false
     PUSH_FALSE
     RET
 .L_endif_129:
@@ -2289,8 +2290,7 @@
     STORE_LOCAL d
     JUMP .L_endif_143
 .L_else_142:
-; return 0, false
-    PUSH_0
+; return false
     PUSH_FALSE
     RET
 .L_endif_143:
@@ -2310,8 +2310,10 @@
     STORE_LOCAL pos
     JUMP .L_for_top_130
 .L_for_exit_131:
-; return val, true
+; parse_asm_int_val = val
     LOAD_LOCAL val
+    STORE_GLOBAL parse_asm_int_val
+; return true
     PUSH_TRUE
     RET
 .L_endif_128:
@@ -2369,8 +2371,7 @@
     SLICE_LEN
     CMP_GE
     JUMP_IF_FALSE .L_endif_151
-; return 0, false
-    PUSH_0
+; return false
     PUSH_FALSE
     RET
 .L_endif_151:
@@ -2458,8 +2459,7 @@
     STORE_LOCAL d
     JUMP .L_endif_165
 .L_else_164:
-; return 0, false
-    PUSH_0
+; return false
     PUSH_FALSE
     RET
 .L_endif_165:
@@ -2479,8 +2479,10 @@
     STORE_LOCAL pos
     JUMP .L_for_top_152
 .L_for_exit_153:
-; return val, true
+; parse_asm_int_val = val
     LOAD_LOCAL val
+    STORE_GLOBAL parse_asm_int_val
+; return true
     PUSH_TRUE
     RET
 .L_endif_150:
@@ -2512,8 +2514,7 @@
 .L_or_true_168:
 .L_or_end_169:
     JUMP_IF_FALSE .L_endif_170
-; return 0, false
-    PUSH_0
+; return false
     PUSH_FALSE
     RET
 .L_endif_170:
@@ -2533,8 +2534,10 @@
     STORE_LOCAL pos
     JUMP .L_for_top_166
 .L_for_exit_167:
-; return val, true
+; parse_asm_int_val = val
     LOAD_LOCAL val
+    STORE_GLOBAL parse_asm_int_val
+; return true
     PUSH_TRUE
     RET
     RET_VOID
@@ -3675,10 +3678,14 @@
 .L_or_true_226:
 .L_or_end_227:
     JUMP_IF_FALSE .L_endif_230
-; return "", line
+; split_code_part = ""
     PUSH_STR ""
+    STORE_GLOBAL split_code_part
+; split_comment_part = line
     LOAD_LOCAL line
-    RET_SLICE
+    STORE_GLOBAL split_comment_part
+; return 
+    RET_VOID
 .L_endif_230:
 ; pos := word(0)
     PUSH_0
@@ -3752,10 +3759,14 @@
     SLICE_LEN
     CMP_GE
     JUMP_IF_FALSE .L_endif_240
-; return s, ""
+; split_code_part = s
     LOAD_LOCAL s
+    STORE_GLOBAL split_code_part
+; split_comment_part = ""
     PUSH_STR ""
-    RET_SLICE
+    STORE_GLOBAL split_comment_part
+; return 
+    RET_VOID
 .L_endif_240:
 ; op_start := pos
     LOAD_LOCAL pos
@@ -3825,10 +3836,14 @@
     SLICE_LEN
     CMP_GE
     JUMP_IF_FALSE .L_endif_249
-; return s, ""
+; split_code_part = s
     LOAD_LOCAL s
+    STORE_GLOBAL split_code_part
+; split_comment_part = ""
     PUSH_STR ""
-    RET_SLICE
+    STORE_GLOBAL split_comment_part
+; return 
+    RET_VOID
 .L_endif_249:
 ; if is_fcc_or_fcs(op)
     LOAD_LOCAL op
@@ -3897,17 +3912,19 @@
     JUMP .L_for_top_254
 .L_for_exit_255:
 .L_endif_251:
-; return s[...], s[...]
+; split_code_part = s[...]
     LOAD_LOCAL s
     PUSH_0
     LOAD_LOCAL pos
     SLICE_SUB
+    STORE_GLOBAL split_code_part
+; split_comment_part = s[...]
     LOAD_LOCAL s
     LOAD_LOCAL pos
     LOAD_LOCAL s
     SLICE_LEN
     SLICE_SUB
-    RET_SLICE
+    STORE_GLOBAL split_comment_part
     RET_VOID
 .endfunction
 
@@ -3916,6 +3933,8 @@
 ; ====================================================================
 .function clear_locals
     .local i: word
+    .local s_name: slice
+    .local s_lbl: slice
     .local _pbuf: word
     .local _tmp_base: word
     .local _tmp_cap: word
@@ -3935,59 +3954,113 @@
     LOAD_GLOBAL num_locals
     CMP_LT
     JUMP_IF_FALSE .L_for3_exit_260
-; if local_name[...].Base != 0
+; s_name := local_name[...]
     ADDR_OF_GLOBAL local_name
     LOAD_LOCAL i
     PUSH_I16 6
     MUL
     ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    STORE_LOCAL s_name
+; if s_name.Base != 0
+    ADDR_OF_LOCAL s_name
     PEEK2
     PUSH_0
     CMP_NE
     JUMP_IF_FALSE .L_endif_261
-; free(local_name[...].Base)
+; free(s_name.Base)
+    ADDR_OF_LOCAL s_name
+    PEEK2
+    BUF_FREE
+; s_name.Base = 0
+    PUSH_0
+    ADDR_OF_LOCAL s_name
+    SWAP
+    POKE2
+; local_name[...] = s_name
+    LOAD_LOCAL s_name
     ADDR_OF_GLOBAL local_name
     LOAD_LOCAL i
     PUSH_I16 6
     MUL
     ADD
-    PEEK2
-    BUF_FREE
-; local_name[...].Base = 0
-    PUSH_0
-    ADDR_OF_GLOBAL local_name
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
     ADD
     SWAP
     POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
 .L_endif_261:
-; if local_lbl[...].Base != 0
+; s_lbl := local_lbl[...]
     ADDR_OF_GLOBAL local_lbl
     LOAD_LOCAL i
     PUSH_I16 6
     MUL
     ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    STORE_LOCAL s_lbl
+; if s_lbl.Base != 0
+    ADDR_OF_LOCAL s_lbl
     PEEK2
     PUSH_0
     CMP_NE
     JUMP_IF_FALSE .L_endif_262
-; free(local_lbl[...].Base)
-    ADDR_OF_GLOBAL local_lbl
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
-    ADD
+; free(s_lbl.Base)
+    ADDR_OF_LOCAL s_lbl
     PEEK2
     BUF_FREE
-; local_lbl[...].Base = 0
+; s_lbl.Base = 0
     PUSH_0
+    ADDR_OF_LOCAL s_lbl
+    SWAP
+    POKE2
+; local_lbl[...] = s_lbl
+    LOAD_LOCAL s_lbl
     ADDR_OF_GLOBAL local_lbl
     LOAD_LOCAL i
     PUSH_I16 6
     MUL
     ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
     SWAP
     POKE2
 .L_endif_262:
@@ -4158,6 +4231,7 @@
     .local pos: word
     .local name: slice
     .local idx: word
+    .local s_lbl: slice
     .local l_str: slice
     .local at_idx: word
     .local ident_start: word
@@ -4269,22 +4343,32 @@
     PUSH_1
     ADD
     STORE_GLOBAL global_inst
-; if local_lbl[...].Base != 0
+; s_lbl := local_lbl[...]
     ADDR_OF_GLOBAL local_lbl
     LOAD_LOCAL idx
     PUSH_I16 6
     MUL
     ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    STORE_LOCAL s_lbl
+; if s_lbl.Base != 0
+    ADDR_OF_LOCAL s_lbl
     PEEK2
     PUSH_0
     CMP_NE
     JUMP_IF_FALSE .L_endif_282
-; free(local_lbl[...].Base)
-    ADDR_OF_GLOBAL local_lbl
-    LOAD_LOCAL idx
-    PUSH_I16 6
-    MUL
-    ADD
+; free(s_lbl.Base)
+    ADDR_OF_LOCAL s_lbl
     PEEK2
     BUF_FREE
 .L_endif_282:
@@ -6184,7 +6268,6 @@
     .local count_raw: slice
     .local count_str: slice
     .local c: word
-    .local ok: word
     .local chunk: word
     .local k: word
     .local code_part: slice
@@ -7117,14 +7200,13 @@
     PUSH_STR " \t\r\n"
     STR_STRIP
     STORE_LOCAL count_str
-; c, ok := parse_asm_int(count_str)
+; if parse_asm_int(count_str)
     LOAD_LOCAL count_str
     CALL parse_asm_int
-    STORE_LOCAL ok
-    STORE_LOCAL c
-; if ok
-    LOAD_LOCAL ok
     JUMP_IF_FALSE .L_else_493
+; c := parse_asm_int_val
+    LOAD_GLOBAL parse_asm_int_val
+    STORE_LOCAL c
 ; if len(lbl) > 0
     LOAD_LOCAL lbl
     SLICE_LEN
@@ -7271,11 +7353,15 @@
 .L_endif_494:
 .L_endif_490:
 .L_endif_485:
-; code_part, comment_part := split_asm_line(line)
+; split_asm_line(line)
     LOAD_LOCAL line
     CALL split_asm_line
-    STORE_LOCAL comment_part
+; code_part := split_code_part
+    LOAD_GLOBAL split_code_part
     STORE_LOCAL code_part
+; comment_part := split_comment_part
+    LOAD_GLOBAL split_comment_part
+    STORE_LOCAL comment_part
 ; code_part = repl_locals(code_part)
     LOAD_LOCAL code_part
     CALL repl_locals
@@ -8640,8 +8726,9 @@
 ; buf_append(bname)
     LOAD_LOCAL bname
     CALL buf_append
-; out_p := strdup(buf_str())
+; out_p := clone_str(buf_str())
     CALL buf_str
+    CALL clone_str
     STORE_LOCAL out_p
 ; preprocess_file(in_p, out_p)
     LOAD_LOCAL in_p

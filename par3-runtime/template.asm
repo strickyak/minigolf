@@ -52,7 +52,7 @@ dp_pad          rmb     1       ; align following buffers to 16-bit word boundar
 pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
 heap_buf        rmb     12288   ; heap buffer for dynamic allocations (12KB)
 line_buf        rmb     256     ; output line buffer for PRINTLN
-globals_buf     rmb     16384   ; storage buffer for global variables (16KB)
+globals_buf     rmb     20480   ; storage buffer for global variables (20KB)
 global_ptrs     rmb     256     ; pointers to each global variable (up to 128 globals)
 dispatch_tbl    rmb     512     ; 256 opcode function pointers
 

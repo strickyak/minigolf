@@ -363,15 +363,17 @@ func strip_char_lit_quotes(s string) string {
     return buf_str()
 }
 
-func parse_asm_int(s string) (word, bool) {
+var parse_asm_int_val word
+
+func parse_asm_int(s string) bool {
     if len(s) == 0 {
-        return 0, false
+        return false
     }
     val := word(0)
     pos := word(0)
     if s[0] == '$' {
         pos = 1
-        if pos >= word(len(s)) { return 0, false }
+        if pos >= word(len(s)) { return false }
         for pos < word(len(s)) {
             c := s[pos]
             d := word(0)
@@ -382,16 +384,17 @@ func parse_asm_int(s string) (word, bool) {
             } else if c >= 'a' && c <= 'f' {
                 d = word(c - 'a' + 10)
             } else {
-                return 0, false
+                return false
             }
             val = (val << 4) | d
             pos++
         }
-        return val, true
+        parse_asm_int_val = val
+        return true
     }
     if len(s) >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') {
         pos = 2
-        if pos >= word(len(s)) { return 0, false }
+        if pos >= word(len(s)) { return false }
         for pos < word(len(s)) {
             c := s[pos]
             d := word(0)
@@ -402,22 +405,24 @@ func parse_asm_int(s string) (word, bool) {
             } else if c >= 'a' && c <= 'f' {
                 d = word(c - 'a' + 10)
             } else {
-                return 0, false
+                return false
             }
             val = (val << 4) | d
             pos++
         }
-        return val, true
+        parse_asm_int_val = val
+        return true
     }
     for pos < word(len(s)) {
         c := s[pos]
         if c < '0' || c > '9' {
-            return 0, false
+            return false
         }
         val = val * 10 + word(c - '0')
         pos++
     }
-    return val, true
+    parse_asm_int_val = val
+    return true
 }
 
 // -----------------------------------------------------------------------------
@@ -574,11 +579,16 @@ func is_local_or_l_label(lbl string) bool {
     return false
 }
 
-func split_asm_line(line string) (string, string) {
+var split_code_part string
+var split_comment_part string
+
+func split_asm_line(line string) {
     s := rstrip(line, "\r\n")
     s_strip := lstrip(s, " \t")
     if len(s) == 0 || s_strip[0] == '*' || s_strip[0] == ';' {
-        return "", line
+        split_code_part = ""
+        split_comment_part = line
+        return
     }
 
     pos := word(0)
@@ -592,7 +602,9 @@ func split_asm_line(line string) (string, string) {
         pos++
     }
     if pos >= word(len(s)) {
-        return s, ""
+        split_code_part = s
+        split_comment_part = ""
+        return
     }
 
     op_start := pos
@@ -605,7 +617,9 @@ func split_asm_line(line string) (string, string) {
         pos++
     }
     if pos >= word(len(s)) {
-        return s, ""
+        split_code_part = s
+        split_comment_part = ""
+        return
     }
 
     if is_fcc_or_fcs(op) {
@@ -622,7 +636,8 @@ func split_asm_line(line string) (string, string) {
         }
     }
 
-    return s[0:pos], s[pos:word(len(s))]
+    split_code_part = s[0:pos]
+    split_comment_part = s[pos:word(len(s))]
 }
 
 // -----------------------------------------------------------------------------
@@ -630,13 +645,17 @@ func split_asm_line(line string) (string, string) {
 // -----------------------------------------------------------------------------
 func clear_locals() {
     for i := word(0); i < num_locals; i++ {
-        if local_name[i].Base != 0 {
-            free(local_name[i].Base)
-            local_name[i].Base = 0
+        s_name := local_name[i]
+        if s_name.Base != 0 {
+            free(s_name.Base)
+            s_name.Base = 0
+            local_name[i] = s_name
         }
-        if local_lbl[i].Base != 0 {
-            free(local_lbl[i].Base)
-            local_lbl[i].Base = 0
+        s_lbl := local_lbl[i]
+        if s_lbl.Base != 0 {
+            free(s_lbl.Base)
+            s_lbl.Base = 0
+            local_lbl[i] = s_lbl
         }
     }
     num_locals = 0
@@ -672,8 +691,9 @@ func repl_locals(code string) string {
             idx := find_local(name)
             if idx < 0xFFFF && local_def[idx] {
                 global_inst++
-                if local_lbl[idx].Base != 0 {
-                    free(local_lbl[idx].Base)
+                s_lbl := local_lbl[idx]
+                if s_lbl.Base != 0 {
+                    free(s_lbl.Base)
                 }
                 local_lbl[idx] = format_local_label(global_inst, name)
                 local_def[idx] = true
@@ -1142,8 +1162,8 @@ func transform_line(out_h word, line string) {
                 count_raw = line[comma + 1 : word(len(line))]
             }
             count_str := strip(count_raw, " \t\r\n")
-            c, ok := parse_asm_int(count_str)
-            if ok {
+            if parse_asm_int(count_str) {
+                c := parse_asm_int_val
                 if len(lbl) > 0 {
                     file_write(out_h, lbl)
                     file_write(out_h, " ")
@@ -1178,7 +1198,9 @@ func transform_line(out_h word, line string) {
     }
 
     // 12. Split code and comment
-    code_part, comment_part := split_asm_line(line)
+    split_asm_line(line)
+    code_part := split_code_part
+    comment_part := split_comment_part
 
     // 13. Replace local @ labels in code_part
     code_part = repl_locals(code_part)
@@ -1421,7 +1443,7 @@ func main() {
             buf_append(out_dir)
             buf_append("/")
             buf_append(bname)
-            out_p := strdup(buf_str())
+            out_p := clone_str(buf_str())
             preprocess_file(in_p, out_p)
         }
         sys_exit(0)

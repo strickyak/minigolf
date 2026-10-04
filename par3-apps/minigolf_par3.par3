@@ -1,13 +1,13 @@
 package main
 
 // Limits for 64K Process Space
-const MAX_CONSTS      = 64
-const MAX_GLOBALS     = 64
-const MAX_FUNCS       = 64
-const MAX_PARAMS      = 64
-const MAX_LOCALS      = 256
-const MAX_STRING_POOL = 3072
-const MAX_STRINGS     = 256
+const MAX_CONSTS      = 96
+const MAX_GLOBALS     = 96
+const MAX_FUNCS       = 96
+const MAX_PARAMS      = 96
+const MAX_LOCALS      = 512
+const MAX_STRING_POOL = 4096
+const MAX_STRINGS     = 384
 
 // Token Kinds
 const TOK_EOF     = 0
@@ -352,11 +352,20 @@ func add_param(name string, kind byte, size word) {
 }
 
 func add_local(name string, kind byte, size word, elem_size byte) {
+    pname := pool_str(name)
+    if num_funcs > 0 {
+        start := func_first_local[num_funcs - 1]
+        for i := start; i < num_locals; i++ {
+            if local_names[i] == pname {
+                return
+            }
+        }
+    }
     if num_locals >= MAX_LOCALS {
         println("ERROR: Exceeded MAX_LOCALS")
         sys_exit(1)
     }
-    local_names[num_locals] = pool_str(name)
+    local_names[num_locals] = pname
     local_kinds[num_locals] = kind
     local_sizes[num_locals] = size
     local_elem_sizes[num_locals] = elem_size
@@ -1057,9 +1066,7 @@ func run_pass1() {
                 add_local("_tmp_cap", KIND_SCALAR, 2, 2)
                 add_local("_tmp_len", KIND_SCALAR, 2, 2)
                 add_local("_tmp_addr", KIND_SCALAR, 2, 2)
-                l_count += 5
-
-                func_num_locals[fidx] = l_count
+                func_num_locals[fidx] = num_locals - func_first_local[fidx]
             } else {
                 func_num_locals[fidx] = 0
             }
