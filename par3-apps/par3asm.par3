@@ -1,14 +1,14 @@
 package main
 
 // Limits for 64K VM Process Space
-const MAX_GLOBALS     = 64
-const MAX_FUNCS       = 64
+const MAX_GLOBALS     = 96
+const MAX_FUNCS       = 80
 const MAX_VARS        = 1024
 const MAX_FUNC_VARS   = 64
-const MAX_LABELS      = 1024
-const MAX_STRING_POOL = 3072
-const MAX_STRINGS     = 256
-const MAX_NAME_POOL   = 1536
+const MAX_LABELS      = 2048
+const MAX_STRING_POOL = 4096
+const MAX_STRINGS     = 384
+const MAX_NAME_POOL   = 2048
 const MAX_VAR_NAME_POOL = 512
 const NUM_OPCODES     = 139
 
@@ -783,7 +783,7 @@ func bin_write_word(w word) {
 
 func bin_flush() {
     if bin_buf_len > 0 {
-        _ = file_write(out_file_h, word(&bin_buf[0]), bin_buf_len)
+        file_write(out_file_h, word(&bin_buf[0]), bin_buf_len)
         bin_buf_len = 0
     }
 }

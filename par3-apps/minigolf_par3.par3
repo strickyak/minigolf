@@ -987,13 +987,24 @@ func run_pass1() {
                             if cur_str == ":=" {
                                 next_tok()
                                 if cur_str == "file_readline" {
-                                    add_local(lname, KIND_SLICE, 6, 0)
-                                    add_local(lname2, KIND_SCALAR, 2, 0)
+                                    if lname != "_" {
+                                        add_local(lname, KIND_SLICE, 6, 0)
+                                        l_count++
+                                    }
+                                    if lname2 != "_" {
+                                        add_local(lname2, KIND_SCALAR, 2, 0)
+                                        l_count++
+                                    }
                                 } else {
-                                    add_local(lname, KIND_SCALAR, 2, 0)
-                                    add_local(lname2, KIND_SCALAR, 2, 0)
+                                    if lname != "_" {
+                                        add_local(lname, KIND_SCALAR, 2, 0)
+                                        l_count++
+                                    }
+                                    if lname2 != "_" {
+                                        add_local(lname2, KIND_SCALAR, 2, 0)
+                                        l_count++
+                                    }
                                 }
-                                l_count += 2
                             }
                         } else if cur_str == ":=" {
                             next_tok() // skip :=
@@ -1052,8 +1063,10 @@ func run_pass1() {
                                     }
                                 }
                             }
-                            add_local(lname, lkind, lsz, 0)
-                            l_count++
+                            if lname != "_" {
+                                add_local(lname, lkind, lsz, 0)
+                                l_count++
+                            }
                         }
                     } else {
                         next_tok()
@@ -1921,8 +1934,16 @@ func compile_stmt() {
                 expect("(")
                 nargs := compile_arg_list()
                 emit_call(fn_name, nargs)
-                emit2("    STORE_LOCAL ", name2)
-                emit2("    STORE_LOCAL ", name)
+                if name2 == "_" {
+                    emit("    POP")
+                } else {
+                    emit2("    STORE_LOCAL ", name2)
+                }
+                if name == "_" {
+                    emit("    POP")
+                } else {
+                    emit2("    STORE_LOCAL ", name)
+                }
                 if cur_str == ";" { next_tok() }
                 return
             }
@@ -1954,8 +1975,16 @@ func compile_stmt() {
 
         if cur_str == ":=" {
             next_tok()
-            compile_expr(0)
-            emit2("    STORE_LOCAL ", name)
+            rk := compile_expr(0)
+            if name == "_" {
+                if rk == KIND_SLICE {
+                    emit("    POP_SLICE")
+                } else {
+                    emit("    POP")
+                }
+            } else {
+                emit2("    STORE_LOCAL ", name)
+            }
             if cur_str == ";" { next_tok() }
             return
         }
@@ -2092,10 +2121,16 @@ func compile_stmt() {
                     emit2("    LOAD_GLOBAL ", name)
                 }
             }
-            compile_expr(0)
+            rk := compile_expr(0)
             if op == "+=" { emit("    ADD") } else if op == "-=" { emit("    SUB") }
 
-            if li != 0xFFFF || pi != 0xFFFF {
+            if name == "_" {
+                if rk == KIND_SLICE {
+                    emit("    POP_SLICE")
+                } else {
+                    emit("    POP")
+                }
+            } else if li != 0xFFFF || pi != 0xFFFF {
                 emit2("    STORE_LOCAL ", name)
             } else {
                 emit2("    STORE_GLOBAL ", name)

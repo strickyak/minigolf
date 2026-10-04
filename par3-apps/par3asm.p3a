@@ -1,7 +1,7 @@
 ;
 ; Starting whole-program compilation (Par3 Backend)
 ; Target architecture: PAR3
-; Output object file: 
+; Output object file: par3-apps/par3asm.p3a
 ; Source files: [par3-apps/par3asm.par3]
 ;
 
@@ -14,18 +14,18 @@
 .global entry_func_idx: word
 .global fn_var_names: 384
 .global fn_var_slots: 64
-.global func_arg_count: 64
-.global func_code_offset: 128
-.global func_code_size: 128
-.global func_first_var: 128
-.global func_frame_size: 128
-.global func_local_count: 64
-.global func_names: 384
-.global func_var_offset: 128
-.global global_names: 384
-.global global_sizes: 128
-.global label_offsets: 2048
-.global name_pool: 1536
+.global func_arg_count: 80
+.global func_code_offset: 160
+.global func_code_size: 160
+.global func_first_var: 160
+.global func_frame_size: 160
+.global func_local_count: 80
+.global func_names: 480
+.global func_var_offset: 160
+.global global_names: 576
+.global global_sizes: 192
+.global label_offsets: 4096
+.global name_pool: 2048
 .global name_pool_len: word
 .global num_cur_vars: word
 .global num_funcs: word
@@ -47,9 +47,9 @@
 .global split_second: slice
 .global split_var_name: slice
 .global split_var_size: word
-.global str_lengths: 512
-.global str_offsets: 512
-.global str_pool: 3072
+.global str_lengths: 768
+.global str_offsets: 768
+.global str_pool: 4096
 .global str_pool_len: word
 .global total_code_size: word
 .global unescape_buf: 256
@@ -392,7 +392,7 @@
     LOAD_GLOBAL name_pool_len
     LOAD_LOCAL slen
     ADD
-    PUSH_I16 1536
+    PUSH_I16 2048
     CMP_GT
     JUMP_IF_FALSE .L_endif_8
 ; println("Error: MAX_NAME_POOL exceeded")
@@ -2729,7 +2729,7 @@
     ADD
     PUSH_1
     ADD
-    PUSH_I16 3072
+    PUSH_I16 4096
     CMP_GT
     JUMP_IF_FALSE .L_endif_222
 ; println("Error: MAX_STRING_POOL exceeded")
@@ -2780,7 +2780,7 @@
 .L_endif_222:
 ; if num_strings >= MAX_STRINGS
     LOAD_GLOBAL num_strings
-    PUSH_I16 256
+    PUSH_I16 384
     CMP_GE
     JUMP_IF_FALSE .L_endif_223
 ; println("Error: MAX_STRINGS exceeded")
@@ -4643,7 +4643,7 @@
     STORE_LOCAL lid
 ; if lid < MAX_LABELS
     LOAD_LOCAL lid
-    PUSH_I16 1024
+    PUSH_I16 2048
     CMP_LT
     JUMP_IF_FALSE .L_endif_281
 ; return label_offsets[...]
@@ -4974,7 +4974,7 @@
     PUSH_0
     CMP_GT
     JUMP_IF_FALSE .L_endif_302
-; _ = file_write(out_file_h, word(&bin_buf[...]), bin_buf_len)
+; file_write(out_file_h, word(&bin_buf[...]), bin_buf_len)
     LOAD_GLOBAL out_file_h
     ADDR_OF_GLOBAL bin_buf
     PUSH_0
@@ -5458,7 +5458,7 @@
     STORE_LOCAL lid
 ; if lid >= MAX_LABELS
     LOAD_LOCAL lid
-    PUSH_I16 1024
+    PUSH_I16 2048
     CMP_GE
     JUMP_IF_FALSE .L_endif_325
 ; println("Error: MAX_LABELS exceeded")
@@ -5565,7 +5565,7 @@
     CALL split_name_and_size
 ; if num_globals >= MAX_GLOBALS
     LOAD_GLOBAL num_globals
-    PUSH_I8 64
+    PUSH_I8 96
     CMP_GE
     JUMP_IF_FALSE .L_endif_330
 ; println("Error: MAX_GLOBALS exceeded")
@@ -5748,7 +5748,7 @@
 .L_endif_338:
 ; if num_funcs >= MAX_FUNCS
     LOAD_GLOBAL num_funcs
-    PUSH_I8 64
+    PUSH_I8 80
     CMP_GE
     JUMP_IF_FALSE .L_endif_339
 ; println("Error: MAX_FUNCS exceeded")
@@ -8341,7 +8341,7 @@
     STORE_LOCAL i
 .L_for3_top_451:
     LOAD_LOCAL i
-    PUSH_I16 1024
+    PUSH_I16 2048
     CMP_LT
     JUMP_IF_FALSE .L_for3_exit_453
 ; label_offsets[...] = 65535
