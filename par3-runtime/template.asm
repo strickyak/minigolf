@@ -1655,7 +1655,7 @@ cic_check
         cmpy    #0
         bne     cic_custom
 * Default whitespace: SP, TAB, LF, CR
-        cmpa    #' '
+        cmpa    #$20
         beq     cic_yes
         cmpa    #9
         beq     cic_yes
@@ -2454,7 +2454,7 @@ pl_next_elem
         subd    #1
         std     <vm_len
         beq     pl_done         ; all elements formatted
-        lda     #' '            ; add space between arguments
+        lda     #$20            ; add space between arguments
         sta     ,y+
         bra     pl_elem_loop
 
@@ -2845,7 +2845,7 @@ op_sys_args
         cmpx    #0
         lbeq    sa_empty
 
-        ; Pass 1: count number of tokens
+* Pass 1: count number of tokens
         clra
         clrb
         pshs    d               ; 0,s = token count N
@@ -2853,17 +2853,17 @@ sa_scan_lead
         lda     ,x
         cmpa    #$0D
         beq     sa_count_done
-        cmpa    #' '
+        cmpa    #$20
         beq     sa_skip_space
         cmpa    #9
         beq     sa_skip_space
-        ; Found token start!
+* Found token start!
         inc     1,s
 sa_in_tok
         lda     ,x+
         cmpa    #$0D
         beq     sa_count_done
-        cmpa    #' '
+        cmpa    #$20
         beq     sa_scan_lead
         cmpa    #9
         beq     sa_scan_lead
@@ -2885,23 +2885,23 @@ sa_count_done
         pshs    x               ; 0,s = list_buf (fixed base), 2,s = N, 4,s = N
         pshs    x               ; 0,s = list_buf write ptr
 
-        ; Pass 2: populate list_buf with string slices
+* Pass 2: populate list_buf with string slices
         ldx     <param_ptr      ; reset X to param string
 sa_tok2_lead
         lda     ,x
         cmpa    #$0D
         beq     sa_tok_finish
-        cmpa    #' '
+        cmpa    #$20
         beq     sa_skip2
         cmpa    #9
         beq     sa_skip2
-        ; Start of token at X
+* Start of token at X
         tfr     x,y             ; Y = start of token
 sa_tok2_end
         lda     ,x+
         cmpa    #$0D
         beq     sa_tok2_found
-        cmpa    #' '
+        cmpa    #$20
         beq     sa_tok2_found
         cmpa    #9
         beq     sa_tok2_found

@@ -268,11 +268,12 @@ chd /dd
 build_img --deep /dd/Red/MODS /dd/Red/deep65280.img
 
 echo === STAGE RED: Recompiling Par3 tools ===
+selfgen_preprocess /dd/SRC/template.asm /dd/Red/template.prep.asm
 minigolf_par3 /dd/SRC/par3pack.par3 /dd/Red/par3pack.p3a
 par3asm /dd/Red/par3pack.p3a -o /dd/Red/par3pack.p3p
 par3pack /dd/Red/par3pack.p3p par3pack /dd/Red
 chd /dd/Red
-asm #48k /dd/SRC/template.asm u -o=/dd/Red/CMDS/par3pack
+asm #48k template.prep.asm u -o=/dd/Red/CMDS/par3pack
 attr /dd/Red/CMDS/par3pack e pe
 
 chd /dd
@@ -280,7 +281,7 @@ minigolf_par3 /dd/SRC/build_img.par3 /dd/Red/build_img.p3a
 par3asm /dd/Red/build_img.p3a -o /dd/Red/build_img.p3p
 par3pack /dd/Red/build_img.p3p build_img /dd/Red
 chd /dd/Red
-asm #48k /dd/SRC/template.asm u -o=/dd/Red/CMDS/build_img
+asm #48k template.prep.asm u -o=/dd/Red/CMDS/build_img
 attr /dd/Red/CMDS/build_img e pe
 
 chd /dd
@@ -288,7 +289,7 @@ minigolf_par3 /dd/SRC/selfgen_preprocess.par3 /dd/Red/selfgen_preprocess.p3a
 par3asm /dd/Red/selfgen_preprocess.p3a -o /dd/Red/selfgen_preprocess.p3p
 par3pack /dd/Red/selfgen_preprocess.p3p selfgen_preprocess /dd/Red
 chd /dd/Red
-asm #48k /dd/SRC/template.asm u -o=/dd/Red/CMDS/selfgen_preprocess
+asm #48k template.prep.asm u -o=/dd/Red/CMDS/selfgen_preprocess
 attr /dd/Red/CMDS/selfgen_preprocess e pe
 
 chd /dd
@@ -296,7 +297,7 @@ minigolf_par3 /dd/SRC/par3asm.par3 /dd/Red/par3asm.p3a
 par3asm /dd/Red/par3asm.p3a -o /dd/Red/par3asm.p3p
 par3pack /dd/Red/par3asm.p3p par3asm /dd/Red
 chd /dd/Red
-asm #48k /dd/SRC/template.asm u -o=/dd/Red/CMDS/par3asm
+asm #48k template.prep.asm u -o=/dd/Red/CMDS/par3asm
 attr /dd/Red/CMDS/par3asm e pe
 
 chd /dd
@@ -304,7 +305,7 @@ minigolf_par3 /dd/SRC/minigolf_par3.par3 /dd/Red/minigolf_par3.p3a
 par3asm /dd/Red/minigolf_par3.p3a -o /dd/Red/minigolf_par3.p3p
 par3pack /dd/Red/minigolf_par3.p3p minigolf_par3 /dd/Red
 chd /dd/Red
-asm #48k /dd/SRC/template.asm u -o=/dd/Red/CMDS/minigolf_par3
+asm #48k template.prep.asm u -o=/dd/Red/CMDS/minigolf_par3
 attr /dd/Red/CMDS/minigolf_par3 e pe
 
 copy /dd/CMDS/asm /dd/Red/CMDS/asm
@@ -379,11 +380,12 @@ chd /dd
 build_img --deep /dd/Green/MODS /dd/Green/deep65280.img
 
 echo === STAGE GREEN: Recompiling Par3 tools ===
+selfgen_preprocess /dd/SRC/template.asm /dd/Green/template.prep.asm
 minigolf_par3 /dd/SRC/par3pack.par3 /dd/Green/par3pack.p3a
 par3asm /dd/Green/par3pack.p3a -o /dd/Green/par3pack.p3p
 par3pack /dd/Green/par3pack.p3p par3pack /dd/Green
 chd /dd/Green
-asm #48k /dd/SRC/template.asm u -o=/dd/Green/CMDS/par3pack
+asm #48k template.prep.asm u -o=/dd/Green/CMDS/par3pack
 attr /dd/Green/CMDS/par3pack e pe
 
 chd /dd
@@ -391,7 +393,7 @@ minigolf_par3 /dd/SRC/build_img.par3 /dd/Green/build_img.p3a
 par3asm /dd/Green/build_img.p3a -o /dd/Green/build_img.p3p
 par3pack /dd/Green/build_img.p3p build_img /dd/Green
 chd /dd/Green
-asm #48k /dd/SRC/template.asm u -o=/dd/Green/CMDS/build_img
+asm #48k template.prep.asm u -o=/dd/Green/CMDS/build_img
 attr /dd/Green/CMDS/build_img e pe
 
 chd /dd
@@ -399,7 +401,7 @@ minigolf_par3 /dd/SRC/selfgen_preprocess.par3 /dd/Green/selfgen_preprocess.p3a
 par3asm /dd/Green/selfgen_preprocess.p3a -o /dd/Green/selfgen_preprocess.p3p
 par3pack /dd/Green/selfgen_preprocess.p3p selfgen_preprocess /dd/Green
 chd /dd/Green
-asm #48k /dd/SRC/template.asm u -o=/dd/Green/CMDS/selfgen_preprocess
+asm #48k template.prep.asm u -o=/dd/Green/CMDS/selfgen_preprocess
 attr /dd/Green/CMDS/selfgen_preprocess e pe
 
 chd /dd
@@ -407,7 +409,7 @@ minigolf_par3 /dd/SRC/par3asm.par3 /dd/Green/par3asm.p3a
 par3asm /dd/Green/par3asm.p3a -o /dd/Green/par3asm.p3p
 par3pack /dd/Green/par3asm.p3p par3asm /dd/Green
 chd /dd/Green
-asm #48k /dd/SRC/template.asm u -o=/dd/Green/CMDS/par3asm
+asm #48k template.prep.asm u -o=/dd/Green/CMDS/par3asm
 attr /dd/Green/CMDS/par3asm e pe
 
 chd /dd
@@ -415,7 +417,7 @@ minigolf_par3 /dd/SRC/minigolf_par3.par3 /dd/Green/minigolf_par3.p3a
 par3asm /dd/Green/minigolf_par3.p3a -o /dd/Green/minigolf_par3.p3p
 par3pack /dd/Green/minigolf_par3.p3p minigolf_par3 /dd/Green
 chd /dd/Green
-asm #48k /dd/SRC/template.asm u -o=/dd/Green/CMDS/minigolf_par3
+asm #48k template.prep.asm u -o=/dd/Green/CMDS/minigolf_par3
 attr /dd/Green/CMDS/minigolf_par3 e pe
 
 copy /dd/Red/CMDS/asm /dd/Green/CMDS/asm
@@ -490,11 +492,12 @@ chd /dd
 build_img --deep /dd/Blue/MODS /dd/Blue/deep65280.img
 
 echo === STAGE BLUE: Recompiling Par3 tools ===
+selfgen_preprocess /dd/SRC/template.asm /dd/Blue/template.prep.asm
 minigolf_par3 /dd/SRC/par3pack.par3 /dd/Blue/par3pack.p3a
 par3asm /dd/Blue/par3pack.p3a -o /dd/Blue/par3pack.p3p
 par3pack /dd/Blue/par3pack.p3p par3pack /dd/Blue
 chd /dd/Blue
-asm #48k /dd/SRC/template.asm u -o=/dd/Blue/CMDS/par3pack
+asm #48k template.prep.asm u -o=/dd/Blue/CMDS/par3pack
 attr /dd/Blue/CMDS/par3pack e pe
 
 chd /dd
@@ -502,7 +505,7 @@ minigolf_par3 /dd/SRC/build_img.par3 /dd/Blue/build_img.p3a
 par3asm /dd/Blue/build_img.p3a -o /dd/Blue/build_img.p3p
 par3pack /dd/Blue/build_img.p3p build_img /dd/Blue
 chd /dd/Blue
-asm #48k /dd/SRC/template.asm u -o=/dd/Blue/CMDS/build_img
+asm #48k template.prep.asm u -o=/dd/Blue/CMDS/build_img
 attr /dd/Blue/CMDS/build_img e pe
 
 chd /dd
@@ -510,7 +513,7 @@ minigolf_par3 /dd/SRC/selfgen_preprocess.par3 /dd/Blue/selfgen_preprocess.p3a
 par3asm /dd/Blue/selfgen_preprocess.p3a -o /dd/Blue/selfgen_preprocess.p3p
 par3pack /dd/Blue/selfgen_preprocess.p3p selfgen_preprocess /dd/Blue
 chd /dd/Blue
-asm #48k /dd/SRC/template.asm u -o=/dd/Blue/CMDS/selfgen_preprocess
+asm #48k template.prep.asm u -o=/dd/Blue/CMDS/selfgen_preprocess
 attr /dd/Blue/CMDS/selfgen_preprocess e pe
 
 chd /dd
@@ -518,7 +521,7 @@ minigolf_par3 /dd/SRC/par3asm.par3 /dd/Blue/par3asm.p3a
 par3asm /dd/Blue/par3asm.p3a -o /dd/Blue/par3asm.p3p
 par3pack /dd/Blue/par3asm.p3p par3asm /dd/Blue
 chd /dd/Blue
-asm #48k /dd/SRC/template.asm u -o=/dd/Blue/CMDS/par3asm
+asm #48k template.prep.asm u -o=/dd/Blue/CMDS/par3asm
 attr /dd/Blue/CMDS/par3asm e pe
 
 chd /dd
@@ -526,7 +529,7 @@ minigolf_par3 /dd/SRC/minigolf_par3.par3 /dd/Blue/minigolf_par3.p3a
 par3asm /dd/Blue/minigolf_par3.p3a -o /dd/Blue/minigolf_par3.p3p
 par3pack /dd/Blue/minigolf_par3.p3p minigolf_par3 /dd/Blue
 chd /dd/Blue
-asm #48k /dd/SRC/template.asm u -o=/dd/Blue/CMDS/minigolf_par3
+asm #48k template.prep.asm u -o=/dd/Blue/CMDS/minigolf_par3
 attr /dd/Blue/CMDS/minigolf_par3 e pe
 
 * ====================================================================
@@ -536,6 +539,9 @@ echo === VERIFICATION: Comparing Green vs Blue Boot Images ===
 chx /dd/CMDS
 chd /dd
 cmp /dd/Green/deep65280.img /dd/Blue/deep65280.img
+
+echo === VERIFICATION: Comparing Green vs Blue Preprocessed Template ===
+cmp /dd/Green/template.prep.asm /dd/Blue/template.prep.asm
 
 echo === VERIFICATION: Comparing Green vs Blue Command Binaries ===
 cmp /dd/Green/CMDS/minigolf_par3 /dd/Blue/CMDS/minigolf_par3
