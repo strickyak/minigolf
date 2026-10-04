@@ -3,7 +3,6 @@ package main
 // Constants
 const MAX_SYMS      = 400
 const MAX_RENAMES   = 128
-const MAX_PROTECTED = 256
 const MAX_FILES     = 48
 const MAX_LOCALS    = 32
 const MAX_DEFINES   = 16
@@ -13,9 +12,14 @@ var define_sym [MAX_DEFINES]string
 var define_val [MAX_DEFINES]string
 var num_defines word
 
-// Protected symbol table
-var protected_syms [MAX_PROTECTED]string
-var num_protected  word
+// Maps
+var protected_map   word
+var defined_sym_map word
+var pfx_count_map   word
+var rename_map      word
+
+// Buffer for case normalization
+var upper_buf [64]byte
 
 // Defined symbols in Pass 1
 var syms     [MAX_SYMS]string
@@ -29,10 +33,8 @@ var prefixes [MAX_SYMS]string
 var num_pfx  word
 
 // Colliding renames for Pass 2 (parallel arrays)
-var rename_old  [MAX_RENAMES]string
 var rename_new  [MAX_RENAMES]string
 var num_renames word
-var rename_has_first_char [256]bool
 var min_rename_len word
 
 // Group file list
@@ -157,59 +159,18 @@ func is_fcc_or_fcs(op string) bool {
     return false
 }
 
-func str_case_cmp(s string, upper_s string) word {
-    l1 := word(len(s))
-    l2 := word(len(upper_s))
-    min_l := l1
-    if l2 < min_l {
-        min_l = l2
-    }
-    for i := word(0); i < min_l; i++ {
-        c1 := toupper(s[i])
-        c2 := upper_s[i]
-        if c1 < c2 {
-            return 0xFFFF
-        }
-        if c1 > c2 {
-            return 1
-        }
-    }
-    if l1 == l2 {
-        return 0
-    }
-    if l1 < l2 {
-        return 0xFFFF
-    }
-    return 1
-}
-
-func to_upper_str(s string) string {
-    if len(s) == 0 {
-        return ""
-    }
-    p := alloc(word(len(s)))
-    for i := word(0); i < word(len(s)); i++ {
-        pokeb(p + i, toupper(s[i]))
-    }
-    var res string
-    res.Base = p
-    res.Cap = word(len(s))
-    res.Len = word(len(s))
-    return res
-}
-
-func upper8(s string) string {
+func to_upper_buf(s string) string {
     max_len := word(len(s))
-    if max_len > 8 {
-        max_len = 8
+    if max_len > 63 {
+        max_len = 63
     }
-    p := alloc(max_len)
+    base := word(&upper_buf[0])
     for i := word(0); i < max_len; i++ {
-        pokeb(p + i, toupper(s[i]))
+        pokeb(base + i, toupper(s[i]))
     }
     var res string
-    res.Base = p
-    res.Cap = max_len
+    res.Base = base
+    res.Cap = 64
     res.Len = max_len
     return res
 }
@@ -428,18 +389,8 @@ func parse_asm_int(s string) bool {
 // -----------------------------------------------------------------------------
 // Protected Symbols
 // -----------------------------------------------------------------------------
-func add_protected_lit(sym string) {
-    if num_protected < MAX_PROTECTED {
-        protected_syms[num_protected] = sym
-        num_protected++
-    }
-}
-
-func add_protected_defs(sym string) {
-    if num_protected < MAX_PROTECTED {
-        protected_syms[num_protected] = to_upper_str(sym)
-        num_protected++
-    }
+func add_protected(sym string) {
+    map_put(protected_map, to_upper_buf(sym), 1)
 }
 
 func add_define(d_str string) {
@@ -459,62 +410,25 @@ func add_define(d_str string) {
     define_sym[num_defines] = clone_str(sym)
     define_val[num_defines] = clone_str(val)
     num_defines++
-    add_protected_defs(sym)
+    add_protected(sym)
 }
 
 func load_default_protected() {
-    add_protected_lit("A"); add_protected_lit("B"); add_protected_lit("CC"); add_protected_lit("D")
-    add_protected_lit("DP"); add_protected_lit("E"); add_protected_lit("F"); add_protected_lit("W")
-    add_protected_lit("X"); add_protected_lit("Y"); add_protected_lit("U"); add_protected_lit("S")
-    add_protected_lit("PC"); add_protected_lit("PCR"); add_protected_lit("EQU"); add_protected_lit("SET")
-    add_protected_lit("RMB"); add_protected_lit("FCB"); add_protected_lit("FDB"); add_protected_lit("FQB")
-    add_protected_lit("FCC"); add_protected_lit("FCS"); add_protected_lit("USE"); add_protected_lit("NAM")
-    add_protected_lit("TTL"); add_protected_lit("MOD"); add_protected_lit("EMOD"); add_protected_lit("END")
-    add_protected_lit("ORG"); add_protected_lit("IFEQ"); add_protected_lit("IFNE"); add_protected_lit("IFGT")
-    add_protected_lit("IFGE"); add_protected_lit("IFLT"); add_protected_lit("IFLE"); add_protected_lit("IFP1")
-    add_protected_lit("IFDEF"); add_protected_lit("IFNDF"); add_protected_lit("IFNDEF"); add_protected_lit("ELSE")
-    add_protected_lit("ENDC"); add_protected_lit("ENDIF")
-}
-
-func sort_protected() {
-    for i := word(1); i < num_protected; i++ {
-        key := protected_syms[i]
-        j := i
-        for j > 0 && strcmp(protected_syms[j-1], key) == 1 {
-            protected_syms[j] = protected_syms[j-1]
-            j--
-        }
-        protected_syms[j] = key
-    }
-    // Remove duplicates
-    if num_protected > 1 {
-        wr := word(1)
-        for rd := word(1); rd < num_protected; rd++ {
-            if protected_syms[rd] != protected_syms[wr-1] {
-                protected_syms[wr] = protected_syms[rd]
-                wr++
-            }
-        }
-        num_protected = wr
-    }
+    add_protected("A"); add_protected("B"); add_protected("CC"); add_protected("D")
+    add_protected("DP"); add_protected("E"); add_protected("F"); add_protected("W")
+    add_protected("X"); add_protected("Y"); add_protected("U"); add_protected("S")
+    add_protected("PC"); add_protected("PCR"); add_protected("EQU"); add_protected("SET")
+    add_protected("RMB"); add_protected("FCB"); add_protected("FDB"); add_protected("FQB")
+    add_protected("FCC"); add_protected("FCS"); add_protected("USE"); add_protected("NAM")
+    add_protected("TTL"); add_protected("MOD"); add_protected("EMOD"); add_protected("END")
+    add_protected("ORG"); add_protected("IFEQ"); add_protected("IFNE"); add_protected("IFGT")
+    add_protected("IFGE"); add_protected("IFLT"); add_protected("IFLE"); add_protected("IFP1")
+    add_protected("IFDEF"); add_protected("IFNDF"); add_protected("IFNDEF"); add_protected("ELSE")
+    add_protected("ENDC"); add_protected("ENDIF")
 }
 
 func is_protected(sym string) bool {
-    low := word(0)
-    high := num_protected
-    for low < high {
-        mid := (low + high) / 2
-        cmp := str_case_cmp(sym, protected_syms[mid])
-        if cmp == 0 {
-            return true
-        }
-        if cmp == 0xFFFF {
-            high = mid
-        } else {
-            low = mid + 1
-        }
-    }
-    return false
+    return map_get(protected_map, to_upper_buf(sym)) != 0xFFFF
 }
 
 func load_defs(defs_path string) {
@@ -531,12 +445,11 @@ func load_defs(defs_path string) {
         line = rstrip(line, "\r\n")
         lbl := extract_col0_label(line)
         if len(lbl) > 0 && !is_local_or_l_label(lbl) {
-            add_protected_defs(lbl)
+            add_protected(lbl)
         }
         free(raw_b)
     }
     file_close(h)
-    sort_protected()
 }
 
 // -----------------------------------------------------------------------------
@@ -766,14 +679,13 @@ func store_upper8(idx word, s string) string {
 }
 
 func add_defined_symbol(lbl string) {
-    for i := word(0); i < num_syms; i++ {
-        if syms[i] == lbl {
-            return
-        }
+    if map_get(defined_sym_map, lbl) != 0xFFFF {
+        return
     }
     if num_syms < MAX_SYMS {
         syms[num_syms] = clone_str(lbl)
         sym_pfx[num_syms] = store_upper8(num_syms, lbl)
+        map_put(defined_sym_map, lbl, num_syms)
         num_syms++
     }
 }
@@ -803,19 +715,17 @@ func pass1_scan_file(path string) {
 
 func compute_collisions() {
     num_pfx = 0
+    pfx_count_map = map_new(128)
 
     for i := word(0); i < num_syms; i++ {
         pfx := sym_pfx[i]
-        found := false
-        for p := word(0); p < num_pfx; p++ {
-            if prefixes[p] == pfx {
-                found = true
-                break
-            }
-        }
-        if !found && num_pfx < MAX_SYMS {
+        c := map_get(pfx_count_map, pfx)
+        if c == 0xFFFF {
+            map_put(pfx_count_map, pfx, 1)
             prefixes[num_pfx] = pfx
             num_pfx++
+        } else {
+            map_put(pfx_count_map, pfx, c + 1)
         }
     }
 
@@ -832,15 +742,11 @@ func compute_collisions() {
 
     rename_counter := word(1)
     num_renames = 0
+    min_rename_len = 0xFFFF
 
     for p := word(0); p < num_pfx; p++ {
         pfx := prefixes[p]
-        count := word(0)
-        for i := word(0); i < num_syms; i++ {
-            if sym_pfx[i] == pfx {
-                count++
-            }
-        }
+        count := map_get(pfx_count_map, pfx)
         if count > 1 {
             seen_idx := word(0)
             for i := word(0); i < num_syms; i++ {
@@ -851,8 +757,12 @@ func compute_collisions() {
                         continue
                     }
                     if num_renames < MAX_RENAMES {
-                        rename_old[num_renames] = s
                         rename_new[num_renames] = format_X(rename_counter)
+                        map_put(rename_map, s, num_renames)
+                        l := word(len(s))
+                        if l < min_rename_len {
+                            min_rename_len = l
+                        }
                         rename_counter++
                         num_renames++
                     }
@@ -861,54 +771,15 @@ func compute_collisions() {
             }
         }
     }
-
-    // Sort renames by len(Old) descending
-    for i := word(1); i < num_renames; i++ {
-        k_old := rename_old[i]
-        k_new := rename_new[i]
-        k_len := len(k_old)
-        j := i
-        for j > 0 && len(rename_old[j-1]) < k_len {
-            rename_old[j] = rename_old[j-1]
-            rename_new[j] = rename_new[j-1]
-            j--
-        }
-        rename_old[j] = k_old
-        rename_new[j] = k_new
-    }
-
-    // Initialize fast rename lookup table and minimum length
-    for i := word(0); i < 256; i++ {
-        rename_has_first_char[i] = false
-    }
-    min_rename_len = 0xFFFF
-    for i := word(0); i < num_renames; i++ {
-        ro := rename_old[i]
-        b := ro[0]
-        rename_has_first_char[b] = true
-        l := word(len(ro))
-        if l < min_rename_len {
-            min_rename_len = l
-        }
-    }
 }
 
 func lookup_rename(tok string) string {
     if num_renames == 0 || word(len(tok)) < min_rename_len {
         return ""
     }
-    b0 := tok[0]
-    if !rename_has_first_char[b0] {
-        return ""
-    }
-    tok_len := word(len(tok))
-    for i := word(0); i < num_renames; i++ {
-        ro := rename_old[i]
-        if ro[0] == b0 && word(len(ro)) == tok_len {
-            if ro == tok {
-                return rename_new[i]
-            }
-        }
+    idx := map_get(rename_map, tok)
+    if idx < 0xFFFF {
+        return rename_new[idx]
     }
     return ""
 }
@@ -1360,15 +1231,15 @@ func main() {
         sys_exit(1)
     }
 
+    protected_map = map_new(128)
+    defined_sym_map = map_new(128)
+    rename_map = map_new(64)
+
     num_files = 0
-    num_protected = 0
     num_syms = 0
     num_renames = 0
     num_defines = 0
     min_rename_len = 0xFFFF
-    for i := word(0); i < 256; i++ {
-        rename_has_first_char[i] = false
-    }
     global_inst = 0
 
     load_default_protected()
@@ -1422,8 +1293,6 @@ func main() {
 
     if len(defs_path) > 0 {
         load_defs(defs_path)
-    } else {
-        sort_protected()
     }
 
     if is_group {
