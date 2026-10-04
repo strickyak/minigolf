@@ -1,11 +1,12 @@
 package main
 
 // Constants
-const MAX_SYMS      = 400
-const MAX_RENAMES   = 128
-const MAX_FILES     = 48
-const MAX_LOCALS    = 32
-const MAX_DEFINES   = 16
+const MAX_COLLIDING_SYMS = 160
+const MAX_COLLIDING_PFX  = 64
+const MAX_RENAMES        = 128
+const MAX_FILES          = 48
+const MAX_LOCALS         = 32
+const MAX_DEFINES        = 16
 
 // -D define table
 var define_sym [MAX_DEFINES]string
@@ -13,28 +14,27 @@ var define_val [MAX_DEFINES]string
 var num_defines word
 
 // Maps
-var protected_map   word
-var defined_sym_map word
-var pfx_count_map   word
-var rename_map      word
+var protected_map      word
+var first_pfx_map      word
+var colliding_pfx_map  word
+var colliding_sym_map  word
+var rename_map         word
 
-// Buffer for case normalization
+// Buffers for case normalization and prefix extraction
 var upper_buf [64]byte
+var pfx_buf   [16]byte
 
-// Defined symbols in Pass 1
-var syms     [MAX_SYMS]string
-var sym_pfx  [MAX_SYMS]string
-var num_syms word
+// Colliding prefixes (Pass 0 -> Pass 1)
+var colliding_pfx     [MAX_COLLIDING_PFX]string
+var num_colliding_pfx word
 
-// Static 8-character prefix storage for Pass 1 (3200 bytes = 400 * 8)
-var sym_pfx_buf [3200]byte
-
-var prefixes [MAX_SYMS]string
-var num_pfx  word
+// Colliding symbols (Pass 1)
+var colliding_syms     [MAX_COLLIDING_SYMS]string
+var num_colliding_syms word
 
 // Colliding renames for Pass 2 (parallel arrays)
-var rename_new  [MAX_RENAMES]string
-var num_renames word
+var rename_new     [MAX_RENAMES]string
+var num_renames    word
 var min_rename_len word
 
 // Group file list
@@ -660,33 +660,92 @@ func repl_locals(code string) string {
 }
 
 // -----------------------------------------------------------------------------
-// Pass 1: Symbol Collection & Collision Analysis
+// Pre-Pass 0 & 1: Symbol Collection & Collision Analysis
 // -----------------------------------------------------------------------------
-func store_upper8(idx word, s string) string {
-    base := word(&sym_pfx_buf[0]) + idx * 8
+func get_upper8(s string) string {
     max_len := word(len(s))
     if max_len > 8 {
         max_len = 8
     }
     for i := word(0); i < max_len; i++ {
-        pokeb(base + i, toupper(s[i]))
+        pokeb(word(&pfx_buf[0]) + i, toupper(s[i]))
     }
     var res string
-    res.Base = base
-    res.Cap = 8
+    res.Base = word(&pfx_buf[0])
+    res.Cap = 16
     res.Len = max_len
     return res
 }
 
-func add_defined_symbol(lbl string) {
-    if map_get(defined_sym_map, lbl) != 0xFFFF {
+func hash_label(s string) word {
+    h := word(5381)
+    for i := word(0); i < word(len(s)); i++ {
+        h = (h * 33) + word(s[i])
+    }
+    h = h ^ (word(len(s)) * 313)
+    if h == 0xFFFF {
+        h = 0xFFFE
+    }
+    return h
+}
+
+func pass0_record_label(lbl string) {
+    pfx := get_upper8(lbl)
+    sig := hash_label(lbl)
+    old_sig := map_get(first_pfx_map, pfx)
+    if old_sig == 0xFFFF {
+        // First time seeing this prefix: store signature
+        map_put(first_pfx_map, pfx, sig)
+    } else {
+        // Prefix seen before. Check if this label differs from first seen label
+        if old_sig != sig {
+            // Collision between two different symbols!
+            if map_get(colliding_pfx_map, pfx) == 0xFFFF {
+                map_put(colliding_pfx_map, pfx, 1)
+                if num_colliding_pfx < MAX_COLLIDING_PFX {
+                    colliding_pfx[num_colliding_pfx] = map_str(colliding_pfx_map, pfx)
+                    num_colliding_pfx++
+                }
+            }
+        }
+    }
+}
+
+func pass0_scan_file(path string) {
+    h, ok := file_open(path)
+    if !ok {
         return
     }
-    if num_syms < MAX_SYMS {
-        syms[num_syms] = clone_str(lbl)
-        sym_pfx[num_syms] = store_upper8(num_syms, lbl)
-        map_put(defined_sym_map, lbl, num_syms)
-        num_syms++
+    for {
+        line, eof := file_readline(h)
+        if eof != 0 {
+            break
+        }
+        raw_b := line.Base
+        line = rstrip(line, "\r\n")
+        lbl := extract_col0_label(line)
+        if len(lbl) > 0 && !is_local_or_l_label(lbl) {
+            if !is_protected(lbl) {
+                pass0_record_label(lbl)
+            }
+        }
+        free(raw_b)
+    }
+    file_close(h)
+}
+
+func pass1_record_label(lbl string) {
+    pfx := get_upper8(lbl)
+    if map_get(colliding_pfx_map, pfx) != 0xFFFF {
+        // This label has a colliding prefix!
+        // Only record each unique label once
+        if map_get(colliding_sym_map, lbl) == 0xFFFF {
+            if num_colliding_syms < MAX_COLLIDING_SYMS {
+                map_put(colliding_sym_map, lbl, num_colliding_syms)
+                colliding_syms[num_colliding_syms] = map_str(colliding_sym_map, lbl)
+                num_colliding_syms++
+            }
+        }
     }
 }
 
@@ -705,7 +764,7 @@ func pass1_scan_file(path string) {
         lbl := extract_col0_label(line)
         if len(lbl) > 0 && !is_local_or_l_label(lbl) {
             if !is_protected(lbl) {
-                add_defined_symbol(lbl)
+                pass1_record_label(lbl)
             }
         }
         free(raw_b)
@@ -714,60 +773,42 @@ func pass1_scan_file(path string) {
 }
 
 func compute_collisions() {
-    num_pfx = 0
-    pfx_count_map = map_new(128)
-
-    for i := word(0); i < num_syms; i++ {
-        pfx := sym_pfx[i]
-        c := map_get(pfx_count_map, pfx)
-        if c == 0xFFFF {
-            map_put(pfx_count_map, pfx, 1)
-            prefixes[num_pfx] = pfx
-            num_pfx++
-        } else {
-            map_put(pfx_count_map, pfx, c + 1)
-        }
-    }
-
-    // Sort prefixes alphabetically
-    for i := word(1); i < num_pfx; i++ {
-        key := prefixes[i]
+    // Sort colliding prefixes alphabetically
+    for i := word(1); i < num_colliding_pfx; i++ {
+        key := colliding_pfx[i]
         j := i
-        for j > 0 && strcmp(prefixes[j-1], key) == 1 {
-            prefixes[j] = prefixes[j-1]
+        for j > 0 && strcmp(colliding_pfx[j-1], key) == 1 {
+            colliding_pfx[j] = colliding_pfx[j-1]
             j--
         }
-        prefixes[j] = key
+        colliding_pfx[j] = key
     }
 
     rename_counter := word(1)
     num_renames = 0
     min_rename_len = 0xFFFF
 
-    for p := word(0); p < num_pfx; p++ {
-        pfx := prefixes[p]
-        count := map_get(pfx_count_map, pfx)
-        if count > 1 {
-            seen_idx := word(0)
-            for i := word(0); i < num_syms; i++ {
-                if sym_pfx[i] == pfx {
-                    s := syms[i]
-                    if seen_idx == 0 && len(s) <= 8 && sym_pfx[i] == pfx {
-                        seen_idx++
-                        continue
-                    }
-                    if num_renames < MAX_RENAMES {
-                        rename_new[num_renames] = format_X(rename_counter)
-                        map_put(rename_map, s, num_renames)
-                        l := word(len(s))
-                        if l < min_rename_len {
-                            min_rename_len = l
-                        }
-                        rename_counter++
-                        num_renames++
-                    }
+    for p := word(0); p < num_colliding_pfx; p++ {
+        pfx := colliding_pfx[p]
+        seen_idx := word(0)
+        for i := word(0); i < num_colliding_syms; i++ {
+            s := colliding_syms[i]
+            if get_upper8(s) == pfx {
+                if seen_idx == 0 && word(len(s)) <= 8 {
                     seen_idx++
+                    continue
                 }
+                if num_renames < MAX_RENAMES {
+                    rename_new[num_renames] = format_X(rename_counter)
+                    map_put(rename_map, s, num_renames)
+                    l := word(len(s))
+                    if l < min_rename_len {
+                        min_rename_len = l
+                    }
+                    rename_counter++
+                    num_renames++
+                }
+                seen_idx++
             }
         }
     }
@@ -1232,11 +1273,14 @@ func main() {
     }
 
     protected_map = map_new(128)
-    defined_sym_map = map_new(128)
+    first_pfx_map = map_new(128)
+    colliding_pfx_map = map_new(64)
+    colliding_sym_map = map_new(64)
     rename_map = map_new(64)
 
     num_files = 0
-    num_syms = 0
+    num_colliding_pfx = 0
+    num_colliding_syms = 0
     num_renames = 0
     num_defines = 0
     min_rename_len = 0xFFFF
@@ -1301,6 +1345,9 @@ func main() {
         }
         if !no_collisions {
             for f := word(0); f < num_files; f++ {
+                pass0_scan_file(file_paths[f])
+            }
+            for f := word(0); f < num_files; f++ {
                 pass1_scan_file(file_paths[f])
             }
             compute_collisions()
@@ -1330,6 +1377,7 @@ func main() {
     }
 
     if !no_collisions {
+        pass0_scan_file(in_file)
         pass1_scan_file(in_file)
         compute_collisions()
     }

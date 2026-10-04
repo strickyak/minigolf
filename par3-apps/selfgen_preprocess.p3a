@@ -6,10 +6,14 @@
 ;
 
 ; Global Variable Table
+.global colliding_pfx: 384
+.global colliding_pfx_map: word
+.global colliding_sym_map: word
+.global colliding_syms: 960
 .global define_sym: 96
 .global define_val: 96
-.global defined_sym_map: word
 .global file_paths: 288
+.global first_pfx_map: word
 .global global_inst: word
 .global heap_start: word
 .global in_ifp1_defsfile: word
@@ -17,27 +21,23 @@
 .global local_lbl: 192
 .global local_name: 192
 .global min_rename_len: word
+.global num_colliding_pfx: word
+.global num_colliding_syms: word
 .global num_defines: word
 .global num_files: word
 .global num_locals: word
-.global num_pfx: word
 .global num_renames: word
-.global num_syms: word
 .global parse_asm_int_val: word
 .global pbuf1: 256
 .global pbuf2: 256
 .global pbuf_active: word
 .global pbuf_len: word
-.global pfx_count_map: word
-.global prefixes: 2400
+.global pfx_buf: 16
 .global protected_map: word
 .global rename_map: word
 .global rename_new: 768
 .global split_code_part: slice
 .global split_comment_part: slice
-.global sym_pfx: 2400
-.global sym_pfx_buf: 3200
-.global syms: 2400
 .global upper_buf: 64
 
 ; ====================================================================
@@ -3993,12 +3993,10 @@
 .endfunction
 
 ; ====================================================================
-; Function: store_upper8
+; Function: get_upper8
 ; ====================================================================
-.function store_upper8
-    .param idx: word
+.function get_upper8
     .param s: slice
-    .local base: word
     .local max_len: word
     .local i: word
     .local res: slice
@@ -4012,15 +4010,6 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; base := word(&sym_pfx_buf[...]) + idx * 8
-    ADDR_OF_GLOBAL sym_pfx_buf
-    PUSH_0
-    ADD
-    LOAD_LOCAL idx
-    PUSH_I8 8
-    MUL
-    ADD
-    STORE_LOCAL base
 ; max_len := word(len(s))
     LOAD_LOCAL s
     SLICE_LEN
@@ -4043,8 +4032,10 @@
     LOAD_LOCAL max_len
     CMP_LT
     JUMP_IF_FALSE .L_for3_exit_268
-; pokeb(base + i, toupper(s[...]))
-    LOAD_LOCAL base
+; pokeb(word(&pfx_buf[...]) + i, toupper(s[...]))
+    ADDR_OF_GLOBAL pfx_buf
+    PUSH_0
+    ADD
     LOAD_LOCAL i
     ADD
     ADDR_OF_LOCAL s
@@ -4063,13 +4054,15 @@
     JUMP .L_for3_top_266
 .L_for3_exit_268:
 ; var res
-; res.Base = base
-    LOAD_LOCAL base
+; res.Base = word(&pfx_buf[...])
+    ADDR_OF_GLOBAL pfx_buf
+    PUSH_0
+    ADD
     ADDR_OF_LOCAL res
     SWAP
     POKE2
-; res.Cap = 8
-    PUSH_I8 8
+; res.Cap = 16
+    PUSH_I8 16
     ADDR_OF_LOCAL res
     PUSH_I16 2
     ADD
@@ -4089,10 +4082,12 @@
 .endfunction
 
 ; ====================================================================
-; Function: add_defined_symbol
+; Function: hash_label
 ; ====================================================================
-.function add_defined_symbol
-    .param lbl: slice
+.function hash_label
+    .param s: slice
+    .local h: word
+    .local i: word
     .local _pbuf: word
     .local _tmp_base: word
     .local _tmp_cap: word
@@ -4103,78 +4098,336 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; if map_get(defined_sym_map, lbl) != 65535
-    LOAD_GLOBAL defined_sym_map
+; h := word(5381)
+    PUSH_I16 5381
+    STORE_LOCAL h
+; for <init>; <cond>; <inc>
+; i := word(0)
+    PUSH_0
+    STORE_LOCAL i
+.L_for3_top_269:
+    LOAD_LOCAL i
+    LOAD_LOCAL s
+    SLICE_LEN
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_271
+; h = h * 33 + word(s[...])
+    LOAD_LOCAL h
+    PUSH_I8 33
+    MUL
+    ADDR_OF_LOCAL s
+    PEEK2
+    LOAD_LOCAL i
+    ADD
+    PEEK1
+    ADD
+    STORE_LOCAL h
+.L_for3_cont_270:
+; i++
+    LOAD_LOCAL i
+    PUSH_1
+    ADD
+    STORE_LOCAL i
+    JUMP .L_for3_top_269
+.L_for3_exit_271:
+; h = h ^ word(len(s)) * 313
+    LOAD_LOCAL h
+    LOAD_LOCAL s
+    SLICE_LEN
+    PUSH_I16 313
+    MUL
+    BIT_XOR
+    STORE_LOCAL h
+; if h == 65535
+    LOAD_LOCAL h
+    PUSH_I16 65535
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_272
+; h = 65534
+    PUSH_I16 65534
+    STORE_LOCAL h
+.L_endif_272:
+; return h
+    LOAD_LOCAL h
+    RET
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: pass0_record_label
+; ====================================================================
+.function pass0_record_label
+    .param lbl: slice
+    .local pfx: slice
+    .local sig: word
+    .local old_sig: word
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; pfx := get_upper8(lbl)
     LOAD_LOCAL lbl
+    CALL get_upper8
+    STORE_LOCAL pfx
+; sig := hash_label(lbl)
+    LOAD_LOCAL lbl
+    CALL hash_label
+    STORE_LOCAL sig
+; old_sig := map_get(first_pfx_map, pfx)
+    LOAD_GLOBAL first_pfx_map
+    LOAD_LOCAL pfx
+    MAP_GET
+    STORE_LOCAL old_sig
+; if old_sig == 65535
+    LOAD_LOCAL old_sig
+    PUSH_I16 65535
+    CMP_EQ
+    JUMP_IF_FALSE .L_else_273
+; map_put(first_pfx_map, pfx, sig)
+    LOAD_GLOBAL first_pfx_map
+    LOAD_LOCAL pfx
+    LOAD_LOCAL sig
+    MAP_PUT
+    POP
+    JUMP .L_endif_274
+.L_else_273:
+; if old_sig != sig
+    LOAD_LOCAL old_sig
+    LOAD_LOCAL sig
+    CMP_NE
+    JUMP_IF_FALSE .L_endif_275
+; if map_get(colliding_pfx_map, pfx) == 65535
+    LOAD_GLOBAL colliding_pfx_map
+    LOAD_LOCAL pfx
+    MAP_GET
+    PUSH_I16 65535
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_276
+; map_put(colliding_pfx_map, pfx, 1)
+    LOAD_GLOBAL colliding_pfx_map
+    LOAD_LOCAL pfx
+    PUSH_1
+    MAP_PUT
+    POP
+; if num_colliding_pfx < MAX_COLLIDING_PFX
+    LOAD_GLOBAL num_colliding_pfx
+    PUSH_I8 64
+    CMP_LT
+    JUMP_IF_FALSE .L_endif_277
+; colliding_pfx[...] = map_str(colliding_pfx_map, pfx)
+    LOAD_GLOBAL colliding_pfx_map
+    LOAD_LOCAL pfx
+    MAP_STR
+    ADDR_OF_GLOBAL colliding_pfx
+    LOAD_GLOBAL num_colliding_pfx
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+; num_colliding_pfx++
+    LOAD_GLOBAL num_colliding_pfx
+    PUSH_1
+    ADD
+    STORE_GLOBAL num_colliding_pfx
+.L_endif_277:
+.L_endif_276:
+.L_endif_275:
+.L_endif_274:
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: pass0_scan_file
+; ====================================================================
+.function pass0_scan_file
+    .param path: slice
+    .local h: word
+    .local ok: word
+    .local line: slice
+    .local eof: word
+    .local raw_b: word
+    .local lbl: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; h, ok := file_open(path)
+    LOAD_LOCAL path
+    FILE_OPEN_READ
+    STORE_LOCAL ok
+    STORE_LOCAL h
+; if !ok
+    LOAD_LOCAL ok
+    NOT
+    JUMP_IF_FALSE .L_endif_278
+; return 
+    RET_VOID
+.L_endif_278:
+; for
+.L_for_top_279:
+; line, eof := file_readline(h)
+    LOAD_LOCAL h
+    FILE_READLINE
+    STORE_LOCAL eof
+    STORE_LOCAL line
+; if eof != 0
+    LOAD_LOCAL eof
+    PUSH_0
+    CMP_NE
+    JUMP_IF_FALSE .L_endif_281
+; break
+    JUMP .L_for_exit_280
+.L_endif_281:
+; raw_b := line.Base
+    ADDR_OF_LOCAL line
+    PEEK2
+    STORE_LOCAL raw_b
+; line = rstrip(line, "\r\n")
+    LOAD_LOCAL line
+    PUSH_STR "\r\n"
+    STR_RSTRIP
+    STORE_LOCAL line
+; lbl := extract_col0_label(line)
+    LOAD_LOCAL line
+    CALL extract_col0_label
+    STORE_LOCAL lbl
+; if len(lbl) > 0 && !is_local_or_l_label(lbl)
+    LOAD_LOCAL lbl
+    SLICE_LEN
+    PUSH_0
+    CMP_GT
+    DUP
+    JUMP_IF_FALSE .L_and_false_282
+    POP
+    LOAD_LOCAL lbl
+    CALL is_local_or_l_label
+    NOT
+    JUMP .L_and_end_283
+.L_and_false_282:
+.L_and_end_283:
+    JUMP_IF_FALSE .L_endif_284
+; if !is_protected(lbl)
+    LOAD_LOCAL lbl
+    CALL is_protected
+    NOT
+    JUMP_IF_FALSE .L_endif_285
+; pass0_record_label(lbl)
+    LOAD_LOCAL lbl
+    CALL pass0_record_label
+.L_endif_285:
+.L_endif_284:
+; free(raw_b)
+    LOAD_LOCAL raw_b
+    BUF_FREE
+    JUMP .L_for_top_279
+.L_for_exit_280:
+; file_close(h)
+    LOAD_LOCAL h
+    FILE_CLOSE
+    RET_VOID
+.endfunction
+
+; ====================================================================
+; Function: pass1_record_label
+; ====================================================================
+.function pass1_record_label
+    .param lbl: slice
+    .local pfx: slice
+    .local _pbuf: word
+    .local _tmp_base: word
+    .local _tmp_cap: word
+    .local _tmp_len: word
+    .local _tmp_addr: word
+    .local _swap_0: slice
+    .local _swap_1: slice
+    .local _swap_2: slice
+    .local _swap_3: slice
+
+; pfx := get_upper8(lbl)
+    LOAD_LOCAL lbl
+    CALL get_upper8
+    STORE_LOCAL pfx
+; if map_get(colliding_pfx_map, pfx) != 65535
+    LOAD_GLOBAL colliding_pfx_map
+    LOAD_LOCAL pfx
     MAP_GET
     PUSH_I16 65535
     CMP_NE
-    JUMP_IF_FALSE .L_endif_269
-; return 
-    RET_VOID
-.L_endif_269:
-; if num_syms < MAX_SYMS
-    LOAD_GLOBAL num_syms
-    PUSH_I16 400
+    JUMP_IF_FALSE .L_endif_286
+; if map_get(colliding_sym_map, lbl) == 65535
+    LOAD_GLOBAL colliding_sym_map
+    LOAD_LOCAL lbl
+    MAP_GET
+    PUSH_I16 65535
+    CMP_EQ
+    JUMP_IF_FALSE .L_endif_287
+; if num_colliding_syms < MAX_COLLIDING_SYMS
+    LOAD_GLOBAL num_colliding_syms
+    PUSH_I16 160
     CMP_LT
-    JUMP_IF_FALSE .L_endif_270
-; syms[...] = clone_str(lbl)
+    JUMP_IF_FALSE .L_endif_288
+; map_put(colliding_sym_map, lbl, num_colliding_syms)
+    LOAD_GLOBAL colliding_sym_map
     LOAD_LOCAL lbl
-    CALL clone_str
-    ADDR_OF_GLOBAL syms
-    LOAD_GLOBAL num_syms
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    SWAP
-    POKE2
-; sym_pfx[...] = store_upper8(num_syms, lbl)
-    LOAD_GLOBAL num_syms
-    LOAD_LOCAL lbl
-    CALL store_upper8
-    ADDR_OF_GLOBAL sym_pfx
-    LOAD_GLOBAL num_syms
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    SWAP
-    POKE2
-; map_put(defined_sym_map, lbl, num_syms)
-    LOAD_GLOBAL defined_sym_map
-    LOAD_LOCAL lbl
-    LOAD_GLOBAL num_syms
+    LOAD_GLOBAL num_colliding_syms
     MAP_PUT
     POP
-; num_syms++
-    LOAD_GLOBAL num_syms
+; colliding_syms[...] = map_str(colliding_sym_map, lbl)
+    LOAD_GLOBAL colliding_sym_map
+    LOAD_LOCAL lbl
+    MAP_STR
+    ADDR_OF_GLOBAL colliding_syms
+    LOAD_GLOBAL num_colliding_syms
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    SWAP
+    POKE2
+    LOAD_LOCAL _tmp_addr
+    SWAP
+    POKE2
+; num_colliding_syms++
+    LOAD_GLOBAL num_colliding_syms
     PUSH_1
     ADD
-    STORE_GLOBAL num_syms
-.L_endif_270:
+    STORE_GLOBAL num_colliding_syms
+.L_endif_288:
+.L_endif_287:
+.L_endif_286:
     RET_VOID
 .endfunction
 
@@ -4207,12 +4460,12 @@
 ; if !ok
     LOAD_LOCAL ok
     NOT
-    JUMP_IF_FALSE .L_endif_271
+    JUMP_IF_FALSE .L_endif_289
 ; return 
     RET_VOID
-.L_endif_271:
+.L_endif_289:
 ; for
-.L_for_top_272:
+.L_for_top_290:
 ; line, eof := file_readline(h)
     LOAD_LOCAL h
     FILE_READLINE
@@ -4222,10 +4475,10 @@
     LOAD_LOCAL eof
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_274
+    JUMP_IF_FALSE .L_endif_292
 ; break
-    JUMP .L_for_exit_273
-.L_endif_274:
+    JUMP .L_for_exit_291
+.L_endif_292:
 ; raw_b := line.Base
     ADDR_OF_LOCAL line
     PEEK2
@@ -4245,30 +4498,30 @@
     PUSH_0
     CMP_GT
     DUP
-    JUMP_IF_FALSE .L_and_false_275
+    JUMP_IF_FALSE .L_and_false_293
     POP
     LOAD_LOCAL lbl
     CALL is_local_or_l_label
     NOT
-    JUMP .L_and_end_276
-.L_and_false_275:
-.L_and_end_276:
-    JUMP_IF_FALSE .L_endif_277
+    JUMP .L_and_end_294
+.L_and_false_293:
+.L_and_end_294:
+    JUMP_IF_FALSE .L_endif_295
 ; if !is_protected(lbl)
     LOAD_LOCAL lbl
     CALL is_protected
     NOT
-    JUMP_IF_FALSE .L_endif_278
-; add_defined_symbol(lbl)
+    JUMP_IF_FALSE .L_endif_296
+; pass1_record_label(lbl)
     LOAD_LOCAL lbl
-    CALL add_defined_symbol
-.L_endif_278:
-.L_endif_277:
+    CALL pass1_record_label
+.L_endif_296:
+.L_endif_295:
 ; free(raw_b)
     LOAD_LOCAL raw_b
     BUF_FREE
-    JUMP .L_for_top_272
-.L_for_exit_273:
+    JUMP .L_for_top_290
+.L_for_exit_291:
 ; file_close(h)
     LOAD_LOCAL h
     FILE_CLOSE
@@ -4280,13 +4533,11 @@
 ; ====================================================================
 .function compute_collisions
     .local i: word
-    .local pfx: slice
-    .local c: word
     .local key: slice
     .local j: word
     .local rename_counter: word
     .local p: word
-    .local count: word
+    .local pfx: slice
     .local seen_idx: word
     .local s: slice
     .local l: word
@@ -4300,112 +4551,17 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; num_pfx = 0
-    PUSH_0
-    STORE_GLOBAL num_pfx
-; pfx_count_map = map_new(128)
-    PUSH_I16 128
-    MAP_NEW
-    STORE_GLOBAL pfx_count_map
-; for <init>; <cond>; <inc>
-; i := word(0)
-    PUSH_0
-    STORE_LOCAL i
-.L_for3_top_279:
-    LOAD_LOCAL i
-    LOAD_GLOBAL num_syms
-    CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_281
-; pfx := sym_pfx[...]
-    ADDR_OF_GLOBAL sym_pfx
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    PEEK2
-    STORE_LOCAL pfx
-; c := map_get(pfx_count_map, pfx)
-    LOAD_GLOBAL pfx_count_map
-    LOAD_LOCAL pfx
-    MAP_GET
-    STORE_LOCAL c
-; if c == 65535
-    LOAD_LOCAL c
-    PUSH_I16 65535
-    CMP_EQ
-    JUMP_IF_FALSE .L_else_282
-; map_put(pfx_count_map, pfx, 1)
-    LOAD_GLOBAL pfx_count_map
-    LOAD_LOCAL pfx
-    PUSH_1
-    MAP_PUT
-    POP
-; prefixes[...] = pfx
-    LOAD_LOCAL pfx
-    ADDR_OF_GLOBAL prefixes
-    LOAD_GLOBAL num_pfx
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    SWAP
-    POKE2
-; num_pfx++
-    LOAD_GLOBAL num_pfx
-    PUSH_1
-    ADD
-    STORE_GLOBAL num_pfx
-    JUMP .L_endif_283
-.L_else_282:
-; map_put(pfx_count_map, pfx, c + 1)
-    LOAD_GLOBAL pfx_count_map
-    LOAD_LOCAL pfx
-    LOAD_LOCAL c
-    PUSH_1
-    ADD
-    MAP_PUT
-    POP
-.L_endif_283:
-.L_for3_cont_280:
-; i++
-    LOAD_LOCAL i
-    PUSH_1
-    ADD
-    STORE_LOCAL i
-    JUMP .L_for3_top_279
-.L_for3_exit_281:
 ; for <init>; <cond>; <inc>
 ; i := word(1)
     PUSH_1
     STORE_LOCAL i
-.L_for3_top_284:
+.L_for3_top_297:
     LOAD_LOCAL i
-    LOAD_GLOBAL num_pfx
+    LOAD_GLOBAL num_colliding_pfx
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_286
-; key := prefixes[...]
-    ADDR_OF_GLOBAL prefixes
+    JUMP_IF_FALSE .L_for3_exit_299
+; key := colliding_pfx[...]
+    ADDR_OF_GLOBAL colliding_pfx
     LOAD_LOCAL i
     PUSH_I16 6
     MUL
@@ -4425,15 +4581,15 @@
 ; j := i
     LOAD_LOCAL i
     STORE_LOCAL j
-; for j > 0 && strcmp(prefixes[...], key) == 1
-.L_for_top_287:
+; for j > 0 && strcmp(colliding_pfx[...], key) == 1
+.L_for_top_300:
     LOAD_LOCAL j
     PUSH_0
     CMP_GT
     DUP
-    JUMP_IF_FALSE .L_and_false_289
+    JUMP_IF_FALSE .L_and_false_302
     POP
-    ADDR_OF_GLOBAL prefixes
+    ADDR_OF_GLOBAL colliding_pfx
     LOAD_LOCAL j
     PUSH_1
     SUB
@@ -4455,12 +4611,12 @@
     STR_CMP
     PUSH_1
     CMP_EQ
-    JUMP .L_and_end_290
-.L_and_false_289:
-.L_and_end_290:
-    JUMP_IF_FALSE .L_for_exit_288
-; prefixes[...] = prefixes[...]
-    ADDR_OF_GLOBAL prefixes
+    JUMP .L_and_end_303
+.L_and_false_302:
+.L_and_end_303:
+    JUMP_IF_FALSE .L_for_exit_301
+; colliding_pfx[...] = colliding_pfx[...]
+    ADDR_OF_GLOBAL colliding_pfx
     LOAD_LOCAL j
     PUSH_1
     SUB
@@ -4478,7 +4634,7 @@
     PUSH_I16 4
     ADD
     PEEK2
-    ADDR_OF_GLOBAL prefixes
+    ADDR_OF_GLOBAL colliding_pfx
     LOAD_LOCAL j
     PUSH_I16 6
     MUL
@@ -4502,11 +4658,11 @@
     PUSH_1
     SUB
     STORE_LOCAL j
-    JUMP .L_for_top_287
-.L_for_exit_288:
-; prefixes[...] = key
+    JUMP .L_for_top_300
+.L_for_exit_301:
+; colliding_pfx[...] = key
     LOAD_LOCAL key
-    ADDR_OF_GLOBAL prefixes
+    ADDR_OF_GLOBAL colliding_pfx
     LOAD_LOCAL j
     PUSH_I16 6
     MUL
@@ -4525,14 +4681,14 @@
     LOAD_LOCAL _tmp_addr
     SWAP
     POKE2
-.L_for3_cont_285:
+.L_for3_cont_298:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_284
-.L_for3_exit_286:
+    JUMP .L_for3_top_297
+.L_for3_exit_299:
 ; rename_counter := word(1)
     PUSH_1
     STORE_LOCAL rename_counter
@@ -4546,13 +4702,13 @@
 ; p := word(0)
     PUSH_0
     STORE_LOCAL p
-.L_for3_top_291:
+.L_for3_top_304:
     LOAD_LOCAL p
-    LOAD_GLOBAL num_pfx
+    LOAD_GLOBAL num_colliding_pfx
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_293
-; pfx := prefixes[...]
-    ADDR_OF_GLOBAL prefixes
+    JUMP_IF_FALSE .L_for3_exit_306
+; pfx := colliding_pfx[...]
+    ADDR_OF_GLOBAL colliding_pfx
     LOAD_LOCAL p
     PUSH_I16 6
     MUL
@@ -4569,16 +4725,6 @@
     ADD
     PEEK2
     STORE_LOCAL pfx
-; count := map_get(pfx_count_map, pfx)
-    LOAD_GLOBAL pfx_count_map
-    LOAD_LOCAL pfx
-    MAP_GET
-    STORE_LOCAL count
-; if count > 1
-    LOAD_LOCAL count
-    PUSH_1
-    CMP_GT
-    JUMP_IF_FALSE .L_endif_294
 ; seen_idx := word(0)
     PUSH_0
     STORE_LOCAL seen_idx
@@ -4586,34 +4732,13 @@
 ; i := word(0)
     PUSH_0
     STORE_LOCAL i
-.L_for3_top_295:
+.L_for3_top_307:
     LOAD_LOCAL i
-    LOAD_GLOBAL num_syms
+    LOAD_GLOBAL num_colliding_syms
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_297
-; if sym_pfx[...] == pfx
-    ADDR_OF_GLOBAL sym_pfx
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    PEEK2
-    LOAD_LOCAL pfx
-    STR_CMP
-    NOT
-    JUMP_IF_FALSE .L_endif_298
-; s := syms[...]
-    ADDR_OF_GLOBAL syms
+    JUMP_IF_FALSE .L_for3_exit_309
+; s := colliding_syms[...]
+    ADDR_OF_GLOBAL colliding_syms
     LOAD_LOCAL i
     PUSH_I16 6
     MUL
@@ -4630,59 +4755,41 @@
     ADD
     PEEK2
     STORE_LOCAL s
-; if seen_idx == 0 && len(s) <= 8 && sym_pfx[...] == pfx
+; if get_upper8(s) == pfx
+    LOAD_LOCAL s
+    CALL get_upper8
+    LOAD_LOCAL pfx
+    STR_CMP
+    NOT
+    JUMP_IF_FALSE .L_endif_310
+; if seen_idx == 0 && word(len(s)) <= 8
     LOAD_LOCAL seen_idx
     PUSH_0
     CMP_EQ
     DUP
-    JUMP_IF_FALSE .L_and_false_301
+    JUMP_IF_FALSE .L_and_false_311
     POP
     LOAD_LOCAL s
     SLICE_LEN
     PUSH_I8 8
     CMP_LE
-    JUMP .L_and_end_302
-.L_and_false_301:
-.L_and_end_302:
-    DUP
-    JUMP_IF_FALSE .L_and_false_299
-    POP
-    ADDR_OF_GLOBAL sym_pfx
-    LOAD_LOCAL i
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    PEEK2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    PEEK2
-    LOAD_LOCAL pfx
-    STR_CMP
-    NOT
-    JUMP .L_and_end_300
-.L_and_false_299:
-.L_and_end_300:
-    JUMP_IF_FALSE .L_endif_303
+    JUMP .L_and_end_312
+.L_and_false_311:
+.L_and_end_312:
+    JUMP_IF_FALSE .L_endif_313
 ; seen_idx++
     LOAD_LOCAL seen_idx
     PUSH_1
     ADD
     STORE_LOCAL seen_idx
 ; continue
-    JUMP .L_for3_cont_296
-.L_endif_303:
+    JUMP .L_for3_cont_308
+.L_endif_313:
 ; if num_renames < MAX_RENAMES
     LOAD_GLOBAL num_renames
     PUSH_I16 128
     CMP_LT
-    JUMP_IF_FALSE .L_endif_304
+    JUMP_IF_FALSE .L_endif_314
 ; rename_new[...] = format_X(rename_counter)
     LOAD_LOCAL rename_counter
     CALL format_X
@@ -4719,11 +4826,11 @@
     LOAD_LOCAL l
     LOAD_GLOBAL min_rename_len
     CMP_LT
-    JUMP_IF_FALSE .L_endif_305
+    JUMP_IF_FALSE .L_endif_315
 ; min_rename_len = l
     LOAD_LOCAL l
     STORE_GLOBAL min_rename_len
-.L_endif_305:
+.L_endif_315:
 ; rename_counter++
     LOAD_LOCAL rename_counter
     PUSH_1
@@ -4734,30 +4841,29 @@
     PUSH_1
     ADD
     STORE_GLOBAL num_renames
-.L_endif_304:
+.L_endif_314:
 ; seen_idx++
     LOAD_LOCAL seen_idx
     PUSH_1
     ADD
     STORE_LOCAL seen_idx
-.L_endif_298:
-.L_for3_cont_296:
+.L_endif_310:
+.L_for3_cont_308:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_for3_top_295
-.L_for3_exit_297:
-.L_endif_294:
-.L_for3_cont_292:
+    JUMP .L_for3_top_307
+.L_for3_exit_309:
+.L_for3_cont_305:
 ; p++
     LOAD_LOCAL p
     PUSH_1
     ADD
     STORE_LOCAL p
-    JUMP .L_for3_top_291
-.L_for3_exit_293:
+    JUMP .L_for3_top_304
+.L_for3_exit_306:
     RET_VOID
 .endfunction
 
@@ -4782,20 +4888,20 @@
     PUSH_0
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_306
+    JUMP_IF_TRUE .L_or_true_316
     POP
     LOAD_LOCAL tok
     SLICE_LEN
     LOAD_GLOBAL min_rename_len
     CMP_LT
-    JUMP .L_or_end_307
-.L_or_true_306:
-.L_or_end_307:
-    JUMP_IF_FALSE .L_endif_308
+    JUMP .L_or_end_317
+.L_or_true_316:
+.L_or_end_317:
+    JUMP_IF_FALSE .L_endif_318
 ; return ""
     PUSH_STR ""
     RET_SLICE
-.L_endif_308:
+.L_endif_318:
 ; idx := map_get(rename_map, tok)
     LOAD_GLOBAL rename_map
     LOAD_LOCAL tok
@@ -4805,7 +4911,7 @@
     LOAD_LOCAL idx
     PUSH_I16 65535
     CMP_LT
-    JUMP_IF_FALSE .L_endif_309
+    JUMP_IF_FALSE .L_endif_319
 ; return rename_new[...]
     ADDR_OF_GLOBAL rename_new
     LOAD_LOCAL idx
@@ -4824,7 +4930,7 @@
     ADD
     PEEK2
     RET_SLICE
-.L_endif_309:
+.L_endif_319:
 ; return ""
     PUSH_STR ""
     RET_SLICE
@@ -4856,20 +4962,20 @@
     PUSH_0
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_310
+    JUMP_IF_TRUE .L_or_true_320
     POP
     LOAD_LOCAL code
     SLICE_LEN
     LOAD_GLOBAL min_rename_len
     CMP_LT
-    JUMP .L_or_end_311
-.L_or_true_310:
-.L_or_end_311:
-    JUMP_IF_FALSE .L_endif_312
+    JUMP .L_or_end_321
+.L_or_true_320:
+.L_or_end_321:
+    JUMP_IF_FALSE .L_endif_322
 ; return code
     LOAD_LOCAL code
     RET_SLICE
-.L_endif_312:
+.L_endif_322:
 ; has_match := false
     PUSH_FALSE
     STORE_LOCAL has_match
@@ -4877,12 +4983,12 @@
     PUSH_0
     STORE_LOCAL pos
 ; for pos < word(len(code))
-.L_for_top_313:
+.L_for_top_323:
     LOAD_LOCAL pos
     LOAD_LOCAL code
     SLICE_LEN
     CMP_LT
-    JUMP_IF_FALSE .L_for_exit_314
+    JUMP_IF_FALSE .L_for_exit_324
 ; if is_ident_char(code[...])
     ADDR_OF_LOCAL code
     PEEK2
@@ -4890,18 +4996,18 @@
     ADD
     PEEK1
     CALL is_ident_char
-    JUMP_IF_FALSE .L_else_315
+    JUMP_IF_FALSE .L_else_325
 ; start := pos
     LOAD_LOCAL pos
     STORE_LOCAL start
 ; for pos < word(len(code)) && is_ident_char(code[...])
-.L_for_top_317:
+.L_for_top_327:
     LOAD_LOCAL pos
     LOAD_LOCAL code
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_319
+    JUMP_IF_FALSE .L_and_false_329
     POP
     ADDR_OF_LOCAL code
     PEEK2
@@ -4909,24 +5015,24 @@
     ADD
     PEEK1
     CALL is_ident_char
-    JUMP .L_and_end_320
-.L_and_false_319:
-.L_and_end_320:
-    JUMP_IF_FALSE .L_for_exit_318
+    JUMP .L_and_end_330
+.L_and_false_329:
+.L_and_end_330:
+    JUMP_IF_FALSE .L_for_exit_328
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-    JUMP .L_for_top_317
-.L_for_exit_318:
+    JUMP .L_for_top_327
+.L_for_exit_328:
 ; if pos - start >= min_rename_len
     LOAD_LOCAL pos
     LOAD_LOCAL start
     SUB
     LOAD_GLOBAL min_rename_len
     CMP_GE
-    JUMP_IF_FALSE .L_endif_321
+    JUMP_IF_FALSE .L_endif_331
 ; tok := code[...]
     LOAD_LOCAL code
     LOAD_LOCAL start
@@ -4939,44 +5045,44 @@
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_322
+    JUMP_IF_FALSE .L_endif_332
 ; has_match = true
     PUSH_TRUE
     STORE_LOCAL has_match
 ; break
-    JUMP .L_for_exit_314
-.L_endif_322:
-.L_endif_321:
-    JUMP .L_endif_316
-.L_else_315:
+    JUMP .L_for_exit_324
+.L_endif_332:
+.L_endif_331:
+    JUMP .L_endif_326
+.L_else_325:
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-.L_endif_316:
-    JUMP .L_for_top_313
-.L_for_exit_314:
+.L_endif_326:
+    JUMP .L_for_top_323
+.L_for_exit_324:
 ; if !has_match
     LOAD_LOCAL has_match
     NOT
-    JUMP_IF_FALSE .L_endif_323
+    JUMP_IF_FALSE .L_endif_333
 ; return code
     LOAD_LOCAL code
     RET_SLICE
-.L_endif_323:
+.L_endif_333:
 ; buf_clear()
     CALL buf_clear
 ; pos = word(0)
     PUSH_0
     STORE_LOCAL pos
 ; for pos < word(len(code))
-.L_for_top_324:
+.L_for_top_334:
     LOAD_LOCAL pos
     LOAD_LOCAL code
     SLICE_LEN
     CMP_LT
-    JUMP_IF_FALSE .L_for_exit_325
+    JUMP_IF_FALSE .L_for_exit_335
 ; if is_ident_char(code[...])
     ADDR_OF_LOCAL code
     PEEK2
@@ -4984,18 +5090,18 @@
     ADD
     PEEK1
     CALL is_ident_char
-    JUMP_IF_FALSE .L_else_326
+    JUMP_IF_FALSE .L_else_336
 ; start := pos
     LOAD_LOCAL pos
     STORE_LOCAL start
 ; for pos < word(len(code)) && is_ident_char(code[...])
-.L_for_top_328:
+.L_for_top_338:
     LOAD_LOCAL pos
     LOAD_LOCAL code
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_330
+    JUMP_IF_FALSE .L_and_false_340
     POP
     ADDR_OF_LOCAL code
     PEEK2
@@ -5003,17 +5109,17 @@
     ADD
     PEEK1
     CALL is_ident_char
-    JUMP .L_and_end_331
-.L_and_false_330:
-.L_and_end_331:
-    JUMP_IF_FALSE .L_for_exit_329
+    JUMP .L_and_end_341
+.L_and_false_340:
+.L_and_end_341:
+    JUMP_IF_FALSE .L_for_exit_339
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-    JUMP .L_for_top_328
-.L_for_exit_329:
+    JUMP .L_for_top_338
+.L_for_exit_339:
 ; tok := code[...]
     LOAD_LOCAL code
     LOAD_LOCAL start
@@ -5029,29 +5135,29 @@
     SUB
     LOAD_GLOBAL min_rename_len
     CMP_GE
-    JUMP_IF_FALSE .L_endif_332
+    JUMP_IF_FALSE .L_endif_342
 ; repl = lookup_rename(tok)
     LOAD_LOCAL tok
     CALL lookup_rename
     STORE_LOCAL repl
-.L_endif_332:
+.L_endif_342:
 ; if len(repl) > 0
     LOAD_LOCAL repl
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_else_333
+    JUMP_IF_FALSE .L_else_343
 ; buf_append(repl)
     LOAD_LOCAL repl
     CALL buf_append
-    JUMP .L_endif_334
-.L_else_333:
+    JUMP .L_endif_344
+.L_else_343:
 ; buf_append(tok)
     LOAD_LOCAL tok
     CALL buf_append
-.L_endif_334:
-    JUMP .L_endif_327
-.L_else_326:
+.L_endif_344:
+    JUMP .L_endif_337
+.L_else_336:
 ; buf_append_byte(code[...])
     ADDR_OF_LOCAL code
     PEEK2
@@ -5064,9 +5170,9 @@
     PUSH_1
     ADD
     STORE_LOCAL pos
-.L_endif_327:
-    JUMP .L_for_top_324
-.L_for_exit_325:
+.L_endif_337:
+    JUMP .L_for_top_334
+.L_for_exit_335:
 ; return buf_str()
     CALL buf_str
     RET_SLICE
@@ -5099,27 +5205,27 @@
     SLICE_LEN
     PUSH_I8 78
     CMP_LT
-    JUMP_IF_FALSE .L_endif_335
+    JUMP_IF_FALSE .L_endif_345
 ; avail = 78 - len(code_part)
     PUSH_I8 78
     LOAD_LOCAL code_part
     SLICE_LEN
     SUB
     STORE_LOCAL avail
-.L_endif_335:
+.L_endif_345:
 ; if len(comment_part) > avail
     LOAD_LOCAL comment_part
     SLICE_LEN
     LOAD_LOCAL avail
     CMP_GT
-    JUMP_IF_FALSE .L_endif_336
+    JUMP_IF_FALSE .L_endif_346
 ; comment_part = comment_part[...]
     LOAD_LOCAL comment_part
     PUSH_0
     LOAD_LOCAL avail
     SLICE_SUB
     STORE_LOCAL comment_part
-.L_endif_336:
+.L_endif_346:
 ; file_write(out_h, code_part)
     LOAD_LOCAL out_h
     LOAD_LOCAL code_part
@@ -5201,7 +5307,7 @@
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_337
+    JUMP_IF_FALSE .L_endif_347
 ; clear_locals()
     CALL clear_locals
 ; file_write(out_h, "\r")
@@ -5211,12 +5317,12 @@
     POP
 ; return 
     RET_VOID
-.L_endif_337:
+.L_endif_347:
 ; if startswith(stripped, ";")
     LOAD_LOCAL stripped
     PUSH_STR ";"
     STR_STARTSWITH
-    JUMP_IF_FALSE .L_endif_338
+    JUMP_IF_FALSE .L_endif_348
 ; clean := lstrip(stripped, "; \t")
     LOAD_LOCAL stripped
     PUSH_STR "; \t"
@@ -5238,14 +5344,14 @@
     SLICE_LEN
     PUSH_I8 78
     CMP_GT
-    JUMP_IF_FALSE .L_endif_339
+    JUMP_IF_FALSE .L_endif_349
 ; res = res[...]
     LOAD_LOCAL res
     PUSH_0
     PUSH_I8 78
     SLICE_SUB
     STORE_LOCAL res
-.L_endif_339:
+.L_endif_349:
 ; file_write(out_h, res)
     LOAD_LOCAL out_h
     LOAD_LOCAL res
@@ -5258,12 +5364,12 @@
     POP
 ; return 
     RET_VOID
-.L_endif_338:
+.L_endif_348:
 ; if startswith(stripped, "*")
     LOAD_LOCAL stripped
     PUSH_STR "*"
     STR_STARTSWITH
-    JUMP_IF_FALSE .L_endif_340
+    JUMP_IF_FALSE .L_endif_350
 ; clean := stripped[...]
     LOAD_LOCAL stripped
     PUSH_1
@@ -5287,14 +5393,14 @@
     SLICE_LEN
     PUSH_I8 78
     CMP_GT
-    JUMP_IF_FALSE .L_endif_341
+    JUMP_IF_FALSE .L_endif_351
 ; res = res[...]
     LOAD_LOCAL res
     PUSH_0
     PUSH_I8 78
     SLICE_SUB
     STORE_LOCAL res
-.L_endif_341:
+.L_endif_351:
 ; file_write(out_h, res)
     LOAD_LOCAL out_h
     LOAD_LOCAL res
@@ -5307,7 +5413,7 @@
     POP
 ; return 
     RET_VOID
-.L_endif_340:
+.L_endif_350:
 ; s_lead := lstrip(line, " \t")
     LOAD_LOCAL line
     PUSH_STR " \t"
@@ -5317,16 +5423,16 @@
     LOAD_GLOBAL num_defines
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_342
+    JUMP_IF_FALSE .L_endif_352
 ; for <init>; <cond>; <inc>
 ; d := word(0)
     PUSH_0
     STORE_LOCAL d
-.L_for3_top_343:
+.L_for3_top_353:
     LOAD_LOCAL d
     LOAD_GLOBAL num_defines
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_345
+    JUMP_IF_FALSE .L_for3_exit_355
 ; dsym := define_sym[...]
     ADDR_OF_GLOBAL define_sym
     LOAD_LOCAL d
@@ -5354,7 +5460,7 @@
     SLICE_LEN
     LOAD_LOCAL dlen
     CMP_GT
-    JUMP_IF_FALSE .L_endif_346
+    JUMP_IF_FALSE .L_endif_356
 ; if str_eq_ci(s_lead[...], dsym)
     LOAD_LOCAL s_lead
     PUSH_0
@@ -5362,7 +5468,7 @@
     SLICE_SUB
     LOAD_LOCAL dsym
     CALL str_eq_ci
-    JUMP_IF_FALSE .L_endif_347
+    JUMP_IF_FALSE .L_endif_357
 ; ch := s_lead[...]
     ADDR_OF_LOCAL s_lead
     PEEK2
@@ -5375,24 +5481,24 @@
     PUSH_I8 32
     CMP_EQ
     DUP
-    JUMP_IF_TRUE .L_or_true_350
+    JUMP_IF_TRUE .L_or_true_360
     POP
     LOAD_LOCAL ch
     PUSH_I8 9
     CMP_EQ
-    JUMP .L_or_end_351
-.L_or_true_350:
-.L_or_end_351:
+    JUMP .L_or_end_361
+.L_or_true_360:
+.L_or_end_361:
     DUP
-    JUMP_IF_TRUE .L_or_true_348
+    JUMP_IF_TRUE .L_or_true_358
     POP
     LOAD_LOCAL ch
     PUSH_I8 58
     CMP_EQ
-    JUMP .L_or_end_349
-.L_or_true_348:
-.L_or_end_349:
-    JUMP_IF_FALSE .L_endif_352
+    JUMP .L_or_end_359
+.L_or_true_358:
+.L_or_end_359:
+    JUMP_IF_FALSE .L_endif_362
 ; rest := lstrip(s_lead[...], " \t:")
     LOAD_LOCAL s_lead
     LOAD_LOCAL dlen
@@ -5407,33 +5513,33 @@
     PUSH_STR "equ"
     CALL startswith_ci
     DUP
-    JUMP_IF_FALSE .L_and_false_355
+    JUMP_IF_FALSE .L_and_false_365
     POP
     LOAD_LOCAL rest
     PUSH_I8 3
     CALL is_word_bound
-    JUMP .L_and_end_356
-.L_and_false_355:
-.L_and_end_356:
+    JUMP .L_and_end_366
+.L_and_false_365:
+.L_and_end_366:
     DUP
-    JUMP_IF_TRUE .L_or_true_353
+    JUMP_IF_TRUE .L_or_true_363
     POP
     LOAD_LOCAL rest
     PUSH_STR "set"
     CALL startswith_ci
     DUP
-    JUMP_IF_FALSE .L_and_false_357
+    JUMP_IF_FALSE .L_and_false_367
     POP
     LOAD_LOCAL rest
     PUSH_I8 3
     CALL is_word_bound
-    JUMP .L_and_end_358
-.L_and_false_357:
-.L_and_end_358:
-    JUMP .L_or_end_354
-.L_or_true_353:
-.L_or_end_354:
-    JUMP_IF_FALSE .L_endif_359
+    JUMP .L_and_end_368
+.L_and_false_367:
+.L_and_end_368:
+    JUMP .L_or_end_364
+.L_or_true_363:
+.L_or_end_364:
+    JUMP_IF_FALSE .L_endif_369
 ; buf_clear()
     CALL buf_clear
 ; buf_append("* [selfgen: overridden by -D ")
@@ -5476,19 +5582,19 @@
     SLICE_LEN
     PUSH_I8 50
     CMP_GT
-    JUMP_IF_FALSE .L_else_360
+    JUMP_IF_FALSE .L_else_370
 ; buf_append(tr[...])
     LOAD_LOCAL tr
     PUSH_0
     PUSH_I8 50
     SLICE_SUB
     CALL buf_append
-    JUMP .L_endif_361
-.L_else_360:
+    JUMP .L_endif_371
+.L_else_370:
 ; buf_append(tr)
     LOAD_LOCAL tr
     CALL buf_append
-.L_endif_361:
+.L_endif_371:
 ; buf_append("\r")
     PUSH_STR "\r"
     CALL buf_append
@@ -5499,42 +5605,42 @@
     POP
 ; return 
     RET_VOID
-.L_endif_359:
-.L_endif_352:
-.L_endif_347:
-.L_endif_346:
-.L_for3_cont_344:
+.L_endif_369:
+.L_endif_362:
+.L_endif_357:
+.L_endif_356:
+.L_for3_cont_354:
 ; d++
     LOAD_LOCAL d
     PUSH_1
     ADD
     STORE_LOCAL d
-    JUMP .L_for3_top_343
-.L_for3_exit_345:
-.L_endif_342:
+    JUMP .L_for3_top_353
+.L_for3_exit_355:
+.L_endif_352:
 ; if startswith(s_lead, "dts") || startswith(s_lead, "DTS") && is_word_bound(s_lead, 3)
     LOAD_LOCAL s_lead
     PUSH_STR "dts"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_364
+    JUMP_IF_TRUE .L_or_true_374
     POP
     LOAD_LOCAL s_lead
     PUSH_STR "DTS"
     STR_STARTSWITH
-    JUMP .L_or_end_365
-.L_or_true_364:
-.L_or_end_365:
+    JUMP .L_or_end_375
+.L_or_true_374:
+.L_or_end_375:
     DUP
-    JUMP_IF_FALSE .L_and_false_362
+    JUMP_IF_FALSE .L_and_false_372
     POP
     LOAD_LOCAL s_lead
     PUSH_I8 3
     CALL is_word_bound
-    JUMP .L_and_end_363
-.L_and_false_362:
-.L_and_end_363:
-    JUMP_IF_FALSE .L_endif_366
+    JUMP .L_and_end_373
+.L_and_false_372:
+.L_and_end_373:
+    JUMP_IF_FALSE .L_endif_376
 ; file_write(out_h, "                    fcc       \"Wed Sep 30 22:41:09 2026\"\r")
     LOAD_LOCAL out_h
     PUSH_STR "                    fcc       \"Wed Sep 30 22:41:09 2026\"\r"
@@ -5542,22 +5648,22 @@
     POP
 ; return 
     RET_VOID
-.L_endif_366:
+.L_endif_376:
 ; if startswith(s_lead, "use") || startswith(s_lead, "USE") && isspace(s_lead[...])
     LOAD_LOCAL s_lead
     PUSH_STR "use"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_369
+    JUMP_IF_TRUE .L_or_true_379
     POP
     LOAD_LOCAL s_lead
     PUSH_STR "USE"
     STR_STARTSWITH
-    JUMP .L_or_end_370
-.L_or_true_369:
-.L_or_end_370:
+    JUMP .L_or_end_380
+.L_or_true_379:
+.L_or_end_380:
     DUP
-    JUMP_IF_FALSE .L_and_false_367
+    JUMP_IF_FALSE .L_and_false_377
     POP
     ADDR_OF_LOCAL s_lead
     PEEK2
@@ -5565,10 +5671,10 @@
     ADD
     PEEK1
     CALL isspace
-    JUMP .L_and_end_368
-.L_and_false_367:
-.L_and_end_368:
-    JUMP_IF_FALSE .L_endif_371
+    JUMP .L_and_end_378
+.L_and_false_377:
+.L_and_end_378:
+    JUMP_IF_FALSE .L_endif_381
 ; rem := lstrip(s_lead[...], " \t")
     LOAD_LOCAL s_lead
     PUSH_I8 3
@@ -5583,24 +5689,24 @@
     PUSH_STR "os9.d"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_374
+    JUMP_IF_TRUE .L_or_true_384
     POP
     LOAD_LOCAL rem
     PUSH_STR "scf.d"
     STR_STARTSWITH
-    JUMP .L_or_end_375
-.L_or_true_374:
-.L_or_end_375:
+    JUMP .L_or_end_385
+.L_or_true_384:
+.L_or_end_385:
     DUP
-    JUMP_IF_TRUE .L_or_true_372
+    JUMP_IF_TRUE .L_or_true_382
     POP
     LOAD_LOCAL rem
     PUSH_STR "rbf.d"
     STR_STARTSWITH
-    JUMP .L_or_end_373
-.L_or_true_372:
-.L_or_end_373:
-    JUMP_IF_FALSE .L_endif_376
+    JUMP .L_or_end_383
+.L_or_true_382:
+.L_or_end_383:
+    JUMP_IF_FALSE .L_endif_386
 ; file_write(out_h, "                    use       defsfile\r")
     LOAD_LOCAL out_h
     PUSH_STR "                    use       defsfile\r"
@@ -5608,12 +5714,12 @@
     POP
 ; return 
     RET_VOID
-.L_endif_376:
+.L_endif_386:
 ; if startswith(rem, "cocovtio.d")
     LOAD_LOCAL rem
     PUSH_STR "cocovtio.d"
     STR_STARTSWITH
-    JUMP_IF_FALSE .L_endif_377
+    JUMP_IF_FALSE .L_endif_387
 ; file_write(out_h, "* [selfgen: stripped cocovtio.d]\r")
     LOAD_LOCAL out_h
     PUSH_STR "* [selfgen: stripped cocovtio.d]\r"
@@ -5621,38 +5727,38 @@
     POP
 ; return 
     RET_VOID
-.L_endif_377:
-.L_endif_371:
+.L_endif_387:
+.L_endif_381:
 ; if in_ifp1_defsfile && startswith(s_lead, "endc") || startswith(s_lead, "ENDC") && is_word_bound(s_lead, 4)
     LOAD_GLOBAL in_ifp1_defsfile
     DUP
-    JUMP_IF_FALSE .L_and_false_380
+    JUMP_IF_FALSE .L_and_false_390
     POP
     LOAD_LOCAL s_lead
     PUSH_STR "endc"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_382
+    JUMP_IF_TRUE .L_or_true_392
     POP
     LOAD_LOCAL s_lead
     PUSH_STR "ENDC"
     STR_STARTSWITH
-    JUMP .L_or_end_383
-.L_or_true_382:
-.L_or_end_383:
-    JUMP .L_and_end_381
-.L_and_false_380:
-.L_and_end_381:
+    JUMP .L_or_end_393
+.L_or_true_392:
+.L_or_end_393:
+    JUMP .L_and_end_391
+.L_and_false_390:
+.L_and_end_391:
     DUP
-    JUMP_IF_FALSE .L_and_false_378
+    JUMP_IF_FALSE .L_and_false_388
     POP
     LOAD_LOCAL s_lead
     PUSH_I8 4
     CALL is_word_bound
-    JUMP .L_and_end_379
-.L_and_false_378:
-.L_and_end_379:
-    JUMP_IF_FALSE .L_endif_384
+    JUMP .L_and_end_389
+.L_and_false_388:
+.L_and_end_389:
+    JUMP_IF_FALSE .L_endif_394
 ; file_write(out_h, "* [selfgen: stripped ENDC around defsfile]\r")
     LOAD_LOCAL out_h
     PUSH_STR "* [selfgen: stripped ENDC around defsfile]\r"
@@ -5663,7 +5769,7 @@
     STORE_GLOBAL in_ifp1_defsfile
 ; return 
     RET_VOID
-.L_endif_384:
+.L_endif_394:
 ; if find(line, "IFNDEF", 0) < 65535
     LOAD_LOCAL line
     PUSH_STR "IFNDEF"
@@ -5671,14 +5777,14 @@
     STR_FIND
     PUSH_I16 65535
     CMP_LT
-    JUMP_IF_FALSE .L_endif_385
+    JUMP_IF_FALSE .L_endif_395
 ; line = replace_ident(line, "IFNDEF", "IFNDF")
     LOAD_LOCAL line
     PUSH_STR "IFNDEF"
     PUSH_STR "IFNDF"
     STR_REPLACE_IDENT
     STORE_LOCAL line
-.L_endif_385:
+.L_endif_395:
 ; if find(line, "ifndef", 0) < 65535
     LOAD_LOCAL line
     PUSH_STR "ifndef"
@@ -5686,37 +5792,37 @@
     STR_FIND
     PUSH_I16 65535
     CMP_LT
-    JUMP_IF_FALSE .L_endif_386
+    JUMP_IF_FALSE .L_endif_396
 ; line = replace_ident(line, "ifndef", "IFNDF")
     LOAD_LOCAL line
     PUSH_STR "ifndef"
     PUSH_STR "IFNDF"
     STR_REPLACE_IDENT
     STORE_LOCAL line
-.L_endif_386:
+.L_endif_396:
 ; if startswith(s_lead, "endif") || startswith(s_lead, "ENDIF") && is_word_bound(s_lead, 5)
     LOAD_LOCAL s_lead
     PUSH_STR "endif"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_389
+    JUMP_IF_TRUE .L_or_true_399
     POP
     LOAD_LOCAL s_lead
     PUSH_STR "ENDIF"
     STR_STARTSWITH
-    JUMP .L_or_end_390
-.L_or_true_389:
-.L_or_end_390:
+    JUMP .L_or_end_400
+.L_or_true_399:
+.L_or_end_400:
     DUP
-    JUMP_IF_FALSE .L_and_false_387
+    JUMP_IF_FALSE .L_and_false_397
     POP
     LOAD_LOCAL s_lead
     PUSH_I8 5
     CALL is_word_bound
-    JUMP .L_and_end_388
-.L_and_false_387:
-.L_and_end_388:
-    JUMP_IF_FALSE .L_endif_391
+    JUMP .L_and_end_398
+.L_and_false_397:
+.L_and_end_398:
+    JUMP_IF_FALSE .L_endif_401
 ; buf_clear()
     CALL buf_clear
 ; buf_append(" endc")
@@ -5732,7 +5838,7 @@
 ; line = buf_str()
     CALL buf_str
     STORE_LOCAL line
-.L_endif_391:
+.L_endif_401:
 ; line = strip_char_lit_quotes(line)
     LOAD_LOCAL line
     CALL strip_char_lit_quotes
@@ -5744,7 +5850,7 @@
     ADD
     PEEK1
     CALL isspace
-    JUMP_IF_FALSE .L_endif_392
+    JUMP_IF_FALSE .L_endif_402
 ; sl := lstrip(line, " \t")
     LOAD_LOCAL line
     PUSH_STR " \t"
@@ -5755,24 +5861,24 @@
     PUSH_STR "ERROR"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_395
+    JUMP_IF_TRUE .L_or_true_405
     POP
     LOAD_LOCAL sl
     PUSH_STR "error"
     STR_STARTSWITH
-    JUMP .L_or_end_396
-.L_or_true_395:
-.L_or_end_396:
+    JUMP .L_or_end_406
+.L_or_true_405:
+.L_or_end_406:
     DUP
-    JUMP_IF_FALSE .L_and_false_393
+    JUMP_IF_FALSE .L_and_false_403
     POP
     LOAD_LOCAL sl
     PUSH_I8 5
     CALL is_word_bound
-    JUMP .L_and_end_394
-.L_and_false_393:
-.L_and_end_394:
-    JUMP_IF_FALSE .L_endif_397
+    JUMP .L_and_end_404
+.L_and_false_403:
+.L_and_end_404:
+    JUMP_IF_FALSE .L_endif_407
 ; buf_clear()
     CALL buf_clear
 ; buf_append("* [selfgen: ERROR directive skipped in asm]: ")
@@ -5788,19 +5894,19 @@
     SLICE_LEN
     PUSH_I8 50
     CMP_GT
-    JUMP_IF_FALSE .L_else_398
+    JUMP_IF_FALSE .L_else_408
 ; buf_append(tr[...])
     LOAD_LOCAL tr
     PUSH_0
     PUSH_I8 50
     SLICE_SUB
     CALL buf_append
-    JUMP .L_endif_399
-.L_else_398:
+    JUMP .L_endif_409
+.L_else_408:
 ; buf_append(tr)
     LOAD_LOCAL tr
     CALL buf_append
-.L_endif_399:
+.L_endif_409:
 ; buf_append("\r")
     PUSH_STR "\r"
     CALL buf_append
@@ -5811,8 +5917,8 @@
     POP
 ; return 
     RET_VOID
-.L_endif_397:
-.L_endif_392:
+.L_endif_407:
+.L_endif_402:
 ; line = str_replace(line, "CLOCK_AND_STOP.Exit0", "CAS.Ex0")
     LOAD_LOCAL line
     PUSH_STR "CLOCK_AND_STOP.Exit0"
@@ -5838,7 +5944,7 @@
     STR_FIND
     PUSH_I16 65535
     CMP_LT
-    JUMP_IF_FALSE .L_endif_400
+    JUMP_IF_FALSE .L_endif_410
 ; line = str_replace(line, "(CAS.R6Hz|CAS.IRQEn|CAS.Tick)", "$23")
     LOAD_LOCAL line
     PUSH_STR "(CAS.R6Hz|CAS.IRQEn|CAS.Tick)"
@@ -5851,18 +5957,18 @@
     PUSH_STR "$23"
     CALL str_replace
     STORE_LOCAL line
-.L_endif_400:
+.L_endif_410:
 ; pos := word(0)
     PUSH_0
     STORE_LOCAL pos
 ; for pos < word(len(line)) && isspace(line[...])
-.L_for_top_401:
+.L_for_top_411:
     LOAD_LOCAL pos
     LOAD_LOCAL line
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_403
+    JUMP_IF_FALSE .L_and_false_413
     POP
     ADDR_OF_LOCAL line
     PEEK2
@@ -5870,17 +5976,17 @@
     ADD
     PEEK1
     CALL isspace
-    JUMP .L_and_end_404
-.L_and_false_403:
-.L_and_end_404:
-    JUMP_IF_FALSE .L_for_exit_402
+    JUMP .L_and_end_414
+.L_and_false_413:
+.L_and_end_414:
+    JUMP_IF_FALSE .L_for_exit_412
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-    JUMP .L_for_top_401
-.L_for_exit_402:
+    JUMP .L_for_top_411
+.L_for_exit_412:
 ; indent := line[...]
     LOAD_LOCAL line
     PUSH_0
@@ -5894,15 +6000,15 @@
     LOAD_LOCAL pos
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_405
+    JUMP_IF_FALSE .L_endif_415
 ; for pos < word(len(line)) && !isspace(line[...])
-.L_for_top_406:
+.L_for_top_416:
     LOAD_LOCAL pos
     LOAD_LOCAL line
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_408
+    JUMP_IF_FALSE .L_and_false_418
     POP
     ADDR_OF_LOCAL line
     PEEK2
@@ -5911,17 +6017,17 @@
     PEEK1
     CALL isspace
     NOT
-    JUMP .L_and_end_409
-.L_and_false_408:
-.L_and_end_409:
-    JUMP_IF_FALSE .L_for_exit_407
+    JUMP .L_and_end_419
+.L_and_false_418:
+.L_and_end_419:
+    JUMP_IF_FALSE .L_for_exit_417
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-    JUMP .L_for_top_406
-.L_for_exit_407:
+    JUMP .L_for_top_416
+.L_for_exit_417:
 ; lbl = line[...]
     LOAD_LOCAL line
     PUSH_0
@@ -5929,13 +6035,13 @@
     SLICE_SUB
     STORE_LOCAL lbl
 ; for pos < word(len(line)) && isspace(line[...])
-.L_for_top_410:
+.L_for_top_420:
     LOAD_LOCAL pos
     LOAD_LOCAL line
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_412
+    JUMP_IF_FALSE .L_and_false_422
     POP
     ADDR_OF_LOCAL line
     PEEK2
@@ -5943,29 +6049,29 @@
     ADD
     PEEK1
     CALL isspace
-    JUMP .L_and_end_413
-.L_and_false_412:
-.L_and_end_413:
-    JUMP_IF_FALSE .L_for_exit_411
+    JUMP .L_and_end_423
+.L_and_false_422:
+.L_and_end_423:
+    JUMP_IF_FALSE .L_for_exit_421
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-    JUMP .L_for_top_410
-.L_for_exit_411:
-.L_endif_405:
+    JUMP .L_for_top_420
+.L_for_exit_421:
+.L_endif_415:
 ; op_start := pos
     LOAD_LOCAL pos
     STORE_LOCAL op_start
 ; for pos < word(len(line)) && !isspace(line[...])
-.L_for_top_414:
+.L_for_top_424:
     LOAD_LOCAL pos
     LOAD_LOCAL line
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_416
+    JUMP_IF_FALSE .L_and_false_426
     POP
     ADDR_OF_LOCAL line
     PEEK2
@@ -5974,17 +6080,17 @@
     PEEK1
     CALL isspace
     NOT
-    JUMP .L_and_end_417
-.L_and_false_416:
-.L_and_end_417:
-    JUMP_IF_FALSE .L_for_exit_415
+    JUMP .L_and_end_427
+.L_and_false_426:
+.L_and_end_427:
+    JUMP_IF_FALSE .L_for_exit_425
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-    JUMP .L_for_top_414
-.L_for_exit_415:
+    JUMP .L_for_top_424
+.L_for_exit_425:
 ; op := line[...]
     LOAD_LOCAL line
     LOAD_LOCAL op_start
@@ -5997,33 +6103,33 @@
     STR_CMP
     NOT
     DUP
-    JUMP_IF_TRUE .L_or_true_420
+    JUMP_IF_TRUE .L_or_true_430
     POP
     LOAD_LOCAL op
     PUSH_STR "FILL"
     STR_CMP
     NOT
-    JUMP .L_or_end_421
-.L_or_true_420:
-.L_or_end_421:
+    JUMP .L_or_end_431
+.L_or_true_430:
+.L_or_end_431:
     DUP
-    JUMP_IF_FALSE .L_and_false_418
+    JUMP_IF_FALSE .L_and_false_428
     POP
     LOAD_LOCAL line
     LOAD_LOCAL pos
     CALL is_word_bound
-    JUMP .L_and_end_419
-.L_and_false_418:
-.L_and_end_419:
-    JUMP_IF_FALSE .L_endif_422
+    JUMP .L_and_end_429
+.L_and_false_428:
+.L_and_end_429:
+    JUMP_IF_FALSE .L_endif_432
 ; for pos < word(len(line)) && isspace(line[...])
-.L_for_top_423:
+.L_for_top_433:
     LOAD_LOCAL pos
     LOAD_LOCAL line
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_425
+    JUMP_IF_FALSE .L_and_false_435
     POP
     ADDR_OF_LOCAL line
     PEEK2
@@ -6031,17 +6137,17 @@
     ADD
     PEEK1
     CALL isspace
-    JUMP .L_and_end_426
-.L_and_false_425:
-.L_and_end_426:
-    JUMP_IF_FALSE .L_for_exit_424
+    JUMP .L_and_end_436
+.L_and_false_435:
+.L_and_end_436:
+    JUMP_IF_FALSE .L_for_exit_434
 ; pos++
     LOAD_LOCAL pos
     PUSH_1
     ADD
     STORE_LOCAL pos
-    JUMP .L_for_top_423
-.L_for_exit_424:
+    JUMP .L_for_top_433
+.L_for_exit_434:
 ; comma := find(line, ",", pos)
     LOAD_LOCAL line
     PUSH_STR ","
@@ -6052,7 +6158,7 @@
     LOAD_LOCAL comma
     PUSH_I16 65535
     CMP_LT
-    JUMP_IF_FALSE .L_endif_427
+    JUMP_IF_FALSE .L_endif_437
 ; val := strip(line[...], " \t")
     LOAD_LOCAL line
     LOAD_LOCAL pos
@@ -6074,7 +6180,7 @@
     LOAD_LOCAL semi
     PUSH_I16 65535
     CMP_LT
-    JUMP_IF_FALSE .L_else_428
+    JUMP_IF_FALSE .L_else_438
 ; count_raw = line[...]
     LOAD_LOCAL line
     LOAD_LOCAL comma
@@ -6083,8 +6189,8 @@
     LOAD_LOCAL semi
     SLICE_SUB
     STORE_LOCAL count_raw
-    JUMP .L_endif_429
-.L_else_428:
+    JUMP .L_endif_439
+.L_else_438:
 ; count_raw = line[...]
     LOAD_LOCAL line
     LOAD_LOCAL comma
@@ -6094,7 +6200,7 @@
     SLICE_LEN
     SLICE_SUB
     STORE_LOCAL count_raw
-.L_endif_429:
+.L_endif_439:
 ; count_str := strip(count_raw, " \t\r\n")
     LOAD_LOCAL count_raw
     PUSH_STR " \t\r\n"
@@ -6103,7 +6209,7 @@
 ; if parse_asm_int(count_str)
     LOAD_LOCAL count_str
     CALL parse_asm_int
-    JUMP_IF_FALSE .L_else_430
+    JUMP_IF_FALSE .L_else_440
 ; c := parse_asm_int_val
     LOAD_GLOBAL parse_asm_int_val
     STORE_LOCAL c
@@ -6112,7 +6218,7 @@
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_432
+    JUMP_IF_FALSE .L_endif_442
 ; file_write(out_h, lbl)
     LOAD_LOCAL out_h
     LOAD_LOCAL lbl
@@ -6123,7 +6229,7 @@
     PUSH_STR " "
     FILE_WRITE
     POP
-.L_endif_432:
+.L_endif_442:
 ; file_write(out_h, "* PREPROCESSED FILL: ")
     LOAD_LOCAL out_h
     PUSH_STR "* PREPROCESSED FILL: "
@@ -6150,11 +6256,11 @@
     FILE_WRITE
     POP
 ; for c > 0
-.L_for_top_433:
+.L_for_top_443:
     LOAD_LOCAL c
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_for_exit_434
+    JUMP_IF_FALSE .L_for_exit_444
 ; chunk := c
     LOAD_LOCAL c
     STORE_LOCAL chunk
@@ -6162,11 +6268,11 @@
     LOAD_LOCAL chunk
     PUSH_I8 16
     CMP_GT
-    JUMP_IF_FALSE .L_endif_435
+    JUMP_IF_FALSE .L_endif_445
 ; chunk = 16
     PUSH_I8 16
     STORE_LOCAL chunk
-.L_endif_435:
+.L_endif_445:
 ; file_write(out_h, indent)
     LOAD_LOCAL out_h
     LOAD_LOCAL indent
@@ -6181,35 +6287,35 @@
 ; k := word(0)
     PUSH_0
     STORE_LOCAL k
-.L_for3_top_436:
+.L_for3_top_446:
     LOAD_LOCAL k
     LOAD_LOCAL chunk
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_438
+    JUMP_IF_FALSE .L_for3_exit_448
 ; if k > 0
     LOAD_LOCAL k
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_439
+    JUMP_IF_FALSE .L_endif_449
 ; file_write(out_h, ",")
     LOAD_LOCAL out_h
     PUSH_STR ","
     FILE_WRITE
     POP
-.L_endif_439:
+.L_endif_449:
 ; file_write(out_h, val)
     LOAD_LOCAL out_h
     LOAD_LOCAL val
     FILE_WRITE
     POP
-.L_for3_cont_437:
+.L_for3_cont_447:
 ; k++
     LOAD_LOCAL k
     PUSH_1
     ADD
     STORE_LOCAL k
-    JUMP .L_for3_top_436
-.L_for3_exit_438:
+    JUMP .L_for3_top_446
+.L_for3_exit_448:
 ; file_write(out_h, "\r")
     LOAD_LOCAL out_h
     PUSH_STR "\r"
@@ -6220,18 +6326,18 @@
     LOAD_LOCAL chunk
     SUB
     STORE_LOCAL c
-    JUMP .L_for_top_433
-.L_for_exit_434:
+    JUMP .L_for_top_443
+.L_for_exit_444:
 ; return 
     RET_VOID
-    JUMP .L_endif_431
-.L_else_430:
+    JUMP .L_endif_441
+.L_else_440:
 ; if len(lbl) > 0
     LOAD_LOCAL lbl
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_440
+    JUMP_IF_FALSE .L_endif_450
 ; file_write(out_h, lbl)
     LOAD_LOCAL out_h
     LOAD_LOCAL lbl
@@ -6242,7 +6348,7 @@
     PUSH_STR " equ *\r"
     FILE_WRITE
     POP
-.L_endif_440:
+.L_endif_450:
 ; file_write(out_h, "* [selfgen: symbolic fill skipped in asm]\r")
     LOAD_LOCAL out_h
     PUSH_STR "* [selfgen: symbolic fill skipped in asm]\r"
@@ -6250,9 +6356,9 @@
     POP
 ; return 
     RET_VOID
-.L_endif_431:
-.L_endif_427:
-.L_endif_422:
+.L_endif_441:
+.L_endif_437:
+.L_endif_432:
 ; split_asm_line(line)
     LOAD_LOCAL line
     CALL split_asm_line
@@ -6279,18 +6385,18 @@
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_441
+    JUMP_IF_FALSE .L_endif_451
 ; p := word(0)
     PUSH_0
     STORE_LOCAL p
 ; for p < word(len(s_c)) && !isspace(s_c[...])
-.L_for_top_442:
+.L_for_top_452:
     LOAD_LOCAL p
     LOAD_LOCAL s_c
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_444
+    JUMP_IF_FALSE .L_and_false_454
     POP
     ADDR_OF_LOCAL s_c
     PEEK2
@@ -6299,25 +6405,25 @@
     PEEK1
     CALL isspace
     NOT
-    JUMP .L_and_end_445
-.L_and_false_444:
-.L_and_end_445:
-    JUMP_IF_FALSE .L_for_exit_443
+    JUMP .L_and_end_455
+.L_and_false_454:
+.L_and_end_455:
+    JUMP_IF_FALSE .L_for_exit_453
 ; p++
     LOAD_LOCAL p
     PUSH_1
     ADD
     STORE_LOCAL p
-    JUMP .L_for_top_442
-.L_for_exit_443:
+    JUMP .L_for_top_452
+.L_for_exit_453:
 ; for p < word(len(s_c)) && isspace(s_c[...])
-.L_for_top_446:
+.L_for_top_456:
     LOAD_LOCAL p
     LOAD_LOCAL s_c
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_448
+    JUMP_IF_FALSE .L_and_false_458
     POP
     ADDR_OF_LOCAL s_c
     PEEK2
@@ -6325,28 +6431,28 @@
     ADD
     PEEK1
     CALL isspace
-    JUMP .L_and_end_449
-.L_and_false_448:
-.L_and_end_449:
-    JUMP_IF_FALSE .L_for_exit_447
+    JUMP .L_and_end_459
+.L_and_false_458:
+.L_and_end_459:
+    JUMP_IF_FALSE .L_for_exit_457
 ; p++
     LOAD_LOCAL p
     PUSH_1
     ADD
     STORE_LOCAL p
-    JUMP .L_for_top_446
-.L_for_exit_447:
+    JUMP .L_for_top_456
+.L_for_exit_457:
 ; p_start := p
     LOAD_LOCAL p
     STORE_LOCAL p_start
 ; for p < word(len(s_c)) && !isspace(s_c[...])
-.L_for_top_450:
+.L_for_top_460:
     LOAD_LOCAL p
     LOAD_LOCAL s_c
     SLICE_LEN
     CMP_LT
     DUP
-    JUMP_IF_FALSE .L_and_false_452
+    JUMP_IF_FALSE .L_and_false_462
     POP
     ADDR_OF_LOCAL s_c
     PEEK2
@@ -6355,36 +6461,36 @@
     PEEK1
     CALL isspace
     NOT
-    JUMP .L_and_end_453
-.L_and_false_452:
-.L_and_end_453:
-    JUMP_IF_FALSE .L_for_exit_451
+    JUMP .L_and_end_463
+.L_and_false_462:
+.L_and_end_463:
+    JUMP_IF_FALSE .L_for_exit_461
 ; p++
     LOAD_LOCAL p
     PUSH_1
     ADD
     STORE_LOCAL p
-    JUMP .L_for_top_450
-.L_for_exit_451:
+    JUMP .L_for_top_460
+.L_for_exit_461:
 ; op_c = s_c[...]
     LOAD_LOCAL s_c
     LOAD_LOCAL p_start
     LOAD_LOCAL p
     SLICE_SUB
     STORE_LOCAL op_c
-.L_endif_441:
+.L_endif_451:
 ; if !is_fcc_or_fcs(op_c)
     LOAD_LOCAL op_c
     CALL is_fcc_or_fcs
     NOT
-    JUMP_IF_FALSE .L_endif_454
+    JUMP_IF_FALSE .L_endif_464
 ; code_part = replace_char(code_part, 124, 33)
     LOAD_LOCAL code_part
     PUSH_I8 124
     PUSH_I8 33
     CALL replace_char
     STORE_LOCAL code_part
-.L_endif_454:
+.L_endif_464:
 ; avail := word(0)
     PUSH_0
     STORE_LOCAL avail
@@ -6393,27 +6499,27 @@
     SLICE_LEN
     PUSH_I8 78
     CMP_LT
-    JUMP_IF_FALSE .L_endif_455
+    JUMP_IF_FALSE .L_endif_465
 ; avail = 78 - word(len(code_part))
     PUSH_I8 78
     LOAD_LOCAL code_part
     SLICE_LEN
     SUB
     STORE_LOCAL avail
-.L_endif_455:
+.L_endif_465:
 ; if word(len(comment_part)) > avail
     LOAD_LOCAL comment_part
     SLICE_LEN
     LOAD_LOCAL avail
     CMP_GT
-    JUMP_IF_FALSE .L_endif_456
+    JUMP_IF_FALSE .L_endif_466
 ; comment_part = comment_part[...]
     LOAD_LOCAL comment_part
     PUSH_0
     LOAD_LOCAL avail
     SLICE_SUB
     STORE_LOCAL comment_part
-.L_endif_456:
+.L_endif_466:
 ; code_part = apply_renames(code_part)
     LOAD_LOCAL code_part
     CALL apply_renames
@@ -6470,7 +6576,7 @@
 ; if !ok1
     LOAD_LOCAL ok1
     NOT
-    JUMP_IF_FALSE .L_endif_457
+    JUMP_IF_FALSE .L_endif_467
 ; print("ERROR: Cannot open input file: ")
 ; print("ERROR: Cannot open input file: ")
     PUSH_I16 10
@@ -6558,7 +6664,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_457:
+.L_endif_467:
 ; out_h, ok2 := file_create(out_path)
     LOAD_LOCAL out_path
     FILE_OPEN_WRITE
@@ -6567,7 +6673,7 @@
 ; if !ok2
     LOAD_LOCAL ok2
     NOT
-    JUMP_IF_FALSE .L_endif_458
+    JUMP_IF_FALSE .L_endif_468
 ; file_close(in_h)
     LOAD_LOCAL in_h
     FILE_CLOSE
@@ -6658,7 +6764,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_458:
+.L_endif_468:
 ; in_ifp1_defsfile = false
     PUSH_FALSE
     STORE_GLOBAL in_ifp1_defsfile
@@ -6668,11 +6774,11 @@
 ; d := word(0)
     PUSH_0
     STORE_LOCAL d
-.L_for3_top_459:
+.L_for3_top_469:
     LOAD_LOCAL d
     LOAD_GLOBAL num_defines
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_461
+    JUMP_IF_FALSE .L_for3_exit_471
 ; buf_clear()
     CALL buf_clear
 ; buf_append(define_sym[...])
@@ -6722,26 +6828,26 @@
     CALL buf_str
     FILE_WRITE
     POP
-.L_for3_cont_460:
+.L_for3_cont_470:
 ; d++
     LOAD_LOCAL d
     PUSH_1
     ADD
     STORE_LOCAL d
-    JUMP .L_for3_top_459
-.L_for3_exit_461:
+    JUMP .L_for3_top_469
+.L_for3_exit_471:
 ; var pending_line
 ; var pending_base
 ; has_pending := false
     PUSH_FALSE
     STORE_LOCAL has_pending
 ; for
-.L_for_top_462:
+.L_for_top_472:
 ; var line
 ; var raw_base
 ; if has_pending
     LOAD_LOCAL has_pending
-    JUMP_IF_FALSE .L_else_464
+    JUMP_IF_FALSE .L_else_474
 ; line = pending_line
     LOAD_LOCAL pending_line
     STORE_LOCAL line
@@ -6751,8 +6857,8 @@
 ; has_pending = false
     PUSH_FALSE
     STORE_LOCAL has_pending
-    JUMP .L_endif_465
-.L_else_464:
+    JUMP .L_endif_475
+.L_else_474:
 ; l, eof := file_readline(in_h)
     LOAD_LOCAL in_h
     FILE_READLINE
@@ -6762,10 +6868,10 @@
     LOAD_LOCAL eof
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_466
+    JUMP_IF_FALSE .L_endif_476
 ; break
-    JUMP .L_for_exit_463
-.L_endif_466:
+    JUMP .L_for_exit_473
+.L_endif_476:
 ; raw_base = l.Base
     ADDR_OF_LOCAL l
     PEEK2
@@ -6775,7 +6881,7 @@
     PUSH_STR "\r\n"
     STR_RSTRIP
     STORE_LOCAL line
-.L_endif_465:
+.L_endif_475:
 ; s_lead := lstrip(line, " \t")
     LOAD_LOCAL line
     PUSH_STR " \t"
@@ -6786,26 +6892,26 @@
     PUSH_STR "ifp1"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_469
+    JUMP_IF_TRUE .L_or_true_479
     POP
     LOAD_LOCAL s_lead
     PUSH_STR "IFP1"
     STR_STARTSWITH
-    JUMP .L_or_end_470
-.L_or_true_469:
-.L_or_end_470:
+    JUMP .L_or_end_480
+.L_or_true_479:
+.L_or_end_480:
     DUP
-    JUMP_IF_FALSE .L_and_false_467
+    JUMP_IF_FALSE .L_and_false_477
     POP
     LOAD_LOCAL s_lead
     PUSH_I8 4
     CALL is_word_bound
-    JUMP .L_and_end_468
-.L_and_false_467:
-.L_and_end_468:
-    JUMP_IF_FALSE .L_else_471
+    JUMP .L_and_end_478
+.L_and_false_477:
+.L_and_end_478:
+    JUMP_IF_FALSE .L_else_481
 ; for
-.L_for_top_473:
+.L_for_top_483:
 ; next_l, next_eof := file_readline(in_h)
     LOAD_LOCAL in_h
     FILE_READLINE
@@ -6815,14 +6921,14 @@
     LOAD_LOCAL next_eof
     PUSH_0
     CMP_NE
-    JUMP_IF_FALSE .L_endif_475
+    JUMP_IF_FALSE .L_endif_485
 ; transform_line(out_h, line)
     LOAD_LOCAL out_h
     LOAD_LOCAL line
     CALL transform_line
 ; break
-    JUMP .L_for_exit_474
-.L_endif_475:
+    JUMP .L_for_exit_484
+.L_endif_485:
 ; next_base := next_l.Base
     ADDR_OF_LOCAL next_l
     PEEK2
@@ -6842,7 +6948,7 @@
     SLICE_LEN
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_476
+    JUMP_IF_FALSE .L_endif_486
 ; transform_line(out_h, next_l)
     LOAD_LOCAL out_h
     LOAD_LOCAL next_l
@@ -6851,8 +6957,8 @@
     LOAD_LOCAL next_base
     BUF_FREE
 ; continue
-    JUMP .L_for_top_473
-.L_endif_476:
+    JUMP .L_for_top_483
+.L_endif_486:
 ; next_lead := lstrip(next_l, " \t")
     LOAD_LOCAL next_l
     PUSH_STR " \t"
@@ -6866,16 +6972,16 @@
     PUSH_STR "use"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_479
+    JUMP_IF_TRUE .L_or_true_489
     POP
     LOAD_LOCAL next_lead
     PUSH_STR "USE"
     STR_STARTSWITH
-    JUMP .L_or_end_480
-.L_or_true_479:
-.L_or_end_480:
+    JUMP .L_or_end_490
+.L_or_true_489:
+.L_or_end_490:
     DUP
-    JUMP_IF_FALSE .L_and_false_477
+    JUMP_IF_FALSE .L_and_false_487
     POP
     ADDR_OF_LOCAL next_lead
     PEEK2
@@ -6883,10 +6989,10 @@
     ADD
     PEEK1
     CALL isspace
-    JUMP .L_and_end_478
-.L_and_false_477:
-.L_and_end_478:
-    JUMP_IF_FALSE .L_endif_481
+    JUMP .L_and_end_488
+.L_and_false_487:
+.L_and_end_488:
+    JUMP_IF_FALSE .L_endif_491
 ; rem := lstrip(next_lead[...], " \t")
     LOAD_LOCAL next_lead
     PUSH_I8 3
@@ -6901,41 +7007,41 @@
     PUSH_STR "defsfile"
     STR_STARTSWITH
     DUP
-    JUMP_IF_TRUE .L_or_true_486
+    JUMP_IF_TRUE .L_or_true_496
     POP
     LOAD_LOCAL rem
     PUSH_STR "os9.d"
     STR_STARTSWITH
-    JUMP .L_or_end_487
-.L_or_true_486:
-.L_or_end_487:
+    JUMP .L_or_end_497
+.L_or_true_496:
+.L_or_end_497:
     DUP
-    JUMP_IF_TRUE .L_or_true_484
+    JUMP_IF_TRUE .L_or_true_494
     POP
     LOAD_LOCAL rem
     PUSH_STR "scf.d"
     STR_STARTSWITH
-    JUMP .L_or_end_485
-.L_or_true_484:
-.L_or_end_485:
+    JUMP .L_or_end_495
+.L_or_true_494:
+.L_or_end_495:
     DUP
-    JUMP_IF_TRUE .L_or_true_482
+    JUMP_IF_TRUE .L_or_true_492
     POP
     LOAD_LOCAL rem
     PUSH_STR "rbf.d"
     STR_STARTSWITH
-    JUMP .L_or_end_483
-.L_or_true_482:
-.L_or_end_483:
-    JUMP_IF_FALSE .L_endif_488
+    JUMP .L_or_end_493
+.L_or_true_492:
+.L_or_end_493:
+    JUMP_IF_FALSE .L_endif_498
 ; is_defs = true
     PUSH_TRUE
     STORE_LOCAL is_defs
-.L_endif_488:
-.L_endif_481:
+.L_endif_498:
+.L_endif_491:
 ; if is_defs
     LOAD_LOCAL is_defs
-    JUMP_IF_FALSE .L_else_489
+    JUMP_IF_FALSE .L_else_499
 ; file_write(out_h, "* [selfgen: stripped IFP1 around defsfile]\r")
     LOAD_LOCAL out_h
     PUSH_STR "* [selfgen: stripped IFP1 around defsfile]\r"
@@ -6951,8 +7057,8 @@
 ; free(next_base)
     LOAD_LOCAL next_base
     BUF_FREE
-    JUMP .L_endif_490
-.L_else_489:
+    JUMP .L_endif_500
+.L_else_499:
 ; transform_line(out_h, line)
     LOAD_LOCAL out_h
     LOAD_LOCAL line
@@ -6966,23 +7072,23 @@
 ; has_pending = true
     PUSH_TRUE
     STORE_LOCAL has_pending
-.L_endif_490:
+.L_endif_500:
 ; break
-    JUMP .L_for_exit_474
-    JUMP .L_for_top_473
-.L_for_exit_474:
-    JUMP .L_endif_472
-.L_else_471:
+    JUMP .L_for_exit_484
+    JUMP .L_for_top_483
+.L_for_exit_484:
+    JUMP .L_endif_482
+.L_else_481:
 ; transform_line(out_h, line)
     LOAD_LOCAL out_h
     LOAD_LOCAL line
     CALL transform_line
-.L_endif_472:
+.L_endif_482:
 ; free(raw_base)
     LOAD_LOCAL raw_base
     BUF_FREE
-    JUMP .L_for_top_462
-.L_for_exit_463:
+    JUMP .L_for_top_472
+.L_for_exit_473:
 ; clear_locals()
     CALL clear_locals
 ; file_close(in_h)
@@ -7101,7 +7207,7 @@
     PEEK2
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_491
+    JUMP_IF_FALSE .L_endif_501
 ; println("Usage:")
 ; println("Usage:")
     PUSH_I16 10
@@ -7231,15 +7337,23 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_491:
+.L_endif_501:
 ; protected_map = map_new(128)
     PUSH_I16 128
     MAP_NEW
     STORE_GLOBAL protected_map
-; defined_sym_map = map_new(128)
+; first_pfx_map = map_new(128)
     PUSH_I16 128
     MAP_NEW
-    STORE_GLOBAL defined_sym_map
+    STORE_GLOBAL first_pfx_map
+; colliding_pfx_map = map_new(64)
+    PUSH_I8 64
+    MAP_NEW
+    STORE_GLOBAL colliding_pfx_map
+; colliding_sym_map = map_new(64)
+    PUSH_I8 64
+    MAP_NEW
+    STORE_GLOBAL colliding_sym_map
 ; rename_map = map_new(64)
     PUSH_I8 64
     MAP_NEW
@@ -7247,9 +7361,12 @@
 ; num_files = 0
     PUSH_0
     STORE_GLOBAL num_files
-; num_syms = 0
+; num_colliding_pfx = 0
     PUSH_0
-    STORE_GLOBAL num_syms
+    STORE_GLOBAL num_colliding_pfx
+; num_colliding_syms = 0
+    PUSH_0
+    STORE_GLOBAL num_colliding_syms
 ; num_renames = 0
     PUSH_0
     STORE_GLOBAL num_renames
@@ -7280,14 +7397,14 @@
     PUSH_0
     STORE_LOCAL i
 ; for i < args.Len
-.L_for_top_492:
+.L_for_top_502:
     LOAD_LOCAL i
     ADDR_OF_LOCAL args
     PUSH_I16 4
     ADD
     PEEK2
     CMP_LT
-    JUMP_IF_FALSE .L_for_exit_493
+    JUMP_IF_FALSE .L_for_exit_503
 ; arg := get_arg(args.Base, i)
     ADDR_OF_LOCAL args
     PEEK2
@@ -7299,7 +7416,7 @@
     PUSH_STR "--no-collisions"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_494
+    JUMP_IF_FALSE .L_else_504
 ; no_collisions = true
     PUSH_TRUE
     STORE_LOCAL no_collisions
@@ -7308,14 +7425,14 @@
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_495
-.L_else_494:
+    JUMP .L_endif_505
+.L_else_504:
 ; if arg == "--defs"
     LOAD_LOCAL arg
     PUSH_STR "--defs"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_496
+    JUMP_IF_FALSE .L_else_506
 ; if i + 1 < args.Len
     LOAD_LOCAL i
     PUSH_1
@@ -7325,7 +7442,7 @@
     ADD
     PEEK2
     CMP_LT
-    JUMP_IF_FALSE .L_else_498
+    JUMP_IF_FALSE .L_else_508
 ; defs_path = get_arg(args.Base, i + 1)
     ADDR_OF_LOCAL args
     PEEK2
@@ -7339,22 +7456,22 @@
     PUSH_I8 2
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_499
-.L_else_498:
+    JUMP .L_endif_509
+.L_else_508:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-.L_endif_499:
-    JUMP .L_endif_497
-.L_else_496:
+.L_endif_509:
+    JUMP .L_endif_507
+.L_else_506:
 ; if arg == "--group"
     LOAD_LOCAL arg
     PUSH_STR "--group"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_500
+    JUMP_IF_FALSE .L_else_510
 ; is_group = true
     PUSH_TRUE
     STORE_LOCAL is_group
@@ -7367,7 +7484,7 @@
     ADD
     PEEK2
     CMP_LT
-    JUMP_IF_FALSE .L_else_502
+    JUMP_IF_FALSE .L_else_512
 ; out_dir = get_arg(args.Base, i + 1)
     ADDR_OF_LOCAL args
     PEEK2
@@ -7381,22 +7498,22 @@
     PUSH_I8 2
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_503
-.L_else_502:
+    JUMP .L_endif_513
+.L_else_512:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-.L_endif_503:
-    JUMP .L_endif_501
-.L_else_500:
+.L_endif_513:
+    JUMP .L_endif_511
+.L_else_510:
 ; if arg == "-D"
     LOAD_LOCAL arg
     PUSH_STR "-D"
     STR_CMP
     NOT
-    JUMP_IF_FALSE .L_else_504
+    JUMP_IF_FALSE .L_else_514
 ; if i + 1 < args.Len
     LOAD_LOCAL i
     PUSH_1
@@ -7406,7 +7523,7 @@
     ADD
     PEEK2
     CMP_LT
-    JUMP_IF_FALSE .L_else_506
+    JUMP_IF_FALSE .L_else_516
 ; d_str := get_arg(args.Base, i + 1)
     ADDR_OF_LOCAL args
     PEEK2
@@ -7423,21 +7540,21 @@
     PUSH_I8 2
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_507
-.L_else_506:
+    JUMP .L_endif_517
+.L_else_516:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-.L_endif_507:
-    JUMP .L_endif_505
-.L_else_504:
+.L_endif_517:
+    JUMP .L_endif_515
+.L_else_514:
 ; if startswith(arg, "-D")
     LOAD_LOCAL arg
     PUSH_STR "-D"
     STR_STARTSWITH
-    JUMP_IF_FALSE .L_else_508
+    JUMP_IF_FALSE .L_else_518
 ; d_str := arg[...]
     LOAD_LOCAL arg
     PUSH_I8 2
@@ -7453,13 +7570,13 @@
     PUSH_1
     ADD
     STORE_LOCAL i
-    JUMP .L_endif_509
-.L_else_508:
+    JUMP .L_endif_519
+.L_else_518:
 ; if num_files < MAX_FILES
     LOAD_GLOBAL num_files
     PUSH_I8 48
     CMP_LT
-    JUMP_IF_FALSE .L_endif_510
+    JUMP_IF_FALSE .L_endif_520
 ; file_paths[...] = arg
     LOAD_LOCAL arg
     ADDR_OF_GLOBAL file_paths
@@ -7486,56 +7603,91 @@
     PUSH_1
     ADD
     STORE_GLOBAL num_files
-.L_endif_510:
+.L_endif_520:
 ; i++
     LOAD_LOCAL i
     PUSH_1
     ADD
     STORE_LOCAL i
-.L_endif_509:
+.L_endif_519:
+.L_endif_515:
+.L_endif_511:
+.L_endif_507:
 .L_endif_505:
-.L_endif_501:
-.L_endif_497:
-.L_endif_495:
-    JUMP .L_for_top_492
-.L_for_exit_493:
+    JUMP .L_for_top_502
+.L_for_exit_503:
 ; if len(defs_path) > 0
     LOAD_LOCAL defs_path
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_511
+    JUMP_IF_FALSE .L_endif_521
 ; load_defs(defs_path)
     LOAD_LOCAL defs_path
     CALL load_defs
-.L_endif_511:
+.L_endif_521:
 ; if is_group
     LOAD_LOCAL is_group
-    JUMP_IF_FALSE .L_endif_512
+    JUMP_IF_FALSE .L_endif_522
 ; if len(out_dir) > 0
     LOAD_LOCAL out_dir
     SLICE_LEN
     PUSH_0
     CMP_GT
-    JUMP_IF_FALSE .L_endif_513
+    JUMP_IF_FALSE .L_endif_523
 ; os_makedirs(out_dir)
     LOAD_LOCAL out_dir
     OS_MAKEDIRS
     POP
-.L_endif_513:
+.L_endif_523:
 ; if !no_collisions
     LOAD_LOCAL no_collisions
     NOT
-    JUMP_IF_FALSE .L_endif_514
+    JUMP_IF_FALSE .L_endif_524
 ; for <init>; <cond>; <inc>
 ; f := word(0)
     PUSH_0
     STORE_LOCAL f
-.L_for3_top_515:
+.L_for3_top_525:
     LOAD_LOCAL f
     LOAD_GLOBAL num_files
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_517
+    JUMP_IF_FALSE .L_for3_exit_527
+; pass0_scan_file(file_paths[...])
+    ADDR_OF_GLOBAL file_paths
+    LOAD_LOCAL f
+    PUSH_I16 6
+    MUL
+    ADD
+    STORE_LOCAL _tmp_addr
+    LOAD_LOCAL _tmp_addr
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 2
+    ADD
+    PEEK2
+    LOAD_LOCAL _tmp_addr
+    PUSH_I16 4
+    ADD
+    PEEK2
+    CALL pass0_scan_file
+.L_for3_cont_526:
+; f++
+    LOAD_LOCAL f
+    PUSH_1
+    ADD
+    STORE_LOCAL f
+    JUMP .L_for3_top_525
+.L_for3_exit_527:
+; for <init>; <cond>; <inc>
+; f := word(0)
+    PUSH_0
+    STORE_LOCAL f
+.L_for3_top_528:
+    LOAD_LOCAL f
+    LOAD_GLOBAL num_files
+    CMP_LT
+    JUMP_IF_FALSE .L_for3_exit_530
 ; pass1_scan_file(file_paths[...])
     ADDR_OF_GLOBAL file_paths
     LOAD_LOCAL f
@@ -7554,26 +7706,26 @@
     ADD
     PEEK2
     CALL pass1_scan_file
-.L_for3_cont_516:
+.L_for3_cont_529:
 ; f++
     LOAD_LOCAL f
     PUSH_1
     ADD
     STORE_LOCAL f
-    JUMP .L_for3_top_515
-.L_for3_exit_517:
+    JUMP .L_for3_top_528
+.L_for3_exit_530:
 ; compute_collisions()
     CALL compute_collisions
-.L_endif_514:
+.L_endif_524:
 ; for <init>; <cond>; <inc>
 ; f := word(0)
     PUSH_0
     STORE_LOCAL f
-.L_for3_top_518:
+.L_for3_top_531:
     LOAD_LOCAL f
     LOAD_GLOBAL num_files
     CMP_LT
-    JUMP_IF_FALSE .L_for3_exit_520
+    JUMP_IF_FALSE .L_for3_exit_533
 ; in_p := file_paths[...]
     ADDR_OF_GLOBAL file_paths
     LOAD_LOCAL f
@@ -7615,23 +7767,23 @@
     LOAD_LOCAL in_p
     LOAD_LOCAL out_p
     CALL preprocess_file
-.L_for3_cont_519:
+.L_for3_cont_532:
 ; f++
     LOAD_LOCAL f
     PUSH_1
     ADD
     STORE_LOCAL f
-    JUMP .L_for3_top_518
-.L_for3_exit_520:
+    JUMP .L_for3_top_531
+.L_for3_exit_533:
 ; sys_exit(0)
     PUSH_0
     SYS_EXIT
-.L_endif_512:
+.L_endif_522:
 ; if num_files == 0
     LOAD_GLOBAL num_files
     PUSH_0
     CMP_EQ
-    JUMP_IF_FALSE .L_endif_521
+    JUMP_IF_FALSE .L_endif_534
 ; println("ERROR: No input file specified")
 ; println("ERROR: No input file specified")
     PUSH_I16 10
@@ -7677,7 +7829,7 @@
 ; sys_exit(1)
     PUSH_1
     SYS_EXIT
-.L_endif_521:
+.L_endif_534:
 ; in_file := file_paths[...]
     ADDR_OF_GLOBAL file_paths
     PUSH_0
@@ -7703,7 +7855,7 @@
     LOAD_GLOBAL num_files
     PUSH_1
     CMP_GT
-    JUMP_IF_FALSE .L_endif_522
+    JUMP_IF_FALSE .L_endif_535
 ; out_file = file_paths[...]
     ADDR_OF_GLOBAL file_paths
     PUSH_1
@@ -7722,17 +7874,20 @@
     ADD
     PEEK2
     STORE_LOCAL out_file
-.L_endif_522:
+.L_endif_535:
 ; if !no_collisions
     LOAD_LOCAL no_collisions
     NOT
-    JUMP_IF_FALSE .L_endif_523
+    JUMP_IF_FALSE .L_endif_536
+; pass0_scan_file(in_file)
+    LOAD_LOCAL in_file
+    CALL pass0_scan_file
 ; pass1_scan_file(in_file)
     LOAD_LOCAL in_file
     CALL pass1_scan_file
 ; compute_collisions()
     CALL compute_collisions
-.L_endif_523:
+.L_endif_536:
 ; preprocess_file(in_file, out_file)
     LOAD_LOCAL in_file
     LOAD_LOCAL out_file
