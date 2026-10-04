@@ -6,8 +6,8 @@ const MAX_GLOBALS     = 96
 const MAX_FUNCS       = 96
 const MAX_PARAMS      = 96
 const MAX_LOCALS      = 512
-const MAX_STRING_POOL = 4096
-const MAX_STRINGS     = 384
+const MAX_STRING_POOL = 8192
+const MAX_STRINGS     = 768
 
 // Token Kinds
 const TOK_EOF     = 0

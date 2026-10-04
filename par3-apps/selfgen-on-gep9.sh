@@ -582,4 +582,4 @@ os9 copy -l -r "$TMP_DIR/startup" "$DISK,startup"
 
 echo "=== Disk image generation complete: $DISK ==="
 echo "=== Booting gep9 emulator to execute self-regeneration ==="
-"$GEP9" -engine deep65280v2 -ram 512k -max-seconds 1800 -disk0 "$DISK" "$BOOT_IMG"
+"$GEP9" -engine deep65280v2 -ram 512k -max-seconds 7200 -disk0 "$DISK" "$BOOT_IMG"

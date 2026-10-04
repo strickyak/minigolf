@@ -50,9 +50,9 @@ path_scratch    rmb     64      ; scratch buffer for OS-9 pathnames
 dp_pad          rmb     1       ; align following buffers to 16-bit word boundary
 
 pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
-heap_buf        rmb     12288   ; heap buffer for dynamic allocations (12KB)
+heap_buf        rmb     4096    ; heap buffer for dynamic allocations (4KB)
 line_buf        rmb     256     ; output line buffer for PRINTLN
-globals_buf     rmb     20480   ; storage buffer for global variables (20KB)
+globals_buf     rmb     24576   ; storage buffer for global variables (24KB)
 global_ptrs     rmb     256     ; pointers to each global variable (up to 128 globals)
 dispatch_tbl    rmb     512     ; 256 opcode function pointers
 
@@ -386,7 +386,7 @@ init_tbl
 * Clear globals_buf:
         ldu     <data_base
         leau    globals_buf,u
-        ldd     #16384/2
+        ldd     #24576/2
 clr_g_loop
         clr     ,u+
         clr     ,u+
@@ -884,7 +884,7 @@ heap_alloc
         pshs    x               ; save block address
         leax    d,x             ; X = new heap_ptr
         ldd     <data_base
-        addd    #heap_buf+12288 ; D = heap limit
+        addd    #heap_buf+4096  ; D = heap limit
         pshs    d
         cmpx    ,s++            ; compare new heap_ptr (X) with limit
         bhi     ha_oom_ov
@@ -947,7 +947,7 @@ ha_bump
         tfr     y,d
         leax    d,x             ; X = new heap_ptr
         ldd     <data_base
-        addd    #heap_buf+12288 ; D = heap limit
+        addd    #heap_buf+4096  ; D = heap limit
         pshs    d
         cmpx    ,s++            ; compare new heap_ptr (X) with limit
         bhi     ha_oom
@@ -992,7 +992,7 @@ heap_free
         pshs    d
         cmpx    ,s++
         blo     hf_done_y       ; before heap_buf: ignore
-        addd    #12288          ; D = heap_buf end
+        addd    #4096           ; D = heap_buf end
         pshs    d
         cmpx    ,s++
         bhs     hf_done_y       ; at or after heap_buf end: ignore
