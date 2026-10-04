@@ -1529,17 +1529,21 @@ func emit_call(name string, nargs word) word {
         emit("    POKE1")
         return KIND_VOID
     }
-    if name == "file_open_read" {
+    if name == "file_open_read" || name == "file_open" {
         emit("    FILE_OPEN_READ")
         return KIND_SCALAR
     }
-    if name == "file_open_write" {
+    if name == "file_open_write" || name == "file_create" {
         emit("    FILE_OPEN_WRITE")
         return KIND_SCALAR
     }
     if name == "file_readline" {
         emit("    FILE_READLINE")
         return KIND_SLICE
+    }
+    if name == "file_read" {
+        emit("    FILE_READ")
+        return KIND_SCALAR
     }
     if name == "file_write" {
         if nargs == 3 {
@@ -1552,6 +1556,14 @@ func emit_call(name string, nargs word) word {
     if name == "file_close" {
         emit("    FILE_CLOSE")
         return KIND_VOID
+    }
+    if name == "os_isfile" {
+        emit("    OS_ISFILE")
+        return KIND_SCALAR
+    }
+    if name == "os_makedirs" {
+        emit("    OS_MAKEDIRS")
+        return KIND_SCALAR
     }
     if name == "sys_args" {
         emit("    SYS_ARGS")

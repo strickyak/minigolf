@@ -98,11 +98,15 @@ class PreprocessorContext:
     def __init__(self):
         self.global_instance_id = 0
 
-    def preprocess_content(self, content):
+    def preprocess_content(self, content, defines=None):
         lines = content.splitlines()
         out = []
         local_map = {}
         in_ifp1_defsfile = False
+
+        if defines:
+            for sym, val in defines:
+                out.append(f"{sym} set {val}")
 
         for line_idx, line in enumerate(lines):
             stripped = line.strip()
@@ -112,6 +116,21 @@ class PreprocessorContext:
                 local_map = {}
                 out.append(line)
                 continue
+
+            # Check if line defines a symbol overridden by -D
+            if defines:
+                m_override = re.match(r"^([A-Za-z0-9_.]+):?\s+(equ|set)\b", stripped, re.IGNORECASE)
+                if m_override:
+                    lbl = m_override.group(1)
+                    matched_def = None
+                    for dsym, dval in defines:
+                        if lbl.upper() == dsym.upper():
+                            matched_def = (dsym, dval)
+                            break
+                    if matched_def:
+                        dsym, dval = matched_def
+                        out.append(f"* [selfgen: overridden by -D {dsym}={dval}]: {stripped[:60]}")
+                        continue
 
             # 2. Comment conversion: ';' in column 0 -> '*'
             if stripped.startswith(';'):
@@ -320,7 +339,40 @@ def main():
         defs_path = args[idx + 1]
         args = args[:idx] + args[idx + 2:]
 
+    defines = []
+    new_args = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "-D":
+            if i + 1 < len(args):
+                d_str = args[i + 1]
+                i += 2
+            else:
+                d_str = ""
+                i += 1
+            if "=" in d_str:
+                sym, val = d_str.split("=", 1)
+            else:
+                sym, val = d_str, "1"
+            defines.append((sym, val))
+        elif arg.startswith("-D"):
+            d_str = arg[2:]
+            if "=" in d_str:
+                sym, val = d_str.split("=", 1)
+            else:
+                sym, val = d_str, "1"
+            defines.append((sym, val))
+            i += 1
+        else:
+            new_args.append(arg)
+            i += 1
+    args = new_args
+
     protected = load_protected_from_defs(defs_path) if defs_path else set(DEFAULT_PROTECTED)
+    for sym, val in defines:
+        protected.add(sym)
+        protected.add(sym.upper())
 
     if "--group" in args:
         idx = args.index("--group")
@@ -334,7 +386,7 @@ def main():
             bname = os.path.basename(p)
             with open(p, "r", errors="ignore") as f:
                 raw = f.read()
-            files_dict[bname] = ctx.preprocess_content(raw)
+            files_dict[bname] = ctx.preprocess_content(raw, defines=defines)
 
         resolved_dict = resolve_group_collisions(files_dict, protected)
 
@@ -352,7 +404,7 @@ def main():
         content = f.read()
 
     ctx = PreprocessorContext()
-    p_content = ctx.preprocess_content(content)
+    p_content = ctx.preprocess_content(content, defines=defines)
 
     bname = os.path.basename(in_file)
     if no_collisions:

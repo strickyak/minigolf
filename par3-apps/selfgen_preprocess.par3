@@ -1,11 +1,17 @@
 package main
 
 // Constants
-const MAX_SYMS      = 256
+const MAX_SYMS      = 400
 const MAX_RENAMES   = 128
 const MAX_PROTECTED = 256
 const MAX_FILES     = 48
 const MAX_LOCALS    = 32
+const MAX_DEFINES   = 16
+
+// -D define table
+var define_sym [MAX_DEFINES]string
+var define_val [MAX_DEFINES]string
+var num_defines word
 
 // Protected symbol table
 var protected_syms [MAX_PROTECTED]string
@@ -16,6 +22,9 @@ var syms     [MAX_SYMS]string
 var sym_pfx  [MAX_SYMS]string
 var num_syms word
 
+// Static 8-character prefix storage for Pass 1 (3200 bytes = 400 * 8)
+var sym_pfx_buf [3200]byte
+
 var prefixes [MAX_SYMS]string
 var num_pfx  word
 
@@ -23,6 +32,8 @@ var num_pfx  word
 var rename_old  [MAX_RENAMES]string
 var rename_new  [MAX_RENAMES]string
 var num_renames word
+var rename_has_first_char [256]bool
+var min_rename_len word
 
 // Group file list
 var file_paths [MAX_FILES]string
@@ -34,37 +45,62 @@ var local_lbl   [MAX_LOCALS]string
 var local_def   [MAX_LOCALS]bool
 var num_locals  word
 var global_inst word
+var heap_start  word
 
-// General line buffer
-var out_buf [256]byte
-var out_len word
+// General ping-pong line buffers (no heap allocation during line transformation)
+var pbuf1 [256]byte
+var pbuf2 [256]byte
+var pbuf_active word
+var pbuf_len word
+
+func pbuf_clear() {
+    pbuf_len = 0
+}
+
+func pbuf_append_byte(b byte) {
+    if pbuf_len < 255 {
+        if pbuf_active == 0 {
+            pbuf1[pbuf_len] = b
+        } else {
+            pbuf2[pbuf_len] = b
+        }
+        pbuf_len++
+    }
+}
+
+func pbuf_append(s string) {
+    for i := word(0); i < word(len(s)); i++ {
+        pbuf_append_byte(s[i])
+    }
+}
+
+func pbuf_str() string {
+    var res string
+    if pbuf_active == 0 {
+        res.Base = word(&pbuf1[0])
+    } else {
+        res.Base = word(&pbuf2[0])
+    }
+    res.Cap = 256
+    res.Len = pbuf_len
+    pbuf_active = 1 - pbuf_active
+    return res
+}
 
 func buf_clear() {
-    out_len = 0
+    pbuf_clear()
 }
 
 func buf_append(s string) {
-    for i := word(0); i < word(len(s)); i++ {
-        if out_len < 255 {
-            out_buf[out_len] = s[i]
-            out_len++
-        }
-    }
+    pbuf_append(s)
 }
 
 func buf_append_byte(b byte) {
-    if out_len < 255 {
-        out_buf[out_len] = b
-        out_len++
-    }
+    pbuf_append_byte(b)
 }
 
 func buf_str() string {
-    var res string
-    res.Base = word(&out_buf[0])
-    res.Cap = 256
-    res.Len = out_len
-    return res
+    return pbuf_str()
 }
 
 func clone_str(s string) string {
@@ -178,6 +214,30 @@ func upper8(s string) string {
     return res
 }
 
+func str_eq_ci(s1 string, s2 string) bool {
+    if len(s1) != len(s2) {
+        return false
+    }
+    for i := word(0); i < word(len(s1)); i++ {
+        if toupper(s1[i]) != toupper(s2[i]) {
+            return false
+        }
+    }
+    return true
+}
+
+func startswith_ci(s string, pfx string) bool {
+    if len(s) < len(pfx) {
+        return false
+    }
+    for i := word(0); i < word(len(pfx)); i++ {
+        if toupper(s[i]) != toupper(pfx[i]) {
+            return false
+        }
+    }
+    return true
+}
+
 func format_local_label(id word, name string) string {
     n_len := word(0)
     for i := word(0); i < word(len(name)) && n_len < 2; i++ {
@@ -248,7 +308,7 @@ func str_replace(s string, old_sub string, new_sub string) string {
         buf_append(new_sub)
         cur = next_pos + word(len(old_sub))
     }
-    return clone_str(buf_str())
+    return buf_str()
 }
 
 func replace_char(s string, from_char byte, to_char byte) string {
@@ -271,7 +331,7 @@ func replace_char(s string, from_char byte, to_char byte) string {
             buf_append_byte(c)
         }
     }
-    return clone_str(buf_str())
+    return buf_str()
 }
 
 func strip_char_lit_quotes(s string) string {
@@ -300,7 +360,7 @@ func strip_char_lit_quotes(s string) string {
             i++
         }
     }
-    return clone_str(buf_str())
+    return buf_str()
 }
 
 func parse_asm_int(s string) (word, bool) {
@@ -377,6 +437,26 @@ func add_protected_defs(sym string) {
     }
 }
 
+func add_define(d_str string) {
+    if num_defines >= MAX_DEFINES {
+        return
+    }
+    eq_idx := find(d_str, "=", 0)
+    var sym string
+    var val string
+    if eq_idx < 0xFFFF {
+        sym = d_str[0:eq_idx]
+        val = d_str[eq_idx+1:len(d_str)]
+    } else {
+        sym = d_str
+        val = "1"
+    }
+    define_sym[num_defines] = clone_str(sym)
+    define_val[num_defines] = clone_str(val)
+    num_defines++
+    add_protected_defs(sym)
+}
+
 func load_default_protected() {
     add_protected_lit("A"); add_protected_lit("B"); add_protected_lit("CC"); add_protected_lit("D")
     add_protected_lit("DP"); add_protected_lit("E"); add_protected_lit("F"); add_protected_lit("W")
@@ -442,11 +522,13 @@ func load_defs(defs_path string) {
         if eof != 0 {
             break
         }
+        raw_b := line.Base
+        line = rstrip(line, "\r\n")
         lbl := extract_col0_label(line)
         if len(lbl) > 0 && !is_local_or_l_label(lbl) {
             add_protected_defs(lbl)
         }
-        free(line.Base)
+        free(raw_b)
     }
     file_close(h)
     sort_protected()
@@ -546,6 +628,20 @@ func split_asm_line(line string) (string, string) {
 // -----------------------------------------------------------------------------
 // Local Label Management (@-labels)
 // -----------------------------------------------------------------------------
+func clear_locals() {
+    for i := word(0); i < num_locals; i++ {
+        if local_name[i].Base != 0 {
+            free(local_name[i].Base)
+            local_name[i].Base = 0
+        }
+        if local_lbl[i].Base != 0 {
+            free(local_lbl[i].Base)
+            local_lbl[i].Base = 0
+        }
+    }
+    num_locals = 0
+}
+
 func find_local(name string) word {
     for i := word(0); i < num_locals; i++ {
         if local_name[i] == name {
@@ -576,6 +672,9 @@ func repl_locals(code string) string {
             idx := find_local(name)
             if idx < 0xFFFF && local_def[idx] {
                 global_inst++
+                if local_lbl[idx].Base != 0 {
+                    free(local_lbl[idx].Base)
+                }
                 local_lbl[idx] = format_local_label(global_inst, name)
                 local_def[idx] = true
             } else if idx < 0xFFFF {
@@ -624,12 +723,28 @@ func repl_locals(code string) string {
         buf_append(repl)
         pos = at_idx + 1
     }
-    return clone_str(buf_str())
+    return buf_str()
 }
 
 // -----------------------------------------------------------------------------
 // Pass 1: Symbol Collection & Collision Analysis
 // -----------------------------------------------------------------------------
+func store_upper8(idx word, s string) string {
+    base := word(&sym_pfx_buf[0]) + idx * 8
+    max_len := word(len(s))
+    if max_len > 8 {
+        max_len = 8
+    }
+    for i := word(0); i < max_len; i++ {
+        pokeb(base + i, toupper(s[i]))
+    }
+    var res string
+    res.Base = base
+    res.Cap = 8
+    res.Len = max_len
+    return res
+}
+
 func add_defined_symbol(lbl string) {
     for i := word(0); i < num_syms; i++ {
         if syms[i] == lbl {
@@ -638,7 +753,7 @@ func add_defined_symbol(lbl string) {
     }
     if num_syms < MAX_SYMS {
         syms[num_syms] = clone_str(lbl)
-        sym_pfx[num_syms] = upper8(lbl)
+        sym_pfx[num_syms] = store_upper8(num_syms, lbl)
         num_syms++
     }
 }
@@ -653,13 +768,15 @@ func pass1_scan_file(path string) {
         if eof != 0 {
             break
         }
+        raw_b := line.Base
+        line = rstrip(line, "\r\n")
         lbl := extract_col0_label(line)
         if len(lbl) > 0 && !is_local_or_l_label(lbl) {
             if !is_protected(lbl) {
                 add_defined_symbol(lbl)
             }
         }
-        free(line.Base)
+        free(raw_b)
     }
     file_close(h)
 }
@@ -739,6 +856,93 @@ func compute_collisions() {
         rename_old[j] = k_old
         rename_new[j] = k_new
     }
+
+    // Initialize fast rename lookup table and minimum length
+    for i := word(0); i < 256; i++ {
+        rename_has_first_char[i] = false
+    }
+    min_rename_len = 0xFFFF
+    for i := word(0); i < num_renames; i++ {
+        ro := rename_old[i]
+        b := ro[0]
+        rename_has_first_char[b] = true
+        l := word(len(ro))
+        if l < min_rename_len {
+            min_rename_len = l
+        }
+    }
+}
+
+func lookup_rename(tok string) string {
+    if num_renames == 0 || word(len(tok)) < min_rename_len {
+        return ""
+    }
+    b0 := tok[0]
+    if !rename_has_first_char[b0] {
+        return ""
+    }
+    tok_len := word(len(tok))
+    for i := word(0); i < num_renames; i++ {
+        ro := rename_old[i]
+        if ro[0] == b0 && word(len(ro)) == tok_len {
+            if ro == tok {
+                return rename_new[i]
+            }
+        }
+    }
+    return ""
+}
+
+func apply_renames(code string) string {
+    if num_renames == 0 || word(len(code)) < min_rename_len {
+        return code
+    }
+    has_match := false
+    pos := word(0)
+    for pos < word(len(code)) {
+        if is_ident_char(code[pos]) {
+            start := pos
+            for pos < word(len(code)) && is_ident_char(code[pos]) {
+                pos++
+            }
+            if pos - start >= min_rename_len {
+                tok := code[start:pos]
+                if len(lookup_rename(tok)) > 0 {
+                    has_match = true
+                    break
+                }
+            }
+        } else {
+            pos++
+        }
+    }
+    if !has_match {
+        return code
+    }
+    buf_clear()
+    pos = word(0)
+    for pos < word(len(code)) {
+        if is_ident_char(code[pos]) {
+            start := pos
+            for pos < word(len(code)) && is_ident_char(code[pos]) {
+                pos++
+            }
+            tok := code[start:pos]
+            repl := ""
+            if pos - start >= min_rename_len {
+                repl = lookup_rename(tok)
+            }
+            if len(repl) > 0 {
+                buf_append(repl)
+            } else {
+                buf_append(tok)
+            }
+        } else {
+            buf_append_byte(code[pos])
+            pos++
+        }
+    }
+    return buf_str()
 }
 
 // -----------------------------------------------------------------------------
@@ -760,11 +964,12 @@ func write_truncated(out_h word, code_part string, comment_part string) {
 }
 
 func transform_line(out_h word, line string) {
+    orig_base := line.Base
     stripped := strip(line, " \t\r\n")
 
     // 1. Blank line
     if len(stripped) == 0 {
-        num_locals = 0
+        clear_locals()
         file_write(out_h, "\r")
         return
     }
@@ -795,6 +1000,40 @@ func transform_line(out_h word, line string) {
 
     s_lead := lstrip(line, " \t")
 
+    // Check if line defines a symbol overridden by -D
+    if num_defines > 0 {
+        for d := word(0); d < num_defines; d++ {
+            dsym := define_sym[d]
+            dlen := word(len(dsym))
+            if word(len(s_lead)) > dlen {
+                if str_eq_ci(s_lead[0:dlen], dsym) {
+                    ch := s_lead[dlen]
+                    if ch == ' ' || ch == '\t' || ch == ':' {
+                        rest := lstrip(s_lead[dlen:len(s_lead)], " \t:")
+                        if (startswith_ci(rest, "equ") && is_word_bound(rest, 3)) ||
+                           (startswith_ci(rest, "set") && is_word_bound(rest, 3)) {
+                            buf_clear()
+                            buf_append("* [selfgen: overridden by -D ")
+                            buf_append(dsym)
+                            buf_append("=")
+                            buf_append(define_val[d])
+                            buf_append("]: ")
+                            tr := strip(line, " \t\r\n")
+                            if len(tr) > 50 {
+                                buf_append(tr[0:50])
+                            } else {
+                                buf_append(tr)
+                            }
+                            buf_append("\r")
+                            file_write(out_h, buf_str())
+                            return
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // 3. dts
     if (startswith(s_lead, "dts") || startswith(s_lead, "DTS")) && is_word_bound(s_lead, 3) {
         file_write(out_h, "                    fcc       \"Wed Sep 30 22:41:09 2026\"\r")
@@ -806,6 +1045,10 @@ func transform_line(out_h word, line string) {
         rem := lstrip(s_lead[3:len(s_lead)], " \t")
         if startswith(rem, "os9.d") || startswith(rem, "scf.d") || startswith(rem, "rbf.d") {
             file_write(out_h, "                    use       defsfile\r")
+            return
+        }
+        if startswith(rem, "cocovtio.d") {
+            file_write(out_h, "* [selfgen: stripped cocovtio.d]\r")
             return
         }
     }
@@ -965,11 +1208,7 @@ func transform_line(out_h word, line string) {
     }
 
     // 15. Collision renaming in code_part
-    for r := word(0); r < num_renames; r++ {
-        if find(code_part, rename_old[r], 0) < 0xFFFF {
-            code_part = replace_ident(code_part, rename_old[r], rename_new[r])
-        }
-    }
+    code_part = apply_renames(code_part)
 
     // 16. Output truncated line
     write_truncated(out_h, code_part, comment_part)
@@ -991,7 +1230,16 @@ func preprocess_file(in_path string, out_path string) {
     }
 
     in_ifp1_defsfile = false
-    num_locals = 0
+    clear_locals()
+
+    for d := word(0); d < num_defines; d++ {
+        buf_clear()
+        buf_append(define_sym[d])
+        buf_append(" set ")
+        buf_append(define_val[d])
+        buf_append("\r")
+        file_write(out_h, buf_str())
+    }
 
     var pending_line string
     var pending_base word
@@ -1009,8 +1257,8 @@ func preprocess_file(in_path string, out_path string) {
             if eof != 0 {
                 break
             }
-            line = l
             raw_base = l.Base
+            line = rstrip(l, "\r\n")
         }
 
         s_lead := lstrip(line, " \t")
@@ -1024,10 +1272,12 @@ func preprocess_file(in_path string, out_path string) {
                     transform_line(out_h, line)
                     break
                 }
+                next_base := next_l.Base
+                next_l = rstrip(next_l, "\r\n")
                 next_s := strip(next_l, " \t\r\n")
                 if len(next_s) == 0 {
                     transform_line(out_h, next_l)
-                    free(next_l.Base)
+                    free(next_base)
                     continue
                 }
                 next_lead := lstrip(next_l, " \t")
@@ -1042,11 +1292,11 @@ func preprocess_file(in_path string, out_path string) {
                     file_write(out_h, "* [selfgen: stripped IFP1 around defsfile]\r")
                     in_ifp1_defsfile = true
                     transform_line(out_h, next_l)
-                    free(next_l.Base)
+                    free(next_base)
                 } else {
                     transform_line(out_h, line)
                     pending_line = next_l
-                    pending_base = next_l.Base
+                    pending_base = next_base
                     has_pending = true
                 }
                 break
@@ -1058,6 +1308,7 @@ func preprocess_file(in_path string, out_path string) {
         free(raw_base)
     }
 
+    clear_locals()
     file_close(in_h)
     file_close(out_h)
 }
@@ -1075,6 +1326,10 @@ func get_arg(args_base word, idx word) string {
 }
 
 func main() {
+    dummy := alloc(1)
+    heap_start = dummy
+    free(dummy)
+
     args := sys_args()
     if args.Len == 0 {
         println("Usage:")
@@ -1087,6 +1342,11 @@ func main() {
     num_protected = 0
     num_syms = 0
     num_renames = 0
+    num_defines = 0
+    min_rename_len = 0xFFFF
+    for i := word(0); i < 256; i++ {
+        rename_has_first_char[i] = false
+    }
     global_inst = 0
 
     load_default_protected()
@@ -1117,6 +1377,18 @@ func main() {
             } else {
                 i++
             }
+        } else if arg == "-D" {
+            if i + 1 < args.Len {
+                d_str := get_arg(args.Base, i + 1)
+                add_define(d_str)
+                i += 2
+            } else {
+                i++
+            }
+        } else if startswith(arg, "-D") {
+            d_str := arg[2:len(arg)]
+            add_define(d_str)
+            i++
         } else {
             if num_files < MAX_FILES {
                 file_paths[num_files] = arg

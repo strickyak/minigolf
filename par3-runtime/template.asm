@@ -52,7 +52,7 @@ dp_pad          rmb     1       ; align following buffers to 16-bit word boundar
 pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
 heap_buf        rmb     12288   ; heap buffer for dynamic allocations (12KB)
 line_buf        rmb     256     ; output line buffer for PRINTLN
-globals_buf     rmb     14336   ; storage buffer for global variables (14KB)
+globals_buf     rmb     16384   ; storage buffer for global variables (16KB)
 global_ptrs     rmb     256     ; pointers to each global variable (up to 128 globals)
 dispatch_tbl    rmb     512     ; 256 opcode function pointers
 
@@ -386,7 +386,7 @@ init_tbl
 * Clear globals_buf:
         ldu     <data_base
         leau    globals_buf,u
-        ldd     #14336/2
+        ldd     #16384/2
 clr_g_loop
         clr     ,u+
         clr     ,u+
@@ -1647,9 +1647,9 @@ sc_greater_lens
 * cic_check: Helper to check if char in A is in chars set
 * Input:  A = char to test
 *         Y = chars_ptr (if 0, check default whitespace: SP, TAB, LF, CR)
-*         D = chars_len
+*         X = chars_len
 * Output: B = 1 if match, 0 if not
-* Preserves: A
+* Preserves: A, X, Y
 ********************************************************************
 cic_check
         cmpy    #0
@@ -1667,22 +1667,21 @@ cic_check
         rts
 
 cic_custom
-        subd    #0              ; test if D == 0
+        cmpx    #0              ; test if chars_len == 0
         beq     cic_no
-        pshs    d,y
-        ldx     ,s              ; X = loop count
+        pshs    x,y
 cic_loop
         cmpa    ,y+
         beq     cic_found
         leax    -1,x
         bne     cic_loop
-        puls    d,y
+        puls    x,y
 cic_no
         clrb
         rts
 
 cic_found
-        puls    d,y
+        puls    x,y
 cic_yes
         ldb     #1
         rts
@@ -1912,7 +1911,7 @@ ls_loop
         ldx     6,s             ; str_ptr
         lda     d,x             ; A = str_ptr[i]
         ldy     10,s            ; chars_ptr
-        ldd     8,s             ; chars_len
+        ldx     8,s             ; chars_len
         lbsr    cic_check
         tstb
         beq     ls_done         ; not in chars -> stop
@@ -1962,7 +1961,7 @@ rs_loop
         ldx     4,s             ; str_ptr
         lda     d,x             ; A = str_ptr[str_len - 1]
         ldy     8,s             ; chars_ptr
-        ldd     6,s             ; chars_len
+        ldx     6,s             ; chars_len
         lbsr    cic_check
         tstb
         beq     rs_done
@@ -2017,7 +2016,7 @@ st_l_loop
         ldx     6,s             ; str_ptr
         lda     d,x
         ldy     10,s            ; chars_ptr
-        ldd     8,s             ; chars_len
+        ldx     8,s             ; chars_len
         lbsr    cic_check
         tstb
         beq     st_l_done
@@ -2048,7 +2047,7 @@ st_r_loop
         ldx     8,s             ; str_ptr
         lda     d,x
         ldy     12,s            ; chars_ptr
-        ldd     10,s            ; chars_len
+        ldx     10,s            ; chars_len
         lbsr    cic_check
         tstb
         beq     st_done
@@ -2321,12 +2320,13 @@ ri_p2_skip_copy
         bra     ri_p2_loop
 
 ri_p2_single
-        ldd     4,s             ; pos
-        ldx     12,s            ; src_ptr
-        lda     d,x             ; A = src_ptr[pos]
-        ldd     2,s             ; out_idx
-        ldx     0,s             ; out_ptr
-        sta     d,x             ; out_ptr[out_idx] = A
+        ldx     0,s             ; X = out_ptr
+        ldd     2,s             ; D = out_idx
+        leax    d,x             ; X = out_ptr + out_idx
+        ldy     12,s            ; Y = src_ptr
+        ldd     4,s             ; D = pos
+        lda     d,y             ; A = src_ptr[pos]
+        sta     ,x              ; out_ptr[out_idx] = A
         ldd     2,s
         addd    #1
         std     2,s             ; out_idx++
