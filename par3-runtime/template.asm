@@ -3213,63 +3213,58 @@ mp_insert
 * D = bucket_offset
 * 0,s = key_len, 2,s = map_ptr, 4,s = key_ptr, 6,s = val
         pshs    d               ; 0,s = bucket_offset
-* 1. Allocate 12-byte node:
-        ldd     #12
-        lbsr    heap_alloc      ; X = new_node
-        pshs    x               ; 0,s = new_node
 * Stack:
-* 0,s = new_node (2 bytes)
-* 2,s = bucket_offset (2 bytes)
-* 4,s = key_len (2 bytes)
-* 6,s = map_ptr (2 bytes)
-* 8,s = key_ptr (2 bytes)
-* 10,s = val (2 bytes)
-* 2. Allocate heap copy of key:
-        ldd     4,s             ; D = key_len
-        addd    #1              ; +1 for null terminator
-        lbsr    heap_alloc      ; X = key_copy_ptr
-* 3. Copy key bytes:
-        ldy     8,s             ; Y = key_ptr
-        ldd     4,s             ; D = key_len
-        pshs    x               ; save key_copy_ptr
-        tfr     d,u             ; U = loop counter (key_len)
+* 0,s = bucket_offset (2 bytes)
+* 2,s = key_len (2 bytes)
+* 4,s = map_ptr (2 bytes)
+* 6,s = key_ptr (2 bytes)
+* 8,s = val (2 bytes)
+* Allocate single block for 12-byte node + key_len + 1 (null terminator):
+        ldd     2,s             ; D = key_len
+        addd    #13             ; D = 12 + key_len + 1
+        lbsr    heap_alloc      ; X = new_node
+* Populate new_node:
+        ldd     8,s             ; D = val
+        std     2,x             ; node.val = val
+        ldd     2,s             ; D = key_len
+        std     4,x             ; node.key_len = key_len
+        leay    12,x            ; Y = inline key buffer (X + 12)
+        sty     6,x             ; node.key_ptr = Y
+* Copy key bytes:
+        pshs    x               ; 0,s = new_node
+        ldx     6+2,s           ; X = key_ptr (source)
+        tfr     d,u             ; U = key_len (count)
 mp_cp_k
         cmpu    #0
         beq     mp_cp_kd
-        lda     ,y+
-        sta     ,x+
+        lda     ,x+
+        sta     ,y+
         leau    -1,u
         bra     mp_cp_k
 mp_cp_kd
-        clr     ,x              ; null terminator
-        puls    x               ; X = key_copy_ptr
-* 4. Populate new_node:
-        ldu     0,s             ; U = new_node
-        stx     6,u             ; node.key_ptr = key_copy_ptr
-        ldd     4,s             ; D = key_len
-        std     4,u             ; node.key_len = key_len
-        ldd     10,s            ; D = val
-        std     2,u             ; node.val = val
+        clr     ,y              ; null terminator
+        puls    u               ; U = new_node
 * Calculate hash and store:
-        ldy     6,u             ; Y = key_copy_ptr
+        ldy     6,u             ; Y = key_ptr (U + 12)
         ldd     4,u             ; D = key_len
         lbsr    ht_calc_hash    ; D = hash
         std     8,u             ; node.hash = hash
-* 5. Link into bucket:
-        ldx     6,s             ; X = map_ptr
-        ldd     2,s             ; D = bucket_offset
+* Link into bucket:
+* 0,s = bucket_offset, 2,s = key_len, 4,s = map_ptr, 6,s = key_ptr, 8,s = val
+        ldx     4,s             ; X = map_ptr
+        ldd     0,s             ; D = bucket_offset
         leax    d,x             ; X = &map.buckets[bucket]
         ldd     ,x              ; D = old_head
         std     ,u              ; node.next = old_head
         stu     ,x              ; map.buckets[bucket] = new_node
-* 6. Increment map.count:
-        ldx     6,s             ; X = map_ptr
+* Increment map.count:
+        ldx     4,s             ; X = map_ptr
         ldd     4,x             ; D = map.count
         addd    #1
         std     4,x
 * Done! Return val:
-        ldd     10,s            ; D = val
-        leas    12,s            ; clean up all stack temps
+        ldd     8,s             ; D = val
+        leas    10,s            ; clean up all stack temps (5 words)
         ldu     <vm_sp          ; restore VM stack pointer
         pshu    d               ; push val (for statement POP)
         ldy     <vm_pc
@@ -3328,61 +3323,52 @@ ms_insert
 * 2,s = key_len (2 bytes)
 * 4,s = map_ptr (2 bytes)
 * 6,s = key_ptr (2 bytes)
-* 1. Allocate 12-byte node:
-        ldd     #12
+* Allocate single block for 12-byte node + key_len + 1 (null terminator):
+        ldd     2,s             ; D = key_len
+        addd    #13             ; D = 12 + key_len + 1
         lbsr    heap_alloc      ; X = new_node
+* Populate new_node:
+        ldd     2,s             ; D = key_len
+        std     4,x             ; node.key_len = key_len
+        leay    12,x            ; Y = inline key buffer (X + 12)
+        sty     6,x             ; node.key_ptr = Y
+* Copy key bytes:
         pshs    x               ; 0,s = new_node
-* Stack:
-* 0,s = new_node (2 bytes)
-* 2,s = bucket_offset (2 bytes)
-* 4,s = key_len (2 bytes)
-* 6,s = map_ptr (2 bytes)
-* 8,s = key_ptr (2 bytes)
-* 2. Allocate heap copy of key:
-        ldd     4,s             ; D = key_len
-        addd    #1              ; +1 for null terminator
-        lbsr    heap_alloc      ; X = key_copy_ptr
-* 3. Copy key bytes:
-        ldy     8,s             ; Y = key_ptr
-        ldd     4,s             ; D = key_len
-        pshs    x               ; save key_copy_ptr
-        tfr     d,u             ; U = loop counter (key_len)
+        ldx     6+2,s           ; X = key_ptr (source)
+        tfr     d,u             ; U = key_len (count)
 ms_cp_k
         cmpu    #0
         beq     ms_cp_kd
-        lda     ,y+
-        sta     ,x+
+        lda     ,x+
+        sta     ,y+
         leau    -1,u
         bra     ms_cp_k
 ms_cp_kd
-        clr     ,x              ; null terminator
-        puls    x               ; X = key_copy_ptr
-* 4. Populate new_node:
-        ldu     0,s             ; U = new_node
-        stx     6,u             ; node.key_ptr = key_copy_ptr
-        ldd     4,s             ; D = key_len
-        std     4,u             ; node.key_len = key_len
-        ldx     6,s             ; X = map_ptr
+        clr     ,y              ; null terminator
+        puls    u               ; U = new_node
+* Assign sequential ID from map.count:
+        ldx     4,s             ; X = map_ptr
         ldd     4,x             ; D = map.count
         std     2,u             ; node.val = map.count (assign sequential ID)
         addd    #1
         std     4,x             ; map.count += 1
 * Calculate hash and store:
-        ldy     6,u             ; Y = key_copy_ptr
+        ldy     6,u             ; Y = key_ptr (U + 12)
         ldd     4,u             ; D = key_len
         lbsr    ht_calc_hash    ; D = hash
         std     8,u             ; node.hash = hash
-* 5. Link into bucket:
-        ldx     6,s             ; X = map_ptr
-        ldd     2,s             ; D = bucket_offset
+* Link into bucket:
+* 0,s = bucket_offset, 2,s = key_len, 4,s = map_ptr, 6,s = key_ptr
+        ldx     4,s             ; X = map_ptr
+        ldd     0,s             ; D = bucket_offset
         leax    d,x             ; X = &map.buckets[bucket]
         ldd     ,x              ; D = old_head
         std     ,u              ; node.next = old_head
         stu     ,x              ; map.buckets[bucket] = new_node
-* 6. Push result slice: Base = key_copy_ptr, Cap = key_len, Len = key_len
-        ldy     6,u             ; Y = key_copy_ptr
+* Push result slice: Base = node.key_ptr, Cap = node.key_len, Len = node.key_len
+        ldy     6,u             ; Y = key_ptr
         ldd     4,u             ; D = key_len
-        leas    10,s            ; clean up all stack temps
+        leas    8,s             ; clean up all stack temps (4 words)
         ldu     <vm_sp          ; restore VM stack pointer
         pshu    y               ; Base
         pshu    d               ; Cap

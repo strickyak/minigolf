@@ -14,20 +14,19 @@
 .global entry_func_idx: word
 .global fn_var_names: 384
 .global fn_var_slots: 64
-.global func_arg_count: 80
-.global func_code_offset: 160
-.global func_code_size: 160
-.global func_first_var: 160
-.global func_frame_size: 160
-.global func_local_count: 80
+.global func_arg_count: 64
+.global func_code_offset: 128
+.global func_code_size: 128
+.global func_first_var: 128
+.global func_frame_size: 128
+.global func_local_count: 64
 .global func_map: word
-.global func_names: 480
-.global func_var_offset: 160
+.global func_names: 384
+.global func_var_offset: 128
 .global global_map: word
-.global global_names: 576
-.global global_sizes: 192
-.global label_offsets: 4096
-.global name_pool: 2048
+.global global_sizes: 128
+.global label_offsets: 2048
+.global name_pool: 1024
 .global name_pool_len: word
 .global num_cur_vars: word
 .global num_funcs: word
@@ -39,7 +38,6 @@
 .global op_arg_types: 144
 .global op_bytes: 144
 .global op_map: word
-.global op_names: 864
 .global out_buf: 256
 .global out_file_h: word
 .global out_len: word
@@ -394,7 +392,7 @@
     LOAD_GLOBAL name_pool_len
     LOAD_LOCAL slen
     ADD
-    PUSH_I16 2048
+    PUSH_I16 1024
     CMP_GT
     JUMP_IF_FALSE .L_endif_8
 ; println("Error: MAX_NAME_POOL exceeded")
@@ -2846,27 +2844,6 @@
     .local _swap_2: slice
     .local _swap_3: slice
 
-; op_names[...] = name
-    LOAD_LOCAL name
-    ADDR_OF_GLOBAL op_names
-    LOAD_LOCAL idx
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    SWAP
-    POKE2
 ; op_bytes[...] = op
     LOAD_LOCAL op
     ADDR_OF_GLOBAL op_bytes
@@ -4117,7 +4094,7 @@
     STORE_LOCAL lid
 ; if lid < MAX_LABELS
     LOAD_LOCAL lid
-    PUSH_I16 2048
+    PUSH_I16 1024
     CMP_LT
     JUMP_IF_FALSE .L_endif_227
 ; return label_offsets[...]
@@ -4932,7 +4909,7 @@
     STORE_LOCAL lid
 ; if lid >= MAX_LABELS
     LOAD_LOCAL lid
-    PUSH_I16 2048
+    PUSH_I16 1024
     CMP_GE
     JUMP_IF_FALSE .L_endif_271
 ; println("Error: MAX_LABELS exceeded")
@@ -5039,7 +5016,7 @@
     CALL split_name_and_size
 ; if num_globals >= MAX_GLOBALS
     LOAD_GLOBAL num_globals
-    PUSH_I8 96
+    PUSH_I8 64
     CMP_GE
     JUMP_IF_FALSE .L_endif_276
 ; println("Error: MAX_GLOBALS exceeded")
@@ -5088,28 +5065,6 @@
     PUSH_1
     SYS_EXIT
 .L_endif_276:
-; global_names[...] = clone_str(split_var_name)
-    LOAD_GLOBAL split_var_name
-    CALL clone_str
-    ADDR_OF_GLOBAL global_names
-    LOAD_GLOBAL num_globals
-    PUSH_I16 6
-    MUL
-    ADD
-    STORE_LOCAL _tmp_addr
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 4
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    PUSH_I16 2
-    ADD
-    SWAP
-    POKE2
-    LOAD_LOCAL _tmp_addr
-    SWAP
-    POKE2
 ; global_sizes[...] = split_var_size
     LOAD_GLOBAL split_var_size
     ADDR_OF_GLOBAL global_sizes
@@ -5228,7 +5183,7 @@
 .L_endif_284:
 ; if num_funcs >= MAX_FUNCS
     LOAD_GLOBAL num_funcs
-    PUSH_I8 80
+    PUSH_I8 64
     CMP_GE
     JUMP_IF_FALSE .L_endif_285
 ; println("Error: MAX_FUNCS exceeded")
@@ -7839,7 +7794,7 @@
     STORE_LOCAL i
 .L_for3_top_397:
     LOAD_LOCAL i
-    PUSH_I16 2048
+    PUSH_I16 1024
     CMP_LT
     JUMP_IF_FALSE .L_for3_exit_399
 ; label_offsets[...] = 65535

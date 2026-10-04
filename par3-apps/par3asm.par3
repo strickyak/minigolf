@@ -1,24 +1,22 @@
 package main
 
 // Limits for 64K VM Process Space
-const MAX_GLOBALS     = 96
-const MAX_FUNCS       = 80
+const MAX_GLOBALS     = 64
+const MAX_FUNCS       = 64
 const MAX_VARS        = 1024
 const MAX_FUNC_VARS   = 64
-const MAX_LABELS      = 2048
+const MAX_LABELS      = 1024
 const MAX_STRING_POOL = 4096
-const MAX_NAME_POOL   = 2048
+const MAX_NAME_POOL   = 1024
 const MAX_VAR_NAME_POOL = 512
 const NUM_OPCODES     = 144
 
-// Opcode Table (sorted alphabetically for binary search)
-var op_names     [NUM_OPCODES]string
+// Opcode Table
 var op_bytes     [NUM_OPCODES]byte
 var op_arg_bytes [NUM_OPCODES]byte
 var op_arg_types [NUM_OPCODES]byte
 
 // Globals Table
-var global_names [MAX_GLOBALS]string
 var global_sizes [MAX_GLOBALS]word
 var num_globals  word
 
@@ -475,7 +473,6 @@ func add_to_string_pool() word {
 // -----------------------------------------------------------------------------
 
 func set_op(idx word, name string, op byte, arg_bytes byte, arg_type byte) {
-    op_names[idx] = name
     op_bytes[idx] = op
     op_arg_bytes[idx] = arg_bytes
     op_arg_types[idx] = arg_type
@@ -829,7 +826,6 @@ func pass1(in_path string) {
                     println("Error: MAX_GLOBALS exceeded")
                     sys_exit(1)
                 }
-                global_names[num_globals] = clone_str(split_var_name)
                 global_sizes[num_globals] = split_var_size
                 map_put(global_map, split_var_name, num_globals)
                 num_globals++
