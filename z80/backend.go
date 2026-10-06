@@ -320,6 +320,36 @@ func (b *Backend) emitLoadAddr(reg string, val ir.Value) {
 	}
 }
 
+func (b *Backend) getDirectGlobalAddr(val ir.Value) (string, bool) {
+	switch v := val.(type) {
+	case *ir.Global:
+		return fmt.Sprintf("v_%s", v.Name), true
+	case *ir.AddressOfGlobal:
+		return fmt.Sprintf("v_%s", v.Global.Name), true
+	case *ir.AddressOfField:
+		if glob, ok := v.Ptr.(*ir.AddressOfGlobal); ok {
+			structType := v.Ptr.Type().PointedType()
+			byteOffset, _ := b.getFieldOffsetAndSize(structType, v.FieldIndex)
+			if byteOffset > 0 {
+				return fmt.Sprintf("v_%s + %d", glob.Global.Name, byteOffset), true
+			}
+			return fmt.Sprintf("v_%s", glob.Global.Name), true
+		}
+	case *ir.AddressOfElement:
+		if glob, ok := v.ArrayPtr.(*ir.AddressOfGlobal); ok {
+			if cIdx, ok2 := v.Index.(*ir.ConstWord); ok2 {
+				eltSize := b.getEltSize(v.ArrayPtr.Type())
+				byteOffset := int(cIdx.Val) * eltSize
+				if byteOffset > 0 {
+					return fmt.Sprintf("v_%s + %d", glob.Global.Name, byteOffset), true
+				}
+				return fmt.Sprintf("v_%s", glob.Global.Name), true
+			}
+		}
+	}
+	return "", false
+}
+
 func (b *Backend) loadLocal(off int, sz int, reg string) {
 	d := b.frameBias - off
 	fits := false
@@ -612,9 +642,25 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 		if cb, ok := i.Right.(*ir.ConstByte); ok {
 			switch i.Op {
 			case "add":
-				b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", cb.Val))
+				if cb.Val == 0 {
+					// no-op
+				} else if cb.Val == 1 {
+					b.buf.WriteString("\tinc  a\n")
+				} else if cb.Val == 2 {
+					b.buf.WriteString("\tinc  a\n\tinc  a\n")
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", cb.Val))
+				}
 			case "sub":
-				b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", cb.Val))
+				if cb.Val == 0 {
+					// no-op
+				} else if cb.Val == 1 {
+					b.buf.WriteString("\tdec  a\n")
+				} else if cb.Val == 2 {
+					b.buf.WriteString("\tdec  a\n\tdec  a\n")
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", cb.Val))
+				}
 			case "and", "bitand":
 				b.buf.WriteString(fmt.Sprintf("\tand  %d\n", cb.Val))
 			case "or", "bitor":
@@ -633,17 +679,34 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 				}
 			}
 		} else if cw, ok := i.Right.(*ir.ConstWord); ok {
+			v := cw.Val & 0xFF
 			switch i.Op {
 			case "add":
-				b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", cw.Val&0xFF))
+				if v == 0 {
+					// no-op
+				} else if v == 1 {
+					b.buf.WriteString("\tinc  a\n")
+				} else if v == 2 {
+					b.buf.WriteString("\tinc  a\n\tinc  a\n")
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", v))
+				}
 			case "sub":
-				b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", cw.Val&0xFF))
+				if v == 0 {
+					// no-op
+				} else if v == 1 {
+					b.buf.WriteString("\tdec  a\n")
+				} else if v == 2 {
+					b.buf.WriteString("\tdec  a\n\tdec  a\n")
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", v))
+				}
 			case "and", "bitand":
-				b.buf.WriteString(fmt.Sprintf("\tand  %d\n", cw.Val&0xFF))
+				b.buf.WriteString(fmt.Sprintf("\tand  %d\n", v))
 			case "or", "bitor":
-				b.buf.WriteString(fmt.Sprintf("\tor   %d\n", cw.Val&0xFF))
+				b.buf.WriteString(fmt.Sprintf("\tor   %d\n", v))
 			case "xor", "bitxor":
-				b.buf.WriteString(fmt.Sprintf("\txor  %d\n", cw.Val&0xFF))
+				b.buf.WriteString(fmt.Sprintf("\txor  %d\n", v))
 			default:
 				b.loadVal(i.Right, "b")
 				switch i.Op {
@@ -688,19 +751,43 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 
 	switch i.Op {
 	case "add":
-		if cw, ok := i.Right.(*ir.ConstWord); ok && cw.Val == 1 {
-			b.buf.WriteString("\tinc  hl\n")
-		} else if cw, ok := i.Right.(*ir.ConstWord); ok && cw.Val == 2 {
-			b.buf.WriteString("\tinc  hl\n\tinc  hl\n")
+		if cw, ok := i.Right.(*ir.ConstWord); ok {
+			switch cw.Val {
+			case 0:
+				// no-op
+			case 1:
+				b.buf.WriteString("\tinc  hl\n")
+			case 2:
+				b.buf.WriteString("\tinc  hl\n\tinc  hl\n")
+			case 3:
+				b.buf.WriteString("\tinc  hl\n\tinc  hl\n\tinc  hl\n")
+			case 4:
+				b.buf.WriteString("\tinc  hl\n\tinc  hl\n\tinc  hl\n\tinc  hl\n")
+			default:
+				b.loadVal(i.Right, "de")
+				b.buf.WriteString("\tadd  hl, de\n")
+			}
 		} else {
 			b.loadVal(i.Right, "de")
 			b.buf.WriteString("\tadd  hl, de\n")
 		}
 	case "sub":
-		if cw, ok := i.Right.(*ir.ConstWord); ok && cw.Val == 1 {
-			b.buf.WriteString("\tdec  hl\n")
-		} else if cw, ok := i.Right.(*ir.ConstWord); ok && cw.Val == 2 {
-			b.buf.WriteString("\tdec  hl\n\tdec  hl\n")
+		if cw, ok := i.Right.(*ir.ConstWord); ok {
+			switch cw.Val {
+			case 0:
+				// no-op
+			case 1:
+				b.buf.WriteString("\tdec  hl\n")
+			case 2:
+				b.buf.WriteString("\tdec  hl\n\tdec  hl\n")
+			case 3:
+				b.buf.WriteString("\tdec  hl\n\tdec  hl\n\tdec  hl\n")
+			case 4:
+				b.buf.WriteString("\tdec  hl\n\tdec  hl\n\tdec  hl\n\tdec  hl\n")
+			default:
+				b.loadVal(i.Right, "de")
+				b.buf.WriteString("\tor   a\n\tsbc  hl, de\n")
+			}
 		} else {
 			b.loadVal(i.Right, "de")
 			b.buf.WriteString("\tor   a\n\tsbc  hl, de\n")
@@ -1005,6 +1092,19 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.LoadPtr:
 		sz := b.getTypeSize(i.Typ)
+		if addrStr, ok := b.getDirectGlobalAddr(i.Ptr); ok {
+			if sz == 1 {
+				b.buf.WriteString(fmt.Sprintf("\tld   a, (%s)\n", addrStr))
+			} else if sz == 2 {
+				b.buf.WriteString(fmt.Sprintf("\tld   hl, (%s)\n", addrStr))
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tld   hl, %s\n", addrStr))
+				b.emitLoadAddr("de", i)
+				b.emitMemCopy("(de)", "(hl)", sz)
+			}
+			b.storeResult(id)
+			return
+		}
 		b.loadVal(i.Ptr, "hl")
 		if sz == 1 {
 			b.buf.WriteString("\tld   a, (hl)\n")
@@ -1018,6 +1118,22 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.StorePtr:
 		sz := b.getTypeSize(i.Val.Type())
+		if addrStr, ok := b.getDirectGlobalAddr(i.Ptr); ok {
+			if sz == 1 {
+				b.loadVal(i.Val, "a")
+				b.buf.WriteString(fmt.Sprintf("\tld   (%s), a\n", addrStr))
+				return
+			} else if sz == 2 {
+				b.loadVal(i.Val, "hl")
+				b.buf.WriteString(fmt.Sprintf("\tld   (%s), hl\n", addrStr))
+				return
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tld   de, %s\n", addrStr))
+				b.emitLoadAddr("hl", i.Val)
+				b.buf.WriteString(fmt.Sprintf("\tld   bc, %d\n\tldir\n", sz))
+				return
+			}
+		}
 		b.loadVal(i.Ptr, "de") // DE = destination address
 		if sz == 1 {
 			b.loadVal(i.Val, "a")
@@ -1996,29 +2112,195 @@ func (b *Backend) Generate(prog *ir.Program) string {
 	return optimizeAsm(b.buf.String())
 }
 
+func normLine(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+}
+
 func optimizeAsm(asm string) string {
 	lines := strings.Split(asm, "\n")
 
-	var out []string
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "jmp ") && !strings.Contains(trimmed, ",") {
-			target := strings.TrimSpace(strings.TrimPrefix(trimmed, "jmp "))
-			j := i + 1
-			for j < len(lines) {
-				t := strings.TrimSpace(lines[j])
-				if t != "" && !strings.HasPrefix(t, ";") {
-					break
-				}
-				j++
-			}
-			if j < len(lines) && strings.TrimSpace(lines[j]) == target+":" {
+	for pass := 0; pass < 5; pass++ {
+		changed := false
+		var out []string
+		n := len(lines)
+
+		for i := 0; i < n; i++ {
+			line := lines[i]
+			trimmed := strings.TrimSpace(line)
+
+			// Skip comment-only or blank lines directly to out
+			if trimmed == "" || strings.HasPrefix(trimmed, ";") {
+				out = append(out, line)
 				continue
 			}
+
+			norm := normLine(trimmed)
+
+			// Find next non-empty, non-comment line index
+			nextIdx := -1
+			for j := i + 1; j < n; j++ {
+				t := strings.TrimSpace(lines[j])
+				if t != "" && !strings.HasPrefix(t, ";") {
+					nextIdx = j
+					break
+				}
+			}
+
+			// 1. Redundant unconditional jump to next label:
+			//    jmp target
+			//    target:
+			if strings.HasPrefix(norm, "jmp ") && !strings.Contains(norm, ",") {
+				target := strings.TrimSpace(strings.TrimPrefix(norm, "jmp "))
+				if nextIdx >= 0 && normLine(lines[nextIdx]) == target+":" {
+					changed = true
+					continue
+				}
+			}
+
+			// 2. Redundant 8-bit store then reload:
+			//    ld (ix+d), a
+			//    ld a, (ix+d)
+			if strings.HasPrefix(norm, "ld (ix") && strings.HasSuffix(norm, "), a") {
+				slot := norm[3 : len(norm)-3] // "(ix...)"
+				if nextIdx >= 0 {
+					nextNorm := normLine(lines[nextIdx])
+					if nextNorm == "ld a, "+slot {
+						lines[nextIdx] = ";" + lines[nextIdx]
+						changed = true
+					}
+				}
+			}
+
+			// 3. Redundant 16-bit store then reload:
+			//    ld (ix+d), l
+			//    ld (ix+d+1), h
+			//    ld l, (ix+d)
+			//    ld h, (ix+d+1)
+			if strings.HasPrefix(norm, "ld (ix") && strings.HasSuffix(norm, "), l") {
+				slotL := norm[3 : len(norm)-3]
+				if nextIdx >= 0 {
+					next1Norm := normLine(lines[nextIdx])
+					if strings.HasPrefix(next1Norm, "ld (ix") && strings.HasSuffix(next1Norm, "), h") {
+						slotH := next1Norm[3 : len(next1Norm)-3]
+						next2Idx := -1
+						for j := nextIdx + 1; j < n; j++ {
+							t := strings.TrimSpace(lines[j])
+							if t != "" && !strings.HasPrefix(t, ";") {
+								next2Idx = j
+								break
+							}
+						}
+						if next2Idx >= 0 {
+							next2Norm := normLine(lines[next2Idx])
+							if next2Norm == "ld l, "+slotL {
+								next3Idx := -1
+								for j := next2Idx + 1; j < n; j++ {
+									t := strings.TrimSpace(lines[j])
+									if t != "" && !strings.HasPrefix(t, ";") {
+										next3Idx = j
+										break
+									}
+								}
+								if next3Idx >= 0 {
+									next3Norm := normLine(lines[next3Idx])
+									if next3Norm == "ld h, "+slotH {
+										lines[next2Idx] = ";" + lines[next2Idx]
+										lines[next3Idx] = ";" + lines[next3Idx]
+										changed = true
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// 4. Branch inversion:
+			//    jmp cond, L1
+			//    jmp L2
+			//    L1:
+			//    ->
+			//    jmp invCond, L2
+			//    L1:
+			if strings.HasPrefix(norm, "jmp ") && strings.Contains(norm, ",") && nextIdx >= 0 {
+				parts := strings.Split(strings.TrimPrefix(norm, "jmp "), ",")
+				if len(parts) == 2 {
+					cond := strings.TrimSpace(parts[0])
+					target1 := strings.TrimSpace(parts[1])
+					next1Norm := normLine(lines[nextIdx])
+					if strings.HasPrefix(next1Norm, "jmp ") && !strings.Contains(next1Norm, ",") {
+						target2 := strings.TrimSpace(strings.TrimPrefix(next1Norm, "jmp "))
+						next2Idx := -1
+						for j := nextIdx + 1; j < n; j++ {
+							t := strings.TrimSpace(lines[j])
+							if t != "" && !strings.HasPrefix(t, ";") {
+								next2Idx = j
+								break
+							}
+						}
+						if next2Idx >= 0 && normLine(lines[next2Idx]) == target1+":" {
+							invCond := ""
+							switch cond {
+							case "z":
+								invCond = "nz"
+							case "nz":
+								invCond = "z"
+							case "c":
+								invCond = "nc"
+							case "nc":
+								invCond = "c"
+							}
+							if invCond != "" {
+								out = append(out, fmt.Sprintf("\tjmp  %s, %s", invCond, target2))
+								lines[nextIdx] = ";" + lines[nextIdx]
+								changed = true
+								continue
+							}
+						}
+					}
+				}
+			}
+
+			// 5. cp 0 -> or a
+			if norm == "cp 0" {
+				out = append(out, "\tor   a")
+				changed = true
+				continue
+			}
+
+			// 6. Redundant register moves: ld r, r
+			if norm == "ld a, a" || norm == "ld b, b" || norm == "ld c, c" ||
+				norm == "ld d, d" || norm == "ld e, e" || norm == "ld h, h" || norm == "ld l, l" {
+				changed = true
+				continue
+			}
+
+			// 7. Redundant consecutive ex de, hl
+			if norm == "ex de, hl" && nextIdx >= 0 {
+				if normLine(lines[nextIdx]) == "ex de, hl" {
+					lines[nextIdx] = ";" + lines[nextIdx]
+					changed = true
+					continue
+				}
+			}
+
+			// 8. Redundant push R / pop R
+			if strings.HasPrefix(norm, "push ") && nextIdx >= 0 {
+				reg := strings.TrimSpace(strings.TrimPrefix(norm, "push "))
+				if normLine(lines[nextIdx]) == "pop "+reg {
+					lines[nextIdx] = ";" + lines[nextIdx]
+					changed = true
+					continue
+				}
+			}
+
+			out = append(out, line)
 		}
-		out = append(out, line)
+		lines = out
+		if !changed {
+			break
+		}
 	}
 
-	return strings.Join(out, "\n")
+	return strings.Join(lines, "\n")
 }

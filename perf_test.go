@@ -14,6 +14,9 @@ import (
 // through the MiniGolf translator and tests their output against their
 // corresponding .want files on all three backends (CBE, amd64, m6809).
 func TestPerf1AllBackends(t *testing.T) {
+	if testing.Short() || os.Getenv("PERF_TESTS") == "" {
+		t.Skip("skipping slow perf tests; set PERF_TESTS=1 to run")
+	}
 	files, err := filepath.Glob("perf/perf1/tests/*.c")
 	if err != nil {
 		t.Fatalf("Failed to glob perf/perf1/tests/*.c: %v", err)

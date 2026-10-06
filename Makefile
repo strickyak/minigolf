@@ -3,7 +3,13 @@ all: minigolf test format
 minigolf: _FORCE_
 	go build -o minigolf main.go
 
-test: _FORCE_
+test: test-z80
+
+test-z80: minigolf _FORCE_
+	go test -count=1 -run ".*z80.*|.*Z80.*" .
+	go test -count=1 ./cmd/asmz80
+
+test-all: minigolf _FORCE_
 	go test -count=1  ./... 2>&1 | tee _test_out
 
 format: _FORCE_

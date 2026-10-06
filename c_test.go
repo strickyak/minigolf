@@ -32,7 +32,7 @@ func TestAllCFiles(t *testing.T) {
 		t.Skip("No *.c files found in c-tests/")
 	}
 
-	backends := []string{"CBE", "amd64", "m6809", "m68k"}
+	backends := []string{"CBE", "amd64", "m6809", "m68k", "z80"}
 
 	if err := os.MkdirAll("_tmp", 0777); err != nil {
 		t.Fatalf("Failed to create _tmp directory: %v", err)
@@ -97,7 +97,7 @@ func TestAllCFiles(t *testing.T) {
 		}
 
 		for _, backend := range backends {
-			if strings.HasSuffix(base, "_nomoto.c") && backend == "m6809" {
+			if strings.HasSuffix(base, "_nomoto.c") && (backend == "m6809" || backend == "z80") {
 				continue
 			}
 			if strings.HasSuffix(base, "_nocbe.c") && backend == "CBE" {
@@ -105,6 +105,9 @@ func TestAllCFiles(t *testing.T) {
 			}
 			if strings.HasSuffix(base, "_motoonly.c") && backend != "m6809" {
 				continue
+			}
+			if backend == "z80" && (strings.HasPrefix(stem, "test_floating") || strings.HasPrefix(stem, "test_math") || strings.HasPrefix(stem, "test_complex") || strings.HasPrefix(stem, "test_fft") || strings.HasPrefix(stem, "test_long") || stem == "test_big" || stem == "test_pysub" || stem == "jun26_whole-collatz") {
+				continue // skip unsupported float/32-bit features on Z80
 			}
 			backend := backend // capture for t.Run closure
 			golfFile := golfFile

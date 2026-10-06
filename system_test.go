@@ -147,7 +147,7 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 	if backend == "amd64" || backend == "x86_64" {
 		ext = ".s"
 	}
-	if backend == "m6809" {
+	if backend == "m6809" || backend == "z80" || backend == "z" {
 		ext = ".asm"
 	}
 	if backend == "m68k" || backend == "k" {
@@ -199,6 +199,20 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 
 	case "m68k", "k":
 		cmd = exec.Command("sh", "runk.sh", midFile)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		t.Logf("Running: %v", cmd)
+		if err := cmd.Run(); err != nil {
+			if expectRunError {
+				return // Success: execution failed as expected
+			}
+			t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
+		} else if expectRunError {
+			t.Fatalf("Expected run error for backend %s but execution succeeded", backend)
+		}
+
+	case "z80", "z":
+		cmd = exec.Command("bash", "runz.sh", midFile)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		t.Logf("Running: %v", cmd)
@@ -294,6 +308,42 @@ func TestSystemTriangles_m68k(t *testing.T) {
 func TestSystemTrianglesByte_m68k(t *testing.T) {
 	testBackend(t, "m68k", "demos/triangles_byte.golf", expectedOutputByte, false, false)
 }
+
+func TestSystemTriangles_z80(t *testing.T) {
+	testBackend(t, "z80", "demos/triangles.golf", expectedOutput, false, false)
+}
+
+func TestSystemTrianglesByte_z80(t *testing.T) {
+	testBackend(t, "z80", "demos/triangles_byte.golf", expectedOutputByte, false, false)
+}
+
+var z80PassingGolfTests = []string{
+	"a3", "array_iter", "c101", "c123", "defer1",
+	"named_returns", "peekpoke", "pointer_inc", "str2byteptr",
+	"test_8queens", "test_bool", "test_cmp_str", "test_cond",
+	"test_constfold", "test_dbe", "test_decompose", "test_defines",
+	"test_destructors", "test_external_fn", "test_for3", "test_func",
+	"test_generic_methods", "test_generics", "test_interference",
+	"test_labeled_loops", "test_loc", "test_logical", "test_loop_control",
+	"test_method", "test_nil", "test_nil2", "test_pointer", "test_range",
+	"test_sizeof", "test_slice_range", "test_tuple", "test_types",
+}
+
+func TestSystemGolfFiles_z80(t *testing.T) {
+	for _, name := range z80PassingGolfTests {
+		name := name
+		golfFile := filepath.Join("tests", name+".golf")
+		wantFile := filepath.Join("tests", name+".want")
+		wantBytes, err := os.ReadFile(wantFile)
+		if err != nil {
+			t.Fatalf("Failed to read want file %s: %v", wantFile, err)
+		}
+		t.Run(name, func(t *testing.T) {
+			testBackend(t, "z80", golfFile, string(wantBytes), false, false)
+		})
+	}
+}
+
 
 var m6809Variants = []struct {
 	name string
