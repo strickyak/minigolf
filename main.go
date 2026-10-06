@@ -19,6 +19,7 @@ import (
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6809"
 	"github.com/strickyak/minigolf/m68k"
+	"github.com/strickyak/minigolf/z80"
 	"github.com/strickyak/minigolf/np"
 	"github.com/strickyak/minigolf/opt"
 	"github.com/strickyak/minigolf/parser"
@@ -503,7 +504,8 @@ func main() {
 
 	archLower := strings.ToLower(*archFlag)
 	if archLower == "m6809" || archLower == "6809" || archLower == "m" ||
-		archLower == "m68k" || archLower == "68000" || archLower == "k" {
+		archLower == "m68k" || archLower == "68000" || archLower == "k" ||
+		archLower == "z80" || archLower == "z" {
 		if _, ok := cDefines["unix"]; !ok {
 			cDefines["unix"] = "0"
 		}
@@ -999,6 +1001,54 @@ func main() {
 			os.Exit(1)
 		}
 		log.Printf("Successfully compiled via M68K to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=z80 : Generate Z80 assembly from IR and exit cleanly
+	if archLower == "z80" || archLower == "z" {
+		builder := ir.NewBuilder(resolveCallback, 2)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
+		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
+
+		optConfig := opt.Config{
+			EnableConstFold:        !*noConstfold,
+			EnableDBE:              !*noDbe,
+			EnableDCE:              !*noDce,
+			EnableCopyProp:         !*noCopyProp,
+			EnableCSE:              !*noCse,
+			EnableStrengthRed:      !*noStrengthRed,
+			EnablePhiSimp:          !*noPhisimp,
+			EnableStackAlloc:       !*noStackAlloc,
+			EnableBranchFold:       !*noBranchFold,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:    *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
+			EnableDebugOpt:         *debugOpt,
+			WordSize:               2,
+		}
+		builder.AnnotateLeafLevels(*debugOpt)
+		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
+
+		backend := z80.New()
+		asmCode := backend.Generate(irProg)
+
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (Zilog Z80 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing Z80 output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via Z80 to: %s", *outFlag)
 		os.Exit(0)
 	}
 

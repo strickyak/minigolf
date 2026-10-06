@@ -600,7 +600,7 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 		stmt.Size = len(stmt.StrData)
 		return stmt, nil
 
-	case "pragma", ".globl", ".global":
+	case "pragma", ".globl", ".global", "nam", "ttl":
 		// Ignored directives
 		stmt.Type = StmtComment
 		return stmt, nil
@@ -1530,6 +1530,12 @@ func (a *Assembler) CollectChunks() []Chunk {
 }
 
 func (a *Assembler) EmitDECB(w io.Writer) error {
+	// Hatvan Executable Magic header (Tag 253 = 0xFD): 'x', '9'
+	magicHdr := []byte{0xFD, 0x00, 0x00, 'x', '9'}
+	if _, err := w.Write(magicHdr); err != nil {
+		return err
+	}
+
 	chunks := a.CollectChunks()
 
 	for _, c := range chunks {

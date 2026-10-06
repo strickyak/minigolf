@@ -36,11 +36,14 @@ _main:
 	}
 
 	data := decbBuf.Bytes()
-	if len(data) < 5 {
+	if len(data) < 10 {
 		t.Fatalf("DECB output too short: %d bytes", len(data))
 	}
-	if data[0] != 0x00 {
-		t.Errorf("Expected chunk header 0x00, got 0x%02X", data[0])
+	if data[0] != 0xFD || data[3] != 'x' || data[4] != '9' {
+		t.Errorf("Expected magic header FD 00 00 'x' '9', got %02X %02X %02X %02X %02X", data[0], data[1], data[2], data[3], data[4])
+	}
+	if data[5] != 0x00 {
+		t.Errorf("Expected data chunk header 0x00, got 0x%02X", data[5])
 	}
 }
 
