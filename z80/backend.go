@@ -284,16 +284,69 @@ func (b *Backend) slotsType(id int) ir.Type {
 	return ir.TypeInt
 }
 
+func (b *Backend) emitAddConstToHL(n int) {
+	if n == 0 {
+		return
+	}
+	if n > 0 && n <= 3 {
+		for k := 0; k < n; k++ {
+			b.buf.WriteString("\tinc  hl\n")
+		}
+		return
+	}
+	if n < 0 && n >= -3 {
+		for k := 0; k < -n; k++ {
+			b.buf.WriteString("\tdec  hl\n")
+		}
+		return
+	}
+	b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n\tadd  hl, de\n", n))
+}
+
+func (b *Backend) emitLocalAddr(reg string, d int) {
+	if reg == "hl" {
+		if d == 0 {
+			b.buf.WriteString("\tpush ix\n\tpop  hl\n")
+		} else if d > 0 && d <= 3 {
+			b.buf.WriteString("\tpush ix\n\tpop  hl\n")
+			for k := 0; k < d; k++ {
+				b.buf.WriteString("\tinc  hl\n")
+			}
+		} else if d < 0 && d >= -3 {
+			b.buf.WriteString("\tpush ix\n\tpop  hl\n")
+			for k := 0; k < -d; k++ {
+				b.buf.WriteString("\tdec  hl\n")
+			}
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tpush ix\n\tpop  hl\n\tld   bc, %d\n\tadd  hl, bc\n", d))
+		}
+	} else if reg == "de" {
+		if d == 0 {
+			b.buf.WriteString("\tpush ix\n\tpop  de\n")
+		} else if d > 0 && d <= 4 {
+			b.buf.WriteString("\tpush ix\n\tpop  de\n")
+			for k := 0; k < d; k++ {
+				b.buf.WriteString("\tinc  de\n")
+			}
+		} else if d < 0 && d >= -4 {
+			b.buf.WriteString("\tpush ix\n\tpop  de\n")
+			for k := 0; k < -d; k++ {
+				b.buf.WriteString("\tdec  de\n")
+			}
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tpush hl\n\tpush ix\n\tpop  hl\n\tld   de, %d\n\tadd  hl, de\n\tex   de, hl\n\tpop  hl\n", d))
+		}
+	} else {
+		log.Panicf("emitLocalAddr: unsupported register %s", reg)
+	}
+}
+
 func (b *Backend) emitLoadAddr(reg string, val ir.Value) {
 	switch v := val.(type) {
 	case *ir.Parameter:
 		off := b.paramSlots[v.Name]
 		d := b.frameBias + off
-		if reg == "de" {
-			b.buf.WriteString(fmt.Sprintf("\tpush hl\n\tpush ix\n\tpop  hl\n\tld   de, %d\n\tadd  hl, de\n\tex   de, hl\n\tpop  hl\n", d))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tpush de\n\tpush ix\n\tpop  hl\n\tld   de, %d\n\tadd  hl, de\n\tpop  de\n", d))
-		}
+		b.emitLocalAddr(reg, d)
 	case ir.Instruction:
 		canon := b.resolveSlot(b.currentFunc, v.GetID())
 		off, ok := b.slots[canon]
@@ -304,11 +357,7 @@ func (b *Backend) emitLoadAddr(reg string, val ir.Value) {
 			log.Panicf("emitLoadAddr: instruction %s (id=%d) has no stack slot in function %s", v, v.GetID(), b.currentFunc.Name)
 		}
 		d := b.frameBias - off
-		if reg == "de" {
-			b.buf.WriteString(fmt.Sprintf("\tpush hl\n\tpush ix\n\tpop  hl\n\tld   de, %d\n\tadd  hl, de\n\tex   de, hl\n\tpop  hl\n", d))
-		} else {
-			b.buf.WriteString(fmt.Sprintf("\tpush de\n\tpush ix\n\tpop  hl\n\tld   de, %d\n\tadd  hl, de\n\tpop  de\n", d))
-		}
+		b.emitLocalAddr(reg, d)
 	case *ir.Global:
 		b.buf.WriteString(fmt.Sprintf("\tld   %s, v_%s\n", reg, v.Name))
 	case *ir.AddressOfGlobal:
@@ -868,70 +917,93 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 		}
 	}
 
-	trueLbl := b.nextLabel()
 	doneLbl := b.nextLabel()
-	falseLbl := b.nextLabel()
 
 	switch i.Op {
 	case "eq":
-		b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", trueLbl))
+		b.buf.WriteString("\tld   a, 0\n")
+		b.buf.WriteString(fmt.Sprintf("\tjmp  nz, %s\n", doneLbl))
+		b.buf.WriteString("\tinc  a\n")
 	case "neq":
-		b.buf.WriteString(fmt.Sprintf("\tjmp  nz, %s\n", trueLbl))
+		b.buf.WriteString("\tld   a, 0\n")
+		b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", doneLbl))
+		b.buf.WriteString("\tinc  a\n")
 	case "lt":
 		if isUnsigned {
-			b.buf.WriteString(fmt.Sprintf("\tjmp  c, %s\n", trueLbl))
+			b.buf.WriteString("\tld   a, 0\n")
+			b.buf.WriteString(fmt.Sprintf("\tjmp  nc, %s\n", doneLbl))
+			b.buf.WriteString("\tinc  a\n")
 		} else {
+			trueLbl := b.nextLabel()
+			falseLbl := b.nextLabel()
 			overLbl := b.nextLabel()
 			b.buf.WriteString(fmt.Sprintf("\tjmp  pe, %s\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  m, %s\n", trueLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  %s\n", falseLbl))
 			b.buf.WriteString(fmt.Sprintf("%s:\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  p, %s\n", trueLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\txor  a\n\tjmp  %s\n", falseLbl, doneLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\tld   a, 1\n", trueLbl))
 		}
 	case "lte":
-		b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", trueLbl))
 		if isUnsigned {
-			b.buf.WriteString(fmt.Sprintf("\tjmp  c, %s\n", trueLbl))
+			b.buf.WriteString("\tld   a, 1\n")
+			b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", doneLbl))
+			b.buf.WriteString(fmt.Sprintf("\tjmp  c, %s\n", doneLbl))
+			b.buf.WriteString("\tdec  a\n")
 		} else {
+			trueLbl := b.nextLabel()
+			falseLbl := b.nextLabel()
 			overLbl := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", trueLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  pe, %s\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  m, %s\n", trueLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  %s\n", falseLbl))
 			b.buf.WriteString(fmt.Sprintf("%s:\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  p, %s\n", trueLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\txor  a\n\tjmp  %s\n", falseLbl, doneLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\tld   a, 1\n", trueLbl))
 		}
 	case "gt":
-		b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", falseLbl))
 		if isUnsigned {
-			b.buf.WriteString(fmt.Sprintf("\tjmp  nc, %s\n", trueLbl))
+			b.buf.WriteString("\tld   a, 0\n")
+			b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", doneLbl))
+			b.buf.WriteString(fmt.Sprintf("\tjmp  c, %s\n", doneLbl))
+			b.buf.WriteString("\tinc  a\n")
 		} else {
+			trueLbl := b.nextLabel()
+			falseLbl := b.nextLabel()
 			overLbl := b.nextLabel()
+			b.buf.WriteString(fmt.Sprintf("\tjmp  z, %s\n", falseLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  pe, %s\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  p, %s\n", trueLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  %s\n", falseLbl))
 			b.buf.WriteString(fmt.Sprintf("%s:\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  m, %s\n", trueLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\txor  a\n\tjmp  %s\n", falseLbl, doneLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\tld   a, 1\n", trueLbl))
 		}
 	case "gte":
 		if isUnsigned {
-			b.buf.WriteString(fmt.Sprintf("\tjmp  nc, %s\n", trueLbl))
+			b.buf.WriteString("\tld   a, 0\n")
+			b.buf.WriteString(fmt.Sprintf("\tjmp  c, %s\n", doneLbl))
+			b.buf.WriteString("\tinc  a\n")
 		} else {
+			trueLbl := b.nextLabel()
+			falseLbl := b.nextLabel()
 			overLbl := b.nextLabel()
 			b.buf.WriteString(fmt.Sprintf("\tjmp  pe, %s\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  p, %s\n", trueLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  %s\n", falseLbl))
 			b.buf.WriteString(fmt.Sprintf("%s:\n", overLbl))
 			b.buf.WriteString(fmt.Sprintf("\tjmp  m, %s\n", trueLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\txor  a\n\tjmp  %s\n", falseLbl, doneLbl))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\tld   a, 1\n", trueLbl))
 		}
 	default:
 		log.Panicf("emitCompare: unsupported op %s", i.Op)
 	}
 
-	b.buf.WriteString(fmt.Sprintf("%s:\n", falseLbl))
-	b.buf.WriteString("\txor  a\n\tld   hl, 0\n")
-	b.buf.WriteString(fmt.Sprintf("\tjmp  %s\n", doneLbl))
-	b.buf.WriteString(fmt.Sprintf("%s:\n", trueLbl))
-	b.buf.WriteString("\tld   a, 1\n\tld   hl, 1\n")
 	b.buf.WriteString(fmt.Sprintf("%s:\n", doneLbl))
 
 	b.storeResult(i.GetID())
@@ -1053,9 +1125,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			return
 		}
 		b.loadVal(i.Ptr, "hl")
-		if byteOffset > 0 {
-			b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n\tadd  hl, de\n", byteOffset))
-		}
+		b.emitAddConstToHL(byteOffset)
 		b.storeResult(id)
 
 	case *ir.AddressOfElement:
@@ -1075,9 +1145,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i.ArrayPtr, "hl")
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
 			byteOffset := int(cIdx.Val) * eltSize
-			if byteOffset > 0 {
-				b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n\tadd  hl, de\n", byteOffset))
-			}
+			b.emitAddConstToHL(byteOffset)
 		} else {
 			b.loadVal(i.Index, "de")
 			if eltSize == 1 {
@@ -1149,9 +1217,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.ExtractField:
 		byteOffset, fieldSize := b.getFieldOffsetAndSize(i.Struct.Type(), i.FieldIndex)
 		b.emitLoadAddr("hl", i.Struct)
-		if byteOffset > 0 {
-			b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n\tadd  hl, de\n", byteOffset))
-		}
+		b.emitAddConstToHL(byteOffset)
 		b.emitLoadAddr("de", i)
 		b.emitMemCopy("(de)", "(hl)", fieldSize)
 
@@ -1172,9 +1238,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.emitLoadAddr("hl", i.Array)
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
 			byteOffset := int(cIdx.Val) * eltSize
-			if byteOffset > 0 {
-				b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n\tadd  hl, de\n", byteOffset))
-			}
+			b.emitAddConstToHL(byteOffset)
 		} else {
 			b.loadVal(i.Index, "de")
 			if eltSize == 1 {

@@ -19,8 +19,8 @@ cstart:
 ; ── Exit System Call ─────────────────────────────────────────────────────────
 _exit:
 __exit:
-	; Exit code is 16-bit word at $00FF000A
-	move.w  6(sp), $00FF000A
+	; Exit code is 16-bit word at $00FF0050 (offset 5 * 16)
+	move.w  6(sp), $00FF0050
 .L_exit_halt:
 	stop    #$2700
 	bra     .L_exit_halt
@@ -34,7 +34,7 @@ putchar:
 
 _getchar:
 getchar:
-	move.b  $00FF0002, d0
+	move.b  $00FF0010, d0
 	ext.w   d0
 	ext.l   d0
 	rts
