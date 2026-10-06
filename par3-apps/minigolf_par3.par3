@@ -1,11 +1,11 @@
 package main
 
 // Limits for 64K Process Space
-const MAX_CONSTS      = 96
-const MAX_GLOBALS     = 96
-const MAX_FUNCS       = 96
-const MAX_PARAMS      = 96
-const MAX_LOCALS      = 512
+const MAX_CONSTS      = 48
+const MAX_GLOBALS     = 64
+const MAX_FUNCS       = 64
+const MAX_PARAMS      = 64
+const MAX_LOCALS      = 480
 
 // Token Kinds
 const TOK_EOF     = 0
@@ -314,6 +314,7 @@ func add_local(name string, kind byte, size word, elem_size byte) {
     local_sizes[num_locals] = size
     local_elem_sizes[num_locals] = elem_size
     num_locals++
+    func_num_locals[cur_func_idx] = num_locals - func_first_local[cur_func_idx]
 }
 
 func find_cur_param(name string) word {
@@ -579,7 +580,7 @@ func next_tok() {
         s.Cap = 256
         s.Len = slen
         cur_tok = TOK_STRING
-        cur_str = pool_str(s)
+        cur_str = s
         return
     }
 
@@ -865,6 +866,7 @@ func run_pass1() {
             expect("(")
 
             fidx := add_func(fname, KIND_VOID)
+            cur_func_idx = fidx
             p_count := byte(0)
 
             for (cur_tok != TOK_PUNCT || cur_str != ")") && cur_tok != TOK_EOF {
@@ -958,23 +960,38 @@ func run_pass1() {
                             first_tok := cur_tok
                             next_tok()
                             if cur_str == "[" {
-                                gi := find_global(first_name)
-                                li := find_cur_local(first_name)
-                                elem_sz := byte(1)
-                                if gi != 0xFFFF {
-                                    elem_sz = global_elem_sizes[gi]
-                                } else if li != 0xFFFF {
-                                    elem_sz = local_elem_sizes[li]
+                                is_subslice := false
+                                for cur_tok != TOK_EOF && cur_str != "]" && cur_str != "{" && cur_str != "}" && cur_str != ";" {
+                                    if cur_str == ":" {
+                                        is_subslice = true
+                                    }
+                                    next_tok()
                                 }
-                                if elem_sz == 6 {
+                                if is_subslice {
                                     lkind = KIND_SLICE
                                     lsz = 6
                                 } else {
-                                    lkind = KIND_SCALAR
-                                    lsz = 2
+                                    gi := find_global(first_name)
+                                    li := find_cur_local(first_name)
+                                    elem_sz := byte(1)
+                                    if gi != 0xFFFF {
+                                        elem_sz = global_elem_sizes[gi]
+                                    } else if li != 0xFFFF {
+                                        elem_sz = local_elem_sizes[li]
+                                    }
+                                    if elem_sz == 6 {
+                                        lkind = KIND_SLICE
+                                        lsz = 6
+                                    } else {
+                                        lkind = KIND_SCALAR
+                                        lsz = 2
+                                    }
+                                }
+                                if cur_str == "]" {
+                                    next_tok()
                                 }
                             } else {
-                                is_sfn := first_name == "sys_args" || first_name == "file_readline" || first_name == "map_str"
+                                is_sfn := first_name == "sys_args" || first_name == "file_readline" || first_name == "map_str" || first_name == "lstrip" || first_name == "rstrip" || first_name == "strip" || first_name == "replace_ident" || first_name == "splitlines" || first_name == "strdup" || first_name == "make" || first_name == "makeslice"
                                 if first_tok == TOK_STRING || is_sfn {
                                     lkind = KIND_SLICE
                                     lsz = 6
@@ -1023,6 +1040,7 @@ func run_pass1() {
                 add_local("_tmp_cap", KIND_SCALAR, 2, 2)
                 add_local("_tmp_len", KIND_SCALAR, 2, 2)
                 add_local("_tmp_addr", KIND_SCALAR, 2, 2)
+                add_local("_tmp_dest_addr", KIND_SCALAR, 2, 2)
                 func_num_locals[fidx] = num_locals - func_first_local[fidx]
             } else {
                 func_num_locals[fidx] = 0
@@ -1122,9 +1140,8 @@ func compile_unary() word {
     }
 
     if cur_tok == TOK_STRING {
-        s := cur_str
+        emit_str("    PUSH_STR ", cur_str)
         next_tok()
-        emit_str("    PUSH_STR ", s)
         return KIND_SLICE
     }
 
@@ -1295,7 +1312,23 @@ func compile_unary() word {
                 emit("    STORE_LOCAL _tmp_cap")
                 emit("    STORE_LOCAL _tmp_base")
                 if gi != 0xFFFF {
-                    emit2("    LOAD_GLOBAL ", name)
+                    if var_kind == KIND_SLICE {
+                        emit2("    LOAD_GLOBAL ", name)
+                    } else {
+                        emit2("    ADDR_OF_GLOBAL ", name)
+                        emit_u16("    PUSH_I16 ", global_sizes[gi])
+                        emit_u16("    PUSH_I16 ", global_sizes[gi])
+                        emit("    SLICE_NEW")
+                    }
+                } else if li != 0xFFFF {
+                    if var_kind == KIND_SLICE {
+                        emit2("    LOAD_LOCAL ", name)
+                    } else {
+                        emit2("    ADDR_OF_LOCAL ", name)
+                        emit_u16("    PUSH_I16 ", local_sizes[li])
+                        emit_u16("    PUSH_I16 ", local_sizes[li])
+                        emit("    SLICE_NEW")
+                    }
                 } else {
                     emit2("    LOAD_LOCAL ", name)
                 }
@@ -1316,14 +1349,15 @@ func compile_unary() word {
                     emit_u8("    PUSH_I8 ", 6)
                     emit("    MUL")
                     emit("    ADD")
-                    emit("    STORE_LOCAL _tmp_addr")
-                    emit("    LOAD_LOCAL _tmp_addr")
+                    // Stack has elem addr. Load slice [Base, Cap, Len] without scratch vars:
+                    emit("    DUP")
                     emit("    PEEK2")
-                    emit("    LOAD_LOCAL _tmp_addr")
+                    emit("    SWAP")
+                    emit("    DUP")
                     emit("    PUSH_I8 2")
                     emit("    ADD")
                     emit("    PEEK2")
-                    emit("    LOAD_LOCAL _tmp_addr")
+                    emit("    SWAP")
                     emit("    PUSH_I8 4")
                     emit("    ADD")
                     emit("    PEEK2")
@@ -1971,21 +2005,21 @@ func compile_stmt() {
                 emit_u8("    PUSH_I8 ", 6)
                 emit("    MUL")
                 emit("    ADD")
-                emit("    STORE_LOCAL _tmp_addr")
+                emit("    STORE_LOCAL _tmp_dest_addr")
                 expect("=")
                 compile_expr(0) // RHS slice value
                 emit("    STORE_LOCAL _tmp_len")
                 emit("    STORE_LOCAL _tmp_cap")
                 emit("    STORE_LOCAL _tmp_base")
-                emit("    LOAD_LOCAL _tmp_addr")
+                emit("    LOAD_LOCAL _tmp_dest_addr")
                 emit("    LOAD_LOCAL _tmp_base")
                 emit("    POKE2")
-                emit("    LOAD_LOCAL _tmp_addr")
+                emit("    LOAD_LOCAL _tmp_dest_addr")
                 emit("    PUSH_I8 2")
                 emit("    ADD")
                 emit("    LOAD_LOCAL _tmp_cap")
                 emit("    POKE2")
-                emit("    LOAD_LOCAL _tmp_addr")
+                emit("    LOAD_LOCAL _tmp_dest_addr")
                 emit("    PUSH_I8 4")
                 emit("    ADD")
                 emit("    LOAD_LOCAL _tmp_len")

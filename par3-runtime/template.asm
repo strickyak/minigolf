@@ -53,7 +53,7 @@ dp_pad          rmb     1       ; align following buffers to 16-bit word boundar
 
 pbuf_scratch    rmb     256     ; scratch buffer for BUF_ALLOC (print/println any-array)
 line_buf        rmb     256     ; output line buffer for PRINTLN
-unified_arena   rmb     32768   ; unified arena for globals + heap (32KB)
+unified_arena   rmb     25600   ; unified arena for globals + heap (25KB)
 globals_buf     equ     unified_arena
 global_ptrs     rmb     256     ; pointers to each global variable (up to 128 globals)
 dispatch_tbl    rmb     512     ; 256 opcode function pointers
@@ -62,7 +62,7 @@ vm_stack        rmb     512     ; 256-word evaluation stack
 vm_stack_top    equ     .
 
 * System stack room (holds VM call stack frames)
-stack_space     rmb     2048
+stack_space     rmb     4096
 size            equ     .
 
 name
@@ -76,7 +76,7 @@ start
         stx     <param_ptr
         sty     <param_len
         ldd     <data_base
-        addd    #unified_arena+32768
+        addd    #unified_arena+25600
         std     <heap_limit
 
 * Clear free_buckets:
@@ -403,7 +403,7 @@ init_tbl
 * Clear unified_arena:
         ldu     <data_base
         leau    unified_arena,u
-        ldd     #32768/2
+        ldd     #25600/2
 clr_g_loop
         clr     ,u+
         clr     ,u+
@@ -956,7 +956,7 @@ ha_bucket
         leax    free_buckets,x  ; X = &free_buckets[0]
         leax    d,x             ; X = &free_buckets[B]
         ldd     ,x              ; D = free_buckets[B]
-        bne     ha_reuse
+        lbne    ha_reuse
         puls    b               ; restore bucket index (0..7)
 
 ha_bump
@@ -3219,16 +3219,25 @@ mp_insert
 * 4,s = map_ptr (2 bytes)
 * 6,s = key_ptr (2 bytes)
 * 8,s = val (2 bytes)
-* Allocate single block for 12-byte node + key_len + 1 (null terminator):
+* Allocate node by bumping heap_ptr directly (exact size, word-aligned):
+* Header is 10 bytes: [next:2][val:2][key_len:2][key_ptr:2][hash:2]
+* Key bytes start at offset 10: 10 + key_len + 1 (null) = 11 + key_len
         ldd     2,s             ; D = key_len
-        addd    #13             ; D = 12 + key_len + 1
-        lbsr    heap_alloc      ; X = new_node
+        addd    #12             ; 11 + key_len + 1 (for rounding up to even)
+        andb    #$FE            ; D = aligned allocation size
+        ldx     <heap_ptr       ; X = new_node address
+        pshs    x               ; save new_node address
+        leax    d,x             ; X = new heap_ptr
+        cmpx    <heap_limit
+        lbhi    ha_oom
+        stx     <heap_ptr       ; save valid new heap_ptr
+        puls    x               ; X = new_node
 * Populate new_node:
         ldd     8,s             ; D = val
         std     2,x             ; node.val = val
         ldd     2,s             ; D = key_len
         std     4,x             ; node.key_len = key_len
-        leay    12,x            ; Y = inline key buffer (X + 12)
+        leay    10,x            ; Y = inline key buffer (X + 10)
         sty     6,x             ; node.key_ptr = Y
 * Copy key bytes:
         pshs    x               ; 0,s = new_node
@@ -3323,14 +3332,23 @@ ms_insert
 * 2,s = key_len (2 bytes)
 * 4,s = map_ptr (2 bytes)
 * 6,s = key_ptr (2 bytes)
-* Allocate single block for 12-byte node + key_len + 1 (null terminator):
+* Allocate node by bumping heap_ptr directly (exact size, word-aligned):
+* Header is 10 bytes: [next:2][val:2][key_len:2][key_ptr:2][hash:2]
+* Key bytes start at offset 10: 10 + key_len + 1 (null) = 11 + key_len
         ldd     2,s             ; D = key_len
-        addd    #13             ; D = 12 + key_len + 1
-        lbsr    heap_alloc      ; X = new_node
+        addd    #12             ; 11 + key_len + 1 (for rounding up to even)
+        andb    #$FE            ; D = aligned allocation size
+        ldx     <heap_ptr       ; X = new_node address
+        pshs    x               ; save new_node address
+        leax    d,x             ; X = new heap_ptr
+        cmpx    <heap_limit
+        lbhi    ha_oom
+        stx     <heap_ptr       ; save valid new heap_ptr
+        puls    x               ; X = new_node
 * Populate new_node:
         ldd     2,s             ; D = key_len
         std     4,x             ; node.key_len = key_len
-        leay    12,x            ; Y = inline key buffer (X + 12)
+        leay    10,x            ; Y = inline key buffer (X + 10)
         sty     6,x             ; node.key_ptr = Y
 * Copy key bytes:
         pshs    x               ; 0,s = new_node

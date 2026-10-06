@@ -431,6 +431,21 @@ func is_protected(sym string) bool {
     return map_get(protected_map, to_upper_buf(sym)) != 0xFFFF
 }
 
+func extract_col0_label(line string) string {
+    s := rstrip(line, "\r\n")
+    if len(s) == 0 || isspace(s[0]) || s[0] == '*' || s[0] == ';' {
+        return ""
+    }
+    pos := word(0)
+    for pos < word(len(s)) && is_ident_char(s[pos]) {
+        pos++
+    }
+    if pos < word(len(s)) && s[pos] == '@' {
+        pos++
+    }
+    return s[0:pos]
+}
+
 func load_defs(defs_path string) {
     h, ok := file_open(defs_path)
     if !ok {
@@ -450,24 +465,6 @@ func load_defs(defs_path string) {
         free(raw_b)
     }
     file_close(h)
-}
-
-// -----------------------------------------------------------------------------
-// Assembly Line Splitting & Label Extraction
-// -----------------------------------------------------------------------------
-func extract_col0_label(line string) string {
-    s := rstrip(line, "\r\n")
-    if len(s) == 0 || isspace(s[0]) || s[0] == '*' || s[0] == ';' {
-        return ""
-    }
-    pos := word(0)
-    for pos < word(len(s)) && is_ident_char(s[pos]) {
-        pos++
-    }
-    if pos < word(len(s)) && s[pos] == '@' {
-        pos++
-    }
-    return s[0:pos]
 }
 
 func is_local_or_l_label(lbl string) bool {

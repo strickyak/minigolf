@@ -1,11 +1,11 @@
 package main
 
 // Limits for 64K VM Process Space
-const MAX_GLOBALS     = 64
-const MAX_FUNCS       = 64
+const MAX_GLOBALS     = 80
+const MAX_FUNCS       = 80
 const MAX_VARS        = 1024
 const MAX_FUNC_VARS   = 64
-const MAX_LABELS      = 1024
+const MAX_LABELS      = 1600
 const MAX_STRING_POOL = 4096
 const MAX_NAME_POOL   = 1024
 const MAX_VAR_NAME_POOL = 512

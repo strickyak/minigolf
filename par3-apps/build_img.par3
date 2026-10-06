@@ -66,14 +66,14 @@ func print_pad(s string, width word) {
 func print_dec_pad(val word, width word) {
     pos := word(0)
     if val == 0 {
-        dec_digits[0] = '0'
+        dec_digits[0] = 0
         pos = 1
     } else {
         temp := val
         for temp > 0 {
-            dec_digits[pos] = byte('0' + (temp % 10))
+            dec_digits[pos] = byte(temp % 10)
             pos++
-            temp /= 10
+            temp = temp / 10
         }
         for i := word(0); i < pos/2; i++ {
             j := pos - 1 - i
@@ -82,8 +82,10 @@ func print_dec_pad(val word, width word) {
             dec_digits[j] = b
         }
     }
+    digits := "0123456789"
     for i := word(0); i < pos; i++ {
-        print(dec_digits[i : i+1])
+        d := word(dec_digits[i])
+        print(digits[d : d+1])
     }
     for pos < width {
         print(" ")
