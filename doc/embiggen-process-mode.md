@@ -75,9 +75,38 @@ graph TD
   - Local stack variables and procedure call frames grow down from `$3FFF`.
   - Global scalar variables, compiler temporaries, and Direct Page variables reside in `$0000..$1FFF`.
   - Because Slots 0 and 1 are never bank-switched, CPU registers, stack pointers (`S`, `SP`, `R2`), and local addresses remain valid across every far call and every far data access.
-- **Fixed Slots 6 & 7 ($C000..$FFFF)**:
-  - Contains the Far Function Trampoline dispatcher, Far Data round-robin manager, `far_malloc` arena allocator, and hardware I/O interrupt vectors.
-  - The hardware I/O page at `$FF00..$FFFF` is locked into high memory by Hatvan OS hardware logic.
+- **Fixed Slot 6 ($C000..$DFFF)**:
+  - Contains the Far Function Trampoline dispatcher, Far Data round-robin manager, `far_malloc` arena allocator, and prelude runtime helpers.
+  - Positioned safely below the `$E000` curtain boundary.
+- **Fixed Slot 7 ($E000..$FFFF)**:
+  - Governed by the Kernel Shared Memory Curtain and Hardware I/O Page.
+  - Contains system call gates (`SWI2`, `OUT ($60)`), system vectors, and hardware I/O registers (`$FF00..$FFFF`).
+
+### Hardware Address Decoding Precedence: Curtain vs. MMAP
+
+The Hatvan OS memory management hardware enforces a strict three-tier precedence hierarchy on every memory cycle:
+
+$$\textbf{Hardware I/O Page (\$FF00..\$FFFF)} \succ \textbf{Kernel Shared Memory Curtain (\$E000..\$FEFF)} \succ \textbf{EMBIGGEN MMAP Vector (\$0000..\$DFFF)}$$
+
+1. **Top Precedence: Hardware I/O Page (`$FF00..$FFFF`)**:
+   - The top 256 bytes are permanently hardwired to memory-mapped peripheral controllers (UART, timer, disk, DMA engine, task fuse, and MMAP vector).
+   - The I/O page cannot be paged out or altered by the curtain or MMAP registers.
+2. **Second Precedence: Kernel Shared Memory Curtain (`$E000..$FEFF`)**:
+   - **The kernel's curtain takes strict precedence over the MMAP mechanism.**
+   - The `SharedMemoryCurtain` register (at `$FF28..$FF29`, defaulting to `$E000`) establishes an impenetrable boundary at Slot 7.
+   - For privileged tasks (Task 0 Kernel, Task 1 RBF, Task 2 PROCFS), memory $\ge \text{Curtain}$ directly aliases Task 0 kernel memory for zero-copy IPC and path descriptors.
+   - For user processes (Task $\ge 3$), access above the curtain is strictly controlled by the operating system (hosting syscall trap gates, read-only system tables, and hardware vectors).
+   - **Security Invariant**: Even if user code writes a block ID to MMAP register `$FF47` (Slot 7), the hardware curtain logic takes precedence. A user task cannot remap Slot 7 to spoof kernel syscalls, tamper with shared process descriptors, or bypass protection traps.
+3. **Third Precedence: EMBIGGEN MMAP Vector (`$FF40..$FF46`, Slots 0..6)**:
+   - All addresses below the curtain (`$0000..$DFFF`, Slots 0 through 6) are translated dynamically according to the task's MMAP vector.
+   - User tasks may read and write `$FF40..$FF46` dynamically without kernel trap mediation.
+
+### Architectural Harmony with the Curtain
+Because the kernel curtain takes absolute precedence over Slot 7:
+- **User Far Code is strictly confined to Slot 5 (`$A000..$BFFF`)** (Blocks `8..127`).
+- **User Far Data is strictly confined to Slots 2, 3, and 4 (`$4000..$9FFF`)** (Blocks `128..255`).
+- **User Trampolines and Core Runtime reside in Slot 6 (`$C000..$DFFF`)**, safely below `$E000`.
+- As a result, the entire EMBIGGEN process model operates in complete harmony with the operating system: user far code and far data expand freely across 2 megabytes of physical blocks without ever colliding with or violating the kernel's curtain.
 
 ---
 
