@@ -585,3 +585,86 @@ Because `Imap[T]` guarantees interned strings, membership and lookup tests do no
 | **Hardware MMU Usage** | Disabled / Identity `{0..7}` | **Active 8KB Paged Vector (`$FF40..$FF47`)** |
 | **Far Call Overhead** | None | 5-byte stub + $\approx 25$ CPU cycles |
 | **Inner Loop Access Speed** | Native bus speed | **Native bus speed** (cached across Slots 2, 3, 4) |
+
+---
+
+## 13. Compiler Architecture: BIGIR & Dedicated Backends
+
+### 13.1 Design Principles: Clean Separation of Concerns
+1. **Shared Frontend & AST**:
+   - The Lexer, Parser, AST structures, Type Checker, and global AST-level optimization passes (Dead Function Elimination `ast.DFE` and Dead Branch Elimination `ast.DBE`) are completely shared between Standard and EMBIGGEN modes.
+   - The programmer writes identical MiniGolf syntax; whether a compilation targets flat or EMBIGGEN mode is controlled via compiler invocation flags (e.g. `minigolf -m=6809 -membiggen`).
+
+2. **Dedicated Intermediate Representation: `BIGIR` (`bigir/`)**:
+   - Rather than overloading the existing flat SSA IR (`ir/ir.go`) with complex conditional branches (`if isEmbiggen`), EMBIGGEN introduces a dedicated IR package `bigir/`.
+   - `BIGIR` directly models the physical semantics of segmented 8KB memory spaces, 16-bit `FarRef` handles, 8-byte slices, 3-window data access, and far subroutine dispatching.
+
+```mermaid
+graph TD
+    Src["MiniGolf Source (*.golf)"] --> Frontend["Lexer & Parser"]
+    Frontend --> AST["Standard AST<br/>(Shared DFE & DBE Passes)"]
+
+    AST -->|Standard Mode (-m=6809)| StdBuilder["Standard IR Builder"]
+    StdBuilder --> StdIR["Standard SSA IR (ir/)"]
+    StdIR --> StdOpt["Standard Optimizer (opt/)"]
+    StdOpt --> StdBackends["Standard Backends<br/>(m6809, z80, cdp1802, amd64, cbe)"]
+
+    AST -->|EMBIGGEN Mode (-membiggen)| BigBuilder["BIGIR Builder (bigir/)"]
+    BigBuilder --> BIGIR["BIGIR SSA<br/>(8-byte Slices, FarRef, Windows)"]
+    BIGIR --> BigOpt["BIGIR Optimizer & Block Packer<br/>(8KB Function Packing, Window Hoisting)"]
+    BigOpt --> BigBackends["EMBIGGEN Backends<br/>(big6809, bigz80, big1802)"]
+```
+
+---
+
+### 13.2 BIGIR Structural Specification
+
+#### 1. Type System (`bigir.Type`)
+- `TypeNearPtr`: Flat 16-bit virtual pointer (`$0000..$FFFF`) to fixed RAM (Stack in Slot 1, Direct Page in Slot 0, Fixed Runtime in Slot 6/7).
+- `TypeFarRef`: 16-bit encoded handle: Bits 15..9 = Physical Block ID (`128..255`), Bits 8..0 = 16-byte Chunk Index (`0..511`).
+- `TypeFarSlice[T]` & `TypeFarString`: 8-byte record `{far_ref, offset, length, capacity}`.
+- `TypeFarFunc`: Far function descriptor (assigned Physical Block ID `8..127` and virtual entry point in Slot 5 `$A000..$BFFF`).
+
+#### 2. Instruction Set
+- **Memory Operations**:
+  - `OpNearLoad(addr)` / `OpNearStore(addr, val)`: Direct 16-bit loads/stores without MMU interaction.
+  - `OpFarLoad(far_ref, offset)` / `OpFarStore(far_ref, offset, val)`: Window-mediated access via Slots 2, 3, or 4.
+  - `OpSliceGet(slice, index)` / `OpSlicePut(slice, index, val)`: Emits dual-path lowering (`far_ref == 0` fast path vs. Far window path).
+  - `OpSliceChop(slice, start, limit)`: $O(1)$ zero-copy byte offset adjustment.
+- **Control Flow Operations**:
+  - `OpNearCall(func_addr)`: Direct 16-bit `jsr` to fixed runtime or prelude helpers in Slot 6.
+  - `OpFarCall(block_id, entry_addr)`: Call mediated by Slot 6 trampoline dispatcher.
+  - `OpFarReturn`: Restores caller's code block to Slot 5 (`$FF45`) and returns.
+
+---
+
+### 13.3 The Block Packing Pass (`bigir/pack.go`)
+
+Because physical code blocks are limited to 8KB ($8,192$ bytes), user functions must be partitioned and assigned to specific blocks:
+1. **Size Estimation**: After SSA optimization, each function's machine code size is estimated (or measured via dry-run emission).
+2. **Bin Packing**:
+   - Functions are packed into discrete 8KB blocks (Blocks `8 .. 127`).
+   - Strongly coupled functions (e.g. caller/callee pairs in the same module) are co-located in the same 8KB block to maximize intra-block direct calls.
+   - User code may optionally provide block placement pragmas (e.g. `// minigolf:block 10`).
+3. **Trampoline Generation**:
+   - For every packed far function, a 5-byte entry stub is generated for fixed Slot 6:
+     ```asm
+     pkg_func:
+         ldb   #<assigned_block_id>
+         ldx   #<virtual_entry_in_slot5>
+         jmp   __far_call_dispatcher
+     ```
+4. **Intra-Block Direct Call Devirtualization**:
+   - If `FuncA` calls `FuncB` and both reside in the same physical block, `OpFarCall` is converted into a direct `OpNearCall(jsr FuncB_Slot5)`, bypassing the trampoline dispatcher completely!
+
+---
+
+### 13.4 Dedicated Backends (`big6809/`, `bigz80/`, `big1802/`)
+
+To preserve the stability, cleanliness, and speed of existing backends:
+- Standard backends (`m6809/`, `z80/`, `cdp1802/`) remain dedicated to flat 64KB programs without any EMBIGGEN baggage.
+- New modules (`big6809/`, `bigz80/`, `big1802/`) handle EMBIGGEN code generation:
+  - **Output Generation**: Emits discrete 8KB binary chunks (`block_008.bin` .. `block_NNN.bin`), the fixed Slot 6 runtime image, and a unified Hatvan executable manifest.
+  - **Window Caching**: Allocates and caches MMU registers (`$FF42..$FF44`) for Far Data dereferencing.
+  - **Calling Conventions**: Manages Slot 5 mapping (`$FF45`) and stack-saved block IDs.
+
