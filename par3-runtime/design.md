@@ -1,17 +1,18 @@
-# NP Language & NPCode Virtual Machine Specification
+# Par3 Language & Virtual Machine Specification
 
-**Version:** 0.4  
-**Date:** October 2026  
-**Document:** `np-runtime/design.md`  
-**Source Language:** NP (`*.np`)  
-**Bytecode Target:** NPCode (`*.npc`)  
-**Virtual Machine Interpreter:** `npcode`  
+**Version:** 0.4
+**Date:** October 2026
+**Document:** `par3-runtime/design.md`
+**Source Language:** Par3 (`*.par3`)
+**Intermediate Target:** Par3 assembly language (`*.p3a`)
+**Bytecode Target:** Par3 P-Codes (`*.p3p`)
+**Virtual Machine Interpreter:** `par3vm` / `npcode`
 
 ---
 
 ## 1. Introduction & Design Philosophy
 
-The **NP** language and **NPCode** Virtual Machine provide a compact, deterministic, and easily portable programming environment tailored for 8-bit and 16-bit architectures—specifically Motorola 6809 and Hitachi 6309 systems running NitrOS-9 Level 1 and Level 2, as well as embedded microcontrollers (such as the RP2350 on the TFR911h board) and Unix host systems.
+The **Par3** language and **Par3Code** Virtual Machine provide a compact, deterministic, and easily portable programming environment tailored for 8-bit and 16-bit architectures—specifically Motorola 6809 and Hitachi 6309 systems running NitrOS-9 Level 1 and Level 2, as well as embedded microcontrollers (such as the RP2350 on the TFR911h board) and Unix host systems.
 
 The primary motivating workload is the native self-generation and source transformation pipeline for NitrOS-9 (e.g. [`recipes/deep65280/selfgen_preprocess.py`](file:///home/strick/modoc/coco-shelf/nitros9/recipes/deep65280/selfgen_preprocess.py)), which translates modern assembly source into native assembler dialects.
 
@@ -20,7 +21,7 @@ The primary motivating workload is the native self-generation and source transfo
 To run comfortably in memory-constrained environments (such as a 64 KB 6809 address space with NitrOS-9 system overhead), the architecture **optimizes for minimum space instead of fastest speed**:
 
 1. **Strongly-Typed (A Go-Like Machine, Not Python)**:
-   - NP is a **statically, strongly-typed language**. Every variable, function parameter, return value, struct field, and collection element type is checked and known at compile time.
+   - Par3 is a **statically, strongly-typed language**. Every variable, function parameter, return value, struct field, and collection element type is checked and known at compile time.
    - The VM does **not** perform dynamic type checking or inspect runtime type tags.
    - A 16-bit word on the operand stack represents an `int16_t`, a `uint16_t`, or a 16-bit memory address.
    - There are **no 32-bit types**. In the rare case that 32-bit functionality is needed (e.g. for filesystem size or sector APIs), the program codes it explicitly using two `uint16_t` variables in the host language.
@@ -65,9 +66,9 @@ To run comfortably in memory-constrained environments (such as a 64 KB 6809 addr
 
 ---
 
-## 2. The NP Source Language (`*.np`)
+## 2. The Par3 Source Language (`*.par3`)
 
-NP features a Go-inspired, statically typed syntax with explicit error handling and built-in text processing primitives.
+Par3 features a Go-inspired, statically typed syntax with explicit error handling and built-in text processing primitives.
 
 ### 2.1 Types
 - **`int` / `int16`**: 16-bit signed integer ($-32,768 \dots +32,767$). 1 word (2 bytes).
@@ -103,7 +104,7 @@ let val: int, ok: bool = symbols.get("DP") # Linear scan; returns (0x2000, true)
 
 ### 2.3 Control Flow & Truthiness
 - **Uniform Zero-Test**:
-  In NP, the `if` and `while` statements test whether a 16-bit word evaluates to non-zero:
+  In Par3, the `if` and `while` statements test whether a 16-bit word evaluates to non-zero:
   ```python
   if ptr:          # true if ptr != nil ($0000)
       ...
@@ -124,9 +125,9 @@ let val: int, ok: bool = symbols.get("DP") # Linear scan; returns (0x2000, true)
 
 ---
 
-## 3. NPCode Virtual Machine Architecture
+## 3. Par3Code Virtual Machine Architecture
 
-NPCode is a **stack-based virtual machine** with an untagged 16-bit operand stack and variable-table-driven storage.
+Par3Code is a **stack-based virtual machine** with an untagged 16-bit operand stack and variable-table-driven storage.
 
 ```mermaid
 flowchart TD
@@ -146,7 +147,7 @@ flowchart TD
     end
 
     subgraph MemoryModel ["Process Memory (64 KB)"]
-        Hdr["NPC Header (16 bytes)"]
+        Hdr["P3P Header (16 bytes)"]
         GVarTab["Global Variable Table (sizes in bytes)"]
         SPool["Raw String Pool (Consecutive text bytes)"]
         FuncTab["Function Table & Local Variable Tables"]
@@ -204,9 +205,9 @@ A `Dict[str, T]` is represented by the 3-word slice `{ pointer, capacity, length
 
 ---
 
-## 4. Binary File Format (`*.npc`)
+## 4. Binary File Format (`*.p3p`)
 
-NPCode binary files are compiled bytecode executables. Multi-byte integers are stored in **Big-Endian** format (matching 6809/6309 native order).
+Par3Code binary files (`*.p3p`) are compiled bytecode executables. Multi-byte integers are stored in **Big-Endian** format (matching 6809/6309 native order).
 
 ### 4.1 File Layout
 
@@ -228,7 +229,7 @@ NPCode binary files are compiled bytecode executables. Multi-byte integers are s
 
 | Offset | Size | Field Name | Description |
 | :--- | :--- | :--- | :--- |
-| `0x00` | 4 | `Magic` | Byte sequence `0x4E 0x50 0x43 0x01` (`"NPC\x01"`) |
+| `0x00` | 4 | `Magic` | 4-byte magic number: `0x50 0x33 0x50 0x01` (`"P3P\x01"`). (Legacy `"NPC\x01"` / `0x4E 0x50 0x43 0x01` also accepted). |
 | `0x04` | 1 | `FormatVer` | Format version (currently `1`) |
 | `0x05` | 1 | `Flags` | Execution flags (Bit 0 = 6309 native, Bit 1 = MMU banked) |
 | `0x06` | 2 | `StringPoolSize` | Total byte size of the raw String Pool section |
@@ -550,11 +551,11 @@ Op_DICT_GET:
 
 ---
 
-## 7. Concrete Example: Compiling `selfgen_preprocess` to NPCode
+## 7. Concrete Example: Compiling `selfgen_preprocess` to Par3Code
 
-Here is how lines 53–63 of `selfgen_preprocess.py` look in NP source code and how they assemble into space-optimized NPCode using 3-word slices:
+Here is how lines 53–63 of `selfgen_preprocess.py` look in Par3 source code and how they assemble into space-optimized Par3Code using 3-word slices:
 
-### 7.1 NP Source Code
+### 7.1 Par3 Source Code
 ```python
 fn split_asm_line(line: str) -> (str, str):
     # line is a 3-word slice { ptr, cap, len }
