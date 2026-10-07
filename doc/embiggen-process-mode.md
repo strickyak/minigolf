@@ -16,7 +16,7 @@ The **EMBIGGEN Process Mode** solves this limitation by pairing the Hatvan OS 8K
 
 ### Key Capabilities & Invariants
 1. **2 Megabyte Process Address Space**: Each process can access up to 256 physical 8KB blocks (2,048 KB total).
-2. **Transparent 16-Bit Pointers**: Far Data is referenced using 16-bit reference handles (`FarRef`), maintaining a uniform 16-bit word size across registers, stack frames, and struct fields without requiring expensive 24-bit or 32-bit pointer emulation.
+2. **Transparent 16-Bit Pointers & 8-Byte Slices**: Far heap data is referenced using 16-bit reference handles (`FarRef`). Slices, strings, and maps use an 8-byte descriptor (`{far_ref, offset, length, capacity}`) that unifies Near constants and stack buffers (`far_ref == 0`) with Far heap buffers (`far_ref != 0`) and enables true $O(1)$ zero-copy byte sub-slicing (`s[1:]`).
 3. **Zero-Thrashing 3-Window Data Access**: Three independently mapped 8KB data windows (Slots 2, 3, and 4) operate in a round-robin / LRU configuration, allowing multi-operand operations (e.g. `s1 == s2`, `buf.Append(s)`, `memcpy(dst, src, n)`) to proceed at full native CPU bus speed without bank-switch thrashing.
 4. **Transparent Far Subroutine Calls**: Every user-defined function (even `main()`) can reside in one of 120 Far Code blocks (up to 960 KB of code), mapped dynamically into Slot 5 via single-instruction-overhead trampolines in fixed memory.
 5. **Fixed Stack & Direct Page**: The process stack, direct page, and fixed static variables reside in permanently mapped low memory (Slots 0 & 1), ensuring that function parameter passing, local variables, and return addresses are never swapped or invalidated.
@@ -146,9 +146,9 @@ Bit 15                                                  Bit 0
   - 9 bits cleanly address all 512 chunks (`0 .. 511`).
   - Byte offset within the 8KB block $= \text{ChunkIndex} \times 16 = \text{ChunkIndex} \ll 4$.
 
-### Mathematical Properties & Nil Representation
-- **Unambiguous Nil**: `0x0000` (and any reference with Bit 15 = 0) represents `nil`. Because all valid Far Data blocks have Bit 15 set, checking for `nil` is a single test on the high bit:
-  - 6809: `BMI is_valid` or `BEQ is_nil`
+### Mathematical Properties & Nil / Near Representation
+- **Unambiguous Nil & Near Distinction**: `0x0000` represents `nil` for scalar pointer types (`*T`). For slices and strings, `far_ref == 0` designates a **Near Reference** (Fixed Virtual Memory in Slots 0, 1, 6, or 7), where the companion `offset` word holds the 16-bit virtual memory address (`$0000..$FFFF`). Because all valid Far Data blocks have Bit 15 set (`128..255`), testing for Far vs. Near / Nil is a single test on the high bit:
+  - 6809: `BMI is_far` or `BEQ is_near_or_nil`
   - Z80: `BIT 7, H`
   - 1802: `GLO R_high` / `SHR`
 - **Intrablock Invariant**: Every allocated object (struct, string payload, slice buffer) resides entirely within a single Far Data block. No individual object spans across an 8KB block boundary.
@@ -213,39 +213,134 @@ func streq(s1 string, s2 string) bool {
 
 ---
 
-## 6. Far Slices, Strings, and Indexing Semantics
+## 6. Slices, Strings, and Maps: The 8-Byte Unified Layout
 
-### Standard 6-Byte Far Slice Layout
-In EMBIGGEN mode, `string` and `slice[T]` preserve their standard 6-byte structure:
+### 6.1 The 8-Byte Slice Representation (`struct slice`)
+
+To support $O(1)$ zero-copy sub-slicing (`s[1:]`) down to single-byte granularity and achieve seamless unification between Near static constants and Far heap buffers, EMBIGGEN expands `slice[T]` and `string` from 6 bytes to **8 bytes** (4 words):
+
+```c
+struct slice {
+    word far_ref;  // 16-bit Far Reference (0 = Near / Fixed Virtual Memory)
+    word offset;   // 16-bit Byte Offset within Far Block, OR 16-bit Near Virtual Address
+    word length;   // 16-bit Active Element / Byte Count
+    word capacity; // 16-bit Total Allocated Capacity
+};
+```
 
 ```
-+--------------------+--------------------+--------------------+
-|  Base: FarRef      |  Cap: uint16       |  Len: uint16       |
-|  (2 bytes)         |  (2 bytes)         |  (2 bytes)         |
-+--------------------+--------------------+--------------------+
+Byte Offset:   0                   2                   4                   6                   8
+             +-------------------+-------------------+-------------------+-------------------+
+             |  far_ref (uint16) |   offset (uint16) |   length (uint16) |  capacity (uint16)|
+             +-------------------+-------------------+-------------------+-------------------+
+Field Role:  | Physical Block &  | Byte offset or    | Active element    | Total element     |
+             | Base Chunk Index  | Near Virt Address | count (s.Len)     | capacity (s.Cap)  |
+             +-------------------+-------------------+-------------------+-------------------+
 ```
-- Because `Base` is still 16 bits, all slice passing, struct embedding, and return conventions remain binary-compatible with near compilation.
-- `Len` and `Cap` measure elements/bytes up to 8,192.
 
-### Prohibition of Raw Pointer Arithmetic
-In standard MiniGolf, advancing a buffer pointer is performed via pointer arithmetic: `ptr = ptr + 1`.  
-**In EMBIGGEN mode, raw pointer arithmetic on `FarRef` is strictly invalid.** Adding 1 to a `FarRef` would increment the chunk index by 1 (advancing 16 bytes!), and incrementing past 511 would overflow into the block ID.
+### 6.2 Near vs. Far Dual Semantics
 
-Instead, all buffer iterations and index accesses MUST use **special indexed expressions** `s[i]`:
-- `s[i]` translates into:
-  $$\text{TargetOffset} = (s.\text{Base}.\text{ChunkIndex} \times 16) + (i \times \text{sizeof}(T))$$
-- Bounds check: $i < s.\text{Len}$.
-- The compiler lowers `s[i]` to `OpFarLoad(slice, index)` and `s[i] = val` to `OpFarStore(slice, index, val)`.
+The `far_ref` field acts as a high-speed discriminator:
 
-### Slicing / Reslicing (`s[low:high]`)
-When creating a subslice `sub := s[start:limit]`:
-- `sub.Len = limit - start`
-- `sub.Cap = s.Cap - start`
-- If `start` is a multiple of 16 bytes:
-  - `sub.Base.ChunkIndex = s.Base.ChunkIndex + (start / 16)`
-  - Subslice remains chunk-aligned.
-- If `start` is not a multiple of 16 bytes:
-  - EMBIGGEN supports byte-aligned `FarSlice` by using a 3-part reference or storing byte sub-offsets in slice metadata (see Section 11).
+| Mode | `far_ref` Condition | Meaning of `offset` | Virtual Memory Resolution | MMU Mapping Required? |
+| :--- | :--- | :--- | :--- | :---: |
+| **Near Data** | `far_ref == 0` | 16-bit Virtual Address (`$0000..$FFFF`) | Direct: $\text{VAddr} = \text{offset} + (i \times \text{sizeof}(T))$ | **No** (Direct CPU memory) |
+| **Far Data** | `far_ref != 0` (Bit 15 = 1) | Byte offset relative to Base Chunk | Windowed: $\text{VAddr} = \text{Base}_{\text{slot}} + (\text{chunk} \ll 4) + \text{offset} + (i \times \text{sizeof}(T))$ | **Yes** (Cached in Slots 2, 3, 4) |
+
+#### 1. Near Literals & Fixed Memory (`far_ref == 0`)
+- **String Literals**: Constant strings embedded in program code (Slots 6 & 7) or static globals in low RAM (Slot 0) are emitted with `far_ref = 0` and `offset = (word)&literal_data`.
+- **Stack Buffers**: Local arrays or stack buffers converted to slices (e.g. `slice[byte]{far_ref: 0, offset: word(&buf), length: 64, capacity: 64}`).
+- **Zero Overhead**: When reading `s[i]`, the runtime checks `far_ref`. If zero, it executes an immediate flat load `*(T*)(s.offset + i * sizeof(T))` with zero MMU interaction and zero cache checks.
+
+#### 2. Far Heap Data (`far_ref != 0`)
+- Heap objects and dynamically grown slices allocated via `far_malloc` receive a valid `FarRef` in `far_ref` (Bits 15..9 = Block ID `128..255`, Bits 8..0 = Base Chunk Index `0..511`).
+- Initial allocation sets `offset = 0`.
+- The element at index `i` is resolved through the 3-window manager (Slots 2, 3, 4).
+
+### 6.3 O(1) Zero-Copy Sub-Slicing (`s[start:limit]`)
+
+Sub-slicing (e.g. `s[1:]`, `s[2:5]`, `s.Chop(start, limit)`) is completely unified and identical across both Near and Far slices:
+
+```c
+struct slice sub_slice(struct slice s, word start, word limit) {
+    // Assert: start <= limit <= s.capacity
+    struct slice sub;
+    sub.far_ref  = s.far_ref;
+    sub.offset   = s.offset + (start * sizeof(T));
+    sub.length   = limit - start;
+    sub.capacity = s.capacity - (start * sizeof(T));
+    return sub;
+}
+```
+
+#### Why This Completely Solves Sub-Slicing:
+1. **Arbitrary Byte Alignment**: If `s` points to Far string `"abcdefghijklmnop"`, `s[1:]` sets `sub.offset = 1`. The subslice immediately points to `"b"` without requiring chunk realignment, memory movement, or copying.
+2. **Preservation of Allocation Handle**: Because `sub.far_ref` remains untouched, the runtime always knows which physical arena and chunk owns the underlying buffer (crucial for `free()`).
+3. **Identical Machine Code**: The slicing arithmetic does not branch on Near vs Far; it simply increments `offset` and decrements `length` / `capacity`.
+
+### 6.4 Element Access & Indexing Semantics (`s[i]`)
+
+Raw pointer arithmetic (`ptr = ptr + 1`) is forbidden on `FarRef`. All indexing goes through typed slice index operators:
+
+#### Code Generation Lowering for `s[i]`
+```c
+T get_element(struct slice s, word i) {
+    if (i >= s.length) {
+        panic("slice index out of bounds");
+    }
+    
+    if (s.far_ref == 0) {
+        // FAST PATH: Near / Fixed Memory (ROM, Stack, Slot 0/6/7)
+        return *(T*)(s.offset + (i * sizeof(T)));
+    } else {
+        // SLOW/CACHED PATH: Far Heap Data (Slots 2, 3, 4)
+        uint8_t block_id   = s.far_ref >> 9;
+        uint16_t chunk_off = (s.far_ref & 0x1FF) << 4;
+        uint16_t byte_off  = chunk_off + s.offset + (i * sizeof(T));
+        
+        uint8_t slot       = ensure_window_mapped(block_id);
+        uint16_t slot_base = 0x4000 + (slot * 0x2000);
+        return *(T*)(slot_base + byte_off);
+    }
+}
+```
+
+### 6.5 String Maps & Interning (`smap.Smap` & `smap.Imap`)
+
+Expanding `slice` to 8 bytes cascades cleanly into `string` and the standard map implementations in [`golflib/smap.golf`](file:///home/strick/github.com/strickyak/minigolf/golflib/smap.golf):
+
+1. **`string` is `slice[byte]`**:
+   - Every `string` variable, argument, or struct member occupies 8 bytes (`far_ref`, `offset`, `length`, `capacity`).
+   - Constant string literals (`far_ref == 0`) and heap-allocated dynamic strings (`far_ref != 0`) are passed interchangeably into any function expecting `string`.
+
+2. **`smap.Smap[T]` (Standard String Map)**:
+   ```golf
+   type Smap[T any] struct {
+       keys   slice[string]  // 8 bytes
+       values slice[T]       // 8 bytes
+   }
+   ```
+   - Total `sizeof(Smap[T])` expands from 12 bytes to **16 bytes**.
+   - The backing buffer for `keys` is an array of 8-byte `string` records.
+   - String comparison `e == key` checks `e.length == key.length`, then compares characters using the 3-window manager.
+
+3. **`smap.Imap[T]` (Interned String Map)**:
+   ```golf
+   type Imap[T any] struct {
+       keys   slice[string]  // 8 bytes
+       values slice[T]       // 8 bytes
+   }
+   ```
+   - In `Imap`, strings are guaranteed to be interned (canonicalized).
+   - Fast equality check: In near mode, `e.Base == key.Base`.
+   - **In EMBIGGEN mode, fast base equality checks both `far_ref` and `offset` (a 32-bit identity comparison)**:
+     ```c
+     if (e.far_ref == key.far_ref && e.offset == key.offset) {
+         // Identity match!
+         return values[i], true;
+     }
+     ```
+   - On 6809, this 32-bit comparison executes in just two `SUBD` instructions ($\approx 12$ cycles), preserving the ultra-fast $O(1)$ lookup speed of interned maps without performing character-by-character string comparisons!
 
 ---
 
@@ -363,8 +458,9 @@ To support EMBIGGEN, the MiniGolf compiler adds target architecture flags and pi
    - All functions in `package main` and user libraries are tagged with `IsFar = true`.
    - Prelude core runtime functions (`malloc_core`, `far_call_dispatcher`, `peek/poke`, math division helpers) are tagged with `IsFar = false` and pinned to Slot 6/7.
 2. **Type System Adaptation**:
-   - Pointers (`*T`) to heap-allocated objects are tagged as `FarPointerType`.
-   - `string` and `slice[T]` types are treated as `FarSliceType` with `Base` typed as `FarRef`.
+   - Pointers (`*T`) to heap-allocated objects are tagged as `FarPointerType` (16-bit `FarRef`).
+   - `string` and `slice[T]` types are treated as `FarSliceType` with the 8-byte layout `{word far_ref, word offset, word length, word capacity}`.
+   - Map types (`smap.Smap[T]` and `smap.Imap[T]`) become 16-byte structs containing two 8-byte slices.
    - Pointers to stack variables (e.g. `&localVar`) remain `NearPointerType` (16-bit virtual address in Slot 1).
 3. **Semantic Checking**:
    - Rejects pointer arithmetic on `FarPointerType` and `FarSliceType`.
@@ -456,10 +552,10 @@ In Hatvan 1802, the MMAP vector is accessed via memory-mapped I/O at `$FF40..$FF
 
 ## 11. Advanced Considerations & Optimization Strategies
 
-### 1. Far String Literals
+### 1. Unified String Literals (Near & Far)
 String constants can be compiled in two ways:
-- **Embedded in Far Code**: Constant strings referenced only by a specific function can reside inside the function's own Far Code block in Slot 5.
-- **Far Constant Pool (Blocks 128..)**: Global and shared strings are placed into dedicated read-only Far Data blocks and assigned standard `FarRef` handles.
+- **Near Static String Literals (`far_ref == 0`)**: Small or frequent strings embedded directly in program code (Slots 6 & 7) or fixed data (Slot 0). Directly addressed via `offset` with **zero MMU overhead** and zero heap allocation.
+- **Far Constant Pool (Blocks 128..)**: Massive global text assets, dictionaries, and translation tables placed into dedicated read-only Far Data blocks and accessed via `FarRef`.
 
 ### 2. Multi-Block Allocation Support
 For allocations larger than 8KB (e.g. full-screen graphics buffers or huge arrays), the allocator can reserve contiguous physical blocks (e.g. Blocks 140..143) and map them simultaneously across Slots 2, 3, and 4 (giving a contiguous 24KB flat window).
@@ -469,6 +565,9 @@ If an inner loop repeatedly accesses fields of the same Far struct `p.field1`, `
 - Map `p.BlockID` into Slot 2 once before loop entry.
 - Inside the loop, access fields directly via fixed offset `[$4000 + chunk_offset + field_offset]` with **zero runtime mapping overhead**.
 
+### 4. Fast 32-Bit Equality for Interned String Maps (`Imap`)
+Because `Imap[T]` guarantees interned strings, membership and lookup tests do not perform character-by-character string comparisons. Instead, the runtime evaluates `(e.far_ref == key.far_ref) && (e.offset == key.offset)`. On 8/16-bit architectures, this evaluates in just two 16-bit word comparisons (~12 CPU cycles).
+
 ---
 
 ## 12. Summary Comparison: Near vs. EMBIGGEN Mode
@@ -477,8 +576,11 @@ If an inner loop repeatedly accesses fields of the same Far struct `p.field1`, `
 | :--- | :--- | :--- |
 | **Max Process Code Size** | $\approx 32\text{ KB}$ | **960 KB** (120 Far Code Blocks) |
 | **Max Process Data Heap** | $\approx 16\text{ KB}$ | **1,024 KB** (128 Far Data Blocks) |
-| **Pointer Size** | 16-bit Flat Virtual Address | **16-bit Far Reference (`FarRef`)** |
-| **Slice / String Size** | 6 Bytes (`Base`, `Cap`, `Len`) | **6 Bytes (`FarRef`, `Cap`, `Len`)** |
+| **Pointer Size (`*T`)** | 16-bit Flat Virtual Address | **16-bit Far Reference (`FarRef`)** |
+| **Slice / String Size** | 6 Bytes (`Base`, `Cap`, `Len`) | **8 Bytes (`far_ref`, `offset`, `length`, `capacity`)** |
+| **Smap / Imap Struct Size** | 12 Bytes (2 $\times$ 6B slices) | **16 Bytes (2 $\times$ 8B slices)** |
+| **Sub-slicing (`s[1:]`)** | Pointer increment (`Base + 1`) | **Offset increment (`offset + 1`) ($O(1)$ zero-copy)** |
+| **Static String Literals** | Direct flat address | **Direct flat address (`far_ref == 0`, zero MMU overhead)** |
 | **Stack Allocation** | Shared in Low/High RAM | Dedicated 8KB in **Slot 1 (`$2000..$3FFF`)** |
 | **Hardware MMU Usage** | Disabled / Identity `{0..7}` | **Active 8KB Paged Vector (`$FF40..$FF47`)** |
 | **Far Call Overhead** | None | 5-byte stub + $\approx 25$ CPU cycles |
