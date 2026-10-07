@@ -19,11 +19,11 @@ type rodataEntry struct {
 }
 
 type Backend struct {
-	buf        bytes.Buffer
-	program    *ir.Program
-	slots      map[int]int    // instruction ID -> byte offset below IX (accessed as -(offset)(ix))
-	jmpSlots   map[int]int    // SetJmp instruction ID -> jmpbuf stack offset below IX
-	paramSlots map[string]int // param name -> stack offset above IX (accessed as offset(ix))
+	buf           bytes.Buffer
+	program       *ir.Program
+	slots         map[int]int    // instruction ID -> byte offset below IX (accessed as -(offset)(ix))
+	jmpSlots      map[int]int    // SetJmp instruction ID -> jmpbuf stack offset below IX
+	paramSlots    map[string]int // param name -> stack offset above IX (accessed as offset(ix))
 	typeMap       map[int]ir.Type
 	fusedCompares map[int]bool
 	stackSize     int

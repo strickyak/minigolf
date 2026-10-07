@@ -395,7 +395,6 @@ func TestSystemGolfFiles_z80(t *testing.T) {
 	}
 }
 
-
 var m6809Variants = []struct {
 	name string
 	args []string

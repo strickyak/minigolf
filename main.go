@@ -14,17 +14,17 @@ import (
 
 	"github.com/strickyak/minigolf/ast"
 	"github.com/strickyak/minigolf/cbe"
+	"github.com/strickyak/minigolf/cdp1802"
 	"github.com/strickyak/minigolf/ctranslator"
 	"github.com/strickyak/minigolf/ir"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6809"
 	"github.com/strickyak/minigolf/m68k"
-	"github.com/strickyak/minigolf/z80"
 	"github.com/strickyak/minigolf/np"
-	"github.com/strickyak/minigolf/par4"
-	"github.com/strickyak/minigolf/cdp1802"
 	"github.com/strickyak/minigolf/opt"
+	"github.com/strickyak/minigolf/par4"
 	"github.com/strickyak/minigolf/parser"
+	"github.com/strickyak/minigolf/z80"
 	// "github.com/strickyak/minigolf/prelude"
 	"github.com/strickyak/minigolf/amd64"
 	"github.com/strickyak/minigolf/semantic"
@@ -673,44 +673,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Flag -m=par3 or -m=np : Generate Par3 assembly directly from AST and exit cleanly
-	if *archFlag == "PAR3" || *archFlag == "NP" {
-		resolver := semantic.NewResolver(golfDefines)
-		resolver.Resolve(program)
-
-		backend := np.New()
-		asmCode := backend.Generate(program)
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Par3 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
-		finalOutput := header + asmCode
-
-		err := writeOutput(*outFlag, finalOutput)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing Par3 output: %v\n", err)
-			os.Exit(1)
-		}
-		log.Printf("Successfully compiled via Par3 to: %s", *outFlag)
-		os.Exit(0)
-	}
-
-	// Flag -m=par4 or -m=p4 : Generate Par4 assembly directly from AST and exit cleanly
-	if *archFlag == "PAR4" || *archFlag == "P4" {
-		resolver := semantic.NewResolver(golfDefines)
-		resolver.Resolve(program)
-
-		backend := par4.New()
-		asmCode := backend.Generate(program)
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Par4 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
-		finalOutput := header + asmCode
-
-		err := writeOutput(*outFlag, finalOutput)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing Par4 output: %v\n", err)
-			os.Exit(1)
-		}
-		log.Printf("Successfully compiled via Par4 to: %s", *outFlag)
-		os.Exit(0)
-	}
-
 	resolver := semantic.NewResolver(golfDefines)
 	resolver.Resolve(program)
 	resolveCallback := func(node ast.Node, defPkg string) ast.Node {
@@ -749,6 +711,38 @@ func main() {
 				log.Printf("TrunkLevel: %s is level %d, Popularity: %d", fs.Name.Value, fs.TrunkLevel, fs.Popularity)
 			}
 		}
+	}
+
+	// Flag -m=par3 or -m=np : Generate Par3 assembly directly from AST and exit cleanly
+	if *archFlag == "PAR3" || *archFlag == "NP" {
+		backend := np.New()
+		asmCode := backend.Generate(program)
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (Par3 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing Par3 output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via Par3 to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=par4 or -m=p4 : Generate Par4 assembly directly from AST and exit cleanly
+	if *archFlag == "PAR4" || *archFlag == "P4" {
+		backend := par4.New()
+		asmCode := backend.Generate(program)
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (Par4 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing Par4 output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via Par4 to: %s", *outFlag)
+		os.Exit(0)
 	}
 
 	if val, ok := analyzer.Pragmas["CHECK_BOUNDS"]; ok {

@@ -157,19 +157,19 @@ type VM struct {
 	MaxInstructions  int
 
 	// Flags
-	Verbose    bool
-	DumpStack  bool
-	StepMode   bool
+	Verbose   bool
+	DumpStack bool
+	StepMode  bool
 
 	// File format sections
-	Functions       []*FunctionMetadata
-	EntryFuncIndex  int
-	StringPoolBase  int
-	StringPoolSize  int
-	GlobalsBase     int
-	GlobalSizes     []int
-	CodeBase        int
-	CodeSize        int
+	Functions      []*FunctionMetadata
+	EntryFuncIndex int
+	StringPoolBase int
+	StringPoolSize int
+	GlobalsBase    int
+	GlobalSizes    []int
+	CodeBase       int
+	CodeSize       int
 
 	Heap    *HeapManager
 	FrameSP int
@@ -194,18 +194,18 @@ type VM struct {
 // NewVM creates a new VM initialized with the given bytecode binary data.
 func NewVM(bytecode []byte) (*VM, error) {
 	vm := &VM{
-		Memory:        make([]byte, 65536),
-		Stack:         make([]uint16, 0, 1024),
-		CallStack:     make([]*CallFrame, 0, 128),
-		Files:         make(map[byte]*os.File),
-		NextFileID:    3,
-		RegexMatches:  make(map[int][]string),
-		NextMatchID:   1,
-		Maps:          make(map[int]map[string]int),
-		NextMapID:     1,
-		Stdin:         os.Stdin,
-		Stdout:        os.Stdout,
-		Stderr:        os.Stderr,
+		Memory:       make([]byte, 65536),
+		Stack:        make([]uint16, 0, 1024),
+		CallStack:    make([]*CallFrame, 0, 128),
+		Files:        make(map[byte]*os.File),
+		NextFileID:   3,
+		RegexMatches: make(map[int][]string),
+		NextMatchID:  1,
+		Maps:         make(map[int]map[string]int),
+		NextMapID:    1,
+		Stdin:        os.Stdin,
+		Stdout:       os.Stdout,
+		Stderr:       os.Stderr,
 	}
 
 	// Initialize standard file paths

@@ -43,6 +43,17 @@ func (s *Scope) Resolve(name string) (Symbol, bool) {
 	return Symbol{}, false
 }
 
+func (s *Scope) ResolveLocal(name string) (Symbol, bool) {
+	curr := s
+	for curr != nil && curr.parent != nil {
+		if sym, ok := curr.symbols[name]; ok {
+			return sym, true
+		}
+		curr = curr.parent
+	}
+	return Symbol{}, false
+}
+
 type GenericTemplate struct {
 	TypeParams []string
 	Tokens     []token.Token
@@ -111,6 +122,68 @@ func New(resolver *Resolver) *Analyzer {
 	global.Define("string", &ast.ArrayType{Elt: ByteType}) // string is alias for slice[byte]
 	global.Define("true", WordType)
 	global.Define("false", WordType)
+
+	// Memory & pointer builtins
+	global.Define("alloc", FuncTypeBuiltin)
+	global.Define("malloc", FuncTypeBuiltin)
+	global.Define("zalloc", FuncTypeBuiltin)
+	global.Define("free", FuncTypeBuiltin)
+	global.Define("peek", FuncTypeBuiltin)
+	global.Define("poke", FuncTypeBuiltin)
+	global.Define("peekb", FuncTypeBuiltin)
+	global.Define("peekw", FuncTypeBuiltin)
+	global.Define("pokeb", FuncTypeBuiltin)
+	global.Define("pokew", FuncTypeBuiltin)
+	global.Define("peek_byte", FuncTypeBuiltin)
+	global.Define("peek_word", FuncTypeBuiltin)
+	global.Define("poke_byte", FuncTypeBuiltin)
+	global.Define("poke_word", FuncTypeBuiltin)
+	global.Define("memcpy", FuncTypeBuiltin)
+	global.Define("mem_copy", FuncTypeBuiltin)
+	global.Define("memset", FuncTypeBuiltin)
+	global.Define("mem_set", FuncTypeBuiltin)
+
+	// String & slice builtins
+	global.Define("streq", FuncTypeBuiltin)
+	global.Define("strcmp", FuncTypeBuiltin)
+	global.Define("strdup", FuncTypeBuiltin)
+	global.Define("rstrip", FuncTypeBuiltin)
+	global.Define("lstrip", FuncTypeBuiltin)
+	global.Define("strip", FuncTypeBuiltin)
+	global.Define("find", FuncTypeBuiltin)
+	global.Define("startswith", FuncTypeBuiltin)
+	global.Define("endswith", FuncTypeBuiltin)
+	global.Define("splitlines", FuncTypeBuiltin)
+	global.Define("replace_ident", FuncTypeBuiltin)
+	global.Define("make", FuncTypeBuiltin)
+	global.Define("makeslice", FuncTypeBuiltin)
+	global.Define("makelist", FuncTypeBuiltin)
+
+	// Map & OS / File builtins
+	global.Define("map_new", FuncTypeBuiltin)
+	global.Define("map_put", FuncTypeBuiltin)
+	global.Define("map_get", FuncTypeBuiltin)
+	global.Define("map_count", FuncTypeBuiltin)
+	global.Define("map_str", FuncTypeBuiltin)
+	global.Define("sys_args", FuncTypeBuiltin)
+	global.Define("sys_exit", FuncTypeBuiltin)
+	global.Define("file_open", FuncTypeBuiltin)
+	global.Define("file_open_read", FuncTypeBuiltin)
+	global.Define("file_open_write", FuncTypeBuiltin)
+	global.Define("file_create", FuncTypeBuiltin)
+	global.Define("file_read", FuncTypeBuiltin)
+	global.Define("file_readline", FuncTypeBuiltin)
+	global.Define("file_write", FuncTypeBuiltin)
+	global.Define("file_close", FuncTypeBuiltin)
+	global.Define("os_isfile", FuncTypeBuiltin)
+	global.Define("os_makedirs", FuncTypeBuiltin)
+
+	// System traps
+	global.Define("hatvan_trap", FuncTypeBuiltin)
+	global.Define("os_call", FuncTypeBuiltin)
+	global.Define("sys_trap", FuncTypeBuiltin)
+	global.Define("sys_poll_flag", FuncTypeBuiltin)
+	global.Define("sys_dma_copy", FuncTypeBuiltin)
 
 	return &Analyzer{
 		errors:           []string{},
@@ -294,7 +367,6 @@ func isFuncType(typ ast.Expression) bool {
 
 func (a *Analyzer) markReachable(qname string) {
 	if !a.reachableFuncs[qname] {
-		//fmt.Printf("DEBUG: marking reachable %s\n", qname)
 		a.reachableFuncs[qname] = true
 		a.queue = append(a.queue, qname)
 	}
@@ -320,10 +392,8 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 					tparams = append(tparams, tp.Value)
 				}
 				a.genericTemplates[qname] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
-				a.globalScope.Define(qname, s.BaseType)
-			} else {
-				a.globalScope.Define(qname, builtinType(qname))
 			}
+			a.globalScope.Define(qname, s.BaseType)
 		case *ast.FuncStatement:
 			if a.currentPackage == "main" && s.Name.Value == "main" && s.Receiver == nil {
 				a.hasMainFunc = true
@@ -495,7 +565,6 @@ func (a *Analyzer) TrimDeadFunctions(program *ast.Program) {
 			}
 
 			if !a.reachableFuncs[qname] && !strings.HasSuffix(qname, "_destructor") {
-				//fmt.Printf("DEBUG: stripping %s\n", qname)
 				continue // DEAD CODE ELIMINATED!
 			}
 		}
@@ -1110,13 +1179,18 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 	case *ast.Identifier:
 		fullName := e.FullName()
 
-		if sym, ok := a.currentScope.Resolve(e.Value); ok {
+		if sym, ok := a.currentScope.ResolveLocal(e.Value); ok {
 			typ = sym.Type
 			e.Value = sym.UniqueName // Rewrite the AST so the builder sees the unique mangled name
 			if isFuncType(typ) {
 				a.markReachable(sym.Name)
 			}
 		} else if sym, ok := a.globalScope.Resolve(fullName); ok {
+			typ = sym.Type
+			if isFuncType(typ) {
+				a.markReachable(sym.Name)
+			}
+		} else if sym, ok := a.globalScope.Resolve(e.Value); ok {
 			typ = sym.Type
 			if isFuncType(typ) {
 				a.markReachable(sym.Name)
@@ -1308,7 +1382,6 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			// It's a method call or field access!
 			baseTypStr := a.exprToString(leftTyp)
 			baseTypStr = strings.TrimPrefix(baseTypStr, "*")
-			//fmt.Printf("DEBUG SELECTOR: baseTypStr=%s e.Right.Value=%s\n", baseTypStr, e.Right.Value)
 
 			// Check for struct field first!
 			lookupTypStr := baseTypStr

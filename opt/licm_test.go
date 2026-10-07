@@ -533,4 +533,3 @@ func TestLICMPreheaderInsertion_NestedLoops(t *testing.T) {
 		t.Errorf("invInner should have been hoisted out of b3")
 	}
 }
-

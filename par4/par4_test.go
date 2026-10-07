@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/par4"
+	"github.com/strickyak/minigolf/parser"
+	"github.com/strickyak/minigolf/semantic"
 )
 
 func TestPar4BasicExecution(t *testing.T) {
@@ -296,5 +299,75 @@ func TestPar4StringEscapesAndComments(t *testing.T) {
 	expected := "Hello; world #1! fix'd\nNext line\n"
 	if stdout.String() != expected {
 		t.Fatalf("Output mismatch:\nGot: %q\nWanted: %q", stdout.String(), expected)
+	}
+}
+
+func TestPar4CompilerDeadFunctionAndBranchElimination(t *testing.T) {
+	src := `package main
+
+func deadFunction() {
+    println("DEAD FUNCTION SHOULD BE ELIMINATED")
+}
+
+func main() {
+    if 0 {
+        println("DEAD BRANCH SHOULD BE ELIMINATED")
+    } else {
+        println("LIVE BRANCH")
+    }
+}
+`
+	tokens := lexer.Lex(src, "test.par4")
+	p := parser.New(tokens)
+	prog := p.ParseProgram("main")
+	if len(p.Errors()) > 0 {
+		t.Fatalf("Parse errors: %v", p.Errors())
+	}
+
+	resolver := semantic.NewResolver(nil)
+	resolver.Resolve(prog)
+	analyzer := semantic.New(resolver)
+	analyzer.Analyze(prog)
+	if len(analyzer.Errors()) > 0 {
+		t.Fatalf("Semantic errors: %v", analyzer.Errors())
+	}
+	analyzer.TrimDeadFunctions(prog)
+
+	backend := par4.New()
+	asm := backend.Generate(prog)
+
+	if strings.Contains(asm, "deadFunction") {
+		t.Errorf("Expected deadFunction to be eliminated by DFE, but found in assembly:\n%s", asm)
+	}
+	if strings.Contains(asm, "DEAD FUNCTION SHOULD BE ELIMINATED") {
+		t.Errorf("Expected dead function body to be eliminated by DFE, but found in assembly:\n%s", asm)
+	}
+	if strings.Contains(asm, "DEAD BRANCH SHOULD BE ELIMINATED") {
+		t.Errorf("Expected dead if branch to be eliminated by DBE, but found in assembly:\n%s", asm)
+	}
+	if !strings.Contains(asm, "LIVE BRANCH") {
+		t.Errorf("Expected live branch to be present in assembly:\n%s", asm)
+	}
+
+	// Assemble and execute to verify the VM runs it cleanly
+	bin, err := par4.Assemble(asm)
+	if err != nil {
+		t.Fatalf("Assemble failed: %v\nAssembly:\n%s", err, asm)
+	}
+	vm, err := par4.NewVM(bin)
+	if err != nil {
+		t.Fatalf("NewVM failed: %v", err)
+	}
+	var stdout bytes.Buffer
+	vm.Stdout = &stdout
+	exitCode, err := vm.Run()
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("Expected exit code 0, got %d", exitCode)
+	}
+	if stdout.String() != "LIVE BRANCH\n" {
+		t.Fatalf("Output mismatch: got %q, want %q", stdout.String(), "LIVE BRANCH\n")
 	}
 }

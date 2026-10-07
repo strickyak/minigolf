@@ -214,7 +214,7 @@ func TestPar3NamedReturnRejected(t *testing.T) {
 
 	// 1. Test named return parameter rejection
 	badFile := filepath.Join(tmpDir, "bad_named.par3")
-	badCode := "package main\n\nfunc compute(x word) (n word) {\n    n = x + 1\n    return n\n}\n\nfunc main() {}\n"
+	badCode := "package main\n\nfunc compute(x word) (n word) {\n    n = x + 1\n    return n\n}\n\nfunc main() {\n    compute(0)\n}\n"
 	if err := os.WriteFile(badFile, []byte(badCode), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestPar3NamedReturnRejected(t *testing.T) {
 
 	// 2. Test bare return in non-void function rejection
 	badBareFile := filepath.Join(tmpDir, "bad_bare.par3")
-	badBareCode := "package main\n\nfunc getVal() word {\n    return\n}\n\nfunc main() {}\n"
+	badBareCode := "package main\n\nfunc getVal() word {\n    return\n}\n\nfunc main() {\n    getVal()\n}\n"
 	if err := os.WriteFile(badBareFile, []byte(badBareCode), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -242,5 +242,57 @@ func TestPar3NamedReturnRejected(t *testing.T) {
 	}
 	if !strings.Contains(string(out2), "bare return is not supported in Par3") {
 		t.Fatalf("Expected error message 'bare return is not supported in Par3', got:\n%s", out2)
+	}
+}
+
+func TestPar3DeadFunctionAndBranchElimination(t *testing.T) {
+	compiler := getMinigolfCompiler(t)
+	importDir := getPar3ImportDir()
+
+	tmpDir := filepath.Join("_tmp", "par3_dce_dbe")
+	_ = os.MkdirAll(tmpDir, 0777)
+
+	srcFile := filepath.Join(tmpDir, "test_dce.par3")
+	src := `package main
+
+func deadFunction() {
+    println("DEAD FUNCTION SHOULD BE ELIMINATED")
+}
+
+func main() {
+    if 0 {
+        println("DEAD BRANCH SHOULD BE ELIMINATED")
+    } else {
+        println("LIVE BRANCH")
+    }
+}
+`
+	if err := os.WriteFile(srcFile, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	outFile := filepath.Join(tmpDir, "test_dce.p3a")
+	cmd := exec.Command(compiler, "-m=par3", "-o", outFile, "-I="+importDir, srcFile)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Compilation failed: %v\nOutput: %s", err, out)
+	}
+
+	asmBytes, err := os.ReadFile(outFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asm := string(asmBytes)
+
+	if strings.Contains(asm, "deadFunction") {
+		t.Errorf("Expected deadFunction to be eliminated by DFE, but found in assembly:\n%s", asm)
+	}
+	if strings.Contains(asm, "DEAD FUNCTION SHOULD BE ELIMINATED") {
+		t.Errorf("Expected dead function body to be eliminated by DFE, but found in assembly:\n%s", asm)
+	}
+	if strings.Contains(asm, "DEAD BRANCH SHOULD BE ELIMINATED") {
+		t.Errorf("Expected dead if branch to be eliminated by DBE, but found in assembly:\n%s", asm)
+	}
+	if !strings.Contains(asm, "LIVE BRANCH") {
+		t.Errorf("Expected live branch to be present in assembly:\n%s", asm)
 	}
 }

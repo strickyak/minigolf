@@ -1,8 +1,8 @@
 package cdp1802
 
 import (
-	_ "embed"
 	"bytes"
+	_ "embed"
 	"fmt"
 	"log"
 	"strings"
