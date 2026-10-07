@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/strickyak/minigolf/ast"
+	"github.com/strickyak/minigolf/big6809"
+	"github.com/strickyak/minigolf/bigir"
 	"github.com/strickyak/minigolf/cbe"
 	"github.com/strickyak/minigolf/cdp1802"
 	"github.com/strickyak/minigolf/ctranslator"
@@ -323,7 +325,8 @@ MORE:
 
 func main() {
 	// Define command-line flags
-	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, par3, np, par4, p4, 1802, cdp1802, c, cosmac)")
+	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, par3, np, par4, p4, 1802, cdp1802, c, cosmac, big6809, bigir)")
+	embiggenFlag := flag.Bool("membiggen", false, "Enable EMBIGGEN process mode (far functions & far data)")
 	outFlag := flag.String("o", "", "Output object file name")
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
@@ -512,7 +515,7 @@ func main() {
 	}
 
 	archLower := strings.ToLower(*archFlag)
-	if archLower == "m6809" || archLower == "6809" || archLower == "m" ||
+	if archLower == "m6809" || archLower == "6809" || archLower == "m" || archLower == "big6809" ||
 		archLower == "m68k" || archLower == "68000" || archLower == "k" ||
 		archLower == "z80" || archLower == "z" ||
 		archLower == "1802" || archLower == "cdp1802" || archLower == "c" || archLower == "cosmac" {
@@ -798,6 +801,27 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Flag -m=bigir : emit BIGIR and exit cleanly
+	if *archFlag == "BIGIR" {
+		builder := bigir.NewBuilder(2)
+		bigProg, err := builder.BuildFromAST(program, resolveCallback)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error building BIGIR: %v\n", err)
+			os.Exit(1)
+		}
+		irCode := bigir.PrintProgram(bigProg)
+		header := fmt.Sprintf("; Starting whole-program compilation (BIGIR)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + irCode
+
+		err = writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing BIGIR output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled to BIGIR: %s", *outFlag)
+		os.Exit(0)
+	}
+
 	// Flag -m=cbe : Generate C from IR and exit cleanly
 	if *archFlag == "CBE" {
 		builder := ir.NewBuilder(resolveCallback, 8)
@@ -891,6 +915,34 @@ func main() {
 			os.Exit(1)
 		}
 		log.Printf("Successfully compiled via AMD64 to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=big6809 or -membiggen : Generate EMBIGGEN 6809 assembly and exit cleanly
+	if *archFlag == "BIG6809" || ((*archFlag == "6809" || *archFlag == "M6809" || *archFlag == "M") && *embiggenFlag) {
+		builder := bigir.NewBuilder(2)
+		bigProg, err := builder.BuildFromAST(program, resolveCallback)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error building BIGIR: %v\n", err)
+			os.Exit(1)
+		}
+
+		backend := big6809.New()
+		asmCode, err := backend.Generate(bigProg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error generating EMBIGGEN 6809 assembly: %v\n", err)
+			os.Exit(1)
+		}
+
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (EMBIGGEN 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err = writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing EMBIGGEN 6809 output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via EMBIGGEN 6809 to: %s", *outFlag)
 		os.Exit(0)
 	}
 

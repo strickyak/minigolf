@@ -24,6 +24,9 @@ import (
 //   - foo_nocbe.c    – skip the CBE backend
 //   - foo_motoonly.c – only run on the m6809 backend (uses hardware I/O, etc.)
 func TestAllCFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow C tests in short mode")
+	}
 	files, err := filepath.Glob("c-tests/*.c")
 	if err != nil {
 		t.Fatalf("Failed to glob c-tests/*.c: %v", err)

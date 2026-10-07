@@ -1,0 +1,283 @@
+package big6809
+
+// CStartTemplate contains the fixed runtime in Slot 6 ($C000..$DFFF)
+// and Direct Page definitions in Slot 0 ($0000..$1FFF).
+const CStartTemplate = `
+; ==============================================================================
+; EMBIGGEN 6809 Runtime & Process Initialization
+; Conforms to Hatvan OS EMBIGGEN Specification (doc/embiggen-process-mode.md)
+; ==============================================================================
+
+	pragma cescapes
+
+; --- Slot 0 Direct Page Allocations ($0000..$00FF) ---
+active_win_0    equ $0002   ; Block ID mapped in Slot 2 ($FF42)
+active_win_1    equ $0003   ; Block ID mapped in Slot 3 ($FF43)
+active_win_2    equ $0004   ; Block ID mapped in Slot 4 ($FF44)
+next_win_slot   equ $0005   ; Round-robin eviction pointer (0, 1, or 2)
+active_code_blk equ $0006   ; Current block mapped in Slot 5 ($FF45)
+
+; --- Slot 6 Fixed Runtime Entry Point ($C000) ---
+	org $C000
+
+cstart_embiggen:
+    ; 1. Initialize Process Stack in Slot 1 ($3FFE growing down to $2000)
+    lds   #$3FFE
+
+    ; 2. Initialize Direct Page register to Slot 0 ($0000)
+    clra
+    tfr   a,dp
+
+    ; 3. Setup Initial 8KB MMAP Vector at $FF40..$FF47
+    ;    Slot 0: Block 0 (Fixed Data / DP)
+    ;    Slot 1: Block 1 (Fixed Stack)
+    ;    Slot 2: Block 2 (Far Data Window 0)
+    ;    Slot 3: Block 3 (Far Data Window 1)
+    ;    Slot 4: Block 4 (Far Data Window 2)
+    ;    Slot 5: Block 8 (Active Far Code Block)
+    ;    Slot 6: Block 6 (Fixed Runtime & Trampolines)
+    ;    Slot 7: Block 7 (Fixed System / I/O)
+    clr   $FF40
+    lda   #1
+    sta   $FF41
+    lda   #2
+    sta   $FF42
+    lda   #3
+    sta   $FF43
+    lda   #4
+    sta   $FF44
+    lda   #8
+    sta   $FF45
+    lda   #6
+    sta   $FF46
+    lda   #7
+    sta   $FF47
+
+    ; 4. Initialize Far Data Window Manager Cache in Direct Page
+    lda   #2
+    sta   <active_win_0
+    lda   #3
+    sta   <active_win_1
+    lda   #4
+    sta   <active_win_2
+    clr   <next_win_slot
+    lda   #8
+    sta   <active_code_blk
+
+    ; 5. Unpack / Stage Far Code Blocks into Physical Blocks 8..127
+    jsr   __unpack_far_blocks
+
+    ; 6. Ensure Slot 5 is mapped to entry block (Block 8) and call main()
+    lda   #8
+    sta   $FF45
+    sta   <active_code_blk
+
+    jsr   f_main__main
+    bra   __exit0
+
+f_main:
+    jmp   f_main__main
+
+__exit0:
+    clra
+    clrb
+    tfr   d,x
+
+__exit:
+    tfr   x,d
+    fcb   $12,$21,107  ; Hatvan Hyper Exit
+    stb   $FF05        ; Hatvan Exit Port ($FF05)
+.stuck:
+    bra   .stuck
+
+; --- Far Call Dispatcher (Slot 6) ---
+; Input: B = Target Block ID (8..127), X = Virtual Entry Address in Slot 5 ($A000..$BFFF)
+__far_call_dispatcher:
+    lda   $FF45             ; Read currently active block in Slot 5
+    pshs  a                 ; Save caller's block ID on process stack (Slot 1)
+    stb   $FF45             ; Map callee's block into Slot 5
+    stb   <active_code_blk
+    jsr   ,x                ; Call callee function in Slot 5
+    puls  b                 ; On return: pop caller's block ID
+    stb   $FF45             ; Restore caller's block into Slot 5
+    stb   <active_code_blk
+    rts
+
+; --- Far Data 3-Window Round-Robin Manager (Slot 6) ---
+; Input: B = Target Far Data Block ID (128..255)
+; Output: X = Virtual Base Address of mapped window ($4000, $6000, or $8000)
+__far_resolve_window:
+    cmpb  <active_win_0
+    beq   .win0
+    cmpb  <active_win_1
+    beq   .win1
+    cmpb  <active_win_2
+    beq   .win2
+
+    ; Cache Miss: Evict slot indicated by next_win_slot
+    lda   <next_win_slot
+    cmpa  #1
+    beq   .evict1
+    cmpa  #2
+    beq   .evict2
+
+.evict0:
+    stb   <active_win_0
+    stb   $FF42
+    lda   #1
+    sta   <next_win_slot
+    ldx   #$4000
+    rts
+
+.evict1:
+    stb   <active_win_1
+    stb   $FF43
+    lda   #2
+    sta   <next_win_slot
+    ldx   #$6000
+    rts
+
+.evict2:
+    stb   <active_win_2
+    stb   $FF44
+    clr   <next_win_slot
+    ldx   #$8000
+    rts
+
+.win0:
+    ldx   #$4000
+    rts
+
+.win1:
+    ldx   #$6000
+    rts
+
+.win2:
+    ldx   #$8000
+    rts
+
+; --- 8-Byte Slice Helpers ---
+; Slice descriptor on stack:
+;   far_ref (2B), offset (2B), length (2B), capacity (2B)
+
+; __slice_get_byte:
+;   Input: X points to 8-byte slice, Y = element index
+;   Output: A = byte value
+__slice_get_byte:
+    ldd   ,x                ; D = far_ref
+    beq   .near_get_byte    ; If far_ref == 0: Near / Fixed RAM fast path
+
+    ; Far Data Path:
+    ; Extract block_id (bits 15..9) and chunk_idx (bits 8..0)
+    pshs  x,y
+    tfr   a,b
+    lsrb                    ; B = block_id (128..255)
+    bsr   __far_resolve_window ; X = Window base ($4000, $6000, $8000)
+    puls  y                 ; Y = original slice pointer
+    lda   1,y               ; Low byte of chunk_idx
+    anda  #$01              ; High bit of chunk (9th bit)
+    ; Chunk base offset = (chunk & 0x1FF) * 16
+    ; For now, calculate byte address:
+    ; offset_in_block = (chunk * 16) + slice.offset + index
+    ldd   2,y               ; D = slice.offset
+    leax  d,x               ; Add slice offset to window base
+    puls  y                 ; Y = element index
+    tfr   y,d
+    leax  d,x               ; Add index
+    lda   ,x                ; Load byte
+    rts
+
+.near_get_byte:
+    ; Near Fast Path: VAddr = slice.offset + index
+    ldd   2,x               ; D = slice.offset (virtual address)
+    tfr   y,x               ; X = index
+    leax  d,x               ; X = offset + index
+    lda   ,x                ; Load byte directly
+    rts
+
+; --- Basic Builtins ---
+
+putchar:
+_putchar:
+    clra
+    fcb   $12,$21,132  ; Hyper PutChar
+    rts
+
+; Prints an 8-byte string slice:
+;   Input: X = pointer to 8-byte slice descriptor
+builtin_print_string:
+    pshs  u,y
+    tfr   x,u               ; U = pointer to 8-byte slice
+    ldd   4,u               ; D = length
+    beq   .print_done
+    ldy   #0                ; Y = index (0)
+.print_loop:
+    pshs  y
+    tfr   u,x
+    bsr   __slice_get_byte  ; A = byte
+    puls  y
+    tfr   a,b
+    jsr   putchar
+    leay  1,y
+    cmpy  4,u               ; Compare with length
+    bne   .print_loop
+.print_done:
+    puls  u,y
+    rts
+
+; Prints an 8-byte string slice followed by a newline:
+;   Input: X = pointer to 8-byte slice descriptor (or 0 for newline only)
+builtin_println:
+    cmpx  #0
+    beq   .newline_only
+    bsr   builtin_print_string
+.newline_only:
+    ldb   #10               ; Newline '\n'
+    jmp   putchar
+
+; --- EMBIGGEN String Compare Helper (Slot 6) ---
+; Input: X = pointer to 8-byte slice A, Y = pointer to 8-byte slice B
+; Output: B = 1 if equal, 0 if not equal; Condition Codes (Z/NZ) set according to B
+__far_streq:
+    ; 1. Compare lengths (offset 4 in descriptor)
+    ldd   4,x               ; D = len(A)
+    subd  4,y               ; compare with len(B)
+    bne   .streq_false      ; if lengths differ, not equal
+
+    ldd   4,x               ; D = len(A)
+    beq   .streq_true       ; if both len == 0, equal
+
+    ; 2. Iterate index 0 .. len-1
+    pshs  u
+    ldu   #0                ; U = current index (0)
+.streq_loop:
+    pshs  x,y
+    tfr   u,y               ; Y = index
+    bsr   __slice_get_byte  ; A = byte from slice A
+    puls  x,y
+    pshs  a                 ; Save byte from A
+
+    pshs  x,y
+    tfr   y,x               ; X = slice B
+    tfr   u,y               ; Y = index
+    bsr   __slice_get_byte  ; A = byte from slice B
+    puls  x,y
+    cmpa  ,s+               ; compare A (from B) with byte from A on stack
+    bne   .streq_diff
+
+    leau  1,u               ; index++
+    cmpu  4,x               ; reached len?
+    bne   .streq_loop
+
+    puls  u
+.streq_true:
+    ldb   #1
+    tstb                    ; Set NZ flag
+    rts
+
+.streq_diff:
+    puls  u
+.streq_false:
+    clrb                    ; Set Z flag
+    rts
+`

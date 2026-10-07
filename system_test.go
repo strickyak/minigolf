@@ -354,6 +354,9 @@ var cdp1802PassingGolfTests = []string{
 }
 
 func TestSystemGolfFiles_1802(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping 1802 system tests in short mode")
+	}
 	for _, name := range cdp1802PassingGolfTests {
 		name := name
 		golfFile := filepath.Join("tests", name+".golf")
@@ -381,6 +384,9 @@ var z80PassingGolfTests = []string{
 }
 
 func TestSystemGolfFiles_z80(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping z80 system tests in short mode")
+	}
 	for _, name := range z80PassingGolfTests {
 		name := name
 		golfFile := filepath.Join("tests", name+".golf")
@@ -419,6 +425,9 @@ func TestSystemTelemetryVariants_m6809(t *testing.T) {
 }
 
 func TestSystemAllVariants_m6809(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping all variants in short mode")
+	}
 	runFlag := ""
 	if f := flag.Lookup("test.run"); f != nil {
 		runFlag = f.Value.String()
@@ -463,6 +472,9 @@ func TestSystemAllVariants_m6809(t *testing.T) {
 }
 
 func TestSystemAllGolfFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow system tests in short mode")
+	}
 	files, err := filepath.Glob("tests/*.golf")
 	if err != nil {
 		t.Fatalf("Failed to glob tests/*.golf: %v", err)
