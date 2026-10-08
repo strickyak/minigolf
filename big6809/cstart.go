@@ -16,6 +16,9 @@ active_win_1    equ $0003   ; Block ID mapped in Slot 3 ($FF43)
 active_win_2    equ $0004   ; Block ID mapped in Slot 4 ($FF44)
 next_win_slot   equ $0005   ; Round-robin eviction pointer (0, 1, or 2)
 active_code_blk equ $0006   ; Current block mapped in Slot 5 ($FF45)
+far_ret_sp      equ $0008   ; 16-bit pointer to Far Return Stack frame
+far_ret_tmp     equ $000A   ; 16-bit scratch in Direct Page for far return PC
+far_ret_stack   equ $0100   ; 512-byte Far Return Stack in Slot 0 ($0100..$02FF)
 
 ; --- Slot 6 Fixed Runtime Entry Point ($C000) ---
 	org $C000
@@ -27,6 +30,10 @@ cstart_embiggen:
     ; 2. Initialize Direct Page register to Slot 0 ($0000)
     clra
     tfr   a,dp
+
+    ; Initialize Far Return Stack in Slot 0
+    ldx   #far_ret_stack
+    stx   <far_ret_sp
 
     ; 3. Setup Initial 8KB MMAP Vector at $FF40..$FF47
     ;    Slot 0: Block 0 (Fixed Data / DP)
@@ -92,16 +99,50 @@ __exit:
 
 ; --- Far Call Dispatcher (Slot 6) ---
 ; Input: B = Target Block ID (8..127), X = Virtual Entry Address in Slot 5 ($A000..$BFFF)
+; On entry, 0,s on process stack holds caller_return_pc.
+; We push (caller_block_id, caller_return_pc) to far_ret_stack, replace 0,s with
+; __far_return_trampoline, map target block into Slot 5, and jump to callee.
 __far_call_dispatcher:
-    lda   $FF45             ; Read currently active block in Slot 5
-    pshs  a                 ; Save caller's block ID on process stack (Slot 1)
-    stb   $FF45             ; Map callee's block into Slot 5
+    pshs  x                     ; Save target entry address on stack
+    ldx   <far_ret_sp           ; X points to next free slot in Far Return Stack
+    lda   $FF45                 ; A = caller's currently active block ID
+    sta   ,x+                   ; Save caller block ID (1 byte)
+
+    stb   $FF45                 ; Map callee's block into Slot 5 NOW!
     stb   <active_code_blk
-    jsr   ,x                ; Call callee function in Slot 5
-    puls  b                 ; On return: pop caller's block ID
-    stb   $FF45             ; Restore caller's block into Slot 5
-    stb   <active_code_blk
-    rts
+
+    ldd   2,s                   ; D = caller return PC (past saved X)
+    std   ,x++                  ; Save caller return PC (2 bytes)
+    stx   <far_ret_sp           ; Update far_ret_sp
+
+    ; Replace caller return PC at 2,s with address of __far_return_trampoline
+    ldd   #__far_return_trampoline
+    std   2,s
+
+    puls  x                     ; Restore target entry address
+    jmp   ,x                    ; Jump directly to callee in Slot 5!
+
+; --- Far Return Trampoline (Slot 6) ---
+; Callee returns here via standard RTS!
+; Register D holds return value.
+; We pop (caller_block_id, caller_return_pc) from far_ret_stack, restore caller's block
+; into Slot 5 ($FF45), preserve D, and jump to caller_return_pc.
+__far_return_trampoline:
+    pshs  d                     ; Preserve return value D (2 bytes on S)
+    ldd   <far_ret_sp
+    subd  #3
+    std   <far_ret_sp
+    tfr   d,x                   ; X points to this Far Return frame
+
+    lda   ,x                    ; A = caller's block ID
+    sta   $FF45                 ; Restore caller's block into Slot 5
+    sta   <active_code_blk
+
+    ldx   1,x                   ; X = caller return PC
+    stx   <far_ret_tmp          ; Save caller return PC in DP ($000A)
+
+    puls  d                     ; Restore return value D
+    jmp   [far_ret_tmp]         ; Indirect jump to caller in Slot 5!
 
 ; --- Far Data 3-Window Round-Robin Manager (Slot 6) ---
 ; Input: B = Target Far Data Block ID (128..255)

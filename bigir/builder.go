@@ -451,6 +451,11 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 		return mapped
 	}
 	switch val := v.(type) {
+	case *ir.Phi:
+		if len(val.Edges) > 0 {
+			return b.resolveVal(val.Edges[0].Value, valueMap, globalMap)
+		}
+		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}
 	case *ir.Cast:
 		return b.resolveVal(val.Operand, valueMap, globalMap)
 	case *ir.AddressOfElement:

@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func TestEMBIGGEN_TestDefines(t *testing.T) {
-	golfFile := filepath.Join("..", "tests", "test_defines.golf")
-	wantFile := filepath.Join("..", "tests", "test_defines.want")
+func runEmbiggenTest(t *testing.T, golfRelPath, wantRelPath string) {
+	golfFile := filepath.Join("..", golfRelPath)
+	wantFile := filepath.Join("..", wantRelPath)
 
 	wantBytes, err := os.ReadFile(wantFile)
 	if err != nil {
@@ -67,4 +67,12 @@ func TestEMBIGGEN_TestDefines(t *testing.T) {
 	if strings.TrimSpace(actualOutput) != strings.TrimSpace(expectedOutput) {
 		t.Fatalf("Output mismatch!\nGot:\n%s\nWant:\n%s", actualOutput, expectedOutput)
 	}
+}
+
+func TestEMBIGGEN_TestDefines(t *testing.T) {
+	runEmbiggenTest(t, filepath.Join("tests", "test_defines.golf"), filepath.Join("tests", "test_defines.want"))
+}
+
+func TestEMBIGGEN_TestFarFunc(t *testing.T) {
+	runEmbiggenTest(t, filepath.Join("tests", "test_far_func.golf"), filepath.Join("tests", "test_far_func.want"))
 }

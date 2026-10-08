@@ -1,0 +1,35 @@
+package main
+
+func add2(a word, b word) word {
+	return a + b
+}
+
+func sub2(a word, b word) word {
+	return a - b
+}
+
+func mul_add(a word, b word, c word) word {
+	x := add2(a, b)
+	y := add2(x, c)
+	return y
+}
+
+func main() {
+	if add2(10, 20) == 30 {
+		println("ADD OK")
+	} else {
+		println("ADD FAIL")
+	}
+
+	if sub2(50, 15) == 35 {
+		println("SUB OK")
+	} else {
+		println("SUB FAIL")
+	}
+
+	if mul_add(5, 10, 20) == 35 {
+		println("NESTED OK")
+	} else {
+		println("NESTED FAIL")
+	}
+}
