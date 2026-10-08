@@ -860,16 +860,22 @@ type UserContext struct {
 	OldLhs       *Thing
 	LhsOk        byte
 	NumLocals    word
-	OldKinds     [100]byte
-	OldVals      [100]word
-	OldNames     [100]string
-	OldLocals    [20]*Thing
-	LocalOks     [20]byte
+	OldKinds     [25]byte
+	OldVals      [25]word
+	OldNames     [25]string
+	OldLocals    [5]*Thing
+	LocalOks     [5]byte
 }
+
+var ContextPool [2]UserContext
+var ContextDepth word
 
 func saveUserContext(ctx *UserContext, u *UserFunction, left *Thing, right *Thing) {
 	ctx.OldNumTokens = NumTokens
 	ctx.OldEvalPos = EvalPos
+	if NumTokens > 25 {
+		panic("too many tokens to save in user context")
+	}
 	for i := word(0); i < NumTokens; i++ {
 		ctx.OldKinds[i] = TokKinds[i]
 		ctx.OldVals[i] = TokVals[i]
@@ -882,6 +888,9 @@ func saveUserContext(ctx *UserContext, u *UserFunction, left *Thing, right *Thin
 	}
 
 	ctx.NumLocals = u.Locals.Len
+	if ctx.NumLocals > 5 {
+		panic("too many locals in user function")
+	}
 	for i := word(0); i < ctx.NumLocals; i++ {
 		locName := u.Locals.Get(i)
 		ctx.OldLocals[i], ctx.LocalOks[i] = Vars.Lookup(locName)
@@ -935,11 +944,15 @@ func restoreUserContext(ctx *UserContext, u *UserFunction) {
 }
 
 func EvalUser(u *UserFunction, left *Thing, right *Thing) *Thing {
-	ctx := (*UserContext)(zalloc(sizeof[UserContext]()))
+	if ContextDepth >= 2 {
+		panic("user function recursion too deep")
+	}
+	ctx := &ContextPool[ContextDepth]
+	ContextDepth++
 	saveUserContext(ctx, u, left, right)
 	res := EvalStatementsUntil(0, 0)
 	restoreUserContext(ctx, u)
-	free((*byte)(ctx))
+	ContextDepth--
 	return res
 }
 
