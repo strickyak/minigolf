@@ -217,6 +217,18 @@ _div0_text:
     fcc   "division by zero"
     fcb   0
 
+__str_panic_2002:
+    fdb   0, __str_panic_2002_text, 4, 4
+__str_panic_2002_text:
+    fcc   "2002"
+    fcb   0
+
+__str_panic_2003:
+    fdb   0, __str_panic_2003_text, 4, 4
+__str_panic_2003_text:
+    fcc   "2003"
+    fcb   0
+
 __divmod16:
     cmpd  #0
     beq   __div0_error

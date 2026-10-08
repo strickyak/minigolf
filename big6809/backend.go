@@ -1506,6 +1506,199 @@ func (b *Backend) storeSliceToPtr(
 	buf.WriteString("    leas  2,s\n")
 }
 
+func (b *Backend) emitSliceGet(
+	buf *bytes.Buffer,
+	instr bigir.Instruction,
+	sliceArg, indexArg bigir.Value,
+	paramOffsets, localOffsets map[int]int,
+	stringDescs map[string]string,
+) {
+	id := instr.GetID()
+	elemSize := instr.Type().Size
+	if elemSize <= 0 {
+		elemSize = 2
+	}
+	lblInbounds := fmt.Sprintf(".L_sget_inbounds_%d", id)
+	lblNear := fmt.Sprintf(".L_sget_near_%d", id)
+	lblCalc := fmt.Sprintf(".L_sget_calc_%d", id)
+
+	// 1. Evaluate index and push to stack
+	b.loadValToD(buf, indexArg, paramOffsets, localOffsets, stringDescs)
+	buf.WriteString("    pshs  d             ; push index\n")
+
+	// 2. Load slice descriptor address into X
+	if sliceArg.Type().Kind == bigir.KindNearPtr || sliceArg.Type().Size == 2 {
+		b.loadValToD(buf, sliceArg, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    tfr   d,x           ; X = slice pointer\n")
+	} else {
+		b.loadSliceDescToReg(buf, sliceArg, "x", paramOffsets, localOffsets, stringDescs)
+	}
+
+	// 3. Bounds check: index on stack against length at 4,x
+	buf.WriteString("    ldd   ,s            ; D = index\n")
+	buf.WriteString("    cmpd  4,x           ; compare with slice.length\n")
+	buf.WriteString(fmt.Sprintf("    blo   %s\n", lblInbounds))
+	buf.WriteString("    ldx   #__str_panic_2002\n")
+	buf.WriteString("    jsr   builtin_panic\n")
+	buf.WriteString(fmt.Sprintf("%s:\n", lblInbounds))
+
+	// 4. Check FarRef: Slot 2 ($4000, $FF42)
+	buf.WriteString("    ldd   ,x            ; D = far_ref\n")
+	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
+	buf.WriteString("    stb   $FF42         ; map block into Slot 2 ($4000)\n")
+	buf.WriteString("    ldd   2,x           ; D = slice.offset\n")
+	buf.WriteString("    addd  #$4000        ; add Slot 2 base\n")
+	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
+	buf.WriteString(fmt.Sprintf("%s:\n", lblNear))
+	buf.WriteString("    ldd   2,x           ; D = slice.offset (near)\n")
+	buf.WriteString(fmt.Sprintf("%s:\n", lblCalc))
+	buf.WriteString("    tfr   d,y           ; Y = element base address\n")
+	buf.WriteString("    puls  d             ; D = index\n")
+
+	// 5. Compute element address and load
+	if elemSize == 1 {
+		buf.WriteString("    leax  d,y           ; X = base + index\n")
+		buf.WriteString("    clra\n    ldb   ,x            ; D = byte\n")
+		if slot, ok := localOffsets[id]; ok {
+			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
+		}
+	} else if elemSize == 2 {
+		buf.WriteString("    asld                ; D = index * 2\n")
+		buf.WriteString("    leax  d,y           ; X = base + index * 2\n")
+		buf.WriteString("    ldd   ,x            ; D = word\n")
+		if slot, ok := localOffsets[id]; ok {
+			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
+		}
+	} else if elemSize == 8 {
+		buf.WriteString("    asld\n    asld\n    asld          ; D = index * 8\n")
+		buf.WriteString("    leax  d,y           ; X = base + index * 8\n")
+		if slot, ok := localOffsets[id]; ok {
+			buf.WriteString("    ldd   0,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; far_ref\n", slot))
+			buf.WriteString("    ldd   2,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; offset\n", slot-2))
+			buf.WriteString("    ldd   4,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; length\n", slot-4))
+			buf.WriteString("    ldd   6,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; capacity\n", slot-6))
+		}
+	} else {
+		buf.WriteString(fmt.Sprintf("    ldx   #%d\n", elemSize))
+		buf.WriteString("    jsr   __mul16\n")
+		buf.WriteString("    leax  d,y           ; X = base + index * size\n")
+		if slot, ok := localOffsets[id]; ok {
+			for off := 0; off < elemSize; off += 2 {
+				if off+2 <= elemSize {
+					buf.WriteString(fmt.Sprintf("    ldd   %d,x\n    std   -%d,u\n", off, slot-off))
+				} else {
+					buf.WriteString(fmt.Sprintf("    ldb   %d,x\n    stb   -%d,u\n", off, slot-off))
+				}
+			}
+		}
+	}
+}
+
+func (b *Backend) emitSlicePut(
+	buf *bytes.Buffer,
+	instr bigir.Instruction,
+	sliceArg, indexArg, valArg bigir.Value,
+	paramOffsets, localOffsets map[int]int,
+	stringDescs map[string]string,
+) {
+	id := instr.GetID()
+	elemSize := valArg.Type().Size
+	if elemSize <= 0 {
+		elemSize = 2
+	}
+	lblInbounds := fmt.Sprintf(".L_sput_inbounds_%d", id)
+	lblNear := fmt.Sprintf(".L_sput_near_%d", id)
+	lblCalc := fmt.Sprintf(".L_sput_calc_%d", id)
+
+	// 1. Push value to store
+	if elemSize == 1 {
+		b.loadValToD(buf, valArg, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    pshs  b             ; push val byte\n")
+	} else if elemSize == 2 {
+		b.loadValToD(buf, valArg, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    pshs  d             ; push val word\n")
+	} else if elemSize == 8 {
+		b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
+	} else {
+		if instrVal, ok := valArg.(bigir.Instruction); ok {
+			if slot, ok := localOffsets[instrVal.GetID()]; ok {
+				aligned := (elemSize + 1) & ^1
+				for off := aligned - 2; off >= 0; off -= 2 {
+					buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-off))
+				}
+			} else {
+				b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
+			}
+		} else {
+			b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
+		}
+	}
+
+	// 2. Evaluate index and push
+	b.loadValToD(buf, indexArg, paramOffsets, localOffsets, stringDescs)
+	buf.WriteString("    pshs  d             ; push index\n")
+
+	// 3. Load slice descriptor pointer into X
+	if sliceArg.Type().Kind == bigir.KindNearPtr || sliceArg.Type().Size == 2 {
+		b.loadValToD(buf, sliceArg, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    tfr   d,x           ; X = slice pointer\n")
+	} else {
+		b.loadSliceDescToReg(buf, sliceArg, "x", paramOffsets, localOffsets, stringDescs)
+	}
+
+	// 4. Bounds check: index on stack against length at 4,x
+	buf.WriteString("    ldd   ,s            ; D = index\n")
+	buf.WriteString("    cmpd  4,x           ; compare with slice.length\n")
+	buf.WriteString(fmt.Sprintf("    blo   %s\n", lblInbounds))
+	buf.WriteString("    ldx   #__str_panic_2003\n")
+	buf.WriteString("    jsr   builtin_panic\n")
+	buf.WriteString(fmt.Sprintf("%s:\n", lblInbounds))
+
+	// 5. Check FarRef: Slot 3 ($6000, $FF43)
+	buf.WriteString("    ldd   ,x            ; D = far_ref\n")
+	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
+	buf.WriteString("    stb   $FF43         ; map block into Slot 3 ($6000)\n")
+	buf.WriteString("    ldd   2,x           ; D = slice.offset\n")
+	buf.WriteString("    addd  #$6000        ; add Slot 3 base\n")
+	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
+	buf.WriteString(fmt.Sprintf("%s:\n", lblNear))
+	buf.WriteString("    ldd   2,x           ; D = slice.offset (near)\n")
+	buf.WriteString(fmt.Sprintf("%s:\n", lblCalc))
+	buf.WriteString("    tfr   d,y           ; Y = element base address\n")
+	buf.WriteString("    puls  d             ; D = index\n")
+
+	// 6. Compute element address and store
+	if elemSize == 1 {
+		buf.WriteString("    leax  d,y           ; X = base + index\n")
+		buf.WriteString("    puls  b             ; B = val\n")
+		buf.WriteString("    stb   ,x\n")
+	} else if elemSize == 2 {
+		buf.WriteString("    asld                ; D = index * 2\n")
+		buf.WriteString("    leax  d,y           ; X = base + index * 2\n")
+		buf.WriteString("    puls  d             ; D = val\n")
+		buf.WriteString("    std   ,x\n")
+	} else if elemSize == 8 {
+		buf.WriteString("    asld\n    asld\n    asld          ; D = index * 8\n")
+		buf.WriteString("    leax  d,y           ; X = base + index * 8\n")
+		buf.WriteString("    puls  d\n    std   0,x           ; far_ref\n")
+		buf.WriteString("    puls  d\n    std   2,x           ; offset\n")
+		buf.WriteString("    puls  d\n    std   4,x           ; length\n")
+		buf.WriteString("    puls  d\n    std   6,x           ; capacity\n")
+	} else {
+		buf.WriteString(fmt.Sprintf("    ldx   #%d\n", elemSize))
+		buf.WriteString("    jsr   __mul16\n")
+		buf.WriteString("    leax  d,y           ; X = base + index * size\n")
+		aligned := (elemSize + 1) & ^1
+		for off := 0; off < aligned; off += 2 {
+			buf.WriteString(fmt.Sprintf("    puls  d\n    std   %d,x\n", off))
+		}
+	}
+}
+
 func (b *Backend) loadSliceDescToReg(
 	buf *bytes.Buffer,
 	arg bigir.Value,

@@ -189,9 +189,9 @@ func (o *slice[T]) Append(x T) {
 	z.Len = n + 1
 
 	for i := range n {
-		z.Put(i, o.Get(i))
+		z.Put1(i, o.Get(i))
 	}
-	z.Put(n, x)
+	z.Put1(n, x)
 	freeslice(*o)
 	*o = z
 }
@@ -231,6 +231,31 @@ func (o *slice[T]) Put(i word, x T) {
 	}
 	MapWindow0(o.FarRef)
 	poke[T](0x4000 + o.Base + p, x)
+}
+
+func (o *slice[T]) Get1(i word) T {
+	if i >= o.Len {
+		panic("2002")
+	}
+	p := i * sizeof[T]()
+	if o.FarRef == 0 {
+		return peek[T](o.Base + p)
+	}
+	MapWindow1(o.FarRef)
+	return peek[T](0x6000 + o.Base + p)
+}
+
+func (o *slice[T]) Put1(i word, x T) {
+	if i >= o.Len {
+		panic("2003")
+	}
+	p := i * sizeof[T]()
+	if o.FarRef == 0 {
+		poke[T](o.Base + p, x)
+		return
+	}
+	MapWindow1(o.FarRef)
+	poke[T](0x6000 + o.Base + p, x)
 }
 
 func (o *slice[T]) Chop(start word, limit word) slice[T] {
@@ -274,7 +299,7 @@ func strcmp(a string, b string) int {
 	}
 	for i := word(0); i < n; i++ {
 		ca := a.Get(i)
-		cb := b.Get(i)
+		cb := b.Get1(i)
 		if ca < cb {
 			return -1
 		}
@@ -299,7 +324,7 @@ func streq(a string, b string) bool {
 		return 1
 	}
 	for i := word(0); i < a.Len; i++ {
-		if a.Get(i) != b.Get(i) {
+		if a.Get(i) != b.Get1(i) {
 			return 0
 		}
 	}
@@ -311,9 +336,9 @@ func strdup(a string) string {
 	var z string
 	z = FarMakeSlice[byte](n + 1)
 	for i := range n {
-		z.Put(i, a.Get(i))
+		z.Put1(i, a.Get(i))
 	}
-	z.Put(n, 0)
+	z.Put1(n, 0)
 	z.Len = n
 	return z
 }
