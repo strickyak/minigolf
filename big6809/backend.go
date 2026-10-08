@@ -206,6 +206,93 @@ func resolveRootLocal(v bigir.Value) bigir.Value {
 	return v
 }
 
+func getBigIROperands(instr bigir.Instruction) []bigir.Value {
+	var ops []bigir.Value
+	switch i := instr.(type) {
+	case *bigir.UnaryOp:
+		ops = append(ops, i.Operand)
+	case *bigir.BinaryOp:
+		ops = append(ops, i.Left, i.Right)
+	case *bigir.Compare:
+		ops = append(ops, i.Left, i.Right)
+	case *bigir.NearStore:
+		ops = append(ops, i.Addr, i.Val)
+	case *bigir.NearLoad:
+		ops = append(ops, i.Addr)
+	case *bigir.FarStore:
+		ops = append(ops, i.FarRef, i.Offset, i.Val)
+	case *bigir.FarLoad:
+		ops = append(ops, i.FarRef, i.Offset)
+	case *bigir.SliceMake:
+		ops = append(ops, i.FarRef, i.Offset, i.Length, i.Capacity)
+	case *bigir.SliceField:
+		ops = append(ops, i.Slice)
+	case *bigir.SliceGet:
+		ops = append(ops, i.Slice, i.Index)
+	case *bigir.SlicePut:
+		ops = append(ops, i.Slice, i.Index, i.Val)
+	case *bigir.SliceChop:
+		ops = append(ops, i.Slice, i.Start, i.Limit)
+	case *bigir.AddressOfLocal:
+		ops = append(ops, i.Local)
+	case *bigir.FarCall:
+		ops = append(ops, i.Args...)
+	case *bigir.NearCall:
+		ops = append(ops, i.Args...)
+	case *bigir.IndirectCall:
+		ops = append(ops, i.FuncPtr)
+		ops = append(ops, i.Args...)
+	case *bigir.Phi:
+		for _, e := range i.Edges {
+			ops = append(ops, e.Value)
+		}
+	}
+	return ops
+}
+
+func getBigIRTerminatorOperands(t bigir.Terminator) []bigir.Value {
+	var ops []bigir.Value
+	switch term := t.(type) {
+	case *bigir.Return:
+		if term.Val != nil {
+			ops = append(ops, term.Val)
+		}
+	case *bigir.FarReturn:
+		if term.Val != nil {
+			ops = append(ops, term.Val)
+		}
+	case *bigir.CondBranch:
+		if term.Cond != nil {
+			ops = append(ops, term.Cond)
+		}
+	}
+	return ops
+}
+
+func getInstrSlotSize(instr bigir.Instruction) int {
+	typ := instr.Type()
+	if _, ok := instr.(*bigir.SliceMake); ok {
+		return 8
+	} else if typ.Kind == bigir.KindFarSlice || typ.Kind == bigir.KindFarString {
+		return 8
+	} else if typ.Kind == bigir.KindArray {
+		return 2
+	} else if typ.Size > 2 {
+		sz := (typ.Size + 1) & ^1
+		if sz < 8 {
+			sz = 8
+		}
+		return sz
+	} else if phi, ok := instr.(*bigir.Phi); ok {
+		for _, edge := range phi.Edges {
+			if edge.Value.Type().Size > 2 {
+				return 8
+			}
+		}
+	}
+	return 2
+}
+
 func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDescs map[string]string) {
 	mName := MangleName(fn.Name)
 	buf.WriteString(fmt.Sprintf("; Function: %s (Block %d, Slot 5 Offset 0x%04X)\n", fn.Name, fn.BlockID, fn.Slot5Offset))
@@ -245,34 +332,44 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 
 	// 2. Collect instructions whose values are actually read.
 	usedInstrs := make(map[int]bool)
-	var markUse func(val bigir.Value)
-	markUse = func(val bigir.Value) {
+	var getLeafInstrIDs func(val bigir.Value, fnVisit func(int))
+	getLeafInstrIDs = func(val bigir.Value, fnVisit func(int)) {
 		if val == nil {
 			return
 		}
 		if bop, ok := val.(*bigir.BinaryOp); ok && bop.GetID() == 0 {
-			markUse(bop.Left)
-			markUse(bop.Right)
+			getLeafInstrIDs(bop.Left, fnVisit)
+			getLeafInstrIDs(bop.Right, fnVisit)
 			return
 		}
 		if aol, ok := val.(*bigir.AddressOfLocal); ok {
-			markUse(resolveRootLocal(aol.Local))
+			root := resolveRootLocal(aol.Local)
+			if target, ok := root.(bigir.Instruction); ok {
+				fnVisit(target.GetID())
+			}
 			return
 		}
 		if sm, ok := val.(*bigir.SliceMake); ok && sm.GetID() == 0 {
-			markUse(sm.FarRef)
-			markUse(sm.Offset)
-			markUse(sm.Length)
-			markUse(sm.Capacity)
+			getLeafInstrIDs(sm.FarRef, fnVisit)
+			getLeafInstrIDs(sm.Offset, fnVisit)
+			getLeafInstrIDs(sm.Length, fnVisit)
+			getLeafInstrIDs(sm.Capacity, fnVisit)
 			return
 		}
 		if sf, ok := val.(*bigir.SliceField); ok && sf.GetID() == 0 {
-			markUse(sf.Slice)
+			getLeafInstrIDs(sf.Slice, fnVisit)
 			return
 		}
 		if instr, ok := val.(bigir.Instruction); ok {
-			usedInstrs[instr.GetID()] = true
+			fnVisit(instr.GetID())
 		}
+	}
+
+	var markUse func(val bigir.Value)
+	markUse = func(val bigir.Value) {
+		getLeafInstrIDs(val, func(id int) {
+			usedInstrs[id] = true
+		})
 	}
 
 	for _, bb := range fn.Blocks {
@@ -368,21 +465,69 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 		}
 	}
 
-	// Pass 2: Allocate stack slots for instructions that produce used values or phis
+	// Pass 2: Allocate stack slots for instructions that produce used values or phis.
+	// To minimize stack frame size, purely intra-block temporaries share scratch slots.
+	defBlock := make(map[int]*bigir.BasicBlock)
+	for _, bb := range fn.Blocks {
+		for _, instr := range bb.Instructions {
+			defBlock[instr.GetID()] = bb
+		}
+	}
+
+	crossBlock := make(map[int]bool)
 	for _, bb := range fn.Blocks {
 		for _, instr := range bb.Instructions {
 			id := instr.GetID()
-			if addressTaken[id] {
+			if phi, ok := instr.(*bigir.Phi); ok {
+				crossBlock[phi.GetID()] = true
+				for _, edge := range phi.Edges {
+					getLeafInstrIDs(edge.Value, func(eid int) {
+						crossBlock[eid] = true
+					})
+				}
+			}
+			if typ := instr.Type(); typ.Size > 2 {
+				switch instr.(type) {
+				case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall:
+					crossBlock[id] = true
+				}
+			}
+			sz := getInstrSlotSize(instr)
+			if sz != 2 && sz != 8 {
+				crossBlock[id] = true
+			}
+			for _, op := range getBigIROperands(instr) {
+				getLeafInstrIDs(op, func(opID int) {
+					if db, ok := defBlock[opID]; ok && db != bb {
+						crossBlock[opID] = true
+					}
+				})
+			}
+		}
+		if bb.Terminator != nil {
+			for _, op := range getBigIRTerminatorOperands(bb.Terminator) {
+				getLeafInstrIDs(op, func(opID int) {
+					if db, ok := defBlock[opID]; ok && db != bb {
+						crossBlock[opID] = true
+					}
+				})
+			}
+		}
+	}
+
+	// Allocate dedicated slots for cross-block instructions
+	for _, bb := range fn.Blocks {
+		for _, instr := range bb.Instructions {
+			id := instr.GetID()
+			if addressTaken[id] || !crossBlock[id] {
 				continue
 			}
 
-			// Constants and addresses are loaded immediately by loadValToD and never read from stack slots
 			switch instr.(type) {
 			case *bigir.ConstByte, *bigir.ConstWord, *bigir.AddressOfGlobal, *bigir.AddressOfLocal, *bigir.FuncRef:
 				continue
 			}
 
-			// Phis must always have slots so incoming edges can write to them
 			isPhi := false
 			if _, ok := instr.(*bigir.Phi); ok {
 				isPhi = true
@@ -397,39 +542,138 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 				}
 			}
 			if !usedInstrs[id] && !isPhi && !isCallWithStructRet {
-				continue // Value never read; no stack slot needed!
+				continue
 			}
 
 			if typ.Size <= 0 {
 				continue
 			}
 
-			sz := 2
-			if _, ok := instr.(*bigir.SliceMake); ok {
-				sz = 8
-			} else if typ.Kind == bigir.KindFarSlice || typ.Kind == bigir.KindFarString {
-				sz = 8
-			} else if typ.Kind == bigir.KindArray {
-				// Arrays are never values on stack unless address-taken (handled in Pass 1).
-				// Any phi or temporary with KindArray is at most a word handle.
-				sz = 2
-			} else if typ.Size > 2 {
-				sz = (typ.Size + 1) & ^1
-				if sz < 8 {
-					sz = 8
-				}
-			} else if phi, ok := instr.(*bigir.Phi); ok {
-				for _, edge := range phi.Edges {
-					if edge.Value.Type().Size > 2 {
-						sz = 8
-						break
-					}
-				}
-			}
-
+			sz := getInstrSlotSize(instr)
 			curLocalOffset += sz
 			localOffsets[id] = curLocalOffset
 		}
+	}
+
+	// Compute live ranges and allocate intra-block scratch slots
+	type intraColor struct {
+		freeAt int
+	}
+	maxScratch2 := 0
+	maxScratch8 := 0
+	blockScratch2Assigned := make(map[int]int)
+	blockScratch8Assigned := make(map[int]int)
+
+	for _, bb := range fn.Blocks {
+		startIdx := make(map[int]int)
+		endIdx := make(map[int]int)
+
+		for i, instr := range bb.Instructions {
+			id := instr.GetID()
+			if addressTaken[id] || crossBlock[id] || !usedInstrs[id] {
+				continue
+			}
+			switch instr.(type) {
+			case *bigir.ConstByte, *bigir.ConstWord, *bigir.AddressOfGlobal, *bigir.AddressOfLocal, *bigir.FuncRef:
+				continue
+			}
+			if instr.Type().Size <= 0 {
+				continue
+			}
+			startIdx[id] = i
+			endIdx[id] = i
+		}
+
+		for i, instr := range bb.Instructions {
+			for _, op := range getBigIROperands(instr) {
+				getLeafInstrIDs(op, func(opID int) {
+					if _, ok := startIdx[opID]; ok {
+						if i > endIdx[opID] {
+							endIdx[opID] = i
+						}
+					}
+				})
+			}
+		}
+
+		if bb.Terminator != nil {
+			termIdx := len(bb.Instructions)
+			for _, op := range getBigIRTerminatorOperands(bb.Terminator) {
+				getLeafInstrIDs(op, func(opID int) {
+					if _, ok := startIdx[opID]; ok {
+						if termIdx > endIdx[opID] {
+							endIdx[opID] = termIdx
+						}
+					}
+				})
+			}
+		}
+
+		var active2 []*intraColor
+		var active8 []*intraColor
+
+		for _, instr := range bb.Instructions {
+			id := instr.GetID()
+			if _, ok := startIdx[id]; !ok {
+				continue
+			}
+			sz := getInstrSlotSize(instr)
+			if sz == 2 {
+				assigned := -1
+				for slotIdx, c := range active2 {
+					if startIdx[id] > c.freeAt {
+						assigned = slotIdx
+						c.freeAt = endIdx[id]
+						break
+					}
+				}
+				if assigned == -1 {
+					assigned = len(active2)
+					active2 = append(active2, &intraColor{freeAt: endIdx[id]})
+				}
+				blockScratch2Assigned[id] = assigned
+			} else if sz == 8 {
+				assigned := -1
+				for slotIdx, c := range active8 {
+					if startIdx[id] > c.freeAt {
+						assigned = slotIdx
+						c.freeAt = endIdx[id]
+						break
+					}
+				}
+				if assigned == -1 {
+					assigned = len(active8)
+					active8 = append(active8, &intraColor{freeAt: endIdx[id]})
+				}
+				blockScratch8Assigned[id] = assigned
+			}
+		}
+
+		if len(active2) > maxScratch2 {
+			maxScratch2 = len(active2)
+		}
+		if len(active8) > maxScratch8 {
+			maxScratch8 = len(active8)
+		}
+	}
+
+	scratch2Offsets := make([]int, maxScratch2)
+	for i := 0; i < maxScratch2; i++ {
+		curLocalOffset += 2
+		scratch2Offsets[i] = curLocalOffset
+	}
+
+	scratch8Offsets := make([]int, maxScratch8)
+	for i := 0; i < maxScratch8; i++ {
+		curLocalOffset += 8
+		scratch8Offsets[i] = curLocalOffset
+	}
+
+	for id, slotIdx := range blockScratch2Assigned {
+		localOffsets[id] = scratch2Offsets[slotIdx]
+	}
+	for id, slotIdx := range blockScratch8Assigned {
+		localOffsets[id] = scratch8Offsets[slotIdx]
 	}
 	frameSize := (curLocalOffset + 3) & ^3
 	if frameSize < 16 {

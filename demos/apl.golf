@@ -504,14 +504,15 @@ func EvalStatementsUntil(stop1 byte, stop2 byte) *Thing {
 	return result
 }
 
+var SkipStack [32]byte
+
 func SkipTokensUntil(stop1 byte, stop2 byte) byte {
-	var stack [100]byte
 	sp := word(0)
 
 	for EvalPos < NumTokens {
 		k := TokKinds[EvalPos]
 		if k == TokLParen || k == TokLBracket || k == TokLBrace {
-			stack[sp] = k
+			SkipStack[sp] = k
 			sp++
 		} else if k == TokRParen || k == TokRBracket || k == TokRBrace {
 			if sp == 0 {
@@ -521,7 +522,7 @@ func SkipTokensUntil(stop1 byte, stop2 byte) byte {
 				panic("unmatched closing parenthesis/bracket/brace")
 			}
 			sp--
-			top := stack[sp]
+			top := SkipStack[sp]
 			if (k == TokRParen && top != TokLParen) ||
 				(k == TokRBracket && top != TokLBracket) ||
 				(k == TokRBrace && top != TokLBrace) {
@@ -773,22 +774,26 @@ func StrLitToThing() *Thing {
 	return t
 }
 
+var StrandNums [64]word
+
 func ParseStrand() *Thing {
 	// Collect consecutive number tokens into a vector (or scalar if just one)
-	var nums [100]word
 	count := word(0)
 	for EvalPos < NumTokens && TokKinds[EvalPos] == TokNum {
-		nums[count] = TokVals[EvalPos]
+		if count >= 64 {
+			panic("strand too long")
+		}
+		StrandNums[count] = TokVals[EvalPos]
 		count++
 		EvalPos++
 	}
 	if count == 1 {
-		return MakeScalar(int(nums[0]))
+		return MakeScalar(int(StrandNums[0]))
 	}
 	t := NewThing()
 	t.Dimensions.Append(count)
 	for i := range count {
-		t.Values.Append(IntToPtr(int(nums[i])))
+		t.Values.Append(IntToPtr(int(StrandNums[i])))
 	}
 	return t
 }
@@ -853,36 +858,31 @@ func DoRhoDyadic(left *Thing, right *Thing) *Thing {
 }
 
 type UserContext struct {
-	OldNumTokens word
-	OldEvalPos   word
-	OldRhs       *Thing
-	RhsOk        byte
-	OldLhs       *Thing
-	LhsOk        byte
-	NumLocals    word
-	OldKinds     [25]byte
-	OldVals      [25]word
-	OldNames     [25]string
-	OldLocals    [5]*Thing
-	LocalOks     [5]byte
+	OldEvalPos  word
+	OldUserFunc *UserFunction
+	OldRhs      *Thing
+	RhsOk       byte
+	OldLhs      *Thing
+	LhsOk       byte
+	NumLocals   word
+	OldLocals   [5]*Thing
+	LocalOks    [5]byte
 }
 
-var ContextPool [2]UserContext
+var ContextPool [20]UserContext
 var ContextDepth word
+var CurrentUserFunc *UserFunction
+
+var TopNumTokens word
+var TopKinds [32]byte
+var TopVals [32]word
+var TopNames [32]string
 
 func saveUserContext(ctx *UserContext, u *UserFunction, left *Thing, right *Thing) {
-	ctx.OldNumTokens = NumTokens
 	ctx.OldEvalPos = EvalPos
-	if NumTokens > 25 {
-		panic("too many tokens to save in user context")
-	}
-	for i := word(0); i < NumTokens; i++ {
-		ctx.OldKinds[i] = TokKinds[i]
-		ctx.OldVals[i] = TokVals[i]
-		ctx.OldNames[i] = TokNames[i]
-	}
-	ctx.OldRhs, ctx.RhsOk = Vars.Lookup(u.RhsName)
+	ctx.OldUserFunc = CurrentUserFunc
 
+	ctx.OldRhs, ctx.RhsOk = Vars.Lookup(u.RhsName)
 	if len(u.LhsName) > 0 {
 		ctx.OldLhs, ctx.LhsOk = Vars.Lookup(u.LhsName)
 	}
@@ -896,6 +896,19 @@ func saveUserContext(ctx *UserContext, u *UserFunction, left *Thing, right *Thin
 		ctx.OldLocals[i], ctx.LocalOks[i] = Vars.Lookup(locName)
 	}
 
+	if CurrentUserFunc == (*UserFunction)(0) {
+		TopNumTokens = NumTokens
+		if TopNumTokens > 32 {
+			panic("top-level expression too long")
+		}
+		for i := word(0); i < TopNumTokens; i++ {
+			TopKinds[i] = TokKinds[i]
+			TopVals[i] = TokVals[i]
+			TopNames[i] = TokNames[i]
+		}
+	}
+
+	CurrentUserFunc = u
 	NumTokens = u.NumTokens
 	EvalPos = 0
 	for i := word(0); i < NumTokens; i++ {
@@ -914,13 +927,6 @@ func saveUserContext(ctx *UserContext, u *UserFunction, left *Thing, right *Thin
 }
 
 func restoreUserContext(ctx *UserContext, u *UserFunction) {
-	NumTokens = ctx.OldNumTokens
-	EvalPos = ctx.OldEvalPos
-	for i := word(0); i < NumTokens; i++ {
-		TokKinds[i] = ctx.OldKinds[i]
-		TokVals[i] = ctx.OldVals[i]
-		TokNames[i] = ctx.OldNames[i]
-	}
 	if ctx.RhsOk != 0 {
 		Vars.Insert(u.RhsName, ctx.OldRhs)
 	} else {
@@ -941,10 +947,30 @@ func restoreUserContext(ctx *UserContext, u *UserFunction) {
 			Vars.Insert(locName, (*Thing)(0))
 		}
 	}
+
+	caller := ctx.OldUserFunc
+	CurrentUserFunc = caller
+	EvalPos = ctx.OldEvalPos
+
+	if caller != (*UserFunction)(0) {
+		NumTokens = caller.NumTokens
+		for i := word(0); i < NumTokens; i++ {
+			TokKinds[i] = caller.TokKinds.Get(i)
+			TokVals[i] = caller.TokVals.Get(i)
+			TokNames[i] = caller.TokNames.Get(i)
+		}
+	} else {
+		NumTokens = TopNumTokens
+		for i := word(0); i < NumTokens; i++ {
+			TokKinds[i] = TopKinds[i]
+			TokVals[i] = TopVals[i]
+			TokNames[i] = TopNames[i]
+		}
+	}
 }
 
 func EvalUser(u *UserFunction, left *Thing, right *Thing) *Thing {
-	if ContextDepth >= 2 {
+	if ContextDepth >= 20 {
 		panic("user function recursion too deep")
 	}
 	ctx := &ContextPool[ContextDepth]
