@@ -205,11 +205,13 @@ func (b *Backend) emitInstruction(buf *bytes.Buffer, fn *bigir.Function, instr b
 			comment = fc.GetComment()
 		}
 
-		if strings.HasPrefix(callee, "builtin_print") {
-			if len(args) > 0 {
-				b.loadSliceDescToReg(buf, args[0], "x", stringDescs)
-			} else {
-				buf.WriteString("    ldx   #0\n")
+		if strings.HasPrefix(callee, "builtin_") {
+			if strings.HasPrefix(callee, "builtin_print") || callee == "builtin_panic" {
+				if len(args) > 0 {
+					b.loadSliceDescToReg(buf, args[0], "x", stringDescs)
+				} else {
+					buf.WriteString("    ldx   #0\n")
+				}
 			}
 			buf.WriteString(fmt.Sprintf("    jsr   %s\n", callee))
 		} else if callee == "prelude.streq" || callee == "streq" {

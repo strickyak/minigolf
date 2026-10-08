@@ -474,7 +474,8 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 		case *ast.VarStatement:
 			typ := UnknownType
 			if s.ValueType != nil {
-				typ = a.analyzeExpression(s.ValueType)
+				a.analyzeExpression(s.ValueType)
+				typ = s.ValueType
 			}
 			a.globalScope.Define(a.currentPackage+"."+s.Name.Value, typ)
 		case *ast.ConstStatement:

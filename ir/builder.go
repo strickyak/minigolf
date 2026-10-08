@@ -2117,6 +2117,11 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			baseType = base.Typ.Name
 		}
 		funcName := MangleName(baseType) + "_" + sel.Right.Value
+		if _, exists := b.funcs[funcName]; !exists {
+			if _, exists2 := b.funcs[baseType+"_"+sel.Right.Value]; exists2 {
+				funcName = baseType + "_" + sel.Right.Value
+			}
+		}
 
 		if _, exists := b.funcs[funcName]; !exists {
 			if instInfo, ok := b.tm.instantiatedTypes[baseType]; ok {
@@ -2419,6 +2424,11 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 				methodName = "Chop"
 			}
 			funcName := MangleName(baseType) + "_" + methodName
+			if _, exists := b.funcs[funcName]; !exists {
+				if _, exists2 := b.funcs[baseType+"_"+methodName]; exists2 {
+					funcName = baseType + "_" + methodName
+				}
+			}
 
 			if _, exists := b.funcs[funcName]; !exists {
 				if instInfo, ok := b.tm.instantiatedTypes[baseType]; ok {
@@ -3216,6 +3226,11 @@ func (b *Builder) assignToExpr(lhs ast.Expression, val Value) {
 				baseType = base.Typ.Name
 			}
 			funcName := MangleName(baseType) + "_Put"
+			if _, exists := b.funcs[funcName]; !exists {
+				if _, exists2 := b.funcs[baseType+"_Put"]; exists2 {
+					funcName = baseType + "_Put"
+				}
+			}
 
 			if _, exists := b.funcs[funcName]; !exists {
 				if instInfo, ok := b.tm.instantiatedTypes[baseType]; ok {

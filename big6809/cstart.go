@@ -235,6 +235,22 @@ builtin_println:
     ldb   #10               ; Newline '\n'
     jmp   putchar
 
+builtin_panic:
+    cmpx  #0
+    beq   .panic_no_arg
+    bsr   builtin_println
+.panic_no_arg:
+    ldx   #1
+    jmp   __exit
+
+builtin_exit:
+    tfr   d,x
+    jmp   __exit
+
+builtin__propagate_panic_:
+builtin__unlink_jmp_:
+    rts
+
 ; --- EMBIGGEN String Compare Helper (Slot 6) ---
 ; Input: X = pointer to 8-byte slice A, Y = pointer to 8-byte slice B
 ; Output: B = 1 if equal, 0 if not equal; Condition Codes (Z/NZ) set according to B
