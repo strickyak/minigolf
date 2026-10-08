@@ -140,6 +140,27 @@ type ConstString struct {
 func (c *ConstString) Opcode() string { return "const_string" }
 func (c *ConstString) String() string { return fmt.Sprintf("%q", c.Val) }
 
+type ConstStruct struct {
+	BaseInstruction
+	Fields []Value
+}
+func (c *ConstStruct) Opcode() string { return "const_struct" }
+func (c *ConstStruct) String() string { return "const_struct" }
+
+type ConstArray struct {
+	BaseInstruction
+	Elements []Value
+}
+func (c *ConstArray) Opcode() string { return "const_array" }
+func (c *ConstArray) String() string { return "const_array" }
+
+type FuncRef struct {
+	BaseInstruction
+	FuncName string
+}
+func (f *FuncRef) Opcode() string { return "func_ref" }
+func (f *FuncRef) String() string { return "&" + f.FuncName }
+
 // --- Arithmetic & Logical Operations ---
 
 type BinaryOp struct {
@@ -278,6 +299,13 @@ type FarCall struct {
 	Args        []Value
 }
 func (c *FarCall) Opcode() string { return "far_call" }
+
+type IndirectCall struct {
+	BaseInstruction
+	FuncPtr Value
+	Args    []Value
+}
+func (c *IndirectCall) Opcode() string { return "indirect_call" }
 
 // --- Terminators ---
 

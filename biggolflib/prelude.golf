@@ -1,0 +1,798 @@
+package prelude
+
+func peek[T any](addr word) T {
+	return *((*T)(addr))
+}
+
+func poke[T any](addr word, value T) {
+	*((*T)(addr)) = value
+}
+
+func peekb(addr word) byte        { return *((*byte)(addr)) }
+func peekw(addr word) word        { return *((*word)(addr)) }
+func pokeb(addr word, value byte) { *((*byte)(addr)) = value }
+func pokew(addr word, value word) { *((*word)(addr)) = value }
+
+// golf:volatile
+func vpeekb(addr word) byte { return *((*byte)(addr)) }
+
+// golf:volatile
+func vpeekw(addr word) word { return *((*word)(addr)) }
+
+// golf:volatile
+func vpokeb(addr word, value byte) { *((*byte)(addr)) = value }
+
+// golf:volatile
+func vpokew(addr word, value word) { *((*word)(addr)) = value }
+
+func abort() {
+	panic("abort")
+}
+
+func pointer_add[T any](ptr *T, i int) *T {
+	return (*T)(word(ptr) + word(i)*sizeof[T]())
+}
+func pointer_sub[T any](ptr *T, i int) *T {
+	return (*T)(word(ptr) - word(i)*sizeof[T]())
+}
+func pointer_diff[T any](a *T, b *T) int {
+	return int(word(a)-word(b)) / int(sizeof[T]())
+}
+
+func post_decrement[T any](p *T) T {
+	z := *p
+	*p--
+	return z
+}
+
+func post_increment[T any](p *T) T {
+	z := *p
+	*p++
+	return z
+}
+
+func pre_increment[T any](p *T) T {
+	*p++
+	return *p
+}
+
+func pre_decrement[T any](p *T) T {
+	*p--
+	return *p
+}
+
+func pointer_post_increment[T any](p **T) *T {
+	z := *p
+	*p = pointer_add[T](*p, 1)
+	return z
+}
+
+func pointer_post_decrement[T any](p **T) *T {
+	z := *p
+	*p = pointer_sub[T](*p, 1)
+	return z
+}
+
+func pointer_pre_increment[T any](p **T) *T {
+	*p = pointer_add[T](*p, 1)
+	return *p
+}
+
+func pointer_pre_decrement[T any](p **T) *T {
+	*p = pointer_sub[T](*p, 1)
+	return *p
+}
+
+func clear[T any](p *T) {
+	addr := word(p)
+	for i := range sizeof[T]() {
+		pokeb(addr+i, 0)
+	}
+}
+func memset(p *byte, x byte, n word) {
+	addr := word(p)
+	for i := range n {
+		pokeb(i+addr, x)
+	}
+}
+
+func memcmp(a *byte, b *byte, n word) int {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va < vb {
+			return -1
+		}
+		if va > vb {
+			return 1
+		}
+	}
+	return 0
+}
+
+func memeq(a *byte, b *byte, n word) bool {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va != vb {
+			return 0
+		}
+	}
+	return 1
+}
+
+func strlen(s *byte) (n word) {
+	for *s != 0 {
+		n++
+		s = (*byte)(word(s) + 1)
+	}
+	return
+}
+
+type any struct {
+	BaseAddr word
+	TypeStr  word
+}
+
+/////////////////////////////////////////////
+// Far Data Window Controls (EMBIGGEN 512KB)
+/////////////////////////////////////////////
+
+// Window 0 is Slot 2 ($4000..$5FFF), controlled by MMAP reg $FF42
+func MapWindow0(block word) {
+	pokeb(0xFF42, byte(block))
+}
+
+// Window 1 is Slot 3 ($6000..$7FFF), controlled by MMAP reg $FF43
+func MapWindow1(block word) {
+	pokeb(0xFF43, byte(block))
+}
+
+// Window 2 is Slot 4 ($8000..$9FFF), controlled by MMAP reg $FF44
+func MapWindow2(block word) {
+	pokeb(0xFF44, byte(block))
+}
+
+/////////////////////////////////////////////
+// EMBIGGEN 8-Byte Slice Definition & Methods
+/////////////////////////////////////////////
+
+type slice[T any] struct {
+	FarRef word
+	Base   word
+	Len    word
+	Cap    word
+}
+
+func (o *slice[T]) Append(x T) {
+	if o.Cap == 0 {
+		var z slice[T]
+		z = FarMakeSlice[T](8)
+		z.Len = 1
+		z.Put(0, x)
+		*o = z
+		return
+	}
+	n := o.Len
+	if n+1 < o.Cap {
+		o.Len++
+		o.Put(n, x)
+		return
+	}
+
+	// Must re-alloc
+	var newCap word = o.Cap + o.Cap
+	if newCap < 8 {
+		newCap = 8
+	}
+	var z slice[T] = FarMakeSlice[T](newCap)
+	z.Len = n + 1
+
+	for i := range n {
+		z.Put(i, o.Get(i))
+	}
+	z.Put(n, x)
+	freeslice(*o)
+	*o = z
+}
+
+func (o *slice[T]) Address(i word) word {
+	if i >= o.Len {
+		panic("2001")
+	}
+	p := i * sizeof[T]()
+	if o.FarRef == 0 {
+		return o.Base + p
+	}
+	MapWindow0(o.FarRef)
+	return 0x4000 + o.Base + p
+}
+
+func (o *slice[T]) Get(i word) T {
+	if i >= o.Len {
+		panic("2002")
+	}
+	p := i * sizeof[T]()
+	if o.FarRef == 0 {
+		return peek[T](o.Base + p)
+	}
+	MapWindow0(o.FarRef)
+	return peek[T](0x4000 + o.Base + p)
+}
+
+func (o *slice[T]) Put(i word, x T) {
+	if i >= o.Len {
+		panic("2003")
+	}
+	p := i * sizeof[T]()
+	if o.FarRef == 0 {
+		poke[T](o.Base + p, x)
+		return
+	}
+	MapWindow0(o.FarRef)
+	poke[T](0x4000 + o.Base + p, x)
+}
+
+func (o *slice[T]) Chop(start word, limit word) slice[T] {
+	if start > limit {
+		panic("2004")
+	}
+	if limit > o.Cap {
+		panic("2005")
+	}
+	var z slice[T]
+	z.FarRef = o.FarRef
+	z.Base = o.Base + start*sizeof[T]()
+	z.Len = limit - start
+	z.Cap = o.Cap - start
+	return z
+}
+
+func (o *slice[T]) Pop() T {
+	if o.Len == 0 {
+		panic("calling Pop() on empty slice")
+	}
+	result := o.Get(0)
+	*o = o.Chop(1, o.Len)
+	return result
+}
+
+func makeslice[T any](n word) slice[T] {
+	return FarMakeSlice[T](n)
+}
+
+func freeslice[T any](a slice[T]) {
+	if a.FarRef != 0 && a.Base != 0 {
+		FarFree(a.FarRef, a.Base)
+	}
+}
+
+func strcmp(a string, b string) int {
+	n := a.Len
+	if b.Len < n {
+		n = b.Len
+	}
+	for i := word(0); i < n; i++ {
+		ca := a.Get(i)
+		cb := b.Get(i)
+		if ca < cb {
+			return -1
+		}
+		if ca > cb {
+			return 1
+		}
+	}
+	if a.Len < b.Len {
+		return -1
+	}
+	if a.Len > b.Len {
+		return 1
+	}
+	return 0
+}
+
+func streq(a string, b string) bool {
+	if a.Len != b.Len {
+		return 0
+	}
+	if a.FarRef == b.FarRef && a.Base == b.Base {
+		return 1
+	}
+	for i := word(0); i < a.Len; i++ {
+		if a.Get(i) != b.Get(i) {
+			return 0
+		}
+	}
+	return 1
+}
+
+func strdup(a string) string {
+	n := a.Len
+	var z string
+	z = FarMakeSlice[byte](n + 1)
+	for i := range n {
+		z.Put(i, a.Get(i))
+	}
+	z.Put(n, 0)
+	z.Len = n
+	return z
+}
+
+func strfree(a string) {
+	freeslice(a)
+}
+
+/////////////////////////////////////////////
+// Far Data Page Allocator (Blocks 128..250)
+/////////////////////////////////////////////
+
+const FIRST_FAR_BLOCK = 128
+const MAX_FAR_BLOCK = 250
+
+type FarBlockHeader struct {
+	next_free_offset word
+	free_bytes       word
+	magic            word
+}
+
+type ChunkHeader struct {
+	next_offset word
+	size        word
+	magic       word
+}
+
+var current_alloc_block word = FIRST_FAR_BLOCK
+var next_alloc_block word = FIRST_FAR_BLOCK + 1
+
+func init_far_block(blk word) {
+	MapWindow0(blk)
+	var win word = 0x4000
+	var hdr *FarBlockHeader = (*FarBlockHeader)(win)
+	hdr.magic = 42424
+	hdr.next_free_offset = sizeof[FarBlockHeader]()
+	hdr.free_bytes = 8192 - sizeof[FarBlockHeader]()
+
+	var first_chunk *ChunkHeader = (*ChunkHeader)(win + sizeof[FarBlockHeader]())
+	first_chunk.next_offset = 0
+	first_chunk.size = hdr.free_bytes
+	first_chunk.magic = 0
+}
+
+func FarAlloc(nbytes word) (word, word) {
+	if nbytes == 0 {
+		return 0, 0
+	}
+	if (nbytes & 1) != 0 {
+		nbytes++
+	}
+	need_size := nbytes + sizeof[ChunkHeader]()
+	if need_size > 8100 {
+		panic("FarAlloc: chunk too large")
+	}
+
+	if current_alloc_block < FIRST_FAR_BLOCK {
+		current_alloc_block = FIRST_FAR_BLOCK
+	}
+	if next_alloc_block <= current_alloc_block {
+		next_alloc_block = current_alloc_block + 1
+	}
+
+	blk := current_alloc_block
+	for {
+		MapWindow0(blk)
+		win := word(0x4000)
+		bhdr := (*FarBlockHeader)(win)
+		if bhdr.magic != 42424 {
+			init_far_block(blk)
+			bhdr = (*FarBlockHeader)(win)
+		}
+
+		var prev_off word = 0
+		var curr_off word = bhdr.next_free_offset
+
+		for curr_off != 0 {
+			chunk := (*ChunkHeader)(win + curr_off)
+			if chunk.size >= need_size {
+				if chunk.size >= need_size + sizeof[ChunkHeader]() + 4 {
+					rem_off := curr_off + need_size
+					rem_size := chunk.size - need_size
+					rem_chunk := (*ChunkHeader)(win + rem_off)
+					rem_chunk.next_offset = chunk.next_offset
+					rem_chunk.size = rem_size
+					rem_chunk.magic = 0
+
+					if prev_off == 0 {
+						bhdr.next_free_offset = rem_off
+					} else {
+						prev_chunk := (*ChunkHeader)(win + prev_off)
+						prev_chunk.next_offset = rem_off
+					}
+					chunk.size = need_size
+				} else {
+					if prev_off == 0 {
+						bhdr.next_free_offset = chunk.next_offset
+					} else {
+						prev_chunk := (*ChunkHeader)(win + prev_off)
+						prev_chunk.next_offset = chunk.next_offset
+					}
+				}
+				chunk.magic = 42424
+				bhdr.free_bytes = bhdr.free_bytes - chunk.size
+				current_alloc_block = blk
+				user_offset := curr_off + sizeof[ChunkHeader]()
+				return blk, user_offset
+			}
+			prev_off = curr_off
+			curr_off = chunk.next_offset
+		}
+
+		if next_alloc_block >= MAX_FAR_BLOCK {
+			panic("FarAlloc: out of physical blocks")
+		}
+		blk = next_alloc_block
+		next_alloc_block++
+		init_far_block(blk)
+	}
+}
+
+func FarFree(blk word, off word) {
+	if blk == 0 || off < sizeof[FarBlockHeader]() + sizeof[ChunkHeader]() {
+		return
+	}
+	MapWindow0(blk)
+	win := word(0x4000)
+	bhdr := (*FarBlockHeader)(win)
+	if bhdr.magic != 42424 {
+		return
+	}
+
+	chunk_off := off - sizeof[ChunkHeader]()
+	chunk := (*ChunkHeader)(win + chunk_off)
+	if chunk.magic != 42424 {
+		return
+	}
+	chunk.magic = 0
+	bhdr.free_bytes = bhdr.free_bytes + chunk.size
+
+	var prev_off word = 0
+	var curr_off word = bhdr.next_free_offset
+
+	for curr_off != 0 && curr_off < chunk_off {
+		prev_off = curr_off
+		pchunk := (*ChunkHeader)(win + curr_off)
+		curr_off = pchunk.next_offset
+	}
+
+	chunk.next_offset = curr_off
+	if prev_off == 0 {
+		bhdr.next_free_offset = chunk_off
+	} else {
+		pchunk := (*ChunkHeader)(win + prev_off)
+		pchunk.next_offset = chunk_off
+	}
+
+	if curr_off != 0 && chunk_off + chunk.size == curr_off {
+		next_chunk := (*ChunkHeader)(win + curr_off)
+		chunk.size = chunk.size + next_chunk.size
+		chunk.next_offset = next_chunk.next_offset
+	}
+
+	if prev_off != 0 {
+		pchunk := (*ChunkHeader)(win + prev_off)
+		if prev_off + pchunk.size == chunk_off {
+			pchunk.size = pchunk.size + chunk.size
+			pchunk.next_offset = chunk.next_offset
+		}
+	}
+}
+
+func FarMakeSlice[T any](n word) slice[T] {
+	var z slice[T]
+	if n == 0 {
+		return z
+	}
+	nbytes := n * sizeof[T]()
+	blk, off := FarAlloc(nbytes)
+	z.FarRef = blk
+	z.Base = off
+	z.Len = n
+	z.Cap = n
+	MapWindow0(blk)
+	addr := 0x4000 + off
+	for i := range nbytes {
+		pokeb(addr+i, 0)
+	}
+	return z
+}
+
+type MallocHeader struct {
+	next  *MallocHeader
+	size  word
+	magic word
+}
+
+var base MallocHeader
+var freep *MallocHeader
+
+func malloc_init(heap_start *byte, heap_size word) {
+	var p *MallocHeader = (*MallocHeader)(word(heap_start))
+	p.size = div_word(heap_size, sizeof[MallocHeader]())
+	p.magic = 42424
+	p.next = &base
+
+	base.next = p
+	base.size = 0
+	freep = &base
+}
+
+const TOO_BIG = 20000
+
+func malloc(nbytes word) *byte {
+	var p *MallocHeader
+	var prevp *MallocHeader
+	var nunits word
+
+	if nbytes > TOO_BIG {
+		panic("4044")
+	}
+
+	nunits = div_word((nbytes+sizeof[MallocHeader]()-1), sizeof[MallocHeader]()) + 1
+
+	prevp = freep
+	if word(prevp) == 0 {
+		panic("4001")
+		return (*byte)(0)
+	}
+
+	p = prevp.next
+	for {
+		if p.size >= nunits {
+			if p.size == nunits {
+				prevp.next = p.next
+			} else {
+				p.size = p.size - nunits
+				p = (*MallocHeader)(word(p) + mul_word(p.size, sizeof[MallocHeader]()))
+				p.size = nunits
+			}
+			p.magic = 42424
+			freep = prevp
+			return (*byte)(word(p) + sizeof[MallocHeader]())
+		}
+		if word(p) == word(freep) {
+			panic("4002")
+			return (*byte)(0)
+		}
+		prevp = p
+		p = p.next
+	}
+	panic("4003")
+	return (*byte)(0)
+}
+
+func free(ap *byte) {
+	var bp *MallocHeader
+	var p *MallocHeader
+
+	if word(ap) == 0 {
+		return
+	}
+
+	heap_start := word(0x0400)
+	heap_end := word(0x2000)
+	if word(ap) < heap_start || word(ap) >= heap_end {
+		return
+	}
+
+	bp = (*MallocHeader)(word(ap) - sizeof[MallocHeader]())
+	if bp.magic != 42424 {
+		return
+	}
+	bp.magic = 0
+
+	var done byte = 0
+	p = freep
+	for done == 0 {
+		if word(bp) > word(p) && word(bp) < word(p.next) {
+			done = 1
+		} else if word(p) >= word(p.next) && (word(bp) > word(p) || word(bp) < word(p.next)) {
+			done = 1
+		}
+
+		if done == 0 {
+			p = p.next
+		}
+	}
+
+	if word(bp)+mul_word(bp.size, sizeof[MallocHeader]()) == word(p.next) {
+		bp.size = bp.size + p.next.size
+		bp.next = p.next.next
+	} else {
+		bp.next = p.next
+	}
+
+	if word(p)+mul_word(p.size, sizeof[MallocHeader]()) == word(bp) {
+		p.size = p.size + bp.size
+		p.next = bp.next
+	} else {
+		p.next = bp
+	}
+
+	freep = p
+}
+
+func zalloc(nbytes word) word {
+	p := word(malloc(nbytes))
+	for i := range nbytes {
+		pokeb(p+i, 0)
+	}
+	return p
+}
+
+/////////////////////////////////////////////
+// Panic & Recover
+/////////////////////////////////////////////
+
+var _panic_ *byte
+var _jmp_chain_ *byte
+
+func recover() *byte {
+	z := _panic_
+	_panic_ = (*byte)(0)
+	return z
+}
+
+/////////////////////////////////////////////
+// Integer Math
+/////////////////////////////////////////////
+
+func mul_byte(a byte, b byte) word
+
+func mul_word(a word, b word) word {
+	return a * b
+}
+
+func div_word(a0 word, b word) word {
+	return a0 / b
+}
+
+func mod_word(a0 word, b word) word {
+	return a0 % b
+}
+
+func abs_int(a int) word {
+	if a < 0 {
+		return word(0 - a)
+	}
+	return word(a)
+}
+
+func mul_int(a int, b int) int {
+	result := int(mul_word(abs_int(a), abs_int(b)))
+	if (a < 0 && b >= 0) || (a >= 0 && b < 0) {
+		return int(0) - result
+	}
+	return result
+}
+
+func div_int(a int, b int) int {
+	if b == 0 {
+		panic("div_int: divide by zero")
+	}
+	result := int(div_word(abs_int(a), abs_int(b)))
+	if (a < 0 && b >= 0) || (a >= 0 && b < 0) {
+		return int(0) - result
+	}
+	return result
+}
+
+func mod_int(a int, b int) int {
+	if b == 0 {
+		panic("mod_int: modulo by zero")
+	}
+	result := int(mod_word(abs_int(a), abs_int(b)))
+	if a < 0 {
+		return int(0) - result
+	}
+	return result
+}
+
+/////////////////////////////////////////////
+// Output & Formatting
+/////////////////////////////////////////////
+
+func printany(x any) {
+	tlen := strlen(x.TypeStr)
+	var t string
+	t.FarRef = 0
+	t.Base = x.TypeStr
+	t.Len = tlen
+	t.Cap = tlen
+
+	if t == "byte" {
+		println("b=", peek[byte](x.BaseAddr))
+	} else if t == "word" {
+		println("w=", peek[word](x.BaseAddr))
+	} else if t == "*byte" {
+		println("*b=", (*byte)(peek[word](x.BaseAddr)))
+	} else if t == "string" {
+		println("s=", peek[string](x.BaseAddr))
+	} else if t == "slice[byte]" {
+		println("s[b]=", peek[string](x.BaseAddr))
+	} else {
+		println("?", (*byte)(x.TypeStr), "?")
+		i := 0
+		for peekb(x.TypeStr+i) > 0 {
+			print(" #", peekb(x.TypeStr+i))
+			i++
+		}
+		println("")
+	}
+}
+
+// minigolf:linkage("putchar")
+func putchar(b byte)
+
+// minigolf:linkage("getchar")
+func getchar() byte
+
+func print_char(b byte) {
+	putchar(b)
+}
+
+func print_str(s string) {
+	for i := range s.Len {
+		putchar(s.Get(i))
+	}
+}
+
+func print_word(n word) {
+	if n == 0 {
+		putchar('0')
+		return
+	}
+	var buf [10]byte
+	i := 0
+	for n > 0 {
+		buf[i] = byte(n%10) + '0'
+		n = n / 10
+		i++
+	}
+	for i > 0 {
+		i--
+		putchar(buf[i])
+	}
+}
+
+func print_int(n int) {
+	if n < 0 {
+		putchar('-')
+		n = 0 - n
+	}
+	print_word(word(n))
+}
+
+func print_byte(n byte) {
+	print_word(word(n))
+}
+
+func print_bool(b bool) {
+	if b != 0 {
+		putchar('t')
+		putchar('r')
+		putchar('u')
+		putchar('e')
+	} else {
+		putchar('f')
+		putchar('a')
+		putchar('l')
+		putchar('s')
+		putchar('e')
+	}
+}
+
+func init() {
+	current_alloc_block = FIRST_FAR_BLOCK
+	next_alloc_block = FIRST_FAR_BLOCK + 1
+	init_far_block(FIRST_FAR_BLOCK)
+	malloc_init((*byte)(0x0400), 0x1C00)
+}

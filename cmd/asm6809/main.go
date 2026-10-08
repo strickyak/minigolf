@@ -469,8 +469,29 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 	if strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, ";") {
 		return &Statement{Type: StmtComment, SrcLine: srcLine, File: filename, LineNum: lineNum}, nil
 	}
-	if idx := strings.Index(line, ";"); idx >= 0 {
-		line = line[:idx]
+	inQuote := false
+	commentIdx := -1
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if inQuote {
+			if c == '\\' && i+1 < len(line) {
+				i++
+				continue
+			}
+			if c == '"' {
+				inQuote = false
+			}
+		} else {
+			if c == '"' {
+				inQuote = true
+			} else if c == ';' {
+				commentIdx = i
+				break
+			}
+		}
+	}
+	if commentIdx >= 0 {
+		line = line[:commentIdx]
 	}
 
 	line = strings.TrimRight(line, " \t\r\n")
@@ -1501,7 +1522,7 @@ func (a *Assembler) encodeStatement(stmt *Statement) error {
 }
 
 type Chunk struct {
-	Addr uint16
+	Addr uint32
 	Data []byte
 }
 
@@ -1513,9 +1534,9 @@ func (a *Assembler) CollectChunks() []Chunk {
 		if len(stmt.Encoded) == 0 {
 			continue
 		}
-		addr := uint16(stmt.PC)
+		addr := stmt.PC
 
-		if currChunk == nil || addr != currChunk.Addr+uint16(len(currChunk.Data)) {
+		if currChunk == nil || addr != currChunk.Addr+uint32(len(currChunk.Data)) {
 			chunks = append(chunks, Chunk{
 				Addr: addr,
 				Data: append([]byte(nil), stmt.Encoded...),
@@ -1537,29 +1558,68 @@ func (a *Assembler) EmitDECB(w io.Writer) error {
 	}
 
 	chunks := a.CollectChunks()
+	var curHigh16 uint16 = 0
 
 	for _, c := range chunks {
-		if len(c.Data) == 0 {
-			continue
+		data := c.Data
+		addr := c.Addr
+		for len(data) > 0 {
+			high16 := uint16(addr >> 16)
+			if high16 != curHigh16 {
+				curHigh16 = high16
+				highHdr := []byte{
+					0xFE,
+					0x00,
+					0x00,
+					byte(curHigh16 >> 8),
+					byte(curHigh16 & 0xFF),
+				}
+				if _, err := w.Write(highHdr); err != nil {
+					return err
+				}
+			}
+
+			chunkLen := len(data)
+			lowAddr := int(addr & 0xFFFF)
+			bytesUntilBoundary := 0x10000 - lowAddr
+			if chunkLen > bytesUntilBoundary {
+				chunkLen = bytesUntilBoundary
+			}
+			if chunkLen > 65535 {
+				chunkLen = 65535
+			}
+
+			length := uint16(chunkLen)
+			chunkAddr := uint16(addr & 0xFFFF)
+			header := []byte{
+				0x00,
+				byte((length >> 8) & 0xFF),
+				byte(length & 0xFF),
+				byte((chunkAddr >> 8) & 0xFF),
+				byte(chunkAddr & 0xFF),
+			}
+			if _, err := w.Write(header); err != nil {
+				return err
+			}
+			if _, err := w.Write(data[:chunkLen]); err != nil {
+				return err
+			}
+
+			data = data[chunkLen:]
+			addr += uint32(chunkLen)
 		}
-		length := uint16(len(c.Data))
-		header := []byte{
-			0x00,
-			byte((length >> 8) & 0xFF),
-			byte(length & 0xFF),
-			byte((c.Addr >> 8) & 0xFF),
-			byte(c.Addr & 0xFF),
-		}
-		if _, err := w.Write(header); err != nil {
-			return err
-		}
-		if _, err := w.Write(c.Data); err != nil {
+	}
+
+	// Reset high16 if needed before postamble
+	if curHigh16 != 0 {
+		highHdr := []byte{0xFE, 0x00, 0x00, 0x00, 0x00}
+		if _, err := w.Write(highHdr); err != nil {
 			return err
 		}
 	}
 
 	// Postamble: 0xFF 0x00 0x00 entryPoint
-	entry := uint16(a.entryPoint)
+	entry := uint16(a.entryPoint & 0xFFFF)
 	postamble := []byte{
 		0xFF,
 		0x00,
@@ -1592,7 +1652,7 @@ func (a *Assembler) EmitSRecords(w io.Writer) error {
 
 	for _, c := range chunks {
 		data := c.Data
-		addr := c.Addr
+		addr := uint16(c.Addr & 0xFFFF)
 		for len(data) > 0 {
 			chunkLen := len(data)
 			if chunkLen > 32 {

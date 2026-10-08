@@ -1035,6 +1035,10 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 			}
 		}
 		b.writeVariable(s.Name.Value, b.currentBlock, val)
+		if b.addressTakenVars[s.Name.Value] {
+			addr := b.addInstr(&AddressOfLocal{BaseInstruction: BaseInstruction{Typ: typ.PointerTo()}, Local: b.variableInitVal[s.Name.Value]}, s)
+			b.addInstr(&StorePtr{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Ptr: addr, Val: val}, s)
+		}
 		if b.isDestructable(typ) {
 			b.deferredActions = append(b.deferredActions, DeferredAction{IsDestructible: true, VarName: s.Name.Value})
 		}
@@ -1977,7 +1981,11 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 		if targetTyp.Name == "*byte" &&
 			(srcName == "prelude.slice_byte" || srcName == "slice_byte" ||
 				srcName == "prelude__slice_byte" || srcName == "slice__byte") {
-			ptrWord := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: val, FieldIndex: 0}, e)
+			baseIdx := 0
+			if len(val.Type().FieldsOfStruct()) == 4 {
+				baseIdx = 1
+			}
+			ptrWord := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: val, FieldIndex: baseIdx}, e)
 			res := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetTyp}, Op: "word_to_ptr", Operand: ptrWord}, e)
 			return ExprResult{IsLValue: false, Value: res, Typ: targetTyp}
 		}
@@ -2625,13 +2633,21 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 		globalAddr := b.addInstr(&AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Global: g}, e)
 		globalWord := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "bitcast", Operand: globalAddr}, e)
 
-		structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 0, Val: globalWord}, e)
-
 		length := int64(len(e.Value))
 		lenVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(length)}, e)
 
-		structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 1, Val: lenVal}, e)
-		structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 2, Val: lenVal}, e)
+		if len(typ.FieldsOfStruct()) == 4 {
+			// 8-byte EMBIGGEN slice: {FarRef: 0, Base: globalWord, Len: lenVal, Cap: lenVal}
+			zeroWord := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, e)
+			structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 0, Val: zeroWord}, e)
+			structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 1, Val: globalWord}, e)
+			structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 2, Val: lenVal}, e)
+			structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 3, Val: lenVal}, e)
+		} else {
+			structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 0, Val: globalWord}, e)
+			structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 1, Val: lenVal}, e)
+			structVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: structVal, FieldIndex: 2, Val: lenVal}, e)
+		}
 
 		return ExprResult{IsLValue: false, Value: structVal, Typ: typ}
 
@@ -2852,10 +2868,18 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			basePtrVal := b.addInstr(&Call{BaseInstruction: BaseInstruction{Typ: TypeByte.PointerTo()}, Func: zallocFunc, Args: []Value{nBytesVal}}, e)
 			baseWordVal := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: TypeWord}, Op: "ptr_to_word", Operand: basePtrVal}, e)
 
-			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 0, Val: baseWordVal}, e)
 			capVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(len(e.Elements))}, e)
-			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: capVal}, e)
-			sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
+			if len(typ.FieldsOfStruct()) == 4 {
+				zeroWord := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, e)
+				sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 0, Val: zeroWord}, e)
+				sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: baseWordVal}, e)
+				sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
+				sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 3, Val: capVal}, e)
+			} else {
+				sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 0, Val: baseWordVal}, e)
+				sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 1, Val: capVal}, e)
+				sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: typ}, Struct: sliceVal, FieldIndex: 2, Val: capVal}, e)
+			}
 
 			arrTyp := b.tm.Intern(Type{
 				Expr: &ast.ArrayType{
@@ -3033,10 +3057,18 @@ func (b *Builder) packVariadicArgs(f *Function, rawArgs []Value, tokenNode ast.N
 	basePtr := b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: eltTyp.PointerTo()}, Op: "bitcast", Operand: arrPtr}, tokenNode)
 
 	var sliceVal Value = b.addInstr(&ZeroInit{BaseInstruction: BaseInstruction{Typ: varTyp}}, tokenNode)
-	sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 0, Val: basePtr}, tokenNode)
 	lenVal := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(numVarArgs)}, tokenNode)
-	sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 1, Val: lenVal}, tokenNode)
-	sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 2, Val: lenVal}, tokenNode)
+	if len(varTyp.FieldsOfStruct()) == 4 {
+		zeroWord := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}, tokenNode)
+		sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 0, Val: zeroWord}, tokenNode)
+		sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 1, Val: basePtr}, tokenNode)
+		sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 2, Val: lenVal}, tokenNode)
+		sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 3, Val: lenVal}, tokenNode)
+	} else {
+		sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 0, Val: basePtr}, tokenNode)
+		sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 1, Val: lenVal}, tokenNode)
+		sliceVal = b.addInstr(&InsertField{BaseInstruction: BaseInstruction{Typ: varTyp}, Struct: sliceVal, FieldIndex: 2, Val: lenVal}, tokenNode)
+	}
 
 	newArgs := append([]Value(nil), rawArgs[:varIdx]...)
 	newArgs = append(newArgs, sliceVal)
@@ -3687,6 +3719,8 @@ func (b *Builder) buildSyntheticInit() {
 		var val Value
 		if b.isConstantExpr(s.Value) {
 			constVal := b.evalConstantExpr(s.Value, g.Typ)
+			g.InitVal = constVal
+			g.IsInit = true
 
 			constName := fmt.Sprintf(".const_struct_%d", len(b.Program.Globals))
 			constGlobal := &Global{

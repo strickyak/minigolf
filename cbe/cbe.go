@@ -235,7 +235,7 @@ func (c *CBE) Generate(program *ir.Program) string {
 	}
 
 	// Globals
-	for _, g := range program.Globals {
+	emitGlobal := func(g *ir.Global) {
 		gName := strings.ReplaceAll(g.Name, ".", "_")
 		if g.IsInit {
 			if g.InitVal != nil {
@@ -256,6 +256,16 @@ func (c *CBE) Generate(program *ir.Program) string {
 			}
 		} else {
 			c.buf.WriteString(fmt.Sprintf("%s v_%s;\n", c.mapIRType(g.Typ), gName))
+		}
+	}
+	for _, g := range program.Globals {
+		if g.InitString != "" {
+			emitGlobal(g)
+		}
+	}
+	for _, g := range program.Globals {
+		if g.InitString == "" {
+			emitGlobal(g)
 		}
 	}
 	if len(program.Globals) > 0 {

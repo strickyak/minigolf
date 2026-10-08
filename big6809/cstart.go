@@ -71,10 +71,7 @@ cstart_embiggen:
     lda   #8
     sta   <active_code_blk
 
-    ; 5. Unpack / Stage Far Code Blocks into Physical Blocks 8..127
-    jsr   __unpack_far_blocks
-
-    ; 6. Ensure Slot 5 is mapped to entry block (Block 8) and call main()
+    ; 5. Ensure Slot 5 is mapped to entry block (Block 8) and call main()
     lda   #8
     sta   $FF45
     sta   <active_code_blk
@@ -92,7 +89,6 @@ __exit0:
 
 __exit:
     tfr   x,d
-    fcb   $12,$21,107  ; Hatvan Hyper Exit
     stb   $FF05        ; Hatvan Exit Port ($FF05)
 .stuck:
     bra   .stuck
@@ -243,15 +239,14 @@ f_putchar:
     ldb   3,s          ; character parameter from stack
 putchar:
 _putchar:
-    clra
-    fcb   $12,$21,132  ; Hyper PutChar
+    stb   $FF00        ; Hatvan console output port
     rts
 
 getchar:
 _getchar:
 f_getchar:
 f_prelude__getchar:
-    fcb   $12,$21,133  ; Hyper GetChar
+    ldb   $FF01        ; Hatvan console input port
     clra
     rts
 
@@ -438,6 +433,7 @@ __far_streq:
 
     puls  u
 .streq_true:
+    clra
     ldb   #1
     tstb                    ; Set NZ flag
     rts
@@ -445,6 +441,7 @@ __far_streq:
 .streq_diff:
     puls  u
 .streq_false:
+    clra
     clrb                    ; Set Z flag
     rts
 `

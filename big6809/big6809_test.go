@@ -32,6 +32,7 @@ func runEmbiggenTest(t *testing.T, golfRelPath, wantRelPath string) {
 	cmdCompile := exec.Command("go", "run", mainGo,
 		"-m=big6809",
 		"-o="+asmPath,
+		"-I="+filepath.Join("..", "biggolflib"),
 		"-I="+filepath.Join("..", "golflib"),
 		"-I="+filepath.Join("..", "tests"),
 		"-I="+filepath.Join("..", "demos"),
@@ -84,6 +85,10 @@ func TestEMBIGGEN_TestFor3(t *testing.T) {
 
 func TestEMBIGGEN_TestArithmetic(t *testing.T) {
 	runEmbiggenTest(t, filepath.Join("tests", "test_arithmetic.golf"), filepath.Join("tests", "test_arithmetic.want"))
+}
+
+func TestEMBIGGEN_TestAPLPrimesNomoto(t *testing.T) {
+	runEmbiggenTest(t, filepath.Join("tests", "test_apl_primes_nomoto.golf"), filepath.Join("tests", "test_apl_primes_nomoto.want"))
 }
 
 

@@ -128,11 +128,15 @@ func formatInstruction(i Instruction) string {
 			fName = fields[instr.FieldIdx]
 		}
 		return fmt.Sprintf("slice_field %s.%s", instr.Slice.String(), fName)
+	case *FuncRef:
+		return fmt.Sprintf("&%s", instr.FuncName)
 	case *NearCall:
 		return fmt.Sprintf("near_call %s(%v)", instr.Callee, formatValues(instr.Args))
 	case *FarCall:
 		return fmt.Sprintf("far_call %s[Block %d : 0x%04X](%v)",
 			instr.Callee, instr.TargetBlock, instr.TargetAddr, formatValues(instr.Args))
+	case *IndirectCall:
+		return fmt.Sprintf("indirect_call %s(%v)", instr.FuncPtr.String(), formatValues(instr.Args))
 	case *Return:
 		if instr.Val != nil {
 			return fmt.Sprintf("return %s", instr.Val.String())

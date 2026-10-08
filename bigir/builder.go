@@ -11,18 +11,53 @@ import (
 
 // Builder constructs a BIGIR Program from AST or standard SSA IR.
 type Builder struct {
-	WordSize  int
-	stringMap map[string]*Global
-	prog      *Program
-	irProg    *ir.Program
+	WordSize     int
+	stringMap    map[string]*Global
+	globalMap    map[*ir.Global]*Global
+	globalByName map[string]*Global
+	prog         *Program
+	irProg       *ir.Program
 }
 
 // NewBuilder creates a new BIGIR builder.
 func NewBuilder(wordSize int) *Builder {
 	return &Builder{
-		WordSize:  wordSize,
-		stringMap: make(map[string]*Global),
+		WordSize:     wordSize,
+		stringMap:    make(map[string]*Global),
+		globalMap:    make(map[*ir.Global]*Global),
+		globalByName: make(map[string]*Global),
 	}
+}
+
+func (b *Builder) lookupGlobal(g *ir.Global) *Global {
+	if g == nil {
+		return nil
+	}
+	if bg, ok := b.globalMap[g]; ok {
+		return bg
+	}
+	if bg, ok := b.globalByName[g.Name]; ok {
+		return bg
+	}
+	bg := &Global{
+		Name:       g.Name,
+		Typ:        b.convertType(g.Typ),
+		InitString: g.InitString,
+		IsFar:      false,
+	}
+	if b.globalMap != nil {
+		b.globalMap[g] = bg
+	}
+	if b.globalByName != nil {
+		b.globalByName[g.Name] = bg
+	}
+	if g.InitVal != nil {
+		bg.InitVal = b.resolveVal(g.InitVal, nil, b.globalMap)
+	}
+	if b.prog != nil {
+		b.prog.Globals = append(b.prog.Globals, bg)
+	}
+	return bg
 }
 
 // BuildFromAST converts an AST Program into a BIGIR Program by first lowering
@@ -57,9 +92,11 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 	b.prog = prog
 	b.irProg = irProg
 	b.stringMap = make(map[string]*Global)
+	b.globalMap = make(map[*ir.Global]*Global)
+	b.globalByName = make(map[string]*Global)
 
 	// 1. Translate Globals
-	globalMap := make(map[*ir.Global]*Global)
+	globalMap := b.globalMap
 	for _, g := range irProg.Globals {
 		bg := &Global{
 			Name:       g.Name,
@@ -68,9 +105,17 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 			IsFar:      false, // Static globals reside in fixed Slot 0 or Slot 6
 		}
 		prog.Globals = append(prog.Globals, bg)
-		globalMap[g] = bg
+		b.globalMap[g] = bg
+		b.globalByName[g.Name] = bg
 		if g.InitString != "" {
 			b.stringMap[g.InitString] = bg
+		}
+	}
+
+	for _, g := range irProg.Globals {
+		if g.InitVal != nil {
+			bg := b.globalMap[g]
+			bg.InitVal = b.resolveVal(g.InitVal, nil, b.globalMap)
 		}
 	}
 
@@ -87,7 +132,9 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 			strings.HasPrefix(nameLower, "_div") ||
 			strings.HasPrefix(nameLower, "_mul") ||
 			strings.HasPrefix(nameLower, "peek") ||
-			strings.HasPrefix(nameLower, "poke") {
+			strings.HasPrefix(nameLower, "poke") ||
+			strings.HasSuffix(nameLower, "putchar") ||
+			strings.HasSuffix(nameLower, "getchar") {
 			isFar = false
 		}
 
@@ -145,20 +192,24 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 			for _, instr := range bb.Instructions {
 				switch ti := instr.(type) {
 				case *ir.Cast:
-					valueMap[instr] = b.resolveVal(ti.Operand, valueMap, globalMap)
-					continue
-				case *ir.AddressOfElement:
-					valueMap[instr] = b.resolveVal(ti.ArrayPtr, valueMap, globalMap)
+					targetTyp := b.convertType(ti.Type())
+					op := b.resolveVal(ti.Operand, valueMap, globalMap)
+					if targetTyp.Size == 1 && op.Type().Size > 1 {
+						break
+					}
+					valueMap[instr] = op
 					continue
 				case *ir.ExtractField:
 					base := b.resolveVal(ti.Struct, valueMap, globalMap)
 					if sm, ok := base.(*SliceMake); ok {
 						switch ti.FieldIndex {
 						case 0:
-							valueMap[instr] = sm.Offset
+							valueMap[instr] = sm.FarRef
 						case 1:
-							valueMap[instr] = sm.Length
+							valueMap[instr] = sm.Offset
 						case 2:
+							valueMap[instr] = sm.Length
+						case 3:
 							valueMap[instr] = sm.Capacity
 						default:
 							valueMap[instr] = sm.FarRef
@@ -283,6 +334,57 @@ func (b *Builder) getTypeSize(irt ir.Type) int {
 	return 2
 }
 
+func (b *Builder) getFieldOffsetAndSize(structTyp ir.Type, fieldIndex int) (int, int) {
+	fields := structTyp.FieldsOfStruct()
+	if len(fields) == 0 && b.irProg != nil && b.irProg.TypeDefs != nil {
+		if def, ok := b.irProg.TypeDefs[structTyp.Name]; ok {
+			fields = def.FieldsOfStruct()
+		}
+	}
+	if len(fields) == 0 && (structTyp.IsASlice() || structTyp.Name == "string" || strings.HasPrefix(structTyp.Name, "slice") || strings.HasPrefix(structTyp.Name, "prelude.slice")) {
+		return fieldIndex * 2, 2
+	}
+	byteOffset := 0
+	fieldSize := 2
+	for i, f := range fields {
+		sz := b.getTypeSize(f.Type)
+		if i < fieldIndex {
+			byteOffset += sz
+		} else if i == fieldIndex {
+			fieldSize = sz
+			break
+		}
+	}
+	return byteOffset, fieldSize
+}
+
+func (b *Builder) getElementSize(arrayPtrTyp ir.Type) int {
+	if arrayPtrTyp.IsAPointer() {
+		pt := arrayPtrTyp.PointedType()
+		if pt.IsAnArray() {
+			et := pt.ArrayElementType()
+			return b.getTypeSize(et)
+		}
+		return b.getTypeSize(pt)
+	}
+	if arrayPtrTyp.IsAnArray() {
+		et := arrayPtrTyp.ArrayElementType()
+		return b.getTypeSize(et)
+	}
+	return 1
+}
+
+func (b *Builder) resolvePtrVal(v ir.Value, valueMap map[ir.Value]Value, globalMap map[*ir.Global]*Global) Value {
+	if g, ok := v.(*ir.Global); ok {
+		bg := b.lookupGlobal(g)
+		return &AddressOfGlobal{
+			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(bg.Typ)},
+			Global:          bg,
+		}
+	}
+	return b.resolveVal(v, valueMap, globalMap)
+}
+
 func (b *Builder) convertInstruction(
 	instr ir.Instruction,
 	valueMap map[ir.Value]Value,
@@ -345,7 +447,7 @@ func (b *Builder) convertInstruction(
 		}
 
 	case *ir.Load:
-		bg := globalMap[i.Global]
+		bg := b.lookupGlobal(i.Global)
 		addr := &AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: MakeNearPtr(bg.Typ)}, Global: bg}
 		return &NearLoad{
 			BaseInstruction: BaseInstruction{Typ: bg.Typ},
@@ -353,7 +455,7 @@ func (b *Builder) convertInstruction(
 		}
 
 	case *ir.Store:
-		bg := globalMap[i.Global]
+		bg := b.lookupGlobal(i.Global)
 		addr := &AddressOfGlobal{BaseInstruction: BaseInstruction{Typ: MakeNearPtr(bg.Typ)}, Global: bg}
 		val := b.resolveVal(i.Val, valueMap, globalMap)
 		return &NearStore{
@@ -363,14 +465,14 @@ func (b *Builder) convertInstruction(
 		}
 
 	case *ir.LoadPtr:
-		ptr := b.resolveVal(i.Ptr, valueMap, globalMap)
+		ptr := b.resolvePtrVal(i.Ptr, valueMap, globalMap)
 		return &NearLoad{
 			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
 			Addr:            ptr,
 		}
 
 	case *ir.StorePtr:
-		ptr := b.resolveVal(i.Ptr, valueMap, globalMap)
+		ptr := b.resolvePtrVal(i.Ptr, valueMap, globalMap)
 		val := b.resolveVal(i.Val, valueMap, globalMap)
 		return &NearStore{
 			BaseInstruction: BaseInstruction{Typ: TypeVoid},
@@ -379,7 +481,7 @@ func (b *Builder) convertInstruction(
 		}
 
 	case *ir.AddressOfGlobal:
-		bg := globalMap[i.Global]
+		bg := b.lookupGlobal(i.Global)
 		return &AddressOfGlobal{
 			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(bg.Typ)},
 			Global:          bg,
@@ -390,6 +492,83 @@ func (b *Builder) convertInstruction(
 		return &AddressOfLocal{
 			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(loc.Type())},
 			Local:           loc,
+		}
+
+	case *ir.AddressOfField:
+		ptr := b.resolvePtrVal(i.Ptr, valueMap, globalMap)
+		structTyp := i.Ptr.Type().PointedType()
+		byteOffset, _ := b.getFieldOffsetAndSize(structTyp, i.FieldIndex)
+		return &BinaryOp{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
+			Op:              "+",
+			Left:            ptr,
+			Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(byteOffset)},
+		}
+
+	case *ir.AddressOfElement:
+		arrayPtr := b.resolvePtrVal(i.ArrayPtr, valueMap, globalMap)
+		eltSize := b.getElementSize(i.ArrayPtr.Type())
+		if i.Index == nil {
+			return &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
+				Op:              "+",
+				Left:            arrayPtr,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0},
+			}
+		}
+		index := b.resolveVal(i.Index, valueMap, globalMap)
+		offsetVal := index
+		if eltSize > 1 {
+			offsetVal = &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: TypeWord},
+				Op:              "*",
+				Left:            index,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(eltSize)},
+			}
+		}
+		return &BinaryOp{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
+			Op:              "+",
+			Left:            arrayPtr,
+			Right:           offsetVal,
+		}
+
+	case *ir.ExtractFieldPtr:
+		ptr := b.resolvePtrVal(i.Ptr, valueMap, globalMap)
+		structTyp := i.Ptr.Type().PointedType()
+		byteOffset, _ := b.getFieldOffsetAndSize(structTyp, i.FieldIndex)
+		addr := ptr
+		if byteOffset > 0 {
+			addr = &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: MakeNearPtr(b.convertType(i.Typ))},
+				Op:              "+",
+				Left:            ptr,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(byteOffset)},
+			}
+		}
+		return &NearLoad{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
+			Addr:            addr,
+		}
+
+	case *ir.InsertFieldPtr:
+		ptr := b.resolvePtrVal(i.Ptr, valueMap, globalMap)
+		val := b.resolveVal(i.Val, valueMap, globalMap)
+		structTyp := i.Ptr.Type().PointedType()
+		byteOffset, _ := b.getFieldOffsetAndSize(structTyp, i.FieldIndex)
+		addr := ptr
+		if byteOffset > 0 {
+			addr = &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: MakeNearPtr(val.Type())},
+				Op:              "+",
+				Left:            ptr,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(byteOffset)},
+			}
+		}
+		return &NearStore{
+			BaseInstruction: BaseInstruction{Typ: TypeVoid},
+			Addr:            addr,
+			Val:             val,
 		}
 
 	case *ir.Call:
@@ -412,6 +591,24 @@ func (b *Builder) convertInstruction(
 		return &NearCall{
 			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
 			Callee:          calleeName,
+			Args:            args,
+		}
+
+	case *ir.AddressOfFunc:
+		return &FuncRef{
+			BaseInstruction: BaseInstruction{Typ: TypeWord},
+			FuncName:        i.Func.Name,
+		}
+
+	case *ir.IndirectCall:
+		args := make([]Value, len(i.Args))
+		for idx, a := range i.Args {
+			args[idx] = b.resolveVal(a, valueMap, globalMap)
+		}
+		funcPtr := b.resolveVal(i.FuncPtr, valueMap, globalMap)
+		return &IndirectCall{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
+			FuncPtr:         funcPtr,
 			Args:            args,
 		}
 
@@ -440,28 +637,49 @@ func (b *Builder) convertInstruction(
 		}
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
 
+	case *ir.ExtractField:
+		base := b.resolveVal(i.Struct, valueMap, globalMap)
+		return &SliceField{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
+			Slice:           base,
+			FieldIdx:        i.FieldIndex,
+		}
+
 	case *ir.InsertField:
 		base := b.resolveVal(i.Struct, valueMap, globalMap)
 		val := b.resolveVal(i.Val, valueMap, globalMap)
+		var farRef, offset, length, capacity Value
 		if sm, ok := base.(*SliceMake); ok {
-			newSm := &SliceMake{
-				BaseInstruction: BaseInstruction{Typ: sm.Typ},
-				FarRef:          sm.FarRef,
-				Offset:          sm.Offset,
-				Length:          sm.Length,
-				Capacity:        sm.Capacity,
-			}
-			switch i.FieldIndex {
-			case 0:
-				newSm.Offset = val
-			case 1:
-				newSm.Length = val
-			case 2:
-				newSm.Capacity = val
-			}
-			return newSm
+			farRef = sm.FarRef
+			offset = sm.Offset
+			length = sm.Length
+			capacity = sm.Capacity
+		} else {
+			farRef = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeFarRef}, Slice: base, FieldIdx: 0}
+			offset = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 1}
+			length = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 2}
+			capacity = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 3}
 		}
-		return nil
+		newSm := &SliceMake{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
+			FarRef:          farRef,
+			Offset:          offset,
+			Length:          length,
+			Capacity:        capacity,
+		}
+		switch i.FieldIndex {
+		case 0:
+			newSm.FarRef = val
+		case 1:
+			newSm.Offset = val
+		case 2:
+			newSm.Length = val
+		case 3:
+			newSm.Capacity = val
+		default:
+			newSm.FarRef = val
+		}
+		return newSm
 
 	default:
 		// Fallback for untyped or unsupported operations
@@ -533,38 +751,110 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 		valueMap[val] = phi
 		return phi
 	case *ir.Cast:
-		return b.resolveVal(val.Operand, valueMap, globalMap)
+		op := b.resolveVal(val.Operand, valueMap, globalMap)
+		targetTyp := b.convertType(val.Type())
+		if targetTyp.Size == 1 && op.Type().Size > 1 {
+			return &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: TypeByte},
+				Op:              "and",
+				Left:            op,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0xFF},
+			}
+		}
+		return op
+	case *ir.AddressOfField:
+		ptr := b.resolvePtrVal(val.Ptr, valueMap, globalMap)
+		structTyp := val.Ptr.Type().PointedType()
+		byteOffset, _ := b.getFieldOffsetAndSize(structTyp, val.FieldIndex)
+		if byteOffset == 0 {
+			return ptr
+		}
+		return &BinaryOp{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Typ)},
+			Op:              "+",
+			Left:            ptr,
+			Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(byteOffset)},
+		}
+
 	case *ir.AddressOfElement:
-		return b.resolveVal(val.ArrayPtr, valueMap, globalMap)
+		arrayPtr := b.resolvePtrVal(val.ArrayPtr, valueMap, globalMap)
+		if val.Index == nil {
+			return arrayPtr
+		}
+		index := b.resolveVal(val.Index, valueMap, globalMap)
+		eltSize := b.getElementSize(val.ArrayPtr.Type())
+		offsetVal := index
+		if eltSize > 1 {
+			offsetVal = &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: TypeWord},
+				Op:              "*",
+				Left:            index,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(eltSize)},
+			}
+		}
+		return &BinaryOp{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Typ)},
+			Op:              "+",
+			Left:            arrayPtr,
+			Right:           offsetVal,
+		}
 	case *ir.ExtractField:
+		if v, ok := valueMap[val]; ok {
+			return v
+		}
 		base := b.resolveVal(val.Struct, valueMap, globalMap)
 		if sm, ok := base.(*SliceMake); ok {
 			switch val.FieldIndex {
 			case 0:
-				return sm.Offset
+				return sm.FarRef
 			case 1:
-				return sm.Length
+				return sm.Offset
 			case 2:
+				return sm.Length
+			case 3:
 				return sm.Capacity
 			default:
 				return sm.FarRef
 			}
 		}
-		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}
+		return &SliceField{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Type())},
+			Slice:           base,
+			FieldIdx:        val.FieldIndex,
+		}
 	case *ir.ConstByte:
 		return &ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: val.Val}
 	case *ir.ConstWord:
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: val.Val}
+	case *ir.ConstStruct:
+		fields := make([]Value, len(val.Fields))
+		for i, f := range val.Fields {
+			fields[i] = b.resolveVal(f, valueMap, globalMap)
+		}
+		return &ConstStruct{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Type())},
+			Fields:          fields,
+		}
+	case *ir.ConstArray:
+		elements := make([]Value, len(val.Elements))
+		for i, el := range val.Elements {
+			elements[i] = b.resolveVal(el, valueMap, globalMap)
+		}
+		return &ConstArray{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Type())},
+			Elements:        elements,
+		}
+	case *ir.AddressOfGlobal:
+		bg := b.lookupGlobal(val.Global)
+		return &AddressOfGlobal{
+			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(bg.Typ)},
+			Global:          bg,
+		}
 	case *ir.Sizeof:
 		sz := b.getTypeSize(val.TargetTyp)
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(sz)}
 	case *ir.Global:
-		if globalMap != nil {
-			if bg, ok := globalMap[val]; ok {
-				return bg
-			}
-		}
-		return &Global{Name: val.Name, Typ: b.convertType(val.Typ), InitString: val.InitString}
+		return b.lookupGlobal(val)
 	case *ir.StringLiteral:
 		// Return 8-byte near string literal descriptor:
 		// far_ref = 0, offset = &str, length = len, capacity = len
@@ -588,6 +878,11 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 			Offset:          addr,
 			Length:          &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(len(val.Value))},
 			Capacity:        &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(len(val.Value))},
+		}
+	case *ir.AddressOfFunc:
+		return &FuncRef{
+			BaseInstruction: BaseInstruction{Typ: TypeWord},
+			FuncName:        val.Func.Name,
 		}
 	default:
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}

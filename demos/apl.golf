@@ -83,10 +83,9 @@ func PutIntPadded(n int, width word) {
 	PutInt(n)
 }
 
-func PutStr(s *byte) {
-	for *s != 0 {
-		putchar(*s)
-		s = (*byte)(word(s) + 1)
+func PutStr(s string) {
+	for i := word(0); i < s.Len; i++ {
+		putchar(s[i])
 	}
 }
 
@@ -134,8 +133,8 @@ type Thing struct {
 }
 
 func (t *Thing) destructor() {
-	free((*byte)(t.Values.Base))
-	free((*byte)(t.Dimensions.Base))
+	freeslice(t.Values)
+	freeslice(t.Dimensions)
 }
 
 func NewThing() *Thing {
@@ -144,8 +143,8 @@ func NewThing() *Thing {
 
 func FreeThing(t *Thing) {
 	if word(t) != 0 {
-		free((*byte)(t.Values.Base))
-		free((*byte)(t.Dimensions.Base))
+		freeslice(t.Values)
+		freeslice(t.Dimensions)
 		free((*byte)(word(t)))
 	}
 }
@@ -219,6 +218,108 @@ func IsSymbolChar(c byte) byte {
 	return 0
 }
 
+func tokenizeString(pos word) word {
+	pos++ // consume opening "
+	start := pos
+	for pos < LineLen && LineBuf[pos] != '"' {
+		pos++
+	}
+	length := pos - start
+	pos++ // consume closing "
+	name := Strings.Intern(BufStr(start, length))
+	TokKinds[NumTokens] = TokStrLit
+	TokNames[NumTokens] = name
+	NumTokens++
+	return pos
+}
+
+func tokenizeNumber(pos word, c byte) word {
+	sign := int(1)
+	if c == '-' {
+		sign = 0 - 1
+		pos++
+	}
+	n := int(0)
+	for pos < LineLen && LineBuf[pos] >= '0' && LineBuf[pos] <= '9' {
+		n = n*10 + int(word(LineBuf[pos])) - int(word('0'))
+		pos++
+	}
+	TokKinds[NumTokens] = TokNum
+	TokVals[NumTokens] = word(n * sign)
+	NumTokens++
+	return pos
+}
+
+func tokenizeVar(pos word) word {
+	start := pos
+	for pos < LineLen {
+		ch := LineBuf[pos]
+		ok := byte(0)
+		if ch >= 'A' && ch <= 'Z' {
+			ok = 1
+		}
+		if ch >= 'a' && ch <= 'z' {
+			ok = 1
+		}
+		if ch >= '0' && ch <= '9' {
+			ok = 1
+		}
+		if ch == '_' {
+			ok = 1
+		}
+		if ok == 0 {
+			break
+		}
+		pos++
+	}
+	length := pos - start
+	name := Strings.Intern(BufStr(start, length))
+	TokKinds[NumTokens] = TokVar
+	TokNames[NumTokens] = name
+	NumTokens++
+	return pos
+}
+
+func tokenizeFunc(pos word) word {
+	start := pos
+	for pos < LineLen {
+		ch := LineBuf[pos]
+		ok := byte(0)
+		if ch >= 'a' && ch <= 'z' {
+			ok = 1
+		}
+		if ch >= '0' && ch <= '9' {
+			ok = 1
+		}
+		if ch == '_' {
+			ok = 1
+		}
+		if ok == 0 {
+			break
+		}
+		pos++
+	}
+	length := pos - start
+	name := Strings.Intern(BufStr(start, length))
+	TokKinds[NumTokens] = TokFunc
+	TokNames[NumTokens] = name
+	NumTokens++
+	return pos
+}
+
+func tokenizeSymbol(pos word) word {
+	start := pos
+	for pos < LineLen && IsSymbolChar(LineBuf[pos]) != 0 {
+		pos++
+	}
+	length := pos - start
+	name := Strings.Intern(BufStr(start, length))
+	TokKinds[NumTokens] = TokFunc
+	TokNames[NumTokens] = name
+	NumTokens++
+	return pos
+}
+
 func Tokenize() {
 	NumTokens = 0
 	pos := word(0)
@@ -237,20 +338,9 @@ func Tokenize() {
 
 		c := LineBuf[pos]
 
-		// String literal (e.g. "Hello") becomes vector of ASCII values (e.g. 72 101 108 108 111)
+		// String literal
 		if c == '"' {
-			pos++ // consume the opening "
-			// yak
-			var s string
-			for pos < LineLen && LineBuf[pos] != '"' {
-				s.Append(LineBuf[pos])
-				pos++
-			}
-			s.Append(0)
-			pos++ // consume the closing "
-			TokKinds[NumTokens] = TokStrLit
-			TokVals[NumTokens] = word(s.Base) // Take guts from string
-			NumTokens++
+			pos = tokenizeString(pos)
 			continue
 		}
 
@@ -272,7 +362,6 @@ func Tokenize() {
 			continue
 		}
 		if c == '=' {
-			// Ensure it's not followed by another symbol character
 			isStandalone := byte(1)
 			if pos+1 < LineLen && IsSymbolChar(LineBuf[pos+1]) != 0 {
 				isStandalone = 0
@@ -286,7 +375,7 @@ func Tokenize() {
 			}
 		}
 
-		// Number (possibly negative: '-' followed by digit)
+		// Number
 		isNum := byte(0)
 		if c >= '0' && c <= '9' {
 			isNum = 1
@@ -295,78 +384,19 @@ func Tokenize() {
 			isNum = 1
 		}
 		if isNum != 0 {
-			sign := int(1)
-			if c == '-' {
-				sign = 0 - 1
-				pos++
-			}
-			n := int(0)
-			for pos < LineLen && LineBuf[pos] >= '0' && LineBuf[pos] <= '9' {
-				n = n*10 + int(word(LineBuf[pos])) - int(word('0'))
-				pos++
-			}
-			TokKinds[NumTokens] = TokNum
-			TokVals[NumTokens] = word(n * sign)
-			NumTokens++
+			pos = tokenizeNumber(pos, c)
 			continue
 		}
 
 		// Uppercase name (variable)
 		if c >= 'A' && c <= 'Z' || c == '_' {
-			start := pos
-			for pos < LineLen {
-				ch := LineBuf[pos]
-				ok := byte(0)
-				if ch >= 'A' && ch <= 'Z' {
-					ok = 1
-				}
-				if ch >= 'a' && ch <= 'z' {
-					ok = 1
-				}
-				if ch >= '0' && ch <= '9' {
-					ok = 1
-				}
-				if ch == '_' {
-					ok = 1
-				}
-				if ok == 0 {
-					break
-				}
-				pos++
-			}
-			length := pos - start
-			name := Strings.Intern(BufStr(start, length))
-			TokKinds[NumTokens] = TokVar
-			TokNames[NumTokens] = name
-			NumTokens++
+			pos = tokenizeVar(pos)
 			continue
 		}
 
 		// Lowercase name (function/operator)
 		if c >= 'a' && c <= 'z' {
-			start := pos
-			for pos < LineLen {
-				ch := LineBuf[pos]
-				ok := byte(0)
-				if ch >= 'a' && ch <= 'z' {
-					ok = 1
-				}
-				if ch >= '0' && ch <= '9' {
-					ok = 1
-				}
-				if ch == '_' {
-					ok = 1
-				}
-				if ok == 0 {
-					break
-				}
-				pos++
-			}
-			length := pos - start
-			name := Strings.Intern(BufStr(start, length))
-			TokKinds[NumTokens] = TokFunc
-			TokNames[NumTokens] = name
-			NumTokens++
+			pos = tokenizeFunc(pos)
 			continue
 		}
 
@@ -428,21 +458,13 @@ func Tokenize() {
 			continue
 		}
 
-		// Symbol operator (one or more special characters, not grouping)
+		// Symbol operator
 		if IsSymbolChar(c) != 0 {
-			start := pos
-			for pos < LineLen && IsSymbolChar(LineBuf[pos]) != 0 {
-				pos++
-			}
-			length := pos - start
-			name := Strings.Intern(BufStr(start, length))
-			TokKinds[NumTokens] = TokFunc
-			TokNames[NumTokens] = name
-			NumTokens++
+			pos = tokenizeSymbol(pos)
 			continue
 		}
 
-		// Semicolon (statement separator)
+		// Semicolon
 		if c == ';' {
 			TokKinds[NumTokens] = TokSemi
 			TokVals[NumTokens] = 0
@@ -527,123 +549,92 @@ func SkipTokensUntil(stop1 byte, stop2 byte) byte {
 var EvalPos word
 var WasAssign byte
 
-func Eval() *Thing {
+func DefineUserFunction() *Thing {
+	EvalPos++
 	if EvalPos >= NumTokens {
-		panic("unexpected end of expression")
+		panic("expected function or variable name")
 	}
 
-	kind := TokKinds[EvalPos]
-
-	// Function Definition
-	if kind == TokDel {
+	isDyadic := byte(0)
+	var lhsName string
+	if TokKinds[EvalPos] == TokVar {
+		isDyadic = 1
+		lhsName = TokNames[EvalPos]
 		EvalPos++
-		if EvalPos >= NumTokens {
-			panic("expected function or variable name")
-		}
+	}
 
-		isDyadic := byte(0)
-		var lhsName string
-		if TokKinds[EvalPos] == TokVar {
-			isDyadic = 1
-			lhsName = TokNames[EvalPos]
-			EvalPos++
-		}
+	if EvalPos >= NumTokens || TokKinds[EvalPos] != TokFunc {
+		panic("expected function name")
+	}
+	name := TokNames[EvalPos]
+	EvalPos++
 
-		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokFunc {
-			panic("expected function name")
-		}
-		name := TokNames[EvalPos]
-		EvalPos++
+	if EvalPos >= NumTokens || TokKinds[EvalPos] != TokVar {
+		panic("expected argument name")
+	}
+	rhsName := TokNames[EvalPos]
+	EvalPos++
 
+	var locals slice[string]
+
+	// Parse optional locals: ; localName
+	for EvalPos < NumTokens && TokKinds[EvalPos] == TokSemi {
+		EvalPos++ // skip ;
 		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokVar {
-			panic("expected argument name")
+			panic("expected local variable name after ;")
 		}
-		rhsName := TokNames[EvalPos]
+		if locals.Len >= 20 {
+			panic("maximum 20 local variables exceeded")
+		}
+		locals.Append(TokNames[EvalPos])
 		EvalPos++
-
-		var locals slice[string]
-
-		// Parse optional locals: ; localName
-		for EvalPos < NumTokens && TokKinds[EvalPos] == TokSemi {
-			EvalPos++ // skip ;
-			if EvalPos >= NumTokens || TokKinds[EvalPos] != TokVar {
-				panic("expected local variable name after ;")
-			}
-			if locals.Len >= 20 {
-				panic("maximum 20 local variables exceeded")
-			}
-			locals.Append(TokNames[EvalPos])
-			EvalPos++
-		}
-
-		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokLBrace {
-			panic("expected {")
-		}
-		EvalPos++
-
-		var tKinds slice[byte]
-		var tVals slice[word]
-		var tNames slice[string]
-		numT := word(0)
-
-		// Copy tokens until TokRBrace
-		for EvalPos < NumTokens && TokKinds[EvalPos] != TokRBrace {
-			tKinds.Append(TokKinds[EvalPos])
-			tVals.Append(TokVals[EvalPos])
-			tNames.Append(TokNames[EvalPos])
-			numT++
-			EvalPos++
-		}
-		if EvalPos >= NumTokens || TokKinds[EvalPos] != TokRBrace {
-			panic("missing }")
-		}
-		EvalPos++ // skip }
-
-		u := (*UserFunction)(zalloc(sizeof[UserFunction]()))
-		u.LhsName = lhsName
-		u.RhsName = rhsName
-		u.Locals = locals
-		u.NumTokens = numT
-		u.TokKinds = tKinds
-		u.TokVals = tVals
-		u.TokNames = tNames
-
-		if isDyadic != 0 {
-			UserDyadicOps.Insert(name, u)
-		} else {
-			UserMonadicOps.Insert(name, u)
-		}
-		WasAssign = 1 // to prevent printing
-		return (*Thing)(0)
 	}
 
-	// Monadic function application
-	if kind == TokFunc {
-		name := TokNames[EvalPos]
-		EvalPos++
-		right := Eval()
-		if word(right) == 0 {
-			panic("nil argument to monadic")
-		}
-
-		u, uok := UserMonadicOps.Lookup(name)
-		if uok != 0 {
-			return EvalUser(u, (*Thing)(0), right)
-		}
-
-		fw, ok := MonadicOps.Lookup(name)
-		if ok == 0 {
-			panic("unknown monadic function")
-		}
-		fn := MonadicFn(fw)
-		return fn(right)
+	if EvalPos >= NumTokens || TokKinds[EvalPos] != TokLBrace {
+		panic("expected {")
 	}
+	EvalPos++
 
-	// Primary value: number strand or variable
+	var tKinds slice[byte]
+	var tVals slice[word]
+	var tNames slice[string]
+	numT := word(0)
+
+	// Copy tokens until TokRBrace
+	for EvalPos < NumTokens && TokKinds[EvalPos] != TokRBrace {
+		tKinds.Append(TokKinds[EvalPos])
+		tVals.Append(TokVals[EvalPos])
+		tNames.Append(TokNames[EvalPos])
+		numT++
+		EvalPos++
+	}
+	if EvalPos >= NumTokens || TokKinds[EvalPos] != TokRBrace {
+		panic("missing }")
+	}
+	EvalPos++ // skip }
+
+	u := (*UserFunction)(zalloc(sizeof[UserFunction]()))
+	u.LhsName = lhsName
+	u.RhsName = rhsName
+	u.Locals = locals
+	u.NumTokens = numT
+	u.TokKinds = tKinds
+	u.TokVals = tVals
+	u.TokNames = tNames
+
+	if isDyadic != 0 {
+		UserDyadicOps.Insert(name, u)
+	} else {
+		UserMonadicOps.Insert(name, u)
+	}
+	WasAssign = 1 // to prevent printing
+	return (*Thing)(0)
+}
+
+func EvalPrimary(kind byte) *Thing {
 	var val *Thing
 
 	if kind == TokStrLit {
-		// yak
 		val = StrLitToThing()
 		EvalPos++
 	} else if kind == TokNum {
@@ -668,7 +659,7 @@ func Eval() *Thing {
 			panic("undefined variable")
 		}
 		if word(val) == 0 {
-			panic("undefined variable")
+			panic("undefined variable (val is 0)")
 		}
 	} else if kind == TokLParen {
 		EvalPos++ // skip '('
@@ -708,6 +699,45 @@ func Eval() *Thing {
 	} else {
 		panic("unexpected token")
 	}
+	return val
+}
+
+func Eval() *Thing {
+	if EvalPos >= NumTokens {
+		panic("unexpected end of expression")
+	}
+
+	kind := TokKinds[EvalPos]
+
+	// Function Definition
+	if kind == TokDel {
+		return DefineUserFunction()
+	}
+
+	// Monadic function application
+	if kind == TokFunc {
+		name := TokNames[EvalPos]
+		EvalPos++
+		right := Eval()
+		if word(right) == 0 {
+			panic("nil argument to monadic")
+		}
+
+		u, uok := UserMonadicOps.Lookup(name)
+		if uok != 0 {
+			return EvalUser(u, (*Thing)(0), right)
+		}
+
+		fw, ok := MonadicOps.Lookup(name)
+		if ok == 0 {
+			panic("unknown monadic function")
+		}
+		fn := MonadicFn(fw)
+		return fn(right)
+	}
+
+	// Primary value: number strand or variable
+	val := EvalPrimary(kind)
 
 	// Dyadic function: val func expr
 	if EvalPos < NumTokens && TokKinds[EvalPos] == TokFunc {
@@ -734,12 +764,10 @@ func Eval() *Thing {
 }
 
 func StrLitToThing() *Thing {
-	// yak
 	t := NewThing()
-	p := (*byte)(TokVals[EvalPos])
-	for *p {
-		t.Values.Append(IntToPtr(int(*p)))
-		p = (*byte)(word(p) + 1)
+	name := TokNames[EvalPos]
+	for i := word(0); i < name.Len; i++ {
+		t.Values.Append(IntToPtr(int(name[i])))
 	}
 	t.Dimensions.Append(t.Values.Len)
 	return t
@@ -824,35 +852,41 @@ func DoRhoDyadic(left *Thing, right *Thing) *Thing {
 	return t
 }
 
-func EvalUser(u *UserFunction, left *Thing, right *Thing) *Thing {
-	// Save context
-	oldNumTokens := NumTokens
-	oldEvalPos := EvalPos
-	var oldKinds [100]byte
-	var oldVals [100]word
-	var oldNames [100]string
+type UserContext struct {
+	OldNumTokens word
+	OldEvalPos   word
+	OldRhs       *Thing
+	RhsOk        byte
+	OldLhs       *Thing
+	LhsOk        byte
+	NumLocals    word
+	OldKinds     [100]byte
+	OldVals      [100]word
+	OldNames     [100]string
+	OldLocals    [20]*Thing
+	LocalOks     [20]byte
+}
+
+func saveUserContext(ctx *UserContext, u *UserFunction, left *Thing, right *Thing) {
+	ctx.OldNumTokens = NumTokens
+	ctx.OldEvalPos = EvalPos
 	for i := word(0); i < NumTokens; i++ {
-		oldKinds[i] = TokKinds[i]
-		oldVals[i] = TokVals[i]
-		oldNames[i] = TokNames[i]
+		ctx.OldKinds[i] = TokKinds[i]
+		ctx.OldVals[i] = TokVals[i]
+		ctx.OldNames[i] = TokNames[i]
 	}
-	oldRhs, rhsOk := Vars.Lookup(u.RhsName)
+	ctx.OldRhs, ctx.RhsOk = Vars.Lookup(u.RhsName)
 
-	var oldLhs *Thing
-	var lhsOk byte
 	if len(u.LhsName) > 0 {
-		oldLhs, lhsOk = Vars.Lookup(u.LhsName)
+		ctx.OldLhs, ctx.LhsOk = Vars.Lookup(u.LhsName)
 	}
 
-	var oldLocals [20]*Thing
-	var localOks [20]byte
-	numLocals := u.Locals.Len
-	for i := word(0); i < numLocals; i++ {
+	ctx.NumLocals = u.Locals.Len
+	for i := word(0); i < ctx.NumLocals; i++ {
 		locName := u.Locals.Get(i)
-		oldLocals[i], localOks[i] = Vars.Lookup(locName)
+		ctx.OldLocals[i], ctx.LocalOks[i] = Vars.Lookup(locName)
 	}
 
-	// Setup context
 	NumTokens = u.NumTokens
 	EvalPos = 0
 	for i := word(0); i < NumTokens; i++ {
@@ -864,44 +898,48 @@ func EvalUser(u *UserFunction, left *Thing, right *Thing) *Thing {
 	if len(u.LhsName) > 0 {
 		Vars.Insert(u.LhsName, left)
 	}
-	for i := word(0); i < numLocals; i++ {
+	for i := word(0); i < ctx.NumLocals; i++ {
 		locName := u.Locals.Get(i)
 		Vars.Insert(locName, (*Thing)(0))
 	}
+}
 
-	defer func() {
-		// Restore context
-		NumTokens = oldNumTokens
-		EvalPos = oldEvalPos
-		for i := word(0); i < NumTokens; i++ {
-			TokKinds[i] = oldKinds[i]
-			TokVals[i] = oldVals[i]
-			TokNames[i] = oldNames[i]
-		}
-		if rhsOk != 0 {
-			Vars.Insert(u.RhsName, oldRhs)
+func restoreUserContext(ctx *UserContext, u *UserFunction) {
+	NumTokens = ctx.OldNumTokens
+	EvalPos = ctx.OldEvalPos
+	for i := word(0); i < NumTokens; i++ {
+		TokKinds[i] = ctx.OldKinds[i]
+		TokVals[i] = ctx.OldVals[i]
+		TokNames[i] = ctx.OldNames[i]
+	}
+	if ctx.RhsOk != 0 {
+		Vars.Insert(u.RhsName, ctx.OldRhs)
+	} else {
+		Vars.Insert(u.RhsName, (*Thing)(0))
+	}
+	if len(u.LhsName) > 0 {
+		if ctx.LhsOk != 0 {
+			Vars.Insert(u.LhsName, ctx.OldLhs)
 		} else {
-			Vars.Insert(u.RhsName, (*Thing)(0))
+			Vars.Insert(u.LhsName, (*Thing)(0))
 		}
-		if len(u.LhsName) > 0 {
-			if lhsOk != 0 {
-				Vars.Insert(u.LhsName, oldLhs)
-			} else {
-				Vars.Insert(u.LhsName, (*Thing)(0))
-			}
+	}
+	for i := word(0); i < ctx.NumLocals; i++ {
+		locName := u.Locals.Get(i)
+		if ctx.LocalOks[i] != 0 {
+			Vars.Insert(locName, ctx.OldLocals[i])
+		} else {
+			Vars.Insert(locName, (*Thing)(0))
 		}
-		for i := word(0); i < numLocals; i++ {
-			locName := u.Locals.Get(i)
-			if localOks[i] != 0 {
-				Vars.Insert(locName, oldLocals[i])
-			} else {
-				Vars.Insert(locName, (*Thing)(0))
-			}
-		}
-	}()
+	}
+}
 
-	var res *Thing
-	res = EvalStatementsUntil(0, 0)
+func EvalUser(u *UserFunction, left *Thing, right *Thing) *Thing {
+	ctx := (*UserContext)(zalloc(sizeof[UserContext]()))
+	saveUserContext(ctx, u, left, right)
+	res := EvalStatementsUntil(0, 0)
+	restoreUserContext(ctx, u)
+	free((*byte)(ctx))
 	return res
 }
 
@@ -1095,13 +1133,18 @@ func DyadicReduce(left *Thing, right *Thing) *Thing {
 		for i := innerLen - 1; i > 0; i-- {
 			idx := i - 1
 			item := MakeScalar(PtrToInt(right.Values.Get(offset + idx)))
+			var newAcc *Thing
 			if ok != 0 {
-				acc = builtinFn(item, acc)
+				newAcc = builtinFn(item, acc)
 			} else {
-				acc = EvalUser(userFn, item, acc)
+				newAcc = EvalUser(userFn, item, acc)
 			}
+			FreeThing(item)
+			FreeThing(acc)
+			acc = newAcc
 		}
 		result.Values.Append(acc.Values.Get(0))
+		FreeThing(acc)
 	}
 	return result
 }
@@ -1159,7 +1202,10 @@ func DyadicTable(left *Thing, right *Thing) *Thing {
 				res = EvalUser(userFn, itemA, itemB)
 			}
 			result.Values.Append(res.Values.Get(0))
+			FreeThing(itemB)
+			FreeThing(res)
 		}
+		FreeThing(itemA)
 	}
 	return result
 }
@@ -1366,14 +1412,12 @@ func PrintThing(t *Thing) {
 
 // ===== Test Helper =====
 
-func TestEval(input *byte) *Thing {
-	// Copy null-terminated input into LineBuf for the tokenizer
+func TestEval(input string) *Thing {
+	// Copy input into LineBuf for the tokenizer
 	LineLen = 0
-	s := input
-	for *s != 0 {
-		LineBuf[LineLen] = *s
+	for i := range input.Len {
+		LineBuf[LineLen] = input[i]
 		LineLen++
-		s = (*byte)(word(s) + 1)
 	}
 	Tokenize()
 	EvalPos = 0

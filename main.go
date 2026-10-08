@@ -131,7 +131,7 @@ func topoSortModules(importEdges map[string][]string, initFuncsByModule map[stri
 	return result
 }
 
-func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch string) *ast.Program {
+func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch string, isEmbiggen bool) *ast.Program {
 	var program *ast.Program
 	imported := make(map[string]bool)
 
@@ -145,9 +145,21 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch st
 	mainDirname := filepath.Dir(mainSourceFile)
 	path := []string{mainDirname}
 	for _, d := range importDirPath {
+		if isEmbiggen && (d == "golflib" || strings.HasSuffix(d, "/golflib")) {
+			bigDir := filepath.Join(filepath.Dir(d), "biggolflib")
+			if fi, err := os.Stat(bigDir); err == nil && fi.IsDir() {
+				path = append(path, bigDir)
+			}
+		}
 		path = append(path, d)
 	}
-	for _, libDir := range []string{"par4-lib", "../par4-lib", "par3-lib", "../par3-lib", "golflib", "../golflib", "np-lib", "../np-lib"} {
+	var defaultLibDirs []string
+	if isEmbiggen {
+		defaultLibDirs = []string{"biggolflib", "../biggolflib", "golflib", "../golflib", "par4-lib", "../par4-lib", "par3-lib", "../par3-lib", "np-lib", "../np-lib"}
+	} else {
+		defaultLibDirs = []string{"par4-lib", "../par4-lib", "par3-lib", "../par3-lib", "golflib", "../golflib", "np-lib", "../np-lib"}
+	}
+	for _, libDir := range defaultLibDirs {
 		if fi, err := os.Stat(libDir); err == nil && fi.IsDir() {
 			path = append(path, libDir)
 		}
@@ -515,6 +527,19 @@ func main() {
 	}
 
 	archLower := strings.ToLower(*archFlag)
+	if strings.HasSuffix(archLower, "+") {
+		*embiggenFlag = true
+		archLower = strings.TrimSuffix(archLower, "+")
+		*archFlag = strings.TrimSuffix(*archFlag, "+")
+	}
+	if archLower == "9" {
+		archLower = "6809"
+		*archFlag = "6809"
+	}
+	if archLower == "big6809" {
+		*embiggenFlag = true
+	}
+
 	if archLower == "m6809" || archLower == "6809" || archLower == "m" || archLower == "big6809" ||
 		archLower == "m68k" || archLower == "68000" || archLower == "k" ||
 		archLower == "z80" || archLower == "z" ||
@@ -526,6 +551,11 @@ func main() {
 	if archLower == "1802" || archLower == "cdp1802" || archLower == "c" || archLower == "cosmac" {
 		if _, ok := golfDefines["prelude.HEAP_SIZE"]; !ok {
 			golfDefines["prelude.HEAP_SIZE"] = "2048"
+		}
+	}
+	if archLower == "big6809" || *embiggenFlag {
+		if _, ok := golfDefines["prelude.HEAP_SIZE"]; !ok {
+			golfDefines["prelude.HEAP_SIZE"] = "2500"
 		}
 	}
 
@@ -657,7 +687,7 @@ func main() {
 	// Compilation Pipeline
 	// =========================================================================
 	// 1 & 2. Parse all source files into a single flat namespace AST
-	program := ParseSourceFiles(mainSourceFile, importDirPath, *archFlag)
+	program := ParseSourceFiles(mainSourceFile, importDirPath, *archFlag, *embiggenFlag)
 
 	*archFlag = strings.ToUpper(*archFlag)
 
