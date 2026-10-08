@@ -236,13 +236,123 @@ __slice_get_byte:
     lda   ,x                ; Load byte directly
     rts
 
-; --- Basic Builtins ---
+; --- Basic Builtins and IO ---
 
+f_prelude__putchar:
+f_putchar:
+    ldb   3,s          ; character parameter from stack
 putchar:
 _putchar:
     clra
     fcb   $12,$21,132  ; Hyper PutChar
     rts
+
+getchar:
+_getchar:
+f_getchar:
+f_prelude__getchar:
+    fcb   $12,$21,133  ; Hyper GetChar
+    clra
+    rts
+
+_printf:
+    leax  2,s
+    fcb   $12,$21,111  ; Hyper Printf
+    rts
+
+; --- Core Arithmetic Helpers (Slot 6) ---
+
+__mul16:
+    pshs  d,x
+    lda   1,s
+    ldb   3,s
+    mul
+    tfr   d,x
+    lda   0,s
+    ldb   3,s
+    mul
+    tfr   b,a
+    clrb
+    leax  d,x
+    lda   1,s
+    ldb   2,s
+    mul
+    tfr   b,a
+    clrb
+    leax  d,x
+    tfr   x,d
+    leas  4,s
+    rts
+
+_div0_msg:
+    fdb   0, _div0_text, 16, 16
+_div0_text:
+    fcc   "division by zero"
+    fcb   0
+
+__divmod16:
+    cmpd  #0
+    beq   __div0_error
+    pshs  u,d
+    ldu   #16
+    clra
+    clrb
+.L_divloop:
+    exg   d,x
+    aslb
+    rola
+    exg   d,x
+    rolb
+    rola
+    cmpd  ,s
+    blo   .L_divnosub
+    subd  ,s
+    leax  1,x
+.L_divnosub:
+    leau  -1,u
+    cmpu  #0
+    bne   .L_divloop
+    leas  2,s
+    puls  u,pc
+
+__div0_error:
+    ldx   #_div0_msg
+    jsr   builtin_panic
+    rts
+
+__div16:
+    lbsr  __divmod16
+    tfr   x,d
+    rts
+
+__mod16:
+    lbsr  __divmod16
+    rts
+
+__shl16:
+    cmpx  #0
+    beq   .shl_done
+.shl_loop:
+    aslb
+    rola
+    leax  -1,x
+    cmpx  #0
+    bne   .shl_loop
+.shl_done:
+    rts
+
+__shr16:
+    cmpx  #0
+    beq   .shr_done
+.shr_loop:
+    lsra
+    rorb
+    leax  -1,x
+    cmpx  #0
+    bne   .shr_loop
+.shr_done:
+    rts
+
 
 ; Prints an 8-byte string slice:
 ;   Input: X = pointer to 8-byte slice descriptor

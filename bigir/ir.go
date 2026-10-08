@@ -165,6 +165,19 @@ type Compare struct {
 }
 func (c *Compare) Opcode() string { return c.Op }
 
+// --- SSA Phi Instruction ---
+
+type PhiEdge struct {
+	Block *BasicBlock
+	Value Value
+}
+
+type Phi struct {
+	BaseInstruction
+	Edges []PhiEdge
+}
+func (p *Phi) Opcode() string { return "phi" }
+
 // --- Memory Operations ---
 
 type NearLoad struct {

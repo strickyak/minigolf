@@ -14,6 +14,7 @@ type Builder struct {
 	WordSize  int
 	stringMap map[string]*Global
 	prog      *Program
+	irProg    *ir.Program
 }
 
 // NewBuilder creates a new BIGIR builder.
@@ -54,6 +55,7 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 		TypeDefs:  make(map[string]Type),
 	}
 	b.prog = prog
+	b.irProg = irProg
 	b.stringMap = make(map[string]*Global)
 
 	// 1. Translate Globals
@@ -184,6 +186,24 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 				}
 			}
 		}
+
+		// Populate edges of Phi instructions
+		for _, bb := range fn.Blocks {
+			for _, instr := range bb.Instructions {
+				if irPhi, ok := instr.(*ir.Phi); ok {
+					if bigPhi, ok := valueMap[irPhi].(*Phi); ok {
+						for _, edge := range irPhi.Edges {
+							predBlock := blockMap[edge.Block]
+							val := b.resolveVal(edge.Value, valueMap, globalMap)
+							bigPhi.Edges = append(bigPhi.Edges, PhiEdge{
+								Block: predBlock,
+								Value: val,
+							})
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// 4. Perform 8KB Block Packing
@@ -220,8 +240,47 @@ func (b *Builder) convertType(irt ir.Type) Type {
 	case "string":
 		return TypeFarString
 	default:
-		return Type{Kind: KindWord, Name: irt.Name, Size: 2}
+		return Type{Kind: KindWord, Name: irt.Name, Size: b.getTypeSize(irt)}
 	}
+}
+
+func (b *Builder) getTypeSize(irt ir.Type) int {
+	if irt.IsAPointer() {
+		return 2
+	}
+	if irt.IsASlice() || irt.Name == "string" {
+		return 8
+	}
+	if irt.IsAnArray() {
+		et := irt.ArrayElementType()
+		length := irt.ArrayLength()
+		return length * b.getTypeSize(et)
+	}
+	if irt.IsAStruct() {
+		fields := irt.FieldsOfStruct()
+		if len(fields) > 0 {
+			size := 0
+			for _, f := range fields {
+				size += b.getTypeSize(f.Type)
+			}
+			return size
+		}
+	}
+	switch irt.Name {
+	case "void", "byte", "bool":
+		return 1
+	case "word", "int", "const_integer", "uint", "noreturn":
+		return 2
+	}
+	if irt.IsAFuncPtr() || irt.Name == "func" {
+		return 2
+	}
+	if b.irProg != nil && b.irProg.TypeDefs != nil {
+		if def, ok := b.irProg.TypeDefs[irt.Name]; ok {
+			return b.getTypeSize(def)
+		}
+	}
+	return 2
 }
 
 func (b *Builder) convertInstruction(
@@ -242,6 +301,13 @@ func (b *Builder) convertInstruction(
 		return &ConstWord{
 			BaseInstruction: BaseInstruction{Typ: TypeWord},
 			Val:             i.Val,
+		}
+
+	case *ir.Sizeof:
+		sz := b.getTypeSize(i.TargetTyp)
+		return &ConstWord{
+			BaseInstruction: BaseInstruction{Typ: TypeWord},
+			Val:             uint64(sz),
 		}
 
 	case *ir.BinaryOp:
@@ -270,6 +336,12 @@ func (b *Builder) convertInstruction(
 			Op:              i.Op,
 			Left:            left,
 			Right:           right,
+		}
+
+	case *ir.Phi:
+		return &Phi{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
+			Edges:           make([]PhiEdge, 0, len(i.Edges)),
 		}
 
 	case *ir.Load:
@@ -452,10 +524,14 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 	}
 	switch val := v.(type) {
 	case *ir.Phi:
-		if len(val.Edges) > 0 {
-			return b.resolveVal(val.Edges[0].Value, valueMap, globalMap)
+		phi := &Phi{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Typ)},
+			Edges:           make([]PhiEdge, 0, len(val.Edges)),
 		}
-		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0}
+		phi.SetID(val.GetID())
+		phi.SetComment(val.GetComment())
+		valueMap[val] = phi
+		return phi
 	case *ir.Cast:
 		return b.resolveVal(val.Operand, valueMap, globalMap)
 	case *ir.AddressOfElement:
@@ -479,6 +555,9 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 		return &ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: val.Val}
 	case *ir.ConstWord:
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: val.Val}
+	case *ir.Sizeof:
+		sz := b.getTypeSize(val.TargetTyp)
+		return &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(sz)}
 	case *ir.Global:
 		if globalMap != nil {
 			if bg, ok := globalMap[val]; ok {

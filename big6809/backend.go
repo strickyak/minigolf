@@ -27,16 +27,22 @@ func MangleName(s string) string {
 }
 
 // Backend generates Motorola 6809 assembly code from BIGIR for EMBIGGEN mode.
-type Backend struct{}
+type Backend struct {
+	fmtCount   int
+	fmtStrings map[string]string
+}
 
 // New creates a new EMBIGGEN 6809 backend.
 func New() *Backend {
-	return &Backend{}
+	return &Backend{
+		fmtStrings: make(map[string]string),
+	}
 }
 
 // Generate transforms a BIGIR Program into valid 6809 assembly.
 func (b *Backend) Generate(prog *bigir.Program) (string, error) {
 	var buf bytes.Buffer
+	var codeBuf bytes.Buffer
 
 	// 1. Emit CStart and Core Runtime in Slot 6
 	buf.WriteString(CStartTemplate)
@@ -106,23 +112,39 @@ func (b *Backend) Generate(prog *bigir.Program) (string, error) {
 		}
 	}
 
-	// 4. Emit Far Code Blocks (Staged Data for Blocks 8..127)
-	buf.WriteString("; ==============================================================================\n")
-	buf.WriteString("; Staged Far Code Blocks (Packed into 8KB physical blocks)\n")
-	buf.WriteString("; ==============================================================================\n\n")
+	// 4. Emit Far Code Blocks (Staged Data for Blocks 8..127) into codeBuf
+	codeBuf.WriteString("; ==============================================================================\n")
+	codeBuf.WriteString("; Staged Far Code Blocks (Packed into 8KB physical blocks)\n")
+	codeBuf.WriteString("; ==============================================================================\n\n")
 
 	for _, blk := range blockIDs {
-		buf.WriteString(fmt.Sprintf("; --- Physical Block %d Data ---\n", blk))
-		buf.WriteString(fmt.Sprintf("_block_%d_data:\n", blk))
+		codeBuf.WriteString(fmt.Sprintf("; --- Physical Block %d Data ---\n", blk))
+		codeBuf.WriteString(fmt.Sprintf("_block_%d_data:\n", blk))
 
 		funcs := prog.FarBlocks[blk]
 		for _, fn := range funcs {
-			b.emitFunction(&buf, fn, stringDescs)
+			b.emitFunction(&codeBuf, fn, stringDescs)
 		}
 
-		buf.WriteString(fmt.Sprintf("_block_%d_end:\n", blk))
-		buf.WriteString(fmt.Sprintf("_block_%d_size equ _block_%d_end - _block_%d_data\n\n", blk, blk, blk))
+		codeBuf.WriteString(fmt.Sprintf("_block_%d_end:\n", blk))
+		codeBuf.WriteString(fmt.Sprintf("_block_%d_size equ _block_%d_end - _block_%d_data\n\n", blk, blk, blk))
 	}
+
+	// Emit format strings collected during function emission
+	if len(b.fmtStrings) > 0 {
+		var fmtKeys []string
+		for k := range b.fmtStrings {
+			fmtKeys = append(fmtKeys, k)
+		}
+		sort.Strings(fmtKeys)
+		for _, k := range fmtKeys {
+			buf.WriteString(fmt.Sprintf("%s:\n    .asciz %q\n", k, b.fmtStrings[k]))
+		}
+		buf.WriteString("\n")
+	}
+
+	// Append Far Code Blocks to main buffer
+	buf.Write(codeBuf.Bytes())
 
 	// 5. Emit Unpack Loop in Slot 6 (after sizes are known)
 	buf.WriteString("; --- Unpack Far Blocks into Physical Blocks 8..127 ---\n")
@@ -194,6 +216,18 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 	buf.WriteString("    tfr   s,u\n")
 	buf.WriteString(fmt.Sprintf("    leas  -%d,s            ; Allocate local stack frame\n", frameSize))
 
+	// Special handling for intrinsic magic functions without an AST body:
+	if fn.Name == "prelude.mul_byte" {
+		buf.WriteString("    lda   5,u               ; param a (low byte)\n")
+		buf.WriteString("    ldb   7,u               ; param b (low byte)\n")
+		buf.WriteString("    mul                     ; D = A * B (16-bit word)\n")
+		buf.WriteString(fmt.Sprintf(".L_%s_epilogue:\n", mName))
+		buf.WriteString("    leas  ,u\n")
+		buf.WriteString("    puls  u\n")
+		buf.WriteString("    rts\n\n")
+		return
+	}
+
 	// Emit Basic Blocks
 	for _, bb := range fn.Blocks {
 		buf.WriteString(fmt.Sprintf(".L_%s_bb%d:\n", mName, bb.ID))
@@ -203,7 +237,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 		}
 
 		if bb.Terminator != nil {
-			b.emitTerminator(buf, fn, bb.Terminator, paramOffsets, localOffsets, stringDescs)
+			b.emitTerminator(buf, fn, bb, bb.Terminator, paramOffsets, localOffsets, stringDescs)
 		}
 	}
 
@@ -233,10 +267,25 @@ func (b *Backend) emitInstruction(
 			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
 		}
 
+	case *bigir.Phi:
+		// Target stack slot is already assigned at edge transition; no-op inside block.
+
+	case *bigir.UnaryOp:
+		b.loadValToD(buf, i.Operand, paramOffsets, localOffsets, stringDescs)
+		switch i.Op {
+		case "neg":
+			buf.WriteString("    coma\n    comb\n    addd  #1\n")
+		case "not":
+			buf.WriteString("    coma\n    comb\n")
+		}
+		if slot, ok := localOffsets[i.GetID()]; ok {
+			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
+		}
+
 	case *bigir.BinaryOp:
-		b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
 		switch i.Op {
 		case "add":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
 			switch r := i.Right.(type) {
 			case *bigir.ConstWord:
 				buf.WriteString(fmt.Sprintf("    addd  #%d\n", r.Val))
@@ -248,6 +297,7 @@ func (b *Backend) emitInstruction(
 				buf.WriteString("    addd  ,s++\n")
 			}
 		case "sub":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
 			switch r := i.Right.(type) {
 			case *bigir.ConstWord:
 				buf.WriteString(fmt.Sprintf("    subd  #%d\n", r.Val))
@@ -261,6 +311,97 @@ func (b *Backend) emitInstruction(
 				buf.WriteString("    subd  ,s\n")  // D = Left - Right
 				buf.WriteString("    leas  4,s\n")
 			}
+		case "mul":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    pshs  d\n")
+			b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    tfr   d,x\n")
+			buf.WriteString("    puls  d\n")
+			buf.WriteString("    jsr   __mul16\n")
+		case "div":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    pshs  d\n")
+			b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    puls  x\n")
+			buf.WriteString("    jsr   __div16\n")
+		case "mod":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    pshs  d\n")
+			b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    puls  x\n")
+			buf.WriteString("    jsr   __mod16\n")
+		case "and":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			switch r := i.Right.(type) {
+			case *bigir.ConstWord:
+				buf.WriteString(fmt.Sprintf("    anda  #%d\n    andb  #%d\n", (r.Val>>8)&0xFF, r.Val&0xFF))
+			case *bigir.ConstByte:
+				buf.WriteString(fmt.Sprintf("    anda  #0\n    andb  #%d\n", r.Val&0xFF))
+			default:
+				buf.WriteString("    pshs  d\n")
+				b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    anda  0,s\n    andb  1,s\n    leas  2,s\n")
+			}
+		case "or":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			switch r := i.Right.(type) {
+			case *bigir.ConstWord:
+				buf.WriteString(fmt.Sprintf("    ora   #%d\n    orb   #%d\n", (r.Val>>8)&0xFF, r.Val&0xFF))
+			case *bigir.ConstByte:
+				buf.WriteString(fmt.Sprintf("    orb   #%d\n", r.Val&0xFF))
+			default:
+				buf.WriteString("    pshs  d\n")
+				b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    ora   0,s\n    orb   1,s\n    leas  2,s\n")
+			}
+		case "xor":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			switch r := i.Right.(type) {
+			case *bigir.ConstWord:
+				buf.WriteString(fmt.Sprintf("    eora  #%d\n    eorb  #%d\n", (r.Val>>8)&0xFF, r.Val&0xFF))
+			case *bigir.ConstByte:
+				buf.WriteString(fmt.Sprintf("    eorb  #%d\n", r.Val&0xFF))
+			default:
+				buf.WriteString("    pshs  d\n")
+				b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    eora  0,s\n    eorb  1,s\n    leas  2,s\n")
+			}
+		case "shl":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			switch r := i.Right.(type) {
+			case *bigir.ConstWord:
+				for k := uint64(0); k < r.Val; k++ {
+					buf.WriteString("    aslb\n    rola\n")
+				}
+			case *bigir.ConstByte:
+				for k := uint8(0); k < r.Val; k++ {
+					buf.WriteString("    aslb\n    rola\n")
+				}
+			default:
+				buf.WriteString("    pshs  d\n")
+				b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    tfr   d,x\n")
+				buf.WriteString("    puls  d\n")
+				buf.WriteString("    jsr   __shl16\n")
+			}
+		case "shr":
+			b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+			switch r := i.Right.(type) {
+			case *bigir.ConstWord:
+				for k := uint64(0); k < r.Val; k++ {
+					buf.WriteString("    lsra\n    rorb\n")
+				}
+			case *bigir.ConstByte:
+				for k := uint8(0); k < r.Val; k++ {
+					buf.WriteString("    lsra\n    rorb\n")
+				}
+			default:
+				buf.WriteString("    pshs  d\n")
+				b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    tfr   d,x\n")
+				buf.WriteString("    puls  d\n")
+				buf.WriteString("    jsr   __shr16\n")
+			}
 		}
 		if slot, ok := localOffsets[i.GetID()]; ok {
 			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
@@ -273,32 +414,50 @@ func (b *Backend) emitInstruction(
 		b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
 		switch r := i.Right.(type) {
 		case *bigir.ConstWord:
-			buf.WriteString(fmt.Sprintf("    subd  #%d\n", r.Val))
+			buf.WriteString(fmt.Sprintf("    cmpd  #%d\n", r.Val))
 		case *bigir.ConstByte:
-			buf.WriteString(fmt.Sprintf("    subd  #%d\n", r.Val))
+			buf.WriteString(fmt.Sprintf("    cmpd  #%d\n", r.Val))
 		default:
 			buf.WriteString("    pshs  d\n")
 			b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
 			buf.WriteString("    pshs  d\n")
 			buf.WriteString("    ldd   2,s\n")
-			buf.WriteString("    subd  ,s\n")
+			buf.WriteString("    cmpd  ,s\n")
 			buf.WriteString("    leas  4,s\n")
 		}
-		lblTrue := fmt.Sprintf(".Lcmp_true_%d", i.GetID())
-		lblEnd := fmt.Sprintf(".Lcmp_end_%d", i.GetID())
+		mName := MangleName(fn.Name)
+		lblTrue := fmt.Sprintf(".L_%s_cmp_true_%d", mName, i.GetID())
+		lblEnd := fmt.Sprintf(".L_%s_cmp_end_%d", mName, i.GetID())
+		isInt := i.Left.Type().Kind == bigir.KindInt
 		switch i.Op {
 		case "eq":
 			buf.WriteString(fmt.Sprintf("    beq   %s\n", lblTrue))
 		case "neq":
 			buf.WriteString(fmt.Sprintf("    bne   %s\n", lblTrue))
 		case "lt":
-			buf.WriteString(fmt.Sprintf("    blt   %s\n", lblTrue))
+			if isInt {
+				buf.WriteString(fmt.Sprintf("    blt   %s\n", lblTrue))
+			} else {
+				buf.WriteString(fmt.Sprintf("    blo   %s\n", lblTrue))
+			}
 		case "lte":
-			buf.WriteString(fmt.Sprintf("    ble   %s\n", lblTrue))
+			if isInt {
+				buf.WriteString(fmt.Sprintf("    ble   %s\n", lblTrue))
+			} else {
+				buf.WriteString(fmt.Sprintf("    bls   %s\n", lblTrue))
+			}
 		case "gt":
-			buf.WriteString(fmt.Sprintf("    bgt   %s\n", lblTrue))
+			if isInt {
+				buf.WriteString(fmt.Sprintf("    bgt   %s\n", lblTrue))
+			} else {
+				buf.WriteString(fmt.Sprintf("    bhi   %s\n", lblTrue))
+			}
 		case "gte":
-			buf.WriteString(fmt.Sprintf("    bge   %s\n", lblTrue))
+			if isInt {
+				buf.WriteString(fmt.Sprintf("    bge   %s\n", lblTrue))
+			} else {
+				buf.WriteString(fmt.Sprintf("    bhs   %s\n", lblTrue))
+			}
 		default:
 			buf.WriteString(fmt.Sprintf("    beq   %s\n", lblTrue))
 		}
@@ -340,14 +499,18 @@ func (b *Backend) emitInstruction(
 		}
 
 		if strings.HasPrefix(callee, "builtin_") {
-			if strings.HasPrefix(callee, "builtin_print") || callee == "builtin_panic" {
+			if callee == "builtin_println" || callee == "builtin_print" {
+				b.emitPrint(buf, callee == "builtin_println", args, paramOffsets, localOffsets, stringDescs)
+			} else if callee == "builtin_panic" {
 				if len(args) > 0 {
 					b.loadSliceDescToReg(buf, args[0], "x", stringDescs)
 				} else {
 					buf.WriteString("    ldx   #0\n")
 				}
+				buf.WriteString("    jsr   builtin_panic\n")
+			} else {
+				buf.WriteString(fmt.Sprintf("    jsr   %s\n", callee))
 			}
-			buf.WriteString(fmt.Sprintf("    jsr   %s\n", callee))
 		} else if callee == "prelude.streq" || callee == "streq" {
 			if len(args) >= 2 {
 				b.loadSliceDescToReg(buf, args[0], "x", stringDescs)
@@ -469,9 +632,140 @@ func (b *Backend) loadSliceDescToReg(buf *bytes.Buffer, arg bigir.Value, reg str
 	buf.WriteString(fmt.Sprintf("    ld%s   #0\n", reg))
 }
 
+func (b *Backend) emitPrint(
+	buf *bytes.Buffer,
+	newline bool,
+	args []bigir.Value,
+	paramOffsets, localOffsets map[int]int,
+	stringDescs map[string]string,
+) {
+	b.fmtCount++
+	fmtLabel := fmt.Sprintf(".Lfmt_%d", b.fmtCount)
+
+	var formatStrs []string
+	for _, arg := range args {
+		if arg == nil {
+			formatStrs = append(formatStrs, "%d")
+			continue
+		}
+		typ := arg.Type()
+		if typ.Kind == bigir.KindFarString || strings.Contains(typ.Name, "string") {
+			formatStrs = append(formatStrs, "%s")
+		} else if typ.Kind == bigir.KindInt {
+			formatStrs = append(formatStrs, "%d")
+		} else {
+			formatStrs = append(formatStrs, "%u")
+		}
+	}
+	format := strings.Join(formatStrs, " ")
+	if newline {
+		format += "\n"
+	}
+	b.fmtStrings[fmtLabel] = format
+
+	// Push arguments in reverse order (right to left)
+	for i := len(args) - 1; i >= 0; i-- {
+		arg := args[i]
+		if sm, ok := arg.(*bigir.SliceMake); ok {
+			if ag, ok := sm.Offset.(*bigir.AddressOfGlobal); ok && ag.Global != nil && ag.Global.InitString != "" {
+				if desc, ok := stringDescs[ag.Global.InitString]; ok {
+					dataLbl := strings.Replace(desc, "_desc_", "_data_", 1)
+					buf.WriteString(fmt.Sprintf("    ldd   #%s\n", dataLbl))
+				} else {
+					b.loadValToD(buf, sm.Offset, paramOffsets, localOffsets, stringDescs)
+				}
+			} else if g, ok := sm.Offset.(*bigir.Global); ok && g.InitString != "" {
+				if desc, ok := stringDescs[g.InitString]; ok {
+					dataLbl := strings.Replace(desc, "_desc_", "_data_", 1)
+					buf.WriteString(fmt.Sprintf("    ldd   #%s\n", dataLbl))
+				} else {
+					b.loadValToD(buf, sm.Offset, paramOffsets, localOffsets, stringDescs)
+				}
+			} else {
+				b.loadValToD(buf, sm.Offset, paramOffsets, localOffsets, stringDescs)
+			}
+		} else if ag, ok := arg.(*bigir.AddressOfGlobal); ok && ag.Global != nil && ag.Global.InitString != "" {
+			if desc, ok := stringDescs[ag.Global.InitString]; ok {
+				dataLbl := strings.Replace(desc, "_desc_", "_data_", 1)
+				buf.WriteString(fmt.Sprintf("    ldd   #%s\n", dataLbl))
+			} else {
+				b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
+			}
+		} else if g, ok := arg.(*bigir.Global); ok && g.InitString != "" {
+			if desc, ok := stringDescs[g.InitString]; ok {
+				dataLbl := strings.Replace(desc, "_desc_", "_data_", 1)
+				buf.WriteString(fmt.Sprintf("    ldd   #%s\n", dataLbl))
+			} else {
+				b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
+			}
+		} else if arg.Type().Kind == bigir.KindFarString {
+			b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
+			// If it's a dynamic string slice loaded into D, offset is at 2,d
+			buf.WriteString("    tfr   d,x\n")
+			buf.WriteString("    ldd   2,x\n")
+		} else {
+			b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
+		}
+		buf.WriteString("    pshs  d\n")
+	}
+
+	buf.WriteString(fmt.Sprintf("    ldx   #%s\n", fmtLabel))
+	buf.WriteString("    pshs  x\n")
+	buf.WriteString("    jsr   _printf\n")
+	cleanup := 2 + len(args)*2
+	buf.WriteString(fmt.Sprintf("    leas  %d,s             ; clean up printf args\n", cleanup))
+}
+
+func (b *Backend) emitPhiAssignments(
+	buf *bytes.Buffer,
+	from, to *bigir.BasicBlock,
+	paramOffsets, localOffsets map[int]int,
+	stringDescs map[string]string,
+) {
+	if to == nil {
+		return
+	}
+	type pendingPhi struct {
+		val  bigir.Value
+		slot int
+	}
+	var pending []pendingPhi
+	for _, instr := range to.Instructions {
+		if phi, ok := instr.(*bigir.Phi); ok {
+			for _, edge := range phi.Edges {
+				if edge.Block == from {
+					if slot, exists := localOffsets[phi.GetID()]; exists {
+						pending = append(pending, pendingPhi{
+							val:  edge.Value,
+							slot: slot,
+						})
+					}
+					break
+				}
+			}
+		}
+	}
+	if len(pending) == 0 {
+		return
+	}
+
+	// 1. Evaluate and push all incoming phi values
+	for _, p := range pending {
+		b.loadValToD(buf, p.val, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    pshs  d\n")
+	}
+
+	// 2. Pop in reverse order into the respective phi stack slots
+	for idx := len(pending) - 1; idx >= 0; idx-- {
+		buf.WriteString("    puls  d\n")
+		buf.WriteString(fmt.Sprintf("    std   -%d,u             ; phi assign\n", pending[idx].slot))
+	}
+}
+
 func (b *Backend) emitTerminator(
 	buf *bytes.Buffer,
 	fn *bigir.Function,
+	bb *bigir.BasicBlock,
 	term bigir.Terminator,
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
@@ -489,11 +783,20 @@ func (b *Backend) emitTerminator(
 		}
 		buf.WriteString(fmt.Sprintf("    bra   .L_%s_epilogue\n", mName))
 	case *bigir.Branch:
+		b.emitPhiAssignments(buf, bb, t.Target, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString(fmt.Sprintf("    lbra  .L_%s_bb%d\n", mName, t.Target.ID))
 	case *bigir.CondBranch:
 		b.loadValToD(buf, t.Cond, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString("    cmpd  #0\n")
-		buf.WriteString(fmt.Sprintf("    lbne  .L_%s_bb%d\n", mName, t.TrueTarget.ID))
+		lblTrue := fmt.Sprintf(".L_%s_cbr_true_%d", mName, t.GetID())
+		buf.WriteString(fmt.Sprintf("    lbne  %s\n", lblTrue))
+		// False target
+		b.emitPhiAssignments(buf, bb, t.FalseTarget, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString(fmt.Sprintf("    lbra  .L_%s_bb%d\n", mName, t.FalseTarget.ID))
+		// True target
+		buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
+		b.emitPhiAssignments(buf, bb, t.TrueTarget, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString(fmt.Sprintf("    lbra  .L_%s_bb%d\n", mName, t.TrueTarget.ID))
 	}
 }
+

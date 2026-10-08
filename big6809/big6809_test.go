@@ -34,6 +34,7 @@ func runEmbiggenTest(t *testing.T, golfRelPath, wantRelPath string) {
 		"-o="+asmPath,
 		"-I="+filepath.Join("..", "golflib"),
 		"-I="+filepath.Join("..", "tests"),
+		"-I="+filepath.Join("..", "demos"),
 		golfFile,
 	)
 	if out, err := cmdCompile.CombinedOutput(); err != nil {
@@ -76,3 +77,13 @@ func TestEMBIGGEN_TestDefines(t *testing.T) {
 func TestEMBIGGEN_TestFarFunc(t *testing.T) {
 	runEmbiggenTest(t, filepath.Join("tests", "test_far_func.golf"), filepath.Join("tests", "test_far_func.want"))
 }
+
+func TestEMBIGGEN_TestFor3(t *testing.T) {
+	runEmbiggenTest(t, filepath.Join("tests", "test_for3.golf"), filepath.Join("tests", "test_for3.want"))
+}
+
+func TestEMBIGGEN_TestArithmetic(t *testing.T) {
+	runEmbiggenTest(t, filepath.Join("tests", "test_arithmetic.golf"), filepath.Join("tests", "test_arithmetic.want"))
+}
+
+

@@ -3,6 +3,7 @@ package bigir
 import (
 	"bytes"
 	"fmt"
+	"strings"
 )
 
 // PrintProgram formats a BIGIR Program into human-readable text.
@@ -93,6 +94,12 @@ func formatInstruction(i Instruction) string {
 		return fmt.Sprintf("%s %s", instr.Op, instr.Operand.String())
 	case *Compare:
 		return fmt.Sprintf("cmp_%s %s, %s", instr.Op, instr.Left.String(), instr.Right.String())
+	case *Phi:
+		var edges []string
+		for _, e := range instr.Edges {
+			edges = append(edges, fmt.Sprintf("[%s from %s]", e.Value.String(), e.Block.String()))
+		}
+		return fmt.Sprintf("phi %s", strings.Join(edges, ", "))
 	case *NearLoad:
 		return fmt.Sprintf("near_load [%s]", instr.Addr.String())
 	case *NearStore:
