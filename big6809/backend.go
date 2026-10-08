@@ -950,6 +950,21 @@ func (b *Backend) emitInstruction(
 					buf.WriteString(fmt.Sprintf("    std   -%d,u             ; store return value v%d\n", slot, instr.GetID()))
 				}
 			}
+		} else if callee == "prelude.MapWindow0" || callee == "MapWindow0" {
+			if len(args) > 0 {
+				b.loadValToD(buf, args[0], paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    stb   $FF42\n")
+			}
+		} else if callee == "prelude.MapWindow1" || callee == "MapWindow1" {
+			if len(args) > 0 {
+				b.loadValToD(buf, args[0], paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    stb   $FF43\n")
+			}
+		} else if callee == "prelude.MapWindow2" || callee == "MapWindow2" {
+			if len(args) > 0 {
+				b.loadValToD(buf, args[0], paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    stb   $FF44\n")
+			}
 		} else {
 			retSize := instr.Type().Size
 

@@ -11,10 +11,6 @@ const CStartTemplate = `
 	pragma cescapes
 
 ; --- Slot 0 Direct Page Allocations ($0000..$00FF) ---
-active_win_0    equ $0002   ; Block ID mapped in Slot 2 ($FF42)
-active_win_1    equ $0003   ; Block ID mapped in Slot 3 ($FF43)
-active_win_2    equ $0004   ; Block ID mapped in Slot 4 ($FF44)
-next_win_slot   equ $0005   ; Round-robin eviction pointer (0, 1, or 2)
 active_code_blk equ $0006   ; Current block mapped in Slot 5 ($FF45)
 far_ret_sp      equ $0008   ; 16-bit pointer to Far Return Stack frame
 far_ret_tmp     equ $000A   ; 16-bit scratch in Direct Page for far return PC
@@ -60,14 +56,6 @@ cstart_embiggen:
     lda   #7
     sta   $FF47
 
-    ; 4. Initialize Far Data Window Manager Cache in Direct Page
-    lda   #2
-    sta   <active_win_0
-    lda   #3
-    sta   <active_win_1
-    lda   #4
-    sta   <active_win_2
-    clr   <next_win_slot
     lda   #8
     sta   <active_code_blk
 
@@ -140,59 +128,6 @@ __far_return_trampoline:
     puls  d                     ; Restore return value D
     jmp   [far_ret_tmp]         ; Indirect jump to caller in Slot 5!
 
-; --- Far Data 3-Window Round-Robin Manager (Slot 6) ---
-; Input: B = Target Far Data Block ID (128..255)
-; Output: X = Virtual Base Address of mapped window ($4000, $6000, or $8000)
-__far_resolve_window:
-    cmpb  <active_win_0
-    beq   .win0
-    cmpb  <active_win_1
-    beq   .win1
-    cmpb  <active_win_2
-    beq   .win2
-
-    ; Cache Miss: Evict slot indicated by next_win_slot
-    lda   <next_win_slot
-    cmpa  #1
-    beq   .evict1
-    cmpa  #2
-    beq   .evict2
-
-.evict0:
-    stb   <active_win_0
-    stb   $FF42
-    lda   #1
-    sta   <next_win_slot
-    ldx   #$4000
-    rts
-
-.evict1:
-    stb   <active_win_1
-    stb   $FF43
-    lda   #2
-    sta   <next_win_slot
-    ldx   #$6000
-    rts
-
-.evict2:
-    stb   <active_win_2
-    stb   $FF44
-    clr   <next_win_slot
-    ldx   #$8000
-    rts
-
-.win0:
-    ldx   #$4000
-    rts
-
-.win1:
-    ldx   #$6000
-    rts
-
-.win2:
-    ldx   #$8000
-    rts
-
 ; --- 8-Byte Slice Helpers ---
 ; Slice descriptor on stack:
 ;   far_ref (2B), offset (2B), length (2B), capacity (2B)
@@ -205,15 +140,12 @@ __slice_get_byte:
     beq   .near_get_byte    ; If far_ref == 0: Near / Fixed RAM fast path
 
     ; Far Data Path:
-    ; far_ref (word) has block_id in B (128..255)
-    pshs  x,y
-    bsr   __far_resolve_window ; X = Window base ($4000, $6000, $8000)
-    puls  y                 ; Y = original slice pointer (was X)
-    ldd   2,y               ; D = slice.offset
-    leax  d,x               ; Add slice offset to window base
-    puls  y                 ; Y = element index (was Y)
-    tfr   y,d
-    leax  d,x               ; Add index
+    ; Map slice.far_ref into Slot 2 ($4000) directly (4 cycles!)
+    stb   $FF42             ; Map block into Slot 2 ($4000..$5FFF)
+    ldd   2,x               ; D = slice.offset
+    addd  #$4000            ; Add Slot 2 window base
+    tfr   y,x               ; X = index
+    leax  d,x               ; X = $4000 + slice.offset + index
     lda   ,x                ; Load byte
     rts
 
@@ -356,16 +288,19 @@ builtin_print_string:
     tfr   x,u               ; U = pointer to 8-byte slice
     ldd   4,u               ; D = length
     beq   .print_done
-    ldy   #0                ; Y = index (0)
+    tfr   d,y               ; Y = remaining count
+    ldd   ,u                ; D = far_ref
+    beq   .near_print
+    stb   $FF42             ; Map block into Slot 2 ($4000)
+    ldx   2,u               ; X = slice.offset
+    leax  $4000,x           ; X = $4000 + slice.offset
+    bra   .print_loop
+.near_print:
+    ldx   2,u               ; X = slice.offset (direct RAM)
 .print_loop:
-    pshs  y
-    tfr   u,x
-    bsr   __slice_get_byte  ; A = byte
-    puls  y
-    tfr   a,b
+    ldb   ,x+
     jsr   putchar
-    leay  1,y
-    cmpy  4,u               ; Compare with length
+    leay  -1,y
     bne   .print_loop
 .print_done:
     puls  u,y
@@ -409,26 +344,38 @@ __far_streq:
     ldd   4,x               ; D = len(A)
     beq   .streq_true       ; if both len == 0, equal
 
-    ; 2. Iterate index 0 .. len-1
     pshs  u
-    ldu   #0                ; U = current index (0)
+    tfr   d,u               ; U = remaining byte count
+
+    ; Resolve pointer A -> Slot 2 if Far, direct if Near
+    ldd   ,x                ; D = far_ref(A)
+    beq   .streq_near_a
+    stb   $FF42             ; Map block into Slot 2 ($4000)
+    ldd   2,x               ; D = offset(A)
+    addd  #$4000
+    tfr   d,x
+    bra   .streq_prep_b
+.streq_near_a:
+    ldx   2,x               ; X = offset(A) (direct RAM)
+
+.streq_prep_b:
+    ; Resolve pointer B -> Slot 3 if Far, direct if Near
+    ldd   ,y                ; D = far_ref(B)
+    beq   .streq_near_b
+    stb   $FF43             ; Map block into Slot 3 ($6000)
+    ldd   2,y               ; D = offset(B)
+    addd  #$6000
+    tfr   d,y
+    bra   .streq_loop
+.streq_near_b:
+    ldy   2,y               ; Y = offset(B) (direct RAM)
+
 .streq_loop:
-    pshs  x,y
-    tfr   u,y               ; Y = index
-    bsr   __slice_get_byte  ; A = byte from slice A
-    puls  x,y
-    pshs  a                 ; Save byte from A
-
-    pshs  x,y
-    tfr   y,x               ; X = slice B
-    tfr   u,y               ; Y = index
-    bsr   __slice_get_byte  ; A = byte from slice B
-    puls  x,y
-    cmpa  ,s+               ; compare A (from B) with byte from A on stack
+    lda   ,x+
+    cmpa  ,y+
     bne   .streq_diff
-
-    leau  1,u               ; index++
-    cmpu  4,x               ; reached len?
+    leau  -1,u
+    cmpu  #0
     bne   .streq_loop
 
     puls  u
