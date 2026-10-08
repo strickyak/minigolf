@@ -205,20 +205,13 @@ __slice_get_byte:
     beq   .near_get_byte    ; If far_ref == 0: Near / Fixed RAM fast path
 
     ; Far Data Path:
-    ; Extract block_id (bits 15..9) and chunk_idx (bits 8..0)
+    ; far_ref (word) has block_id in B (128..255)
     pshs  x,y
-    tfr   a,b
-    lsrb                    ; B = block_id (128..255)
     bsr   __far_resolve_window ; X = Window base ($4000, $6000, $8000)
-    puls  y                 ; Y = original slice pointer
-    lda   1,y               ; Low byte of chunk_idx
-    anda  #$01              ; High bit of chunk (9th bit)
-    ; Chunk base offset = (chunk & 0x1FF) * 16
-    ; For now, calculate byte address:
-    ; offset_in_block = (chunk * 16) + slice.offset + index
+    puls  y                 ; Y = original slice pointer (was X)
     ldd   2,y               ; D = slice.offset
     leax  d,x               ; Add slice offset to window base
-    puls  y                 ; Y = element index
+    puls  y                 ; Y = element index (was Y)
     tfr   y,d
     leax  d,x               ; Add index
     lda   ,x                ; Load byte
@@ -254,6 +247,13 @@ _printf:
     leax  2,s
     fcb   $12,$21,111  ; Hyper Printf
     rts
+
+__fmt_d:
+    fcc   "%d"
+    fcb   0
+__fmt_u:
+    fcc   "%u"
+    fcb   0
 
 ; --- Core Arithmetic Helpers (Slot 6) ---
 

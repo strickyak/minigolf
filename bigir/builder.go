@@ -11,21 +11,25 @@ import (
 
 // Builder constructs a BIGIR Program from AST or standard SSA IR.
 type Builder struct {
-	WordSize     int
-	stringMap    map[string]*Global
-	globalMap    map[*ir.Global]*Global
-	globalByName map[string]*Global
-	prog         *Program
-	irProg       *ir.Program
+	WordSize        int
+	stringMap       map[string]*Global
+	globalMap       map[*ir.Global]*Global
+	globalByName    map[string]*Global
+	typeMap         map[string]Type
+	convertingTypes map[string]bool
+	prog            *Program
+	irProg          *ir.Program
 }
 
 // NewBuilder creates a new BIGIR builder.
 func NewBuilder(wordSize int) *Builder {
 	return &Builder{
-		WordSize:     wordSize,
-		stringMap:    make(map[string]*Global),
-		globalMap:    make(map[*ir.Global]*Global),
-		globalByName: make(map[string]*Global),
+		WordSize:        wordSize,
+		stringMap:       make(map[string]*Global),
+		globalMap:       make(map[*ir.Global]*Global),
+		globalByName:    make(map[string]*Global),
+		typeMap:         make(map[string]Type),
+		convertingTypes: make(map[string]bool),
 	}
 }
 
@@ -216,6 +220,10 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 						}
 						continue
 					}
+					if cs, ok := base.(*ConstStruct); ok && ti.FieldIndex < len(cs.Fields) {
+						valueMap[instr] = cs.Fields[ti.FieldIndex]
+						continue
+					}
 				}
 
 				binstr := b.convertInstruction(instr, valueMap, globalMap, blockMap, funcMap)
@@ -266,13 +274,31 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 }
 
 func (b *Builder) convertType(irt ir.Type) Type {
+	if b.typeMap != nil && irt.Name != "" {
+		if cached, ok := b.typeMap[irt.Name]; ok {
+			return cached
+		}
+	}
+	if b.convertingTypes != nil && irt.Name != "" && b.convertingTypes[irt.Name] {
+		// Recursive type reference (e.g. *Frame inside Frame)
+		return Type{Kind: KindWord, Name: irt.Name, Size: 2}
+	}
+
 	if irt.IsASlice() {
 		elemTyp := b.convertType(irt.SliceElementType())
-		return MakeFarSlice(elemTyp)
+		res := MakeFarSlice(elemTyp)
+		if b.typeMap != nil && irt.Name != "" {
+			b.typeMap[irt.Name] = res
+		}
+		return res
 	}
 	if irt.IsAPointer() {
 		elemTyp := b.convertType(irt.PointedType())
-		return MakeNearPtr(elemTyp)
+		res := MakeNearPtr(elemTyp)
+		if b.typeMap != nil && irt.Name != "" {
+			b.typeMap[irt.Name] = res
+		}
+		return res
 	}
 
 	switch irt.Name {
@@ -291,7 +317,46 @@ func (b *Builder) convertType(irt ir.Type) Type {
 	case "string":
 		return TypeFarString
 	default:
-		return Type{Kind: KindWord, Name: irt.Name, Size: b.getTypeSize(irt)}
+		if irt.Name != "" && b.convertingTypes != nil {
+			b.convertingTypes[irt.Name] = true
+			defer func() {
+				delete(b.convertingTypes, irt.Name)
+			}()
+		}
+		fields := irt.FieldsOfStruct()
+		if len(fields) == 0 && b.irProg != nil && b.irProg.TypeDefs != nil {
+			if def, ok := b.irProg.TypeDefs[irt.Name]; ok {
+				fields = def.FieldsOfStruct()
+			}
+		}
+		if len(fields) > 0 {
+			var bFields []Field
+			byteOffset := 0
+			for _, f := range fields {
+				ft := b.convertType(f.Type)
+				bFields = append(bFields, Field{
+					Name:   f.Name,
+					Type:   ft,
+					Offset: byteOffset,
+				})
+				byteOffset += ft.Size
+			}
+			res := Type{
+				Kind:   KindStruct,
+				Name:   irt.Name,
+				Size:   b.getTypeSize(irt),
+				Fields: bFields,
+			}
+			if b.typeMap != nil && irt.Name != "" {
+				b.typeMap[irt.Name] = res
+			}
+			return res
+		}
+		res := Type{Kind: KindWord, Name: irt.Name, Size: b.getTypeSize(irt)}
+		if b.typeMap != nil && irt.Name != "" {
+			b.typeMap[irt.Name] = res
+		}
+		return res
 	}
 }
 
@@ -635,51 +700,79 @@ func (b *Builder) convertInstruction(
 				Capacity:        &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0},
 			}
 		}
+		if typ.Kind == KindStruct || typ.Size > 2 {
+			return &ZeroInit{
+				BaseInstruction: BaseInstruction{Typ: typ},
+			}
+		}
 		return &ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: 0}
 
 	case *ir.ExtractField:
 		base := b.resolveVal(i.Struct, valueMap, globalMap)
-		return &SliceField{
+		structTyp := i.Struct.Type()
+		if structTyp.IsASlice() || structTyp.Name == "string" {
+			return &SliceField{
+				BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
+				Slice:           base,
+				FieldIdx:        i.FieldIndex,
+			}
+		}
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(structTyp, i.FieldIndex)
+		return &ExtractField{
 			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
-			Slice:           base,
-			FieldIdx:        i.FieldIndex,
+			Struct:          base,
+			FieldIndex:      i.FieldIndex,
+			ByteOffset:      byteOffset,
+			FieldSize:       fieldSize,
 		}
 
 	case *ir.InsertField:
 		base := b.resolveVal(i.Struct, valueMap, globalMap)
 		val := b.resolveVal(i.Val, valueMap, globalMap)
-		var farRef, offset, length, capacity Value
-		if sm, ok := base.(*SliceMake); ok {
-			farRef = sm.FarRef
-			offset = sm.Offset
-			length = sm.Length
-			capacity = sm.Capacity
-		} else {
-			farRef = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeFarRef}, Slice: base, FieldIdx: 0}
-			offset = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 1}
-			length = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 2}
-			capacity = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 3}
+		structTyp := i.Struct.Type()
+		if structTyp.IsASlice() || structTyp.Name == "string" {
+			var farRef, offset, length, capacity Value
+			if sm, ok := base.(*SliceMake); ok {
+				farRef = sm.FarRef
+				offset = sm.Offset
+				length = sm.Length
+				capacity = sm.Capacity
+			} else {
+				farRef = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeFarRef}, Slice: base, FieldIdx: 0}
+				offset = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 1}
+				length = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 2}
+				capacity = &SliceField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Slice: base, FieldIdx: 3}
+			}
+			newSm := &SliceMake{
+				BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
+				FarRef:          farRef,
+				Offset:          offset,
+				Length:          length,
+				Capacity:        capacity,
+			}
+			switch i.FieldIndex {
+			case 0:
+				newSm.FarRef = val
+			case 1:
+				newSm.Offset = val
+			case 2:
+				newSm.Length = val
+			case 3:
+				newSm.Capacity = val
+			default:
+				newSm.FarRef = val
+			}
+			return newSm
 		}
-		newSm := &SliceMake{
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(structTyp, i.FieldIndex)
+		return &InsertField{
 			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
-			FarRef:          farRef,
-			Offset:          offset,
-			Length:          length,
-			Capacity:        capacity,
+			Struct:          base,
+			FieldIndex:      i.FieldIndex,
+			ByteOffset:      byteOffset,
+			FieldSize:       fieldSize,
+			Val:             val,
 		}
-		switch i.FieldIndex {
-		case 0:
-			newSm.FarRef = val
-		case 1:
-			newSm.Offset = val
-		case 2:
-			newSm.Length = val
-		case 3:
-			newSm.Capacity = val
-		default:
-			newSm.FarRef = val
-		}
-		return newSm
 
 	default:
 		// Fallback for untyped or unsupported operations
@@ -817,10 +910,24 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 				return sm.FarRef
 			}
 		}
-		return &SliceField{
+		if cs, ok := base.(*ConstStruct); ok && val.FieldIndex < len(cs.Fields) {
+			return cs.Fields[val.FieldIndex]
+		}
+		structTyp := val.Struct.Type()
+		if structTyp.IsASlice() || structTyp.Name == "string" {
+			return &SliceField{
+				BaseInstruction: BaseInstruction{Typ: b.convertType(val.Type())},
+				Slice:           base,
+				FieldIdx:        val.FieldIndex,
+			}
+		}
+		byteOffset, fieldSize := b.getFieldOffsetAndSize(structTyp, val.FieldIndex)
+		return &ExtractField{
 			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Type())},
-			Slice:           base,
-			FieldIdx:        val.FieldIndex,
+			Struct:          base,
+			FieldIndex:      val.FieldIndex,
+			ByteOffset:      byteOffset,
+			FieldSize:       fieldSize,
 		}
 	case *ir.ConstByte:
 		return &ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: val.Val}

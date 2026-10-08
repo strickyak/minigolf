@@ -140,17 +140,23 @@ type any struct {
 
 // Window 0 is Slot 2 ($4000..$5FFF), controlled by MMAP reg $FF42
 func MapWindow0(block word) {
-	pokeb(0xFF42, byte(block))
+	b := byte(block)
+	pokeb(0x0002, b)
+	pokeb(0xFF42, b)
 }
 
 // Window 1 is Slot 3 ($6000..$7FFF), controlled by MMAP reg $FF43
 func MapWindow1(block word) {
-	pokeb(0xFF43, byte(block))
+	b := byte(block)
+	pokeb(0x0003, b)
+	pokeb(0xFF43, b)
 }
 
 // Window 2 is Slot 4 ($8000..$9FFF), controlled by MMAP reg $FF44
 func MapWindow2(block word) {
-	pokeb(0xFF44, byte(block))
+	b := byte(block)
+	pokeb(0x0004, b)
+	pokeb(0xFF44, b)
 }
 
 /////////////////////////////////////////////

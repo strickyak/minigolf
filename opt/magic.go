@@ -31,6 +31,8 @@ var MagicFuncNames = []string{
 	"prelude.mul_byte",
 	"prelude.div_word",
 	"prelude.mod_word",
+	// Memory allocation for slice/composite literals
+	"prelude.zalloc",
 }
 
 // MagicFuncSet is a fast-lookup set derived from MagicFuncNames.

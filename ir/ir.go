@@ -237,6 +237,19 @@ func (t Type) FieldsOfStruct() (result []NameAndType) {
 				FieldIndex: i,
 			})
 		}
+		return
+	}
+	if t.Builder != nil && t.Builder.tm != nil {
+		if st, ok := t.Builder.tm.typeDefsAST[t.Name]; ok && st != nil {
+			for i, field := range st.Fields {
+				result = append(result, NameAndType{
+					Name:       field.Name.ShortName,
+					Type:       t.Builder.tm.astToIRType(field.Type),
+					FieldIndex: i,
+				})
+			}
+			return
+		}
 	}
 	return
 }

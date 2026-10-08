@@ -128,6 +128,12 @@ func formatInstruction(i Instruction) string {
 			fName = fields[instr.FieldIdx]
 		}
 		return fmt.Sprintf("slice_field %s.%s", instr.Slice.String(), fName)
+	case *ZeroInit:
+		return fmt.Sprintf("zero_init %s", instr.Type().String())
+	case *ExtractField:
+		return fmt.Sprintf("extract_field %s.%d [off=%d, sz=%d]", instr.Struct.String(), instr.FieldIndex, instr.ByteOffset, instr.FieldSize)
+	case *InsertField:
+		return fmt.Sprintf("insert_field %s.%d = %s [off=%d, sz=%d]", instr.Struct.String(), instr.FieldIndex, instr.Val.String(), instr.ByteOffset, instr.FieldSize)
 	case *FuncRef:
 		return fmt.Sprintf("&%s", instr.FuncName)
 	case *NearCall:

@@ -282,6 +282,32 @@ type SliceField struct {
 }
 func (s *SliceField) Opcode() string { return "slice_field" }
 
+// --- General Struct Operations ---
+
+type ZeroInit struct {
+	BaseInstruction
+}
+func (z *ZeroInit) Opcode() string { return "zero_init" }
+
+type ExtractField struct {
+	BaseInstruction
+	Struct     Value
+	FieldIndex int
+	ByteOffset int
+	FieldSize  int
+}
+func (e *ExtractField) Opcode() string { return "extract_field" }
+
+type InsertField struct {
+	BaseInstruction
+	Struct     Value
+	FieldIndex int
+	ByteOffset int
+	FieldSize  int
+	Val        Value
+}
+func (i *InsertField) Opcode() string { return "insert_field" }
+
 // --- Call Operations ---
 
 type NearCall struct {
