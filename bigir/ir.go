@@ -346,6 +346,13 @@ type IndirectCall struct {
 }
 func (c *IndirectCall) Opcode() string { return "indirect_call" }
 
+// --- SetJmp ---
+
+type SetJmp struct {
+	BaseInstruction
+}
+func (s *SetJmp) Opcode() string { return "setjmp" }
+
 // --- Terminators ---
 
 type Return struct {

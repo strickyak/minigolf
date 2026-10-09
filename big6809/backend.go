@@ -108,7 +108,9 @@ func (b *Backend) Generate(prog *bigir.Program) (string, error) {
 		} else {
 			mName := MangleName(g.Name)
 			buf.WriteString(fmt.Sprintf("v_%s:\n", mName))
-			if g.InitVal != nil {
+			if g.Name == "prelude._jmp_chain_" || g.Name == "prelude._panic_" {
+				buf.WriteString("    fdb   0\n\n")
+			} else if g.InitVal != nil {
 				b.emitData(&buf, g.InitVal)
 				buf.WriteString("\n")
 			} else {
@@ -526,6 +528,19 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 		}
 	}
 
+	// Pass 1b: Allocate stack buffers for SetJmp jumper frames (14 bytes) and return values (2 bytes)
+	jmpSlots := make(map[int]int)
+	for _, bb := range fn.Blocks {
+		for _, instr := range bb.Instructions {
+			if _, ok := instr.(*bigir.SetJmp); ok {
+				curLocalOffset += 14
+				jmpSlots[instr.GetID()] = curLocalOffset
+				curLocalOffset += 2
+				localOffsets[instr.GetID()] = curLocalOffset
+			}
+		}
+	}
+
 	// Pass 2: Allocate stack slots for instructions that produce used values or phis.
 	// To minimize stack frame size, purely intra-block temporaries share scratch slots.
 	defBlock := make(map[int]*bigir.BasicBlock)
@@ -582,7 +597,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 	for _, bb := range fn.Blocks {
 		for _, instr := range bb.Instructions {
 			id := instr.GetID()
-			if addressTaken[id] || !crossBlock[id] {
+			if addressTaken[id] || !crossBlock[id] || jmpSlots[id] > 0 {
 				continue
 			}
 
@@ -633,7 +648,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 
 		for i, instr := range bb.Instructions {
 			id := instr.GetID()
-			if addressTaken[id] || crossBlock[id] || !usedInstrs[id] {
+			if addressTaken[id] || crossBlock[id] || !usedInstrs[id] || jmpSlots[id] > 0 {
 				continue
 			}
 			switch instr.(type) {
@@ -767,7 +782,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 		buf.WriteString(fmt.Sprintf(".L_%s_bb%d:\n", mName, bb.ID))
 
 		for _, instr := range bb.Instructions {
-			b.emitInstruction(buf, fn, instr, paramOffsets, localOffsets, stringDescs, tracker)
+			b.emitInstruction(buf, fn, instr, paramOffsets, localOffsets, stringDescs, tracker, jmpSlots)
 		}
 
 		if bb.Terminator != nil {
@@ -782,6 +797,41 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 	buf.WriteString("    rts\n\n")
 }
 
+func (b *Backend) emitSetJmp(
+	buf *bytes.Buffer,
+	fn *bigir.Function,
+	i *bigir.SetJmp,
+	jmpSlots map[int]int,
+	localOffsets map[int]int,
+	tracker *WindowSlotTracker,
+) {
+	mName := MangleName(fn.Name)
+	jmpSlot := jmpSlots[i.GetID()]
+	lblResume := fmt.Sprintf(".L_%s_setjmp_resume_%d", mName, i.GetID())
+
+	buf.WriteString(fmt.Sprintf("    leax  -%d,u             ; X = pointer to 14-byte jumper struct\n", jmpSlot))
+	buf.WriteString("    ldd   v_prelude___jmp_chain_\n")
+	buf.WriteString("    std   0,x               ; jumper.prev = _jmp_chain_\n")
+	buf.WriteString("    stx   v_prelude___jmp_chain_ ; _jmp_chain_ = &jumper\n")
+	buf.WriteString("    sts   4,x               ; jumper.saved_s = S\n")
+	buf.WriteString("    stu   6,x               ; jumper.saved_u = U\n")
+	buf.WriteString("    sty   8,x               ; jumper.saved_y = Y\n")
+	buf.WriteString("    lda   <active_code_blk  ; A = active code block in Slot 5\n")
+	buf.WriteString("    sta   10,x              ; jumper.saved_code_blk\n")
+	buf.WriteString("    ldd   <far_ret_sp\n")
+	buf.WriteString("    std   12,x              ; jumper.saved_far_ret_sp\n")
+	buf.WriteString(fmt.Sprintf("    leay  %s,pcr            ; Y = runtime address of resume label\n", lblResume))
+	buf.WriteString("    sty   2,x               ; jumper.resume_pc = Y\n")
+	buf.WriteString("    clra\n    clrb                    ; D = 0 (first return)\n")
+	buf.WriteString(fmt.Sprintf("%s:\n", lblResume))
+	if tracker != nil {
+		tracker.Reset()
+	}
+	if slot, ok := localOffsets[i.GetID()]; ok {
+		buf.WriteString(fmt.Sprintf("    std   -%d,u             ; store setjmp return value (0 or 1)\n", slot))
+	}
+}
+
 func (b *Backend) emitInstruction(
 	buf *bytes.Buffer,
 	fn *bigir.Function,
@@ -789,9 +839,12 @@ func (b *Backend) emitInstruction(
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
 	tracker *WindowSlotTracker,
+	jmpSlots map[int]int,
 ) {
 	mName := MangleName(fn.Name)
 	switch i := instr.(type) {
+	case *bigir.SetJmp:
+		b.emitSetJmp(buf, fn, i, jmpSlots, localOffsets, tracker)
 	case *bigir.ConstByte:
 		if slot, ok := localOffsets[i.GetID()]; ok {
 			buf.WriteString(fmt.Sprintf("    ldd   #%d\n", i.Val))

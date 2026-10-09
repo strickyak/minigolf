@@ -31,6 +31,11 @@ cstart_embiggen:
     ldx   #far_ret_stack
     stx   <far_ret_sp
 
+    ; Initialize panic and jmp_chain to 0
+    ldd   #0
+    std   v_prelude___jmp_chain_
+    std   v_prelude___panic_
+
     ; 3. Setup Initial 8KB MMAP Vector at $FF40..$FF47
     ;    Slot 0: Block 0 (Fixed Data / DP)
     ;    Slot 1: Block 1 (Fixed Stack)
@@ -348,11 +353,48 @@ builtin_println:
     ldb   #10               ; Newline '\n'
     jmp   putchar
 
+__panic_prefix:
+    fcc   "\n*PANIC* "
+    fcb   0
+
+__abort_empty_re_chain:
+    fcc   "\n*** ABORT\n\n*** EMPTY_RE_CHAIN\n"
+    fcb   0
+
+__print_asciz:
+.asciz_loop:
+    ldb   ,x+
+    beq   .asciz_done
+    jsr   putchar
+    bra   .asciz_loop
+.asciz_done:
+    rts
+
 builtin_panic:
+    stx   v_prelude___panic_
     cmpx  #0
-    beq   .panic_no_arg
-    bsr   builtin_println
-.panic_no_arg:
+    bne   .panic_has_arg
+    ldx   #1
+    stx   v_prelude___panic_
+.panic_has_arg:
+    ldx   #__panic_prefix
+    jsr   __print_asciz
+    ldx   v_prelude___panic_
+    cmpx  #1
+    beq   .panic_after_msg
+    jsr   builtin_print_string
+.panic_after_msg:
+    ldb   #10               ; '\n'
+    jsr   putchar
+
+    ldx   v_prelude___jmp_chain_
+    cmpx  #0
+    beq   .panic_abort
+    jmp   __longjmp_to_x
+
+.panic_abort:
+    ldx   #__abort_empty_re_chain
+    jsr   __print_asciz
     ldx   #1
     jmp   __exit
 
@@ -361,8 +403,47 @@ builtin_exit:
     jmp   __exit
 
 builtin__propagate_panic_:
-builtin__unlink_jmp_:
+    ldd   v_prelude___panic_
+    beq   .propagate_done
+
+    ldx   v_prelude___jmp_chain_
+    cmpx  #0
+    beq   .propagate_abort
+    jmp   __longjmp_to_x
+
+.propagate_abort:
+    ldx   #__abort_empty_re_chain
+    jsr   __print_asciz
+    ldx   #1
+    jmp   __exit
+
+.propagate_done:
     rts
+
+builtin__unlink_jmp_:
+    ldx   v_prelude___jmp_chain_
+    cmpx  #0
+    beq   .unlink_done
+    ldd   0,x
+    std   v_prelude___jmp_chain_
+.unlink_done:
+    rts
+
+__longjmp_to_x:
+    ldd   2,x
+    std   far_ret_tmp
+    ldd   12,x
+    std   <far_ret_sp
+    lda   10,x
+    sta   $FF45
+    sta   <active_code_blk
+    ldy   8,x
+    ldu   6,x
+    lds   4,x
+    clra
+    ldb   #1
+    jmp   [far_ret_tmp]
+
 
 ; --- EMBIGGEN String Compare Helper (Slot 6) ---
 ; Input: X = pointer to 8-byte slice A, Y = pointer to 8-byte slice B

@@ -711,6 +711,9 @@ func (b *Builder) convertInstruction(
 		}
 
 	case *ir.ZeroInit:
+		if existing, ok := valueMap[i].(Instruction); ok {
+			return existing
+		}
 		typ := b.convertType(i.Typ)
 		if typ.Kind == KindFarSlice || typ.Kind == KindFarString {
 			return &SliceMake{
@@ -893,6 +896,11 @@ func (b *Builder) convertInstruction(
 			Operand:         op,
 		}
 
+	case *ir.SetJmp:
+		return &SetJmp{
+			BaseInstruction: BaseInstruction{Typ: TypeWord},
+		}
+
 	default:
 		// Fallback for untyped or unsupported operations
 		return nil
@@ -962,6 +970,27 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 		phi.SetComment(val.GetComment())
 		valueMap[val] = phi
 		return phi
+	case *ir.ZeroInit:
+		btyp := b.convertType(val.Typ)
+		var zi Instruction
+		if btyp.Kind == KindFarSlice || btyp.Kind == KindFarString {
+			zi = &SliceMake{
+				BaseInstruction: BaseInstruction{ID: val.GetID(), Typ: btyp},
+				FarRef:          &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0},
+				Offset:          &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0},
+				Length:          &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0},
+				Capacity:        &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0},
+			}
+		} else if btyp.Kind == KindStruct || btyp.Size > 2 {
+			zi = &ZeroInit{
+				BaseInstruction: BaseInstruction{ID: val.GetID(), Typ: btyp},
+			}
+		} else {
+			zi = &ConstWord{BaseInstruction: BaseInstruction{ID: val.GetID(), Typ: btyp}, Val: 0}
+		}
+		zi.SetComment(val.GetComment())
+		valueMap[val] = zi
+		return zi
 	case *ir.Cast:
 		if val.Op == "word_to_ptr" {
 			if ef, ok := val.Operand.(*ir.ExtractField); ok {
