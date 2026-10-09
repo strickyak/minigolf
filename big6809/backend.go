@@ -2445,16 +2445,32 @@ func (b *Backend) emitPhiAssignments(
 		} else if p.size == 8 && (p.val.Type().Kind == bigir.KindFarSlice || p.val.Type().Kind == bigir.KindFarString) {
 			b.pushSliceArg(buf, p.val, paramOffsets, localOffsets, stringDescs)
 		} else if p.size > 2 {
+			aligned := (p.size + 1) & ^1
 			if instr, ok := p.val.(bigir.Instruction); ok {
 				if slot, ok := localOffsets[instr.GetID()]; ok {
-					aligned := (p.size + 1) & ^1
 					for off := aligned - 2; off >= 0; off -= 2 {
 						buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-off))
 					}
-				} else {
+				} else if aligned == 8 {
 					b.pushSliceArg(buf, p.val, paramOffsets, localOffsets, stringDescs)
 				}
-			} else {
+			} else if param, ok := p.val.(*bigir.Parameter); ok {
+				if pOff, ok := paramOffsets[param.ID]; ok {
+					for off := aligned - 2; off >= 0; off -= 2 {
+						buf.WriteString(fmt.Sprintf("    ldd   %d,u\n    pshs  d\n", pOff+off))
+					}
+				}
+			} else if cs, ok := p.val.(*bigir.ConstStruct); ok {
+				for idx := len(cs.Fields) - 1; idx >= 0; idx-- {
+					b.loadValToD(buf, cs.Fields[idx], paramOffsets, localOffsets, stringDescs)
+					buf.WriteString("    pshs  d\n")
+				}
+			} else if g, ok := p.val.(*bigir.Global); ok {
+				mName := MangleName(g.Name)
+				for off := aligned - 2; off >= 0; off -= 2 {
+					buf.WriteString(fmt.Sprintf("    ldd   v_%s+%d\n    pshs  d\n", mName, off))
+				}
+			} else if aligned == 8 {
 				b.pushSliceArg(buf, p.val, paramOffsets, localOffsets, stringDescs)
 			}
 		} else {
