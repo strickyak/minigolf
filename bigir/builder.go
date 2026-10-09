@@ -819,7 +819,40 @@ func (b *Builder) convertInstruction(
 				FieldSize:       eltSize,
 			}
 		}
-		return nil
+		if cb, ok := i.Index.(*ir.ConstByte); ok {
+			byteOffset := int(cb.Val) * eltSize
+			return &ExtractField{
+				BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
+				Struct:          base,
+				FieldIndex:      int(cb.Val),
+				ByteOffset:      byteOffset,
+				FieldSize:       eltSize,
+			}
+		}
+		indexVal := b.resolveVal(i.Index, valueMap, globalMap)
+		offsetVal := indexVal
+		if eltSize > 1 {
+			offsetVal = &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: TypeWord},
+				Op:              "*",
+				Left:            indexVal,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(eltSize)},
+			}
+		}
+		baseAddr := &AddressOfLocal{
+			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(base.Type())},
+			Local:           base,
+		}
+		addr := &BinaryOp{
+			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(b.convertType(i.Type()))},
+			Op:              "+",
+			Left:            baseAddr,
+			Right:           offsetVal,
+		}
+		return &NearLoad{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Type())},
+			Addr:            addr,
+		}
 
 	case *ir.Cast:
 		if i.Op == "word_to_ptr" {
@@ -978,7 +1011,40 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 				FieldSize:       eltSize,
 			}
 		}
-		return base
+		if cb, ok := val.Index.(*ir.ConstByte); ok {
+			byteOffset := int(cb.Val) * eltSize
+			return &ExtractField{
+				BaseInstruction: BaseInstruction{Typ: b.convertType(val.Type())},
+				Struct:          base,
+				FieldIndex:      int(cb.Val),
+				ByteOffset:      byteOffset,
+				FieldSize:       eltSize,
+			}
+		}
+		indexVal := b.resolveVal(val.Index, valueMap, globalMap)
+		offsetVal := indexVal
+		if eltSize > 1 {
+			offsetVal = &BinaryOp{
+				BaseInstruction: BaseInstruction{Typ: TypeWord},
+				Op:              "*",
+				Left:            indexVal,
+				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: uint64(eltSize)},
+			}
+		}
+		baseAddr := &AddressOfLocal{
+			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(base.Type())},
+			Local:           base,
+		}
+		addr := &BinaryOp{
+			BaseInstruction: BaseInstruction{Typ: MakeNearPtr(b.convertType(val.Type()))},
+			Op:              "+",
+			Left:            baseAddr,
+			Right:           offsetVal,
+		}
+		return &NearLoad{
+			BaseInstruction: BaseInstruction{Typ: b.convertType(val.Type())},
+			Addr:            addr,
+		}
 	case *ir.AddressOfField:
 		ptr := b.resolvePtrVal(val.Ptr, valueMap, globalMap)
 		structTyp := val.Ptr.Type().PointedType()
