@@ -370,8 +370,8 @@ var current_alloc_block word = FIRST_FAR_BLOCK
 var next_alloc_block word = FIRST_FAR_BLOCK + 1
 
 func init_far_block(blk word) {
-	MapWindow0(blk)
-	var win word = 0x4000
+	MapWindow2(blk)
+	var win word = 0x8000
 	var hdr *FarBlockHeader = (*FarBlockHeader)(win)
 	hdr.magic = 42424
 	hdr.next_free_offset = sizeof[FarBlockHeader]()
@@ -404,8 +404,8 @@ func FarAlloc(nbytes word) (word, word) {
 
 	blk := current_alloc_block
 	for {
-		MapWindow0(blk)
-		win := word(0x4000)
+		MapWindow2(blk)
+		win := word(0x8000)
 		bhdr := (*FarBlockHeader)(win)
 		if bhdr.magic != 42424 {
 			init_far_block(blk)
@@ -464,8 +464,8 @@ func FarFree(blk word, off word) {
 	if blk == 0 || off < sizeof[FarBlockHeader]() + sizeof[ChunkHeader]() {
 		return
 	}
-	MapWindow0(blk)
-	win := word(0x4000)
+	MapWindow2(blk)
+	win := word(0x8000)
 	bhdr := (*FarBlockHeader)(win)
 	if bhdr.magic != 42424 {
 		return
@@ -522,8 +522,8 @@ func FarMakeSlice[T any](n word) slice[T] {
 	z.Base = off
 	z.Len = n
 	z.Cap = n
-	MapWindow0(blk)
-	addr := 0x4000 + off
+	MapWindow2(blk)
+	addr := 0x8000 + off
 	for i := range nbytes {
 		pokeb(addr+i, 0)
 	}
