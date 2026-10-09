@@ -280,6 +280,9 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 		}
 	}
 
+	// 3.5. Optimize BIGIR (e.g. eliminate trivial Phis)
+	EliminateTrivialPhis(prog)
+
 	// 4. Perform 8KB Block Packing
 	if err := PackProgram(prog); err != nil {
 		return nil, err

@@ -645,6 +645,20 @@ func free(ap *byte) {
 	freep = p
 }
 
+func BytesFree() word {
+	if word(freep) == 0 {
+		return 0
+	}
+	var total_units word = 0
+	curr := freep.next
+	for word(curr) != word(freep) {
+		total_units = total_units + curr.size
+		curr = curr.next
+	}
+	total_units = total_units + freep.size
+	return mul_word(total_units, sizeof[MallocHeader]())
+}
+
 func zalloc(nbytes word) word {
 	p := word(malloc(nbytes))
 	for i := range nbytes {
