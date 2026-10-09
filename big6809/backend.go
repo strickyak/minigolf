@@ -78,7 +78,10 @@ func (b *Backend) Generate(prog *bigir.Program) (string, error) {
 
 	for _, g := range prog.Globals {
 		if g.InitString != "" {
-			if _, exists := stringDescs[g.InitString]; exists {
+			mName := MangleName(g.Name)
+			if descLbl, exists := stringDescs[g.InitString]; exists {
+				dataLbl := strings.Replace(descLbl, "_desc_", "_data_", 1)
+				buf.WriteString(fmt.Sprintf("v_%s equ %s\n", mName, dataLbl))
 				continue
 			}
 			lbl := fmt.Sprintf("_str_data_%d", strCount)
@@ -94,6 +97,7 @@ func (b *Backend) Generate(prog *bigir.Program) (string, error) {
 			}
 
 			buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+			buf.WriteString(fmt.Sprintf("v_%s:\n", mName))
 			buf.WriteString(fmt.Sprintf("    fcc   %q\n", cleanStr))
 			buf.WriteString("    fcb   0\n")
 			buf.WriteString(fmt.Sprintf("%s:\n", descLbl))
@@ -822,6 +826,17 @@ func (b *Backend) emitInstruction(
 			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; store slice field v%d\n", slot, i.GetID()))
 		}
 
+	case *bigir.SliceToPtr:
+		b.loadSliceDescToReg(buf, i.Slice, "x", paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    jsr   __slice_to_ptr\n")
+		if slot, ok := localOffsets[i.GetID()]; ok {
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; store ptr v%d\n", slot, i.GetID()))
+		}
+		if tracker != nil {
+			tracker.Invalidate(2)
+		}
+
+
 	case *bigir.SliceGet:
 		b.emitSliceGet(buf, fn, i, i.Slice, i.Index, 2, paramOffsets, localOffsets, stringDescs, tracker)
 
@@ -837,9 +852,20 @@ func (b *Backend) emitInstruction(
 	case *bigir.ZeroInit:
 		if slot, ok := localOffsets[i.GetID()]; ok {
 			sz := (i.Type().Size + 1) & ^1
-			for off := 0; off < sz; off += 2 {
-				buf.WriteString("    clra\n    clrb\n")
-				buf.WriteString(fmt.Sprintf("    std   -%d,u             ; zero init\n", slot-off))
+			if sz <= 8 {
+				for off := 0; off < sz; off += 2 {
+					buf.WriteString("    clra\n    clrb\n")
+					buf.WriteString(fmt.Sprintf("    std   -%d,u             ; zero init\n", slot-off))
+				}
+			} else {
+				mName := MangleName(fn.Name)
+				lbl := fmt.Sprintf(".L_%s_zero_%d", mName, i.GetID())
+				buf.WriteString(fmt.Sprintf("    leax  -%d,u             ; zero init large struct/array\n", slot))
+				buf.WriteString(fmt.Sprintf("    ldy   #%d\n", sz))
+				buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+				buf.WriteString("    clr   ,x+\n")
+				buf.WriteString("    leay  -1,y\n")
+				buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
 			}
 		}
 
@@ -995,10 +1021,35 @@ func (b *Backend) emitInstruction(
 			buf.WriteString("    tfr   d,x\n")
 			buf.WriteString("    puls  b\n")
 			buf.WriteString("    stb   ,x\n")
-		} else if i.Val.Type().Size > 2 {
+		} else if i.Val.Type().Size == 8 && (i.Val.Type().Kind == bigir.KindFarSlice || i.Val.Type().Kind == bigir.KindFarString) {
 			b.loadValToD(buf, i.Addr, paramOffsets, localOffsets, stringDescs)
 			buf.WriteString("    tfr   d,x\n")
 			b.storeSliceToPtr(buf, i.Val, paramOffsets, localOffsets, stringDescs)
+		} else if i.Val.Type().Size > 2 {
+			sz := i.Val.Type().Size
+			b.loadValToD(buf, i.Addr, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    tfr   d,x\n")
+			if srcInstr, ok := i.Val.(bigir.Instruction); ok {
+				if srcSlot, ok := localOffsets[srcInstr.GetID()]; ok {
+					buf.WriteString(fmt.Sprintf("    leay  -%d,u\n", srcSlot))
+					if sz <= 4 {
+						for off := 0; off < sz; off++ {
+							buf.WriteString("    lda   ,y+\n    sta   ,x+\n")
+						}
+					} else {
+						wordCount := (sz + 1) / 2
+						lbl := fmt.Sprintf(".L_storecpy_%d", instr.GetID())
+						buf.WriteString("    pshs  u\n")
+						buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
+						buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+						buf.WriteString("    ldd   ,y++\n")
+						buf.WriteString("    std   ,x++\n")
+						buf.WriteString("    leau  -1,u\n")
+						buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
+						buf.WriteString("    puls  u\n")
+					}
+				}
+			}
 		} else {
 			b.loadValToD(buf, i.Val, paramOffsets, localOffsets, stringDescs)
 			buf.WriteString("    pshs  d\n")
@@ -1043,6 +1094,8 @@ func (b *Backend) emitInstruction(
 						if typ.Kind == bigir.KindFarString ||
 							strings.Contains(typ.Name, "string") ||
 							strings.HasSuffix(typ.Name, "slice_byte") ||
+							typ.Name == "*byte" || typ.Name == "*char" ||
+							(typ.Kind == bigir.KindNearPtr && typ.ElementType != nil && typ.ElementType.Size == 1) ||
 							(typ.Kind == bigir.KindFarSlice && typ.ElementType != nil && typ.ElementType.Size == 1) {
 							hasString = true
 							break
@@ -1414,6 +1467,14 @@ func (b *Backend) loadValToD(
 			return
 		}
 		b.loadSliceFieldToD(buf, v, paramOffsets, localOffsets, stringDescs)
+	case *bigir.SliceToPtr:
+		if off, ok := localOffsets[v.GetID()]; ok {
+			buf.WriteString(fmt.Sprintf("    ldd   -%d,u              ; v%d\n", off, v.GetID()))
+			return
+		}
+		b.loadSliceDescToReg(buf, v.Slice, "x", paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    jsr   __slice_to_ptr\n")
+		return
 	case *bigir.ExtractField:
 		if off, ok := localOffsets[v.GetID()]; ok {
 			buf.WriteString(fmt.Sprintf("    ldd   -%d,u              ; v%d\n", off, v.GetID()))
@@ -2158,7 +2219,9 @@ func (b *Backend) emitPrint(
 			buf.WriteString("    jsr   builtin_print_string\n")
 		} else {
 			fmtLabel := "__fmt_d"
-			if typ.Kind != bigir.KindInt {
+			if typ.Name == "*byte" || typ.Name == "*char" || (typ.Kind == bigir.KindNearPtr && typ.ElementType != nil && typ.ElementType.Size == 1) {
+				fmtLabel = "__fmt_s"
+			} else if typ.Kind != bigir.KindInt {
 				fmtLabel = "__fmt_u"
 			}
 			b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
@@ -2195,6 +2258,11 @@ func (b *Backend) emitPhiAssignments(
 			for _, edge := range phi.Edges {
 				if edge.Block == from {
 					if slot, exists := localOffsets[phi.GetID()]; exists {
+						if edgeInstr, ok := edge.Value.(bigir.Instruction); ok {
+							if srcSlot, exists := localOffsets[edgeInstr.GetID()]; exists && srcSlot == slot {
+								break
+							}
+						}
 						sz := phi.Type().Size
 						if edge.Value.Type().Size > sz {
 							sz = edge.Value.Type().Size
@@ -2214,9 +2282,28 @@ func (b *Backend) emitPhiAssignments(
 		return
 	}
 
-	// 1. Evaluate and push all incoming phi values
+	// 1. Evaluate and copy/push incoming phi values
 	for _, p := range pending {
-		if p.size == 8 && (p.val.Type().Kind == bigir.KindFarSlice || p.val.Type().Kind == bigir.KindFarString) {
+		if p.size > 8 {
+			if instr, ok := p.val.(bigir.Instruction); ok {
+				if srcSlot, ok := localOffsets[instr.GetID()]; ok {
+					if srcSlot != p.slot {
+						lbl := fmt.Sprintf(".L_phicpy_%d_%d_%d", from.ID, to.ID, instr.GetID())
+						wordCount := (p.size + 1) / 2
+						buf.WriteString(fmt.Sprintf("    leax  -%d,u             ; phi copy src\n", srcSlot))
+						buf.WriteString(fmt.Sprintf("    leay  -%d,u             ; phi copy dest\n", p.slot))
+						buf.WriteString("    pshs  u\n")
+						buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
+						buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+						buf.WriteString("    ldd   ,x++\n")
+						buf.WriteString("    std   ,y++\n")
+						buf.WriteString("    leau  -1,u\n")
+						buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
+						buf.WriteString("    puls  u\n")
+					}
+				}
+			}
+		} else if p.size == 8 && (p.val.Type().Kind == bigir.KindFarSlice || p.val.Type().Kind == bigir.KindFarString) {
 			b.pushSliceArg(buf, p.val, paramOffsets, localOffsets, stringDescs)
 		} else if p.size > 2 {
 			if instr, ok := p.val.(bigir.Instruction); ok {
@@ -2240,7 +2327,9 @@ func (b *Backend) emitPhiAssignments(
 	// 2. Pop in reverse order into the respective phi stack slots
 	for idx := len(pending) - 1; idx >= 0; idx-- {
 		p := pending[idx]
-		if p.size == 8 && (p.val.Type().Kind == bigir.KindFarSlice || p.val.Type().Kind == bigir.KindFarString) {
+		if p.size > 8 {
+			continue // Already copied directly in step 1
+		} else if p.size == 8 && (p.val.Type().Kind == bigir.KindFarSlice || p.val.Type().Kind == bigir.KindFarString) {
 			buf.WriteString("    puls  d\n")
 			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; phi assign (far_ref)\n", p.slot))
 			buf.WriteString("    puls  d\n")

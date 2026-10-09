@@ -157,6 +157,22 @@ __slice_get_byte:
     lda   ,x                ; Load byte directly
     rts
 
+; __slice_to_ptr:
+;   Input: X points to 8-byte slice descriptor {far_ref, offset, len, cap}
+;   Output: D = 16-bit virtual pointer.
+;           If far_ref != 0: maps far_ref into Slot 2 ($FF42) and adds $4000.
+;           If far_ref == 0: returns offset directly (near RAM / rodata).
+__slice_to_ptr:
+    ldd   ,x                ; D = far_ref
+    beq   .near_slice_ptr
+    stb   $FF42             ; Map far_ref into Slot 2 ($4000..$5FFF)
+    ldd   2,x               ; D = offset
+    addd  #$4000            ; Add Slot 2 window base
+    rts
+.near_slice_ptr:
+    ldd   2,x               ; D = offset (near virtual address)
+    rts
+
 ; --- Basic Builtins and IO ---
 
 f_prelude__putchar:
@@ -186,6 +202,10 @@ __fmt_d:
 __fmt_u:
     fcc   "%u"
     fcb   0
+__fmt_s:
+    fcc   "%s"
+    fcb   0
+
 
 ; --- Core Arithmetic Helpers (Slot 6) ---
 

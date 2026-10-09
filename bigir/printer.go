@@ -128,6 +128,9 @@ func formatInstruction(i Instruction) string {
 			fName = fields[instr.FieldIdx]
 		}
 		return fmt.Sprintf("slice_field %s.%s", instr.Slice.String(), fName)
+	case *SliceToPtr:
+		return fmt.Sprintf("slice_to_ptr %s", instr.Slice.String())
+
 	case *ZeroInit:
 		return fmt.Sprintf("zero_init %s", instr.Type().String())
 	case *ExtractField:

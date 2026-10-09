@@ -282,6 +282,13 @@ type SliceField struct {
 }
 func (s *SliceField) Opcode() string { return "slice_field" }
 
+type SliceToPtr struct {
+	BaseInstruction
+	Slice Value
+}
+func (s *SliceToPtr) Opcode() string { return "slice_to_ptr" }
+
+
 // --- General Struct Operations ---
 
 type ZeroInit struct {

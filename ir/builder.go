@@ -889,8 +889,12 @@ func (b *Builder) coerceType(val Value, targetType Type) Value {
 	}
 
 	// nando: Coerce string literal (slice_byte) to *byte for C interop
-	if (val.Type().Name == "slice_byte" || val.Type().Name == "prelude.slice_byte") && targetType.Name == "*byte" {
-		ptrWord := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: val, FieldIndex: 0}, nil)
+	if (val.Type().Name == "slice_byte" || val.Type().Name == "prelude.slice_byte" || val.Type().Name == "string" || val.Type().Name == "prelude.string" || val.Type().IsASlice()) && targetType.Name == "*byte" {
+		baseIdx := 0
+		if len(val.Type().FieldsOfStruct()) == 4 {
+			baseIdx = 1
+		}
+		ptrWord := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: val, FieldIndex: baseIdx}, nil)
 		return b.addInstr(&Cast{BaseInstruction: BaseInstruction{Typ: targetType}, Op: "word_to_ptr", Operand: ptrWord}, nil)
 	}
 
@@ -1980,7 +1984,8 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 		srcName := val.Type().Name
 		if targetTyp.Name == "*byte" &&
 			(srcName == "prelude.slice_byte" || srcName == "slice_byte" ||
-				srcName == "prelude__slice_byte" || srcName == "slice__byte") {
+				srcName == "prelude__slice_byte" || srcName == "slice__byte" ||
+				srcName == "string" || srcName == "prelude.string" || val.Type().IsASlice()) {
 			baseIdx := 0
 			if len(val.Type().FieldsOfStruct()) == 4 {
 				baseIdx = 1
@@ -2267,7 +2272,11 @@ func (b *Builder) buildCall(e *ast.CallExpression, isDefer bool) ExprResult {
 			arg := b.buildExpr(e.Arguments[0])
 			fieldIdx := 2 // Len
 			if ident.Value == "cap" {
-				fieldIdx = 1 // Cap
+				if len(arg.Type().FieldsOfStruct()) == 4 {
+					fieldIdx = 3 // Cap in EMBIGGEN 4-field slice
+				} else {
+					fieldIdx = 1 // Cap in near 3-field slice
+				}
 			}
 			val := b.addInstr(&ExtractField{BaseInstruction: BaseInstruction{Typ: TypeWord}, Struct: arg, FieldIndex: fieldIdx}, e)
 			return ExprResult{IsLValue: false, Value: val, Typ: TypeWord}
