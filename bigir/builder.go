@@ -213,7 +213,7 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 					}
 					targetTyp := b.convertType(ti.Type())
 					op := b.resolveVal(ti.Operand, valueMap, globalMap)
-					if targetTyp.Size == 1 && op.Type().Size > 1 {
+					if !targetTyp.Equals(op.Type()) {
 						break
 					}
 					valueMap[instr] = op

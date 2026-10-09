@@ -97,6 +97,27 @@ func (t Type) String() string {
 		return "unknown"
 	}
 }
+// Equals reports whether two types are structurally equal.
+func (t Type) Equals(other Type) bool {
+	if t.Kind != other.Kind || t.Size != other.Size || t.Name != other.Name || t.ArrayLen != other.ArrayLen {
+		return false
+	}
+	if (t.ElementType == nil) != (other.ElementType == nil) {
+		return false
+	}
+	if t.ElementType != nil && !t.ElementType.Equals(*other.ElementType) {
+		return false
+	}
+	if len(t.Fields) != len(other.Fields) {
+		return false
+	}
+	for i := range t.Fields {
+		if t.Fields[i].Name != other.Fields[i].Name || t.Fields[i].Offset != other.Fields[i].Offset || !t.Fields[i].Type.Equals(other.Fields[i].Type) {
+			return false
+		}
+	}
+	return true
+}
 
 var (
 	TypeVoid     = Type{Kind: KindVoid, Name: "void", Size: 0}
