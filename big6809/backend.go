@@ -444,7 +444,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 			}
 			if typ := instr.Type(); typ.Size > 2 {
 				switch instr.(type) {
-				case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall:
+				case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet:
 					crossBlock[id] = true
 				}
 			}
@@ -492,7 +492,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 			typ := instr.Type()
 			isCallWithStructRet := false
 			switch instr.(type) {
-			case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall:
+			case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet:
 				if typ.Size > 2 {
 					isCallWithStructRet = true
 				}
@@ -731,6 +731,12 @@ func (b *Backend) emitInstruction(
 			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; store slice field v%d\n", slot, i.GetID()))
 		}
 
+	case *bigir.SliceGet:
+		b.emitSliceGet(buf, fn, i, i.Slice, i.Index, 2, paramOffsets, localOffsets, stringDescs)
+
+	case *bigir.SlicePut:
+		b.emitSlicePut(buf, fn, i, i.Slice, i.Index, i.Val, 3, paramOffsets, localOffsets, stringDescs)
+
 	case *bigir.ZeroInit:
 		if slot, ok := localOffsets[i.GetID()]; ok {
 			sz := (i.Type().Size + 1) & ^1
@@ -964,6 +970,21 @@ func (b *Backend) emitInstruction(
 			if len(args) > 0 {
 				b.loadValToD(buf, args[0], paramOffsets, localOffsets, stringDescs)
 				buf.WriteString("    stb   $FF44\n")
+			}
+		} else if strings.Contains(callee, "slice_") && (strings.HasSuffix(callee, "_Get") || strings.HasSuffix(callee, "_Get1")) {
+			if len(args) >= 2 {
+				slotNum := 2
+				if strings.HasSuffix(callee, "_Get1") {
+					slotNum = 3
+				}
+				b.emitSliceGet(buf, fn, instr, args[0], args[1], slotNum, paramOffsets, localOffsets, stringDescs)
+				return
+			}
+		} else if strings.Contains(callee, "slice_") && (strings.HasSuffix(callee, "_Put") || strings.HasSuffix(callee, "_Put1")) {
+			if len(args) >= 3 {
+				slotNum := 3
+				b.emitSlicePut(buf, fn, instr, args[0], args[1], args[2], slotNum, paramOffsets, localOffsets, stringDescs)
+				return
 			}
 		} else {
 			retSize := instr.Type().Size
@@ -1508,8 +1529,10 @@ func (b *Backend) storeSliceToPtr(
 
 func (b *Backend) emitSliceGet(
 	buf *bytes.Buffer,
+	fn *bigir.Function,
 	instr bigir.Instruction,
 	sliceArg, indexArg bigir.Value,
+	slotNum int,
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
 ) {
@@ -1518,9 +1541,19 @@ func (b *Backend) emitSliceGet(
 	if elemSize <= 0 {
 		elemSize = 2
 	}
-	lblInbounds := fmt.Sprintf(".L_sget_inbounds_%d", id)
-	lblNear := fmt.Sprintf(".L_sget_near_%d", id)
-	lblCalc := fmt.Sprintf(".L_sget_calc_%d", id)
+	mmapReg := "$FF42"
+	winBase := "$4000"
+	if slotNum == 3 {
+		mmapReg = "$FF43"
+		winBase = "$6000"
+	} else if slotNum == 4 {
+		mmapReg = "$FF44"
+		winBase = "$8000"
+	}
+	mName := MangleName(fn.Name)
+	lblInbounds := fmt.Sprintf(".L_%s_sget_inbounds_%d", mName, id)
+	lblNear := fmt.Sprintf(".L_%s_sget_near_%d", mName, id)
+	lblCalc := fmt.Sprintf(".L_%s_sget_calc_%d", mName, id)
 
 	// 1. Evaluate index and push to stack
 	b.loadValToD(buf, indexArg, paramOffsets, localOffsets, stringDescs)
@@ -1542,12 +1575,12 @@ func (b *Backend) emitSliceGet(
 	buf.WriteString("    jsr   builtin_panic\n")
 	buf.WriteString(fmt.Sprintf("%s:\n", lblInbounds))
 
-	// 4. Check FarRef: Slot 2 ($4000, $FF42)
+	// 4. Check FarRef: Slot
 	buf.WriteString("    ldd   ,x            ; D = far_ref\n")
 	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
-	buf.WriteString("    stb   $FF42         ; map block into Slot 2 ($4000)\n")
+	buf.WriteString(fmt.Sprintf("    stb   %s         ; map block into Slot\n", mmapReg))
 	buf.WriteString("    ldd   2,x           ; D = slice.offset\n")
-	buf.WriteString("    addd  #$4000        ; add Slot 2 base\n")
+	buf.WriteString(fmt.Sprintf("    addd  #%s        ; add Slot base\n", winBase))
 	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
 	buf.WriteString(fmt.Sprintf("%s:\n", lblNear))
 	buf.WriteString("    ldd   2,x           ; D = slice.offset (near)\n")
@@ -1563,14 +1596,14 @@ func (b *Backend) emitSliceGet(
 			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
 		}
 	} else if elemSize == 2 {
-		buf.WriteString("    asld                ; D = index * 2\n")
+		buf.WriteString("    aslb\n    rola          ; D = index * 2\n")
 		buf.WriteString("    leax  d,y           ; X = base + index * 2\n")
 		buf.WriteString("    ldd   ,x            ; D = word\n")
 		if slot, ok := localOffsets[id]; ok {
 			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
 		}
 	} else if elemSize == 8 {
-		buf.WriteString("    asld\n    asld\n    asld          ; D = index * 8\n")
+		buf.WriteString("    aslb\n    rola\n    aslb\n    rola\n    aslb\n    rola          ; D = index * 8\n")
 		buf.WriteString("    leax  d,y           ; X = base + index * 8\n")
 		if slot, ok := localOffsets[id]; ok {
 			buf.WriteString("    ldd   0,x\n")
@@ -1600,8 +1633,10 @@ func (b *Backend) emitSliceGet(
 
 func (b *Backend) emitSlicePut(
 	buf *bytes.Buffer,
+	fn *bigir.Function,
 	instr bigir.Instruction,
 	sliceArg, indexArg, valArg bigir.Value,
+	slotNum int,
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
 ) {
@@ -1610,9 +1645,19 @@ func (b *Backend) emitSlicePut(
 	if elemSize <= 0 {
 		elemSize = 2
 	}
-	lblInbounds := fmt.Sprintf(".L_sput_inbounds_%d", id)
-	lblNear := fmt.Sprintf(".L_sput_near_%d", id)
-	lblCalc := fmt.Sprintf(".L_sput_calc_%d", id)
+	mmapReg := "$FF43"
+	winBase := "$6000"
+	if slotNum == 2 {
+		mmapReg = "$FF42"
+		winBase = "$4000"
+	} else if slotNum == 4 {
+		mmapReg = "$FF44"
+		winBase = "$8000"
+	}
+	mName := MangleName(fn.Name)
+	lblInbounds := fmt.Sprintf(".L_%s_sput_inbounds_%d", mName, id)
+	lblNear := fmt.Sprintf(".L_%s_sput_near_%d", mName, id)
+	lblCalc := fmt.Sprintf(".L_%s_sput_calc_%d", mName, id)
 
 	// 1. Push value to store
 	if elemSize == 1 {
@@ -1658,12 +1703,12 @@ func (b *Backend) emitSlicePut(
 	buf.WriteString("    jsr   builtin_panic\n")
 	buf.WriteString(fmt.Sprintf("%s:\n", lblInbounds))
 
-	// 5. Check FarRef: Slot 3 ($6000, $FF43)
+	// 5. Check FarRef: Slot
 	buf.WriteString("    ldd   ,x            ; D = far_ref\n")
 	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
-	buf.WriteString("    stb   $FF43         ; map block into Slot 3 ($6000)\n")
+	buf.WriteString(fmt.Sprintf("    stb   %s         ; map block into Slot\n", mmapReg))
 	buf.WriteString("    ldd   2,x           ; D = slice.offset\n")
-	buf.WriteString("    addd  #$6000        ; add Slot 3 base\n")
+	buf.WriteString(fmt.Sprintf("    addd  #%s        ; add Slot base\n", winBase))
 	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
 	buf.WriteString(fmt.Sprintf("%s:\n", lblNear))
 	buf.WriteString("    ldd   2,x           ; D = slice.offset (near)\n")
@@ -1677,12 +1722,12 @@ func (b *Backend) emitSlicePut(
 		buf.WriteString("    puls  b             ; B = val\n")
 		buf.WriteString("    stb   ,x\n")
 	} else if elemSize == 2 {
-		buf.WriteString("    asld                ; D = index * 2\n")
+		buf.WriteString("    aslb\n    rola          ; D = index * 2\n")
 		buf.WriteString("    leax  d,y           ; X = base + index * 2\n")
 		buf.WriteString("    puls  d             ; D = val\n")
 		buf.WriteString("    std   ,x\n")
 	} else if elemSize == 8 {
-		buf.WriteString("    asld\n    asld\n    asld          ; D = index * 8\n")
+		buf.WriteString("    aslb\n    rola\n    aslb\n    rola\n    aslb\n    rola          ; D = index * 8\n")
 		buf.WriteString("    leax  d,y           ; X = base + index * 8\n")
 		buf.WriteString("    puls  d\n    std   0,x           ; far_ref\n")
 		buf.WriteString("    puls  d\n    std   2,x           ; offset\n")
