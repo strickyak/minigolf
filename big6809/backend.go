@@ -550,7 +550,9 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 			if typ := instr.Type(); typ.Size > 2 {
 				switch instr.(type) {
 				case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet, *bigir.FarLoad:
-					crossBlock[id] = true
+					if !usedInstrs[id] {
+						crossBlock[id] = true
+					}
 				}
 			}
 			sz := getInstrSlotSize(instr)
@@ -1106,8 +1108,38 @@ func (b *Backend) emitInstruction(
 			b.storeSliceToPtr(buf, i.Val, paramOffsets, localOffsets, stringDescs)
 		} else if i.Val.Type().Size > 2 {
 			sz := i.Val.Type().Size
-			b.loadValToD(buf, i.Addr, paramOffsets, localOffsets, stringDescs)
-			buf.WriteString("    tfr   d,x\n")
+			if aol, ok := i.Addr.(*bigir.AddressOfLocal); ok {
+				loc := resolveRootLocal(aol.Local)
+				if dstInstr, ok := loc.(bigir.Instruction); ok {
+					if srcInstr, ok := i.Val.(bigir.Instruction); ok {
+						if dstSlot, ok := localOffsets[dstInstr.GetID()]; ok {
+							if srcSlot, ok := localOffsets[srcInstr.GetID()]; ok && dstSlot == srcSlot {
+								break
+							}
+						}
+					}
+				}
+				if param, ok := loc.(*bigir.Parameter); ok {
+					if off, ok := paramOffsets[param.ID]; ok {
+						if param.Type().Size == 1 {
+							buf.WriteString(fmt.Sprintf("    leax  %d,u\n", off+1))
+						} else {
+							buf.WriteString(fmt.Sprintf("    leax  %d,u\n", off))
+						}
+					}
+				} else if instr, ok := loc.(bigir.Instruction); ok {
+					if off, ok := localOffsets[instr.GetID()]; ok {
+						if instr.Type().Size == 1 {
+							buf.WriteString(fmt.Sprintf("    leax  -%d,u\n", off-1))
+						} else {
+							buf.WriteString(fmt.Sprintf("    leax  -%d,u\n", off))
+						}
+					}
+				}
+			} else {
+				b.loadValToD(buf, i.Addr, paramOffsets, localOffsets, stringDescs)
+				buf.WriteString("    tfr   d,x\n")
+			}
 			if srcInstr, ok := i.Val.(bigir.Instruction); ok {
 				if srcSlot, ok := localOffsets[srcInstr.GetID()]; ok {
 					if sz <= 32 {
@@ -1864,6 +1896,29 @@ func (b *Backend) pushArg(
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
 ) int {
+	if aol, ok := arg.(*bigir.AddressOfLocal); ok {
+		loc := resolveRootLocal(aol.Local)
+		if param, ok := loc.(*bigir.Parameter); ok {
+			if off, ok := paramOffsets[param.ID]; ok {
+				if param.Type().Size == 1 {
+					buf.WriteString(fmt.Sprintf("    leax  %d,u\n    pshs  x\n", off+1))
+				} else {
+					buf.WriteString(fmt.Sprintf("    leax  %d,u\n    pshs  x\n", off))
+				}
+				return 2
+			}
+		}
+		if instr, ok := loc.(bigir.Instruction); ok {
+			if off, ok := localOffsets[instr.GetID()]; ok {
+				if instr.Type().Size == 1 {
+					buf.WriteString(fmt.Sprintf("    leax  -%d,u\n    pshs  x\n", off-1))
+				} else {
+					buf.WriteString(fmt.Sprintf("    leax  -%d,u\n    pshs  x\n", off))
+				}
+				return 2
+			}
+		}
+	}
 	sz := arg.Type().Size
 	if sz <= 2 {
 		b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
