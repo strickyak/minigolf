@@ -269,7 +269,7 @@ func (o *slice[T]) Chop(start word, limit word) slice[T] {
 	z.FarRef = o.FarRef
 	z.Base = o.Base + start*sizeof[T]()
 	z.Len = limit - start
-	z.Cap = o.Cap - start
+	z.Cap = z.Len
 	return z
 }
 
