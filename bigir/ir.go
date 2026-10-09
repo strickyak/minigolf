@@ -288,6 +288,12 @@ type SliceToPtr struct {
 }
 func (s *SliceToPtr) Opcode() string { return "slice_to_ptr" }
 
+type BitCast struct {
+	BaseInstruction
+	Operand Value
+}
+func (b *BitCast) Opcode() string { return "bitcast" }
+
 
 // --- General Struct Operations ---
 

@@ -882,7 +882,10 @@ func (b *Builder) convertInstruction(
 				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0xFF},
 			}
 		}
-		return nil
+		return &BitCast{
+			BaseInstruction: BaseInstruction{Typ: targetTyp},
+			Operand:         op,
+		}
 
 	default:
 		// Fallback for untyped or unsupported operations
@@ -981,7 +984,10 @@ func (b *Builder) resolveVal(v ir.Value, valueMap map[ir.Value]Value, globalMap 
 				Right:           &ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: 0xFF},
 			}
 		}
-		return op
+		return &BitCast{
+			BaseInstruction: BaseInstruction{Typ: targetTyp},
+			Operand:         op,
+		}
 	case *ir.InsertElement:
 		base := b.resolveVal(val.Array, valueMap, globalMap)
 		v := b.resolveVal(val.Val, valueMap, globalMap)

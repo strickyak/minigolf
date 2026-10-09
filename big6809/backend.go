@@ -233,6 +233,10 @@ func getBigIROperands(instr bigir.Instruction) []bigir.Value {
 		ops = append(ops, i.Slice)
 	case *bigir.ZeroInit:
 		// no operands
+	case *bigir.SliceToPtr:
+		ops = append(ops, i.Slice)
+	case *bigir.BitCast:
+		ops = append(ops, i.Operand)
 	case *bigir.ExtractField:
 		ops = append(ops, i.Struct)
 	case *bigir.InsertField:
@@ -422,6 +426,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 		if sz < 2 {
 			sz = 2 // 2-byte stack alignment
 		}
+		sz = (sz + 1) & ^1
 		paramOffsets[p.ID] = curParamOffset
 		curParamOffset += sz
 	}
@@ -467,6 +472,14 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 		}
 		if sf, ok := val.(*bigir.SliceField); ok && sf.GetID() == 0 {
 			getLeafInstrIDs(sf.Slice, fnVisit)
+			return
+		}
+		if stp, ok := val.(*bigir.SliceToPtr); ok && stp.GetID() == 0 {
+			getLeafInstrIDs(stp.Slice, fnVisit)
+			return
+		}
+		if bc, ok := val.(*bigir.BitCast); ok && bc.GetID() == 0 {
+			getLeafInstrIDs(bc.Operand, fnVisit)
 			return
 		}
 		if instr, ok := val.(bigir.Instruction); ok {
@@ -838,6 +851,15 @@ func (b *Backend) emitInstruction(
 		}
 		if tracker != nil {
 			tracker.Invalidate(2)
+		}
+
+	case *bigir.BitCast:
+		if slot, ok := localOffsets[i.GetID()]; ok {
+			b.loadValToD(buf, i.Operand, paramOffsets, localOffsets, stringDescs)
+			if i.Type().Size == 1 {
+				buf.WriteString("    clra\n")
+			}
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; store bitcast v%d\n", slot, i.GetID()))
 		}
 
 
@@ -1230,14 +1252,7 @@ func (b *Backend) emitInstruction(
 			totalArgBytes := 0
 			for idx := len(args) - 1; idx >= 0; idx-- {
 				arg := args[idx]
-				if arg.Type().Size > 2 {
-					b.pushSliceArg(buf, arg, paramOffsets, localOffsets, stringDescs)
-					totalArgBytes += 8
-				} else {
-					b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
-					buf.WriteString("    pshs  d\n")
-					totalArgBytes += 2
-				}
+				totalArgBytes += b.pushArg(buf, arg, paramOffsets, localOffsets, stringDescs)
 			}
 
 			// If retSize > 2, push invisible return pointer last (at 4,u in callee)
@@ -1282,14 +1297,7 @@ func (b *Backend) emitInstruction(
 		totalArgBytes := 0
 		for idx := len(i.Args) - 1; idx >= 0; idx-- {
 			arg := i.Args[idx]
-			if arg.Type().Size > 2 {
-				b.pushSliceArg(buf, arg, paramOffsets, localOffsets, stringDescs)
-				totalArgBytes += 8
-			} else {
-				b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
-				buf.WriteString("    pshs  d\n")
-				totalArgBytes += 2
-			}
+			totalArgBytes += b.pushArg(buf, arg, paramOffsets, localOffsets, stringDescs)
 		}
 
 		if retSize > 2 {
@@ -1510,17 +1518,39 @@ func (b *Backend) loadValToD(
 		loc := resolveRootLocal(v.Local)
 		if param, ok := loc.(*bigir.Parameter); ok {
 			if off, ok := paramOffsets[param.ID]; ok {
-				buf.WriteString(fmt.Sprintf("    leax  %d,u\n    tfr   x,d\n", off))
+				if param.Type().Size == 1 {
+					buf.WriteString(fmt.Sprintf("    leax  %d,u\n    tfr   x,d\n", off+1))
+				} else {
+					buf.WriteString(fmt.Sprintf("    leax  %d,u\n    tfr   x,d\n", off))
+				}
 				return
 			}
 		}
 		if instr, ok := loc.(bigir.Instruction); ok {
 			if off, ok := localOffsets[instr.GetID()]; ok {
-				buf.WriteString(fmt.Sprintf("    leax  -%d,u\n    tfr   x,d\n", off))
+				if instr.Type().Size == 1 {
+					buf.WriteString(fmt.Sprintf("    leax  -%d,u\n    tfr   x,d\n", off-1))
+				} else {
+					buf.WriteString(fmt.Sprintf("    leax  -%d,u\n    tfr   x,d\n", off))
+				}
 				return
 			}
 		}
 		buf.WriteString("    clra\n    clrb\n")
+	case *bigir.BitCast:
+		if v.GetID() > 0 {
+			if off, ok := localOffsets[v.GetID()]; ok {
+				buf.WriteString(fmt.Sprintf("    ldd   -%d,u              ; v%d\n", off, v.GetID()))
+				if v.Type().Size == 1 {
+					buf.WriteString("    clra\n")
+				}
+				return
+			}
+		}
+		b.loadValToD(buf, v.Operand, paramOffsets, localOffsets, stringDescs)
+		if v.Type().Size == 1 {
+			buf.WriteString("    clra\n")
+		}
 	case *bigir.FuncRef:
 		buf.WriteString(fmt.Sprintf("    ldd   #f_%s\n", MangleName(v.FuncName)))
 		return
@@ -1763,6 +1793,48 @@ func (b *Backend) pushSliceArg(
 		return
 	}
 	buf.WriteString("    clra\n    clrb\n    pshs  d\n    pshs  d\n    pshs  d\n    pshs  d\n")
+}
+
+func (b *Backend) pushArg(
+	buf *bytes.Buffer,
+	arg bigir.Value,
+	paramOffsets, localOffsets map[int]int,
+	stringDescs map[string]string,
+) int {
+	sz := arg.Type().Size
+	if sz <= 2 {
+		b.loadValToD(buf, arg, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    pshs  d\n")
+		return 2
+	}
+	if sz == 8 && (arg.Type().Kind == bigir.KindFarSlice || arg.Type().Kind == bigir.KindFarString) {
+		b.pushSliceArg(buf, arg, paramOffsets, localOffsets, stringDescs)
+		return 8
+	}
+	aligned := (sz + 1) & ^1
+	if instr, ok := arg.(bigir.Instruction); ok {
+		if srcSlot, ok := localOffsets[instr.GetID()]; ok {
+			for off := aligned - 2; off >= 0; off -= 2 {
+				buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", srcSlot-off))
+			}
+			return aligned
+		}
+	} else if p, ok := arg.(*bigir.Parameter); ok {
+		if pOff, ok := paramOffsets[p.ID]; ok {
+			for off := aligned - 2; off >= 0; off -= 2 {
+				buf.WriteString(fmt.Sprintf("    ldd   %d,u\n    pshs  d\n", pOff+off))
+			}
+			return aligned
+		}
+	} else if cs, ok := arg.(*bigir.ConstStruct); ok {
+		for idx := len(cs.Fields) - 1; idx >= 0; idx-- {
+			b.loadValToD(buf, cs.Fields[idx], paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    pshs  d\n")
+		}
+		return aligned
+	}
+	b.pushSliceArg(buf, arg, paramOffsets, localOffsets, stringDescs)
+	return 8
 }
 
 func (b *Backend) storeSliceToOffset(

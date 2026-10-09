@@ -130,6 +130,8 @@ func formatInstruction(i Instruction) string {
 		return fmt.Sprintf("slice_field %s.%s", instr.Slice.String(), fName)
 	case *SliceToPtr:
 		return fmt.Sprintf("slice_to_ptr %s", instr.Slice.String())
+	case *BitCast:
+		return fmt.Sprintf("bitcast %s", instr.Operand.String())
 
 	case *ZeroInit:
 		return fmt.Sprintf("zero_init %s", instr.Type().String())
