@@ -75,7 +75,15 @@ func cleanBig6809Output(out string) []string {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "[") {
-			// Skip emulator cycle count / code size annotations (e.g., [gep9 finished: ...])
+			// Skip emulator/firmware annotations (e.g., [gep9 finished: ...], [bye: ...])
+			continue
+		}
+		if strings.HasPrefix(trimmed, "*** GEP9") ||
+			strings.HasPrefix(trimmed, "Task ") ||
+			strings.HasPrefix(trimmed, "quick-") ||
+			strings.HasPrefix(trimmed, "Internal web server") ||
+			strings.HasPrefix(trimmed, "WriteBytes:") ||
+			strings.HasPrefix(trimmed, "Received C_SHUTDOWN") {
 			continue
 		}
 		if trimmed == "" {
@@ -213,27 +221,39 @@ func getTether(t *testing.T) string {
 	return ""
 }
 
-func pingTfr911(t *testing.T, tetherBin string) bool {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, tetherBin, "-quick-ping", "42")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
+func getTetherWire() string {
+	matches, _ := filepath.Glob("/dev/ttyACM*")
+	if len(matches) > 0 {
+		return matches[len(matches)-1]
 	}
-	return strings.Contains(string(out), "quick-ping: OK")
+	return "/dev/ttyACM0"
+}
+
+func waitForTfr911(t *testing.T, tetherBin string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		matches, _ := filepath.Glob("/dev/ttyACM*")
+		for _, wire := range matches {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			cmd := exec.CommandContext(ctx, tetherBin, "-wire", wire, "-quick-ping", "42")
+			out, err := cmd.CombinedOutput()
+			cancel()
+			if err == nil && strings.Contains(string(out), "quick-ping: OK") {
+				return wire
+			}
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	return ""
 }
 
 func checkTfr911Embiggened(t *testing.T, tetherBin string) bool {
 	t.Helper()
-	// The TFR911 gep9 engine firmware (in tfr911h/v4_gep9_mmu.h and v4_gep9_io.h)
-	// has not yet been modified to support EMBIGGEN 8KB page mapping ($FF40..$FF47).
-	// When EMBIGGEN support is added to the firmware, set TFR911_EMBIGGEN=1.
-	if os.Getenv("TFR911_EMBIGGEN") == "1" {
-		return true
+	if os.Getenv("SKIP_TFR911") == "1" {
+		return false
 	}
-	return false
+	return true
 }
 
 func TestBig6809OnTfr911(t *testing.T) {
@@ -242,12 +262,12 @@ func TestBig6809OnTfr911(t *testing.T) {
 	}
 
 	tetherBin := getTether(t)
-	if !pingTfr911(t, tetherBin) {
+	if wire := waitForTfr911(t, tetherBin, 12*time.Second); wire == "" {
 		t.Skip("TFR911 board not responding or not connected via USB")
 	}
 
 	if !checkTfr911Embiggened(t, tetherBin) {
-		t.Skip("TFR911 gep9 engine has not yet been embiggened (requires $FF40..$FF47 MMAP vector and 8KB block translation in tfr911h firmware)")
+		t.Skip("TFR911 testing disabled (SKIP_TFR911=1)")
 	}
 
 	compiler := getMinigolfCompiler(t)
@@ -320,14 +340,28 @@ func TestBig6809OnTfr911(t *testing.T) {
 				t.Fatalf("Assembly failed with %s: %v\nOutput: %s", asmBin, err, string(out))
 			}
 
-			// 3. Execute on TFR911 via tether
-			cmdRun := exec.Command(tetherBin, decbPath)
-			out, err := cmdRun.CombinedOutput()
-			if err != nil {
-				t.Fatalf("TFR911 execution failed: %v\nOutput: %s", err, string(out))
+			// 3. Write mode81.tcl into tmpDir
+			tclScript := "set Config(engine) \"gep9big\"\nset Config(flat_img) \"/pc/out.decb\"\nset Config(task1) \"\"\nset Config(task2) \"\"\nset Config(drive0) \"\"\nset Config(drive1) \"\"\nset Config(drive2) \"\"\nset Config(drive3) \"\"\nmenu store Config\nbye\n"
+			if err := os.WriteFile(filepath.Join(tmpDir, "mode81.tcl"), []byte(tclScript), 0644); err != nil {
+				t.Fatalf("Failed to write mode81.tcl: %v", err)
 			}
 
-			// 4. Verify output against .want
+			// 4. Wait for TFR911 to be ready and get current wire port
+			wire := waitForTfr911(t, tetherBin, 8*time.Second)
+			if wire == "" {
+				t.Fatalf("TFR911 board did not become ready for test %s", testName)
+			}
+
+			// 5. Execute on TFR911 via tether
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			cmdRun := exec.CommandContext(ctx, tetherBin, "-wire", wire, "-pc", tmpDir, "-bootmode=81")
+			out, err := cmdRun.Output()
+			if err != nil {
+				t.Fatalf("TFR911 execution failed on %s: %v\nOutput: %s", wire, err, string(out))
+			}
+
+			// 6. Verify output against .want
 			actualLines := cleanBig6809Output(string(out))
 			expectedLines := cleanBig6809Output(string(targetWant))
 			actual := strings.Join(actualLines, "\n")

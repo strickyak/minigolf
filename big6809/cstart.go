@@ -197,9 +197,95 @@ f_prelude__getchar:
     rts
 
 _printf:
-    leax  2,s
-    fcb   $12,$21,111  ; Hyper Printf
+    pshs  d,x,y,u
+    ldx   10,s          ; format string pointer
+    lda   ,x+           ; first char
+    cmpa  #'%'
+    bne   .printf_done
+    lda   ,x+           ; format specifier char
+    cmpa  #'s'
+    beq   .printf_s
+    cmpa  #'d'
+    beq   .printf_d
+    cmpa  #'u'
+    beq   .printf_u
+    bra   .printf_done
+
+.printf_s:
+    ldx   12,s          ; string pointer (null-terminated)
+    beq   .printf_done
+.printf_s_loop:
+    ldb   ,x+
+    beq   .printf_done
+    jsr   putchar
+    bra   .printf_s_loop
+
+.printf_d:
+    ldd   12,s          ; signed 16-bit value
+    bpl   .printf_u_val
+    pshs  d
+    ldb   #45           ; ASCII '-'
+    jsr   putchar
+    puls  d
+    coma
+    comb
+    addd  #1
+    bra   .printf_u_val
+
+.printf_u:
+    ldd   12,s          ; unsigned 16-bit value
+.printf_u_val:
+    jsr   __print_u16_d
+
+.printf_done:
+    puls  d,x,y,u
     rts
+
+__print_u16_d:
+    ; Input: D = 16-bit unsigned integer
+    pshs  d,x,y,u       ; Save caller registers (8B)
+    clra
+    clrb
+    pshs  d             ; 0,s = digit count (1B), 1,s = leading zero flag (1B)
+    ldd   2,s           ; D = original value to print (was pushed in pshs d,x,y,u)
+    pshs  d             ; 0,s = running value (2B), 2,s = digit count (1B), 3,s = leading zero flag (1B)
+    ldu   #__pow10_table
+.u16_next_div:
+    ldy   ,u++          ; Y = divisor (10000, 1000, 100, 10, 1)
+    beq   .u16_done
+    clr   2,s           ; digit count = 0
+.u16_sub_loop:
+    ldd   0,s           ; D = running value
+    subd  -2,u          ; subtract divisor
+    bcs   .u16_digit_done
+    std   0,s           ; update running value
+    inc   2,s           ; digit count++
+    bra   .u16_sub_loop
+.u16_digit_done:
+    lda   2,s           ; A = digit count (0..9)
+    bne   .u16_emit
+    tst   3,s           ; leading zero flag set?
+    bne   .u16_emit
+    cmpy  #1            ; 1s place?
+    bne   .u16_next_div ; skip leading zero
+.u16_emit:
+    inc   3,s           ; mark leading zero flag = true
+    adda  #'0'
+    tfr   a,b
+    jsr   putchar
+    bra   .u16_next_div
+.u16_done:
+    leas  4,s           ; drop local vars (running value 2B, digit 1B, flag 1B)
+    puls  d,x,y,u       ; restore caller registers
+    rts
+
+__pow10_table:
+    fdb   10000
+    fdb   1000
+    fdb   100
+    fdb   10
+    fdb   1
+    fdb   0
 
 __fmt_d:
     fcc   "%d"
