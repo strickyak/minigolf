@@ -1366,6 +1366,21 @@ func (b *Backend) emitBinaryOp(
 			b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
 			buf.WriteString("    eora  0,s\n    eorb  1,s\n    leas  2,s\n")
 		}
+	case "andnot", "&^":
+		b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
+		switch r := i.Right.(type) {
+		case *bigir.ConstWord:
+			inv := ^r.Val
+			buf.WriteString(fmt.Sprintf("    anda  #%d\n    andb  #%d\n", (inv>>8)&0xFF, inv&0xFF))
+		case *bigir.ConstByte:
+			inv := ^uint16(r.Val)
+			buf.WriteString(fmt.Sprintf("    anda  #%d\n    andb  #%d\n", (inv>>8)&0xFF, inv&0xFF))
+		default:
+			buf.WriteString("    pshs  d\n")
+			b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
+			buf.WriteString("    coma\n    comb\n")
+			buf.WriteString("    anda  0,s\n    andb  1,s\n    leas  2,s\n")
+		}
 	case "shl", "<<":
 		b.loadValToD(buf, i.Left, paramOffsets, localOffsets, stringDescs)
 		switch r := i.Right.(type) {
