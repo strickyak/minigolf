@@ -310,6 +310,94 @@ func getInstrSlotSize(instr bigir.Instruction) int {
 	return 2
 }
 
+// WindowSlotTracker tracks which FarRef/slice/buffer is currently mapped into
+// physical MMAP window slots 2 ($4000, $FF42), 3 ($6000, $FF43), and 4 ($8000, $FF44)
+// within a straight-line basic block.
+type WindowSlotTracker struct {
+	mappedKey [5]string
+}
+
+func (t *WindowSlotTracker) Reset() {
+	for i := range t.mappedKey {
+		t.mappedKey[i] = ""
+	}
+}
+
+func (t *WindowSlotTracker) Invalidate(slot int) {
+	if slot >= 0 && slot < len(t.mappedKey) {
+		t.mappedKey[slot] = ""
+	}
+}
+
+func (t *WindowSlotTracker) InvalidateKey(key string) {
+	if key == "" {
+		return
+	}
+	for i := range t.mappedKey {
+		if t.mappedKey[i] == key {
+			t.mappedKey[i] = ""
+		}
+	}
+}
+
+func (t *WindowSlotTracker) InvalidateAll() {
+	t.Reset()
+}
+
+func (t *WindowSlotTracker) IsMapped(slot int, key string) bool {
+	if key == "" || slot < 0 || slot >= len(t.mappedKey) {
+		return false
+	}
+	return t.mappedKey[slot] == key
+}
+
+func (t *WindowSlotTracker) SetMapped(slot int, key string) {
+	if key != "" && slot >= 0 && slot < len(t.mappedKey) {
+		t.mappedKey[slot] = key
+	}
+}
+
+func valKey(v bigir.Value) string {
+	if v == nil {
+		return ""
+	}
+	v = resolveRootLocal(v)
+	if aol, ok := v.(*bigir.AddressOfLocal); ok {
+		root := resolveRootLocal(aol.Local)
+		if instr, ok := root.(bigir.Instruction); ok {
+			return fmt.Sprintf("instr:%d", instr.GetID())
+		}
+	}
+	if aog, ok := v.(*bigir.AddressOfGlobal); ok && aog.Global != nil {
+		return fmt.Sprintf("global:%s", aog.Global.Name)
+	}
+	if g, ok := v.(*bigir.Global); ok {
+		return fmt.Sprintf("global:%s", g.Name)
+	}
+	if p, ok := v.(*bigir.Parameter); ok {
+		return fmt.Sprintf("param:%d", p.ID)
+	}
+	if sm, ok := v.(*bigir.SliceMake); ok {
+		if cw, ok := sm.FarRef.(*bigir.ConstWord); ok {
+			return fmt.Sprintf("far_const:%d", cw.Val)
+		}
+		if cb, ok := sm.FarRef.(*bigir.ConstByte); ok {
+			return fmt.Sprintf("far_const:%d", cb.Val)
+		}
+		return fmt.Sprintf("instr:%d", sm.GetID())
+	}
+	if cw, ok := v.(*bigir.ConstWord); ok {
+		return fmt.Sprintf("const:%d", cw.Val)
+	}
+	if cb, ok := v.(*bigir.ConstByte); ok {
+		return fmt.Sprintf("const:%d", cb.Val)
+	}
+	if instr, ok := v.(bigir.Instruction); ok && instr.GetID() > 0 {
+		return fmt.Sprintf("instr:%d", instr.GetID())
+	}
+	return ""
+}
+
 func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDescs map[string]string) {
 	mName := MangleName(fn.Name)
 	buf.WriteString(fmt.Sprintf("; Function: %s (Block %d, Slot 5 Offset 0x%04X)\n", fn.Name, fn.BlockID, fn.Slot5Offset))
@@ -444,7 +532,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 			}
 			if typ := instr.Type(); typ.Size > 2 {
 				switch instr.(type) {
-				case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet:
+				case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet, *bigir.FarLoad:
 					crossBlock[id] = true
 				}
 			}
@@ -492,7 +580,7 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 			typ := instr.Type()
 			isCallWithStructRet := false
 			switch instr.(type) {
-			case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet:
+			case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet, *bigir.FarLoad:
 				if typ.Size > 2 {
 					isCallWithStructRet = true
 				}
@@ -654,11 +742,13 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 	}
 
 	// Emit Basic Blocks
+	tracker := &WindowSlotTracker{}
 	for _, bb := range fn.Blocks {
+		tracker.Reset()
 		buf.WriteString(fmt.Sprintf(".L_%s_bb%d:\n", mName, bb.ID))
 
 		for _, instr := range bb.Instructions {
-			b.emitInstruction(buf, fn, instr, paramOffsets, localOffsets, stringDescs)
+			b.emitInstruction(buf, fn, instr, paramOffsets, localOffsets, stringDescs, tracker)
 		}
 
 		if bb.Terminator != nil {
@@ -679,6 +769,7 @@ func (b *Backend) emitInstruction(
 	instr bigir.Instruction,
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
+	tracker *WindowSlotTracker,
 ) {
 	switch i := instr.(type) {
 	case *bigir.ConstByte:
@@ -732,10 +823,16 @@ func (b *Backend) emitInstruction(
 		}
 
 	case *bigir.SliceGet:
-		b.emitSliceGet(buf, fn, i, i.Slice, i.Index, 2, paramOffsets, localOffsets, stringDescs)
+		b.emitSliceGet(buf, fn, i, i.Slice, i.Index, 2, paramOffsets, localOffsets, stringDescs, tracker)
 
 	case *bigir.SlicePut:
-		b.emitSlicePut(buf, fn, i, i.Slice, i.Index, i.Val, 3, paramOffsets, localOffsets, stringDescs)
+		b.emitSlicePut(buf, fn, i, i.Slice, i.Index, i.Val, 3, paramOffsets, localOffsets, stringDescs, tracker)
+
+	case *bigir.FarLoad:
+		b.emitFarLoad(buf, fn, i, i.FarRef, i.Offset, 2, paramOffsets, localOffsets, stringDescs, tracker)
+
+	case *bigir.FarStore:
+		b.emitFarStore(buf, fn, i, i.FarRef, i.Offset, i.Val, 3, paramOffsets, localOffsets, stringDescs, tracker)
 
 	case *bigir.ZeroInit:
 		if slot, ok := localOffsets[i.GetID()]; ok {
@@ -885,6 +982,11 @@ func (b *Backend) emitInstruction(
 		}
 
 	case *bigir.NearStore:
+		if aol, ok := i.Addr.(*bigir.AddressOfLocal); ok {
+			if tracker != nil {
+				tracker.InvalidateKey(valKey(aol))
+			}
+		}
 		isByteStore := i.Val.Type().Size == 1 || (i.Addr.Type().ElementType != nil && i.Addr.Type().ElementType.Size == 1)
 		if isByteStore {
 			b.loadValToD(buf, i.Val, paramOffsets, localOffsets, stringDescs)
@@ -934,8 +1036,27 @@ func (b *Backend) emitInstruction(
 
 		if strings.HasPrefix(callee, "builtin_") {
 			if callee == "builtin_println" || callee == "builtin_print" {
+				hasString := false
+				for _, arg := range args {
+					if arg != nil {
+						typ := arg.Type()
+						if typ.Kind == bigir.KindFarString ||
+							strings.Contains(typ.Name, "string") ||
+							strings.HasSuffix(typ.Name, "slice_byte") ||
+							(typ.Kind == bigir.KindFarSlice && typ.ElementType != nil && typ.ElementType.Size == 1) {
+							hasString = true
+							break
+						}
+					}
+				}
 				b.emitPrint(buf, callee == "builtin_println", args, paramOffsets, localOffsets, stringDescs)
+				if tracker != nil && hasString {
+					tracker.Invalidate(2) // Slot 2 is clobbered by builtin_print_string
+				}
 			} else if callee == "builtin_panic" {
+				if tracker != nil {
+					tracker.InvalidateAll()
+				}
 				if len(args) > 0 {
 					b.loadSliceDescToReg(buf, args[0], "x", paramOffsets, localOffsets, stringDescs)
 				} else {
@@ -943,9 +1064,15 @@ func (b *Backend) emitInstruction(
 				}
 				buf.WriteString("    jsr   builtin_panic\n")
 			} else {
+				if tracker != nil {
+					tracker.InvalidateAll()
+				}
 				buf.WriteString(fmt.Sprintf("    jsr   %s\n", callee))
 			}
 		} else if callee == "prelude.streq" || callee == "streq" {
+			if tracker != nil {
+				tracker.InvalidateAll()
+			}
 			if len(args) >= 2 {
 				b.loadSliceDescToReg(buf, args[0], "x", paramOffsets, localOffsets, stringDescs)
 				b.loadSliceDescToReg(buf, args[1], "y", paramOffsets, localOffsets, stringDescs)
@@ -960,16 +1087,25 @@ func (b *Backend) emitInstruction(
 			if len(args) > 0 {
 				b.loadValToD(buf, args[0], paramOffsets, localOffsets, stringDescs)
 				buf.WriteString("    stb   $FF42\n")
+				if tracker != nil {
+					tracker.SetMapped(2, valKey(args[0]))
+				}
 			}
 		} else if callee == "prelude.MapWindow1" || callee == "MapWindow1" {
 			if len(args) > 0 {
 				b.loadValToD(buf, args[0], paramOffsets, localOffsets, stringDescs)
 				buf.WriteString("    stb   $FF43\n")
+				if tracker != nil {
+					tracker.SetMapped(3, valKey(args[0]))
+				}
 			}
 		} else if callee == "prelude.MapWindow2" || callee == "MapWindow2" {
 			if len(args) > 0 {
 				b.loadValToD(buf, args[0], paramOffsets, localOffsets, stringDescs)
 				buf.WriteString("    stb   $FF44\n")
+				if tracker != nil {
+					tracker.SetMapped(4, valKey(args[0]))
+				}
 			}
 		} else if strings.Contains(callee, "slice_") && (strings.HasSuffix(callee, "_Get") || strings.HasSuffix(callee, "_Get1")) {
 			if len(args) >= 2 {
@@ -977,16 +1113,22 @@ func (b *Backend) emitInstruction(
 				if strings.HasSuffix(callee, "_Get1") {
 					slotNum = 3
 				}
-				b.emitSliceGet(buf, fn, instr, args[0], args[1], slotNum, paramOffsets, localOffsets, stringDescs)
+				b.emitSliceGet(buf, fn, instr, args[0], args[1], slotNum, paramOffsets, localOffsets, stringDescs, tracker)
 				return
 			}
 		} else if strings.Contains(callee, "slice_") && (strings.HasSuffix(callee, "_Put") || strings.HasSuffix(callee, "_Put1")) {
 			if len(args) >= 3 {
 				slotNum := 3
-				b.emitSlicePut(buf, fn, instr, args[0], args[1], args[2], slotNum, paramOffsets, localOffsets, stringDescs)
+				if strings.HasSuffix(callee, "_Put1") {
+					slotNum = 2
+				}
+				b.emitSlicePut(buf, fn, instr, args[0], args[1], args[2], slotNum, paramOffsets, localOffsets, stringDescs, tracker)
 				return
 			}
 		} else {
+			if tracker != nil {
+				tracker.InvalidateAll()
+			}
 			retSize := instr.Type().Size
 
 			// Push arguments in reverse order (right to left)
@@ -1036,6 +1178,9 @@ func (b *Backend) emitInstruction(
 		}
 
 	case *bigir.IndirectCall:
+		if tracker != nil {
+			tracker.InvalidateAll()
+		}
 		retSize := instr.Type().Size
 
 		// Push arguments in reverse order (right to left)
@@ -1535,6 +1680,7 @@ func (b *Backend) emitSliceGet(
 	slotNum int,
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
+	tracker *WindowSlotTracker,
 ) {
 	id := instr.GetID()
 	elemSize := instr.Type().Size
@@ -1576,9 +1722,17 @@ func (b *Backend) emitSliceGet(
 	buf.WriteString(fmt.Sprintf("%s:\n", lblInbounds))
 
 	// 4. Check FarRef: Slot
+	sliceKey := valKey(sliceArg)
+	alreadyMapped := tracker != nil && sliceKey != "" && tracker.IsMapped(slotNum, sliceKey)
+
 	buf.WriteString("    ldd   ,x            ; D = far_ref\n")
 	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
-	buf.WriteString(fmt.Sprintf("    stb   %s         ; map block into Slot\n", mmapReg))
+	if !alreadyMapped {
+		buf.WriteString(fmt.Sprintf("    stb   %s         ; map block into Slot\n", mmapReg))
+		if tracker != nil && sliceKey != "" {
+			tracker.SetMapped(slotNum, sliceKey)
+		}
+	}
 	buf.WriteString("    ldd   2,x           ; D = slice.offset\n")
 	buf.WriteString(fmt.Sprintf("    addd  #%s        ; add Slot base\n", winBase))
 	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
@@ -1639,6 +1793,7 @@ func (b *Backend) emitSlicePut(
 	slotNum int,
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
+	tracker *WindowSlotTracker,
 ) {
 	id := instr.GetID()
 	elemSize := valArg.Type().Size
@@ -1704,9 +1859,17 @@ func (b *Backend) emitSlicePut(
 	buf.WriteString(fmt.Sprintf("%s:\n", lblInbounds))
 
 	// 5. Check FarRef: Slot
+	sliceKey := valKey(sliceArg)
+	alreadyMapped := tracker != nil && sliceKey != "" && tracker.IsMapped(slotNum, sliceKey)
+
 	buf.WriteString("    ldd   ,x            ; D = far_ref\n")
 	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
-	buf.WriteString(fmt.Sprintf("    stb   %s         ; map block into Slot\n", mmapReg))
+	if !alreadyMapped {
+		buf.WriteString(fmt.Sprintf("    stb   %s         ; map block into Slot\n", mmapReg))
+		if tracker != nil && sliceKey != "" {
+			tracker.SetMapped(slotNum, sliceKey)
+		}
+	}
 	buf.WriteString("    ldd   2,x           ; D = slice.offset\n")
 	buf.WriteString(fmt.Sprintf("    addd  #%s        ; add Slot base\n", winBase))
 	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
@@ -1740,6 +1903,175 @@ func (b *Backend) emitSlicePut(
 		aligned := (elemSize + 1) & ^1
 		for off := 0; off < aligned; off += 2 {
 			buf.WriteString(fmt.Sprintf("    puls  d\n    std   %d,x\n", off))
+		}
+	}
+}
+
+func (b *Backend) emitFarLoad(
+	buf *bytes.Buffer,
+	fn *bigir.Function,
+	instr bigir.Instruction,
+	farRefVal, offsetVal bigir.Value,
+	slotNum int,
+	paramOffsets, localOffsets map[int]int,
+	stringDescs map[string]string,
+	tracker *WindowSlotTracker,
+) {
+	id := instr.GetID()
+	elemSize := instr.Type().Size
+	if elemSize <= 0 {
+		elemSize = 2
+	}
+	mmapReg := "$FF42"
+	winBase := "$4000"
+	if slotNum == 3 {
+		mmapReg = "$FF43"
+		winBase = "$6000"
+	} else if slotNum == 4 {
+		mmapReg = "$FF44"
+		winBase = "$8000"
+	}
+	mName := MangleName(fn.Name)
+	lblNear := fmt.Sprintf(".L_%s_fld_near_%d", mName, id)
+	lblCalc := fmt.Sprintf(".L_%s_fld_calc_%d", mName, id)
+
+	refKey := valKey(farRefVal)
+	alreadyMapped := tracker != nil && refKey != "" && tracker.IsMapped(slotNum, refKey)
+
+	// 1. Evaluate FarRef
+	b.loadValToD(buf, farRefVal, paramOffsets, localOffsets, stringDescs)
+	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
+	if !alreadyMapped {
+		buf.WriteString(fmt.Sprintf("    stb   %s         ; map FarRef into Slot\n", mmapReg))
+		if tracker != nil && refKey != "" {
+			tracker.SetMapped(slotNum, refKey)
+		}
+	}
+	// Far branch: add Slot base
+	b.loadValToD(buf, offsetVal, paramOffsets, localOffsets, stringDescs)
+	buf.WriteString(fmt.Sprintf("    addd  #%s        ; add Slot base\n", winBase))
+	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
+
+	// Near branch: direct RAM
+	buf.WriteString(fmt.Sprintf("%s:\n", lblNear))
+	b.loadValToD(buf, offsetVal, paramOffsets, localOffsets, stringDescs)
+
+	buf.WriteString(fmt.Sprintf("%s:\n", lblCalc))
+	buf.WriteString("    tfr   d,x           ; X = target address\n")
+
+	// 2. Perform load
+	if elemSize == 1 {
+		buf.WriteString("    clra\n    ldb   ,x\n")
+		if slot, ok := localOffsets[id]; ok {
+			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
+		}
+	} else if elemSize == 2 {
+		buf.WriteString("    ldd   ,x\n")
+		if slot, ok := localOffsets[id]; ok {
+			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
+		}
+	} else if elemSize == 8 {
+		if slot, ok := localOffsets[id]; ok {
+			buf.WriteString("    ldd   0,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; far_ref\n", slot))
+			buf.WriteString("    ldd   2,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; offset\n", slot-2))
+			buf.WriteString("    ldd   4,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; length\n", slot-4))
+			buf.WriteString("    ldd   6,x\n")
+			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; capacity\n", slot-6))
+		}
+	} else {
+		if slot, ok := localOffsets[id]; ok {
+			for off := 0; off < elemSize; off += 2 {
+				if off+2 <= elemSize {
+					buf.WriteString(fmt.Sprintf("    ldd   %d,x\n    std   -%d,u\n", off, slot-off))
+				} else {
+					buf.WriteString(fmt.Sprintf("    ldb   %d,x\n    stb   -%d,u\n", off, slot-off))
+				}
+			}
+		}
+	}
+}
+
+func (b *Backend) emitFarStore(
+	buf *bytes.Buffer,
+	fn *bigir.Function,
+	instr bigir.Instruction,
+	farRefVal, offsetVal, valArg bigir.Value,
+	slotNum int,
+	paramOffsets, localOffsets map[int]int,
+	stringDescs map[string]string,
+	tracker *WindowSlotTracker,
+) {
+	elemSize := valArg.Type().Size
+	if elemSize <= 0 {
+		elemSize = 2
+	}
+	mmapReg := "$FF43"
+	winBase := "$6000"
+	if slotNum == 2 {
+		mmapReg = "$FF42"
+		winBase = "$4000"
+	} else if slotNum == 4 {
+		mmapReg = "$FF44"
+		winBase = "$8000"
+	}
+	id := instr.GetID()
+	mName := MangleName(fn.Name)
+	lblNear := fmt.Sprintf(".L_%s_fst_near_%d", mName, id)
+	lblCalc := fmt.Sprintf(".L_%s_fst_calc_%d", mName, id)
+
+	refKey := valKey(farRefVal)
+	alreadyMapped := tracker != nil && refKey != "" && tracker.IsMapped(slotNum, refKey)
+
+	// 1. Push value
+	if elemSize == 1 {
+		b.loadValToD(buf, valArg, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    pshs  b             ; push val byte\n")
+	} else if elemSize == 2 {
+		b.loadValToD(buf, valArg, paramOffsets, localOffsets, stringDescs)
+		buf.WriteString("    pshs  d             ; push val word\n")
+	} else if elemSize == 8 {
+		b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
+	} else {
+		b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
+	}
+
+	// 2. Evaluate FarRef
+	b.loadValToD(buf, farRefVal, paramOffsets, localOffsets, stringDescs)
+	buf.WriteString(fmt.Sprintf("    beq   %s\n", lblNear))
+	if !alreadyMapped {
+		buf.WriteString(fmt.Sprintf("    stb   %s         ; map FarRef into Slot\n", mmapReg))
+		if tracker != nil && refKey != "" {
+			tracker.SetMapped(slotNum, refKey)
+		}
+	}
+	b.loadValToD(buf, offsetVal, paramOffsets, localOffsets, stringDescs)
+	buf.WriteString(fmt.Sprintf("    addd  #%s        ; add Slot base\n", winBase))
+	buf.WriteString(fmt.Sprintf("    bra   %s\n", lblCalc))
+
+	buf.WriteString(fmt.Sprintf("%s:\n", lblNear))
+	b.loadValToD(buf, offsetVal, paramOffsets, localOffsets, stringDescs)
+
+	buf.WriteString(fmt.Sprintf("%s:\n", lblCalc))
+	buf.WriteString("    tfr   d,x           ; X = target address\n")
+
+	// 3. Perform store
+	if elemSize == 1 {
+		buf.WriteString("    puls  b\n    stb   ,x\n")
+	} else if elemSize == 2 {
+		buf.WriteString("    puls  d\n    std   ,x\n")
+	} else if elemSize == 8 {
+		buf.WriteString("    puls  d\n    std   0,x           ; far_ref\n")
+		buf.WriteString("    puls  d\n    std   2,x           ; offset\n")
+		buf.WriteString("    puls  d\n    std   4,x           ; length\n")
+		buf.WriteString("    puls  d\n    std   6,x           ; capacity\n")
+	} else {
+		aligned := (elemSize + 1) & ^1
+		for off := 0; off < aligned; off += 2 {
+			buf.WriteString("    puls  d\n")
+			buf.WriteString(fmt.Sprintf("    std   %d,x\n", off))
 		}
 	}
 }
