@@ -21,11 +21,32 @@ func eliminateFuncTrivialPhis(fn *Function) {
 		return v
 	}
 
-	replaceVal := func(v *Value) {
+	var replaceVal func(v *Value)
+	replaceVal = func(v *Value) {
 		if *v != nil {
 			resolved := resolve(*v)
 			if resolved != *v {
 				*v = resolved
+			}
+			switch expr := (*v).(type) {
+			case *BinaryOp:
+				if expr.GetID() == 0 {
+					replaceVal(&expr.Left)
+					replaceVal(&expr.Right)
+				}
+			case *UnaryOp:
+				if expr.GetID() == 0 {
+					replaceVal(&expr.Operand)
+				}
+			case *Compare:
+				if expr.GetID() == 0 {
+					replaceVal(&expr.Left)
+					replaceVal(&expr.Right)
+				}
+			case *AddressOfLocal:
+				if expr.GetID() == 0 {
+					replaceVal(&expr.Local)
+				}
 			}
 		}
 	}

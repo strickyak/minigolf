@@ -524,6 +524,9 @@ func (b *Builder) convertInstruction(
 		}
 
 	case *ir.Phi:
+		if existing, ok := valueMap[i].(Instruction); ok {
+			return existing
+		}
 		return &Phi{
 			BaseInstruction: BaseInstruction{Typ: b.convertType(i.Typ)},
 			Edges:           make([]PhiEdge, 0, len(i.Edges)),
