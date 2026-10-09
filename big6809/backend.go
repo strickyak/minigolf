@@ -775,6 +775,7 @@ func (b *Backend) emitInstruction(
 	stringDescs map[string]string,
 	tracker *WindowSlotTracker,
 ) {
+	mName := MangleName(fn.Name)
 	switch i := instr.(type) {
 	case *bigir.ConstByte:
 		if slot, ok := localOffsets[i.GetID()]; ok {
@@ -797,6 +798,9 @@ func (b *Backend) emitInstruction(
 			buf.WriteString("    coma\n    comb\n    addd  #1\n")
 		case "not":
 			buf.WriteString("    coma\n    comb\n")
+		}
+		if i.Type().Size == 1 {
+			buf.WriteString("    clra\n")
 		}
 		if slot, ok := localOffsets[i.GetID()]; ok {
 			buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
@@ -858,7 +862,6 @@ func (b *Backend) emitInstruction(
 					buf.WriteString(fmt.Sprintf("    std   -%d,u             ; zero init\n", slot-off))
 				}
 			} else {
-				mName := MangleName(fn.Name)
 				lbl := fmt.Sprintf(".L_%s_zero_%d", mName, i.GetID())
 				buf.WriteString(fmt.Sprintf("    leax  -%d,u             ; zero init large struct/array\n", slot))
 				buf.WriteString(fmt.Sprintf("    ldy   #%d\n", sz))
@@ -1038,7 +1041,7 @@ func (b *Backend) emitInstruction(
 						}
 					} else {
 						wordCount := (sz + 1) / 2
-						lbl := fmt.Sprintf(".L_storecpy_%d", instr.GetID())
+						lbl := fmt.Sprintf(".L_%s_storecpy_%d", mName, instr.GetID())
 						buf.WriteString("    pshs  u\n")
 						buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
 						buf.WriteString(fmt.Sprintf("%s:\n", lbl))
@@ -1400,6 +1403,9 @@ func (b *Backend) emitBinaryOp(
 			buf.WriteString("    jsr   __shr16\n")
 		}
 	}
+	if i.Type().Size == 1 {
+		buf.WriteString("    clra\n")
+	}
 }
 
 func (b *Backend) loadValToD(
@@ -1420,6 +1426,9 @@ func (b *Backend) loadValToD(
 	case *bigir.Parameter:
 		if off, ok := paramOffsets[v.ID]; ok {
 			buf.WriteString(fmt.Sprintf("    ldd   %d,u               ; param %s\n", off, v.Name))
+			if v.Type().Size == 1 {
+				buf.WriteString("    clra\n")
+			}
 		} else {
 			buf.WriteString("    clra\n    clrb\n")
 		}
@@ -1496,6 +1505,9 @@ func (b *Backend) loadValToD(
 	case bigir.Instruction:
 		if off, ok := localOffsets[v.GetID()]; ok {
 			buf.WriteString(fmt.Sprintf("    ldd   -%d,u              ; v%d\n", off, v.GetID()))
+			if v.Type().Size == 1 {
+				buf.WriteString("    clra\n")
+			}
 		} else {
 			buf.WriteString("    clra\n    clrb\n")
 		}
@@ -2240,6 +2252,7 @@ func (b *Backend) emitPrint(
 
 func (b *Backend) emitPhiAssignments(
 	buf *bytes.Buffer,
+	mName string,
 	from, to *bigir.BasicBlock,
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
@@ -2288,7 +2301,7 @@ func (b *Backend) emitPhiAssignments(
 			if instr, ok := p.val.(bigir.Instruction); ok {
 				if srcSlot, ok := localOffsets[instr.GetID()]; ok {
 					if srcSlot != p.slot {
-						lbl := fmt.Sprintf(".L_phicpy_%d_%d_%d", from.ID, to.ID, instr.GetID())
+						lbl := fmt.Sprintf(".L_%s_phicpy_%d_%d_%d", mName, from.ID, to.ID, instr.GetID())
 						wordCount := (p.size + 1) / 2
 						buf.WriteString(fmt.Sprintf("    leax  -%d,u             ; phi copy src\n", srcSlot))
 						buf.WriteString(fmt.Sprintf("    leay  -%d,u             ; phi copy dest\n", p.slot))
@@ -2346,6 +2359,9 @@ func (b *Backend) emitPhiAssignments(
 			}
 		} else {
 			buf.WriteString("    puls  d\n")
+			if p.size == 1 {
+				buf.WriteString("    clra\n")
+			}
 			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; phi assign\n", p.slot))
 		}
 	}
@@ -2396,7 +2412,7 @@ func (b *Backend) emitTerminator(
 		}
 		buf.WriteString(fmt.Sprintf("    bra   .L_%s_epilogue\n", mName))
 	case *bigir.Branch:
-		b.emitPhiAssignments(buf, bb, t.Target, paramOffsets, localOffsets, stringDescs)
+		b.emitPhiAssignments(buf, mName, bb, t.Target, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString(fmt.Sprintf("    lbra  .L_%s_bb%d\n", mName, t.Target.ID))
 	case *bigir.CondBranch:
 		b.loadValToD(buf, t.Cond, paramOffsets, localOffsets, stringDescs)
@@ -2404,11 +2420,11 @@ func (b *Backend) emitTerminator(
 		lblTrue := fmt.Sprintf(".L_%s_cbr_true_%d", mName, t.GetID())
 		buf.WriteString(fmt.Sprintf("    lbne  %s\n", lblTrue))
 		// False target
-		b.emitPhiAssignments(buf, bb, t.FalseTarget, paramOffsets, localOffsets, stringDescs)
+		b.emitPhiAssignments(buf, mName, bb, t.FalseTarget, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString(fmt.Sprintf("    lbra  .L_%s_bb%d\n", mName, t.FalseTarget.ID))
 		// True target
 		buf.WriteString(fmt.Sprintf("%s:\n", lblTrue))
-		b.emitPhiAssignments(buf, bb, t.TrueTarget, paramOffsets, localOffsets, stringDescs)
+		b.emitPhiAssignments(buf, mName, bb, t.TrueTarget, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString(fmt.Sprintf("    lbra  .L_%s_bb%d\n", mName, t.TrueTarget.ID))
 	}
 }
