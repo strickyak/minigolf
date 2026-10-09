@@ -668,3 +668,67 @@ To preserve the stability, cleanliness, and speed of existing backends:
   - **Window Caching**: Allocates and caches MMU registers (`$FF42..$FF44`) for Far Data dereferencing.
   - **Calling Conventions**: Manages Slot 5 mapping (`$FF45`) and stack-saved block IDs.
 
+---
+
+## 14. Current Test Suite Status & Known Edge Cases (Hatvan OS EMBIGGEN 6809)
+
+As of the current implementation, the EMBIGGEN 6809 test suite achieves **83/86 passed tests** (0 failed tests against expected output) under the Hatvan OS environment (`run9+.sh`). Three specific tests represent known architectural edge cases:
+
+| Test File | Result | Root Cause Category |
+| :--- | :--- | :--- |
+| `tests/test_apl_triangle_nomoto.golf` | `RUNTIME_ERR` (gep9 crash at `0x2E8B`) | **Stack–Heap Collision**: Deep recursion in Slot 1 pushes stack downward past `$3800` into the near heap. |
+| `tests/test_fft_sine64.golf` | `RUNTIME_ERR` (`*PANIC* 4002`) | **Near Heap Exhaustion**: Accumulation of ~280 uncollected float-format strings exhausts 13KB near heap. |
+| `tests/picol_1_nomoto.golf` | `TIMEOUT` (>45s) | **CPU Cycle Bound**: Full Tcl interpreter running an extensive suite on emulated 6809. |
+
+---
+
+### 14.1 `tests/test_apl_triangle_nomoto.golf`: Stack–Heap Collision in Slot 1
+
+#### Symptoms
+Under `run9+.sh`, the test fails during initial evaluation of user-defined recursive functions with an emulator crash in `gep9`:
+```
+panic: unimplemented Page 0 opcode 0x01 at PC 0x2E8B
+```
+
+#### Mechanism
+1. **Slot 1 Layout**: Slot 1 (`$2000..$3FFF`, 8KB) hosts both the hardware process stack (growing downward from `$3FFE`) and the near heap (configured at `0x0400..0x3800` across lower RAM to support memory-heavy non-far programs like `test_btree` and `forth_count`).
+2. **Constrained Stack Headroom**: This configuration leaves approximately 2KB (`$3800..$3FFE`) for the process stack.
+3. **Deep Recursive Evaluation**: The APL interpreter (`demos/apl.golf`) tests recursion via `triangle 10` and `fib 5`. Each recursive call retains nested lexical context frames, token slices, and intermediate values.
+4. **Collision and Pointer Corruption**: As the call stack descends past `$3800` to `$37C2`, it enters active heap allocations. When `apl.Eval` looks up an operation in `DyadicOps`, stack/heap memory corruption clobbers the function pointer with a heap address (`0x2E00` instead of a valid code trampoline at `$C000+`). An indirect call (`jsr ,x`) into data RAM executes non-code bytes until faulting.
+5. **Contrast with Flat M6809**: Under standard non-embiggen M6809 (`run9.sh`), the process memory model is not confined to an 8KB paging window, and the test completes cleanly in 7.95 million cycles.
+
+---
+
+### 14.2 `tests/test_fft_sine64.golf`: Near Heap Exhaustion in Format-Heavy Loops
+
+#### Symptoms
+The test executes for **343,983,183 cycles** (~5 minutes in software emulation), successfully computing and printing:
+- All 64 points of the sine Wave Table.
+- All 64 points of Forward FFT (128 floating-point numbers).
+- Points 0 through 43 of Inverse FFT (88 floating-point numbers).
+
+At point 44 of the Inverse FFT loop, execution halts with:
+```
+*PANIC* 4002
+*** ABORT
+*** EMPTY_RE_CHAIN
+```
+
+#### Mechanism
+1. **Panic 4002 Origin**: In `biggolflib/prelude.golf`, panic `4002` is raised by `malloc` when the circular free-list pointer wraps around without locating an available arena chunk (`word(p) == word(freep)`).
+2. **Accumulation of Uncollected Strings**: Each iteration prints complex values using `println(i, complex.Format(inv[i]))`. `complex.Format` calls `floating.Format`, which dynamically allocates temporary string buffers on the near heap.
+3. **Absence of GC**: Because MiniGolf operates with manual and destructor-based memory management rather than an automatic garbage collector for scalar expressions, 280 formatted strings accumulate in memory without being explicitly freed.
+4. **13KB Heap Capacity**: The 13,312-byte near heap is exhausted near the very end of the test (44/64 inverse points completed, just 24 lines away from completion).
+
+---
+
+### 14.3 `tests/picol_1_nomoto.golf`: Execution Time / Cycle Limit
+
+#### Symptoms
+The test times out after exceeding the standard 45-second test runner execution deadline.
+
+#### Mechanism
+1. **Interpreter-on-Emulator Overhead**: `picol` is an implementation of a Tcl interpreter written in MiniGolf. Running an interpreted dynamic scripting language on an emulated 6809 CPU running on a software virtual machine (`gep9`) compounds interpretive overhead.
+2. **Cycle Budget**: The test passes under flat non-timeout runners given sufficient time (>60–90 seconds) and represents a CPU cycle-bound workload rather than an architectural or memory layout failure.
+
+
