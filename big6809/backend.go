@@ -1715,6 +1715,15 @@ func (b *Backend) pushSliceArg(
 	paramOffsets, localOffsets map[int]int,
 	stringDescs map[string]string,
 ) {
+	if instr, ok := arg.(bigir.Instruction); ok {
+		if slot, ok := localOffsets[instr.GetID()]; ok {
+			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-6))
+			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-4))
+			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-2))
+			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot))
+			return
+		}
+	}
 	if sm, ok := arg.(*bigir.SliceMake); ok {
 		b.loadValToD(buf, sm.Capacity, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString("    pshs  d\n")
@@ -1742,15 +1751,6 @@ func (b *Backend) pushSliceArg(
 			buf.WriteString(fmt.Sprintf("    ldd   %d,u\n    pshs  d\n", off+4))
 			buf.WriteString(fmt.Sprintf("    ldd   %d,u\n    pshs  d\n", off+2))
 			buf.WriteString(fmt.Sprintf("    ldd   %d,u\n    pshs  d\n", off))
-			return
-		}
-	}
-	if instr, ok := arg.(bigir.Instruction); ok {
-		if slot, ok := localOffsets[instr.GetID()]; ok {
-			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-6))
-			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-4))
-			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-2))
-			buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot))
 			return
 		}
 	}
