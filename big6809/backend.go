@@ -992,7 +992,7 @@ func (b *Backend) emitInstruction(
 			if slot, ok := localOffsets[i.GetID()]; ok {
 				buf.WriteString(fmt.Sprintf("    std   -%d,u\n", slot))
 			}
-		} else if i.Type().Size > 2 {
+		} else if i.Type().Size == 8 && (i.Type().Kind == bigir.KindFarSlice || i.Type().Kind == bigir.KindFarString) {
 			if slot, ok := localOffsets[i.GetID()]; ok {
 				buf.WriteString("    ldd   0,x\n")
 				buf.WriteString(fmt.Sprintf("    std   -%d,u             ; far_ref\n", slot))
@@ -1002,6 +1002,36 @@ func (b *Backend) emitInstruction(
 				buf.WriteString(fmt.Sprintf("    std   -%d,u             ; length\n", slot-4))
 				buf.WriteString("    ldd   6,x\n")
 				buf.WriteString(fmt.Sprintf("    std   -%d,u             ; capacity\n", slot-6))
+			}
+		} else if i.Type().Size > 2 {
+			if slot, ok := localOffsets[i.GetID()]; ok {
+				sz := i.Type().Size
+				if sz <= 32 {
+					for off := 0; off < sz; off += 2 {
+						if off+2 <= sz {
+							buf.WriteString(fmt.Sprintf("    ldd   %d,x\n    std   -%d,u\n", off, slot-off))
+						} else {
+							buf.WriteString(fmt.Sprintf("    ldb   %d,x\n    stb   -%d,u\n", off, slot-off))
+						}
+					}
+				} else {
+					wordCount := sz / 2
+					buf.WriteString(fmt.Sprintf("    leay  -%d,u\n", slot))
+					if wordCount > 0 {
+						lbl := fmt.Sprintf(".L_%s_loadcpy_%d", mName, instr.GetID())
+						buf.WriteString("    pshs  u\n")
+						buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
+						buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+						buf.WriteString("    ldd   ,x++\n")
+						buf.WriteString("    std   ,y++\n")
+						buf.WriteString("    leau  -1,u\n")
+						buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
+						buf.WriteString("    puls  u\n")
+					}
+					if sz%2 != 0 {
+						buf.WriteString("    ldb   ,x\n    stb   ,y\n")
+					}
+				}
 			}
 		} else {
 			buf.WriteString("    ldd   ,x\n")
@@ -1034,22 +1064,31 @@ func (b *Backend) emitInstruction(
 			buf.WriteString("    tfr   d,x\n")
 			if srcInstr, ok := i.Val.(bigir.Instruction); ok {
 				if srcSlot, ok := localOffsets[srcInstr.GetID()]; ok {
-					buf.WriteString(fmt.Sprintf("    leay  -%d,u\n", srcSlot))
-					if sz <= 4 {
-						for off := 0; off < sz; off++ {
-							buf.WriteString("    lda   ,y+\n    sta   ,x+\n")
+					if sz <= 32 {
+						for off := 0; off < sz; off += 2 {
+							if off+2 <= sz {
+								buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    std   %d,x\n", srcSlot-off, off))
+							} else {
+								buf.WriteString(fmt.Sprintf("    ldb   -%d,u\n    stb   %d,x\n", srcSlot-off, off))
+							}
 						}
 					} else {
-						wordCount := (sz + 1) / 2
-						lbl := fmt.Sprintf(".L_%s_storecpy_%d", mName, instr.GetID())
-						buf.WriteString("    pshs  u\n")
-						buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
-						buf.WriteString(fmt.Sprintf("%s:\n", lbl))
-						buf.WriteString("    ldd   ,y++\n")
-						buf.WriteString("    std   ,x++\n")
-						buf.WriteString("    leau  -1,u\n")
-						buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
-						buf.WriteString("    puls  u\n")
+						wordCount := sz / 2
+						buf.WriteString(fmt.Sprintf("    leay  -%d,u\n", srcSlot))
+						if wordCount > 0 {
+							lbl := fmt.Sprintf(".L_%s_storecpy_%d", mName, instr.GetID())
+							buf.WriteString("    pshs  u\n")
+							buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
+							buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+							buf.WriteString("    ldd   ,y++\n")
+							buf.WriteString("    std   ,x++\n")
+							buf.WriteString("    leau  -1,u\n")
+							buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
+							buf.WriteString("    puls  u\n")
+						}
+						if sz%2 != 0 {
+							buf.WriteString("    ldb   ,y\n    stb   ,x\n")
+						}
 					}
 				}
 			}
