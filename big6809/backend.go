@@ -939,8 +939,25 @@ func (b *Backend) emitInstruction(
 				if valInstr, ok := i.Val.(bigir.Instruction); ok {
 					if valSlot, ok := localOffsets[valInstr.GetID()]; ok {
 						for off := 0; off < i.FieldSize; off += 2 {
-							buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n", valSlot-off))
-							buf.WriteString(fmt.Sprintf("    std   -%d,u\n", fieldDestOffset-off))
+							if off+2 <= i.FieldSize {
+								buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n", valSlot-off))
+								buf.WriteString(fmt.Sprintf("    std   -%d,u\n", fieldDestOffset-off))
+							} else {
+								buf.WriteString(fmt.Sprintf("    ldb   -%d,u\n", valSlot-off))
+								buf.WriteString(fmt.Sprintf("    stb   -%d,u\n", fieldDestOffset-off))
+							}
+						}
+					}
+				} else if p, ok := i.Val.(*bigir.Parameter); ok {
+					if pOff, ok := paramOffsets[p.ID]; ok {
+						for off := 0; off < i.FieldSize; off += 2 {
+							if off+2 <= i.FieldSize {
+								buf.WriteString(fmt.Sprintf("    ldd   %d,u\n", pOff+off))
+								buf.WriteString(fmt.Sprintf("    std   -%d,u\n", fieldDestOffset-off))
+							} else {
+								buf.WriteString(fmt.Sprintf("    ldb   %d,u\n", pOff+off))
+								buf.WriteString(fmt.Sprintf("    stb   -%d,u\n", fieldDestOffset-off))
+							}
 						}
 					}
 				}
@@ -1040,18 +1057,25 @@ func (b *Backend) emitInstruction(
 					wordCount := sz / 2
 					buf.WriteString(fmt.Sprintf("    leay  -%d,u\n", slot))
 					if wordCount > 0 {
-						lbl := fmt.Sprintf(".L_%s_loadcpy_%d", mName, instr.GetID())
-						buf.WriteString("    pshs  u\n")
-						buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
-						buf.WriteString(fmt.Sprintf("%s:\n", lbl))
-						buf.WriteString("    ldd   ,x++\n")
-						buf.WriteString("    std   ,y++\n")
-						buf.WriteString("    leau  -1,u\n")
-						buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
-						buf.WriteString("    puls  u\n")
+						if wordCount <= 16 {
+							for off := 0; off < wordCount*2; off += 2 {
+								buf.WriteString(fmt.Sprintf("    ldd   %d,x\n    std   %d,y\n", off, off))
+							}
+						} else {
+							lbl := fmt.Sprintf(".L_%s_loadcpy_%d", mName, instr.GetID())
+							buf.WriteString("    pshs  u\n")
+							buf.WriteString(fmt.Sprintf("    ldu   #%d\n", wordCount))
+							buf.WriteString(fmt.Sprintf("%s:\n", lbl))
+							buf.WriteString("    ldd   ,x++\n")
+							buf.WriteString("    std   ,y++\n")
+							buf.WriteString("    leau  -1,u\n")
+							buf.WriteString("    cmpu  #0\n")
+							buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
+							buf.WriteString("    puls  u\n")
+						}
 					}
 					if sz%2 != 0 {
-						buf.WriteString("    ldb   ,x\n    stb   ,y\n")
+						buf.WriteString(fmt.Sprintf("    ldb   %d,x\n    stb   %d,y\n", wordCount*2, wordCount*2))
 					}
 				}
 			}
@@ -1105,12 +1129,41 @@ func (b *Backend) emitInstruction(
 							buf.WriteString("    ldd   ,y++\n")
 							buf.WriteString("    std   ,x++\n")
 							buf.WriteString("    leau  -1,u\n")
+							buf.WriteString("    cmpu  #0\n")
 							buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
 							buf.WriteString("    puls  u\n")
 						}
 						if sz%2 != 0 {
 							buf.WriteString("    ldb   ,y\n    stb   ,x\n")
 						}
+					}
+				}
+			} else if p, ok := i.Val.(*bigir.Parameter); ok {
+				if pOff, ok := paramOffsets[p.ID]; ok {
+					for off := 0; off < sz; off += 2 {
+						if off+2 <= sz {
+							buf.WriteString(fmt.Sprintf("    ldd   %d,u\n    std   %d,x\n", pOff+off, off))
+						} else {
+							buf.WriteString(fmt.Sprintf("    ldb   %d,u\n    stb   %d,x\n", pOff+off, off))
+						}
+					}
+				}
+			} else if cs, ok := i.Val.(*bigir.ConstStruct); ok {
+				for off, f := range cs.Fields {
+					b.loadValToD(buf, f, paramOffsets, localOffsets, stringDescs)
+					if f.Type().Size == 1 {
+						buf.WriteString(fmt.Sprintf("    stb   %d,x\n", off))
+					} else {
+						buf.WriteString(fmt.Sprintf("    std   %d,x\n", off))
+					}
+				}
+			} else if g, ok := i.Val.(*bigir.Global); ok {
+				mName := MangleName(g.Name)
+				for off := 0; off < sz; off += 2 {
+					if off+2 <= sz {
+						buf.WriteString(fmt.Sprintf("    ldd   v_%s+%d\n    std   %d,x\n", mName, off, off))
+					} else {
+						buf.WriteString(fmt.Sprintf("    ldb   v_%s+%d\n    stb   %d,x\n", mName, off, off))
 					}
 				}
 			}
@@ -1692,8 +1745,13 @@ func (b *Backend) copyFieldBytes(
 		if slot, ok := localOffsets[sInstr.GetID()]; ok {
 			srcBase := slot - byteOffset
 			for off := 0; off < size; off += 2 {
-				buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n", srcBase-off))
-				buf.WriteString(fmt.Sprintf("    std   -%d,u\n", destSlot-off))
+				if off+2 <= size {
+					buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n", srcBase-off))
+					buf.WriteString(fmt.Sprintf("    std   -%d,u\n", destSlot-off))
+				} else {
+					buf.WriteString(fmt.Sprintf("    ldb   -%d,u\n", srcBase-off))
+					buf.WriteString(fmt.Sprintf("    stb   -%d,u\n", destSlot-off))
+				}
 			}
 			return
 		}
@@ -1701,8 +1759,13 @@ func (b *Backend) copyFieldBytes(
 		if pOff, ok := paramOffsets[p.ID]; ok {
 			srcBase := pOff + byteOffset
 			for off := 0; off < size; off += 2 {
-				buf.WriteString(fmt.Sprintf("    ldd   %d,u\n", srcBase+off))
-				buf.WriteString(fmt.Sprintf("    std   -%d,u\n", destSlot-off))
+				if off+2 <= size {
+					buf.WriteString(fmt.Sprintf("    ldd   %d,u\n", srcBase+off))
+					buf.WriteString(fmt.Sprintf("    std   -%d,u\n", destSlot-off))
+				} else {
+					buf.WriteString(fmt.Sprintf("    ldb   %d,u\n", srcBase+off))
+					buf.WriteString(fmt.Sprintf("    stb   -%d,u\n", destSlot-off))
+				}
 			}
 			return
 		}
@@ -2423,7 +2486,7 @@ func (b *Backend) emitPhiAssignments(
 
 	// 1. Evaluate and copy/push incoming phi values
 	for _, p := range pending {
-		if p.size > 8 {
+		if p.size > 32 {
 			if instr, ok := p.val.(bigir.Instruction); ok {
 				if srcSlot, ok := localOffsets[instr.GetID()]; ok {
 					if srcSlot != p.slot {
@@ -2437,6 +2500,7 @@ func (b *Backend) emitPhiAssignments(
 						buf.WriteString("    ldd   ,x++\n")
 						buf.WriteString("    std   ,y++\n")
 						buf.WriteString("    leau  -1,u\n")
+						buf.WriteString("    cmpu  #0\n")
 						buf.WriteString(fmt.Sprintf("    bne   %s\n", lbl))
 						buf.WriteString("    puls  u\n")
 					}
@@ -2482,7 +2546,7 @@ func (b *Backend) emitPhiAssignments(
 	// 2. Pop in reverse order into the respective phi stack slots
 	for idx := len(pending) - 1; idx >= 0; idx-- {
 		p := pending[idx]
-		if p.size > 8 {
+		if p.size > 32 {
 			continue // Already copied directly in step 1
 		} else if p.size == 8 && (p.val.Type().Kind == bigir.KindFarSlice || p.val.Type().Kind == bigir.KindFarString) {
 			buf.WriteString("    puls  d\n")
@@ -2543,10 +2607,38 @@ func (b *Backend) emitTerminator(
 							buf.WriteString(fmt.Sprintf("    stb   %d,x\n", off))
 						}
 					}
-				} else {
+				} else if retSize == 8 {
 					b.storeSliceToPtr(buf, val, paramOffsets, localOffsets, stringDescs)
 				}
-			} else {
+			} else if p, ok := val.(*bigir.Parameter); ok {
+				if pOff, ok := paramOffsets[p.ID]; ok {
+					for off := 0; off < retSize; off += 2 {
+						if off+2 <= retSize {
+							buf.WriteString(fmt.Sprintf("    ldd   %d,u\n    std   %d,x\n", pOff+off, off))
+						} else {
+							buf.WriteString(fmt.Sprintf("    ldb   %d,u\n    stb   %d,x\n", pOff+off, off))
+						}
+					}
+				}
+			} else if cs, ok := val.(*bigir.ConstStruct); ok {
+				for off, f := range cs.Fields {
+					b.loadValToD(buf, f, paramOffsets, localOffsets, stringDescs)
+					if f.Type().Size == 1 {
+						buf.WriteString(fmt.Sprintf("    stb   %d,x\n", off))
+					} else {
+						buf.WriteString(fmt.Sprintf("    std   %d,x\n", off))
+					}
+				}
+			} else if g, ok := val.(*bigir.Global); ok {
+				mName := MangleName(g.Name)
+				for off := 0; off < retSize; off += 2 {
+					if off+2 <= retSize {
+						buf.WriteString(fmt.Sprintf("    ldd   v_%s+%d\n    std   %d,x\n", mName, off, off))
+					} else {
+						buf.WriteString(fmt.Sprintf("    ldb   v_%s+%d\n    stb   %d,x\n", mName, off, off))
+					}
+				}
+			} else if retSize == 8 {
 				b.storeSliceToPtr(buf, val, paramOffsets, localOffsets, stringDescs)
 			}
 		} else if val != nil {
