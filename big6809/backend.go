@@ -2138,21 +2138,10 @@ func (b *Backend) emitSlicePut(
 	} else if elemSize == 2 {
 		b.loadValToD(buf, valArg, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString("    pshs  d             ; push val word\n")
-	} else if elemSize == 8 {
+	} else if elemSize == 8 && (valArg.Type().Kind == bigir.KindFarSlice || valArg.Type().Kind == bigir.KindFarString) {
 		b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
 	} else {
-		if instrVal, ok := valArg.(bigir.Instruction); ok {
-			if slot, ok := localOffsets[instrVal.GetID()]; ok {
-				aligned := (elemSize + 1) & ^1
-				for off := aligned - 2; off >= 0; off -= 2 {
-					buf.WriteString(fmt.Sprintf("    ldd   -%d,u\n    pshs  d\n", slot-off))
-				}
-			} else {
-				b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
-			}
-		} else {
-			b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
-		}
+		b.pushArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
 	}
 
 	// 2. Evaluate index and push
@@ -2349,10 +2338,10 @@ func (b *Backend) emitFarStore(
 	} else if elemSize == 2 {
 		b.loadValToD(buf, valArg, paramOffsets, localOffsets, stringDescs)
 		buf.WriteString("    pshs  d             ; push val word\n")
-	} else if elemSize == 8 {
+	} else if elemSize == 8 && (valArg.Type().Kind == bigir.KindFarSlice || valArg.Type().Kind == bigir.KindFarString) {
 		b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
 	} else {
-		b.pushSliceArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
+		b.pushArg(buf, valArg, paramOffsets, localOffsets, stringDescs)
 	}
 
 	// 2. Evaluate FarRef
