@@ -30,6 +30,7 @@ func MangleName(s string) string {
 type Backend struct {
 	fmtCount   int
 	fmtStrings map[string]string
+	cstart     string
 }
 
 // New creates a new EMBIGGEN 6809 backend.
@@ -39,13 +40,22 @@ func New() *Backend {
 	}
 }
 
+// SetCStart sets a custom cstart assembly template.
+func (b *Backend) SetCStart(s string) {
+	b.cstart = s
+}
+
 // Generate transforms a BIGIR Program into valid 6809 assembly.
 func (b *Backend) Generate(prog *bigir.Program) (string, error) {
 	var buf bytes.Buffer
 	var codeBuf bytes.Buffer
 
 	// 1. Emit CStart and Core Runtime in Slot 6
-	buf.WriteString(CStartTemplate)
+	cstart := b.cstart
+	if cstart == "" {
+		cstart = CStartTemplate
+	}
+	buf.WriteString(cstart)
 	buf.WriteString("\n")
 
 	// 2. Emit Slot 6 Trampolines

@@ -196,6 +196,95 @@ f_prelude__getchar:
     clra
     rts
 
+; --- Low-Level Subroutines for os.golf (Fallback Bare Metal) ---
+
+; os.SysReadLn(path int, buf *byte, maxLen int) int
+f_os__SysReadLn:
+    pshs  u
+    tfr   s,u
+    ldx   6,u          ; X = buf
+    ldy   8,u          ; Y = maxLen
+    cmpy  #0
+    ble   .bm_fallback_rln_eof
+    clra
+    clrb
+    pshs  d            ; 0,s = count (2B)
+.bm_fallback_rln_loop:
+    ldd   0,s
+    cmpd  8,u          ; count >= maxLen?
+    bge   .bm_fallback_rln_done
+    ldb   $FF01        ; read byte from console
+    beq   .bm_fallback_rln_loop ; wait for input
+    cmpb  #4           ; EOF (Ctrl-D)?
+    beq   .bm_fallback_rln_ctrl_d
+    cmpb  #$FF         ; EOF?
+    beq   .bm_fallback_rln_ctrl_d
+    cmpb  #13          ; CR?
+    beq   .bm_fallback_rln_eol
+    cmpb  #10          ; LF?
+    beq   .bm_fallback_rln_eol
+    cmpb  #8           ; Backspace?
+    beq   .bm_fallback_rln_bs
+    cmpb  #127         ; Delete?
+    beq   .bm_fallback_rln_bs
+    stb   ,x+
+    ldd   0,s
+    addd  #1
+    std   0,s
+    bra   .bm_fallback_rln_loop
+.bm_fallback_rln_bs:
+    ldd   0,s
+    beq   .bm_fallback_rln_loop
+    subd  #1
+    std   0,s
+    leax  -1,x
+    bra   .bm_fallback_rln_loop
+.bm_fallback_rln_eol:
+    ldb   #10          ; append newline '\n'
+    stb   ,x+
+    ldd   0,s
+    addd  #1
+    std   0,s
+    bra   .bm_fallback_rln_done
+.bm_fallback_rln_ctrl_d:
+    ldd   0,s
+    bne   .bm_fallback_rln_done
+    puls  d
+    ldd   #-1          ; return -1 on EOF
+    puls  u,pc
+.bm_fallback_rln_done:
+    puls  d            ; D = count
+    puls  u,pc
+.bm_fallback_rln_eof:
+    ldd   #-1
+    puls  u,pc
+
+; os.SysWritLn(path int, buf *byte, count int) int
+f_os__SysWritLn:
+    pshs  u
+    tfr   s,u
+    ldx   6,u          ; X = buf
+    ldy   8,u          ; Y = count
+    cmpy  #0
+    ble   .bm_fallback_wln_done
+.bm_fallback_wln_loop:
+    ldb   ,x+
+    stb   $FF00        ; write to console port
+    leay  -1,y
+    bne   .bm_fallback_wln_loop
+.bm_fallback_wln_done:
+    ldd   8,u          ; return count
+    puls  u,pc
+
+; os.SysExit(status int)
+f_os__SysExit:
+    pshs  u
+    tfr   s,u
+    ldb   5,u          ; status byte
+    stb   $FF05        ; bare metal exit port
+.bm_fallback_exit_stuck:
+    bra   .bm_fallback_exit_stuck
+
 _printf:
     pshs  d,x,y,u
     ldx   10,s          ; format string pointer

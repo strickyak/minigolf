@@ -1,26 +1,27 @@
 MINIGOLF ?= ../minigolf
 ASM6809 ?= ../asm6809
 BIGGOLFLIB ?= ../biggolflib
+COMPILE_BARE ?= ../compile-bare-metal.sh
+COMPILE_HATVAN ?= ../compile-hatvan.sh
 BUILD_DIR ?= build
 
 SRC = pyeval.golf
-ASM = $(BUILD_DIR)/pyeval.asm
-LIST = $(BUILD_DIR)/pyeval.list
 DECB = $(BUILD_DIR)/pyeval.decb
+DECB_HV = $(BUILD_DIR)/pyeval-hv.decb
 TCL = $(BUILD_DIR)/mode81.tcl
 
 .PHONY: all clean test run-gep9 run-tfr911
 
-all: $(DECB) $(TCL)
+all: $(DECB) $(DECB_HV) $(TCL)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(ASM): $(SRC) | $(BUILD_DIR)
-	$(MINIGOLF) -m=6809+ -I=$(BIGGOLFLIB) -o=$@ $<
+$(DECB): $(SRC) $(COMPILE_BARE) ../bare-metal-lib/os.golf ../bare-metal-lib/cstart.asm | $(BUILD_DIR)
+	$(COMPILE_BARE) $(SRC) $(DECB)
 
-$(DECB): $(ASM) | $(BUILD_DIR)
-	$(ASM6809) --decb -l $(LIST) -o $@ $<
+$(DECB_HV): $(SRC) $(COMPILE_HATVAN) ../hatvan-lib/os.golf ../hatvan-lib/cstart.asm | $(BUILD_DIR)
+	$(COMPILE_HATVAN) $(SRC) $(DECB_HV)
 
 $(TCL): | $(BUILD_DIR)
 	@echo 'set Config(engine) "gep9big"' > $@

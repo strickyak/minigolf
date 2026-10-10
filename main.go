@@ -343,6 +343,7 @@ func main() {
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
 	globalsAtYFlag := flag.Bool("globals-at-y", false, "Reserve Y register as a pointer to the global data section (uses contiguous offset addressing)")
 	picFlag := flag.Bool("pic", false, "Generate position-independent code (PIC) using relative branches and localized PCR data segments")
+	cstartFlag := flag.String("cstart", "", "Path to custom cstart.asm for 6809+")
 
 	noConstfold := flag.Bool("no-constfold", false, "Disable Constant Folding optimization")
 	noDbe := flag.Bool("no-dbe", false, "Disable Dead Branch Elimination optimization")
@@ -958,6 +959,24 @@ func main() {
 		}
 
 		backend := big6809.New()
+		if *cstartFlag != "" {
+			cstartData, err := os.ReadFile(*cstartFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading cstart file %s: %v\n", *cstartFlag, err)
+				os.Exit(1)
+			}
+			backend.SetCStart(string(cstartData))
+		} else {
+			// Search for cstart.asm in import path
+			mainDirname := filepath.Dir(mainSourceFile)
+			searchPath := []string{mainDirname}
+			for _, d := range importDirPath {
+				searchPath = append(searchPath, d)
+			}
+			if cstartData, err := ReadFileFromPath("cstart.asm", searchPath); err == nil {
+				backend.SetCStart(string(cstartData))
+			}
+		}
 		asmCode, err := backend.Generate(bigProg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error generating EMBIGGEN 6809 assembly: %v\n", err)

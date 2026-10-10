@@ -130,7 +130,10 @@ func (b *Builder) BuildFromIR(irProg *ir.Program) (*Program, error) {
 		nameLower := strings.ToLower(fn.Name)
 
 		// Core runtime and prelude helpers remain Near (Slot 6)
-		if strings.HasPrefix(nameLower, "__far_") ||
+		if (len(fn.Blocks) == 0 && fn.Name != "prelude.mul_byte") ||
+			fn.Linkage != "" ||
+			strings.HasPrefix(nameLower, "os.sys") ||
+			strings.HasPrefix(nameLower, "__far_") ||
 			strings.HasPrefix(nameLower, "malloc_core") ||
 			strings.HasPrefix(nameLower, "cstart") ||
 			strings.HasPrefix(nameLower, "_div") ||

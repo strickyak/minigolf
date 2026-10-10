@@ -1,5 +1,7 @@
 package main
 
+import "os"
+
 // ═══════════════════════════════════════════════════════════════════
 // MiniGolf Python Expression Evaluator for big6809
 // ═══════════════════════════════════════════════════════════════════
@@ -2251,7 +2253,7 @@ var ExitStatus int = 0
 func ExitProgram(status int) {
 	ShouldExit = true
 	ExitStatus = status
-	pokeb(0xFF05, byte(status))
+	os.Exit(status)
 }
 
 func EvalLine(line string) {
@@ -2277,54 +2279,11 @@ func EvalLine(line string) {
 	}
 }
 
-var LineBuf [256]byte
-
-func ReadLine() (string, bool) {
-	var length word = 0
-	for {
-		c := getchar()
-		if c == 0 {
-			continue
-		}
-		if c == 255 || c == 4 {
-			if length > 0 {
-				break
-			}
-			var empty string
-			return empty, false
-		}
-		if c == 13 || c == 10 {
-			break
-		}
-		if c == 8 || c == 127 {
-			if length > 0 {
-				length--
-			}
-			continue
-		}
-		if length < 250 {
-			LineBuf[length] = c
-			length++
-		}
-	}
-	dest := FarMakeSlice[byte](length + 1)
-	for i := word(0); i < length; i++ {
-		dest.Put(i, LineBuf[i])
-	}
-	dest.Put(length, 0)
-	var res string
-	res.FarRef = dest.FarRef
-	res.Base = dest.Base
-	res.Len = length
-	res.Cap = length + 1
-	return res, true
-}
-
 func main() {
 	InitGlobals()
 	for !ShouldExit {
 		print(">>> ")
-		line, ok := ReadLine()
+		line, ok := os.ReadLine()
 		if !ok || ShouldExit {
 			break
 		}
@@ -2333,4 +2292,5 @@ func main() {
 		}
 		EvalLine(line)
 	}
+	os.Exit(ExitStatus)
 }

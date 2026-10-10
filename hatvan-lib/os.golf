@@ -1,0 +1,58 @@
+package os
+
+// Low-level assembly subroutines provided by cstart.asm:
+func SysReadLn(path int, buf *byte, maxLen int) int
+func SysWritLn(path int, buf *byte, count int) int
+func SysExit(status int)
+
+var LineBuffer [256]byte
+
+// ReadLine reads a line from standard input into a FarRef string.
+// Returns (line, true) on success, or ("", false) on EOF.
+func ReadLine() (string, bool) {
+	n := SysReadLn(0, &LineBuffer[0], 255)
+	if n <= 0 {
+		var empty string
+		return empty, false
+	}
+	length := word(n)
+	// Strip trailing newline character(s) '\n' or '\r'
+	if length > 0 {
+		c := LineBuffer[length-1]
+		if c == 10 || c == 13 {
+			length--
+		}
+	}
+	if length > 0 {
+		c := LineBuffer[length-1]
+		if c == 10 || c == 13 {
+			length--
+		}
+	}
+	dest := FarMakeSlice[byte](length + 1)
+	for i := word(0); i < length; i++ {
+		dest.Put(i, LineBuffer[i])
+	}
+	dest.Put(length, 0)
+	var res string
+	res.FarRef = dest.FarRef
+	res.Base = dest.Base
+	res.Len = length
+	res.Cap = length + 1
+	return res, true
+}
+
+// ReadLn reads up to maxLen bytes into buf from path. Returns number of bytes read.
+func ReadLn(path int, buf *byte, maxLen int) int {
+	return SysReadLn(path, buf, maxLen)
+}
+
+// WritLn writes count bytes from buf to path with a newline.
+func WritLn(path int, buf *byte, count int) int {
+	return SysWritLn(path, buf, count)
+}
+
+// Exit terminates the program with the given exit status.
+func Exit(status int) {
+	SysExit(status)
+}
