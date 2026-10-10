@@ -87,6 +87,12 @@ None
 >>> 14
 >>> <function <lambda>>
 >>> 150
+>>> <function <lambda>>
+>>> 1
+>>> 3
+>>> 6
+>>> 10
+>>> 15
 >>> '<class \'function\'>'
 >>> '<function <lambda>>'
 >>> 

@@ -245,7 +245,7 @@ func ListAppend(l *PyVal, item PyVal) {
 		if l.Len > 0 {
 			oldSl := l.AsListSlice()
 			for i := word(0); i < l.Len; i++ {
-				newSl.Put(i, oldSl.Get(i))
+				newSl.Put1(i, oldSl.Get(i))
 			}
 			if l.FarRef != 0 {
 				freeslice(oldSl)
@@ -351,7 +351,7 @@ func DictSet(d *PyVal, k PyVal, val PyVal) {
 		if d.Len > 0 {
 			oldSl := d.AsDictSlice()
 			for i := word(0); i < d.Len; i++ {
-				newSl.Put(i, oldSl.Get(i))
+				newSl.Put1(i, oldSl.Get(i))
 			}
 			if d.FarRef != 0 {
 				freeslice(oldSl)
@@ -388,26 +388,84 @@ func DictDel(d *PyVal, k PyVal) bool {
 	return false
 }
 
+func DictGetStr(d *PyVal, name string) (PyVal, bool) {
+	if d.Len == 0 || d.FarRef == 0 {
+		return PyNone(), false
+	}
+	sl := d.AsDictSlice()
+	for i := word(0); i < d.Len; i++ {
+		e := sl.Get(i)
+		if e.Key.Tag == VAL_STR && streq(e.Key.AsStr(), name) {
+			return e.Val, true
+		}
+	}
+	return PyNone(), false
+}
+
+func DictSetStr(d *PyVal, name string, val PyVal) {
+	if d.Len > 0 && d.FarRef != 0 {
+		sl := d.AsDictSlice()
+		for i := word(0); i < d.Len; i++ {
+			e := sl.Get(i)
+			if e.Key.Tag == VAL_STR && streq(e.Key.AsStr(), name) {
+				e.Val = val
+				sl.Put(i, e)
+				return
+			}
+		}
+	}
+	DictSet(d, PyStr(name), val)
+}
+
+func DictDelStr(d *PyVal, name string) bool {
+	if d.Len == 0 || d.FarRef == 0 {
+		return false
+	}
+	sl := d.AsDictSlice()
+	for i := word(0); i < d.Len; i++ {
+		e := sl.Get(i)
+		if e.Key.Tag == VAL_STR && streq(e.Key.AsStr(), name) {
+			for j := i; j+1 < d.Len; j++ {
+				tmp := sl.Get(j+1)
+				sl.Put(j, tmp)
+			}
+			d.Len--
+			return true
+		}
+	}
+	return false
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Global Variable Environment (Dictionary in Far Heap)
 // ═══════════════════════════════════════════════════════════════════
 
+type SavedVar struct {
+	name string
+	val  PyVal
+}
+
+var LambdaScopeStack slice[SavedVar]
+var SavedScopeCount word
+
 var Globals PyVal
 
 func InitGlobals() {
-	Globals = MakeDict(16)
+	Globals = MakeDict(64)
+	LambdaScopeStack = FarMakeSlice[SavedVar](128)
+	SavedScopeCount = 0
 }
 
 func SetGlobal(name string, val PyVal) {
-	DictSet(&Globals, PyStr(name), val)
+	DictSetStr(&Globals, name, val)
 }
 
 func GetGlobal(name string) (PyVal, bool) {
-	return DictGet(&Globals, PyStr(name))
+	return DictGetStr(&Globals, name)
 }
 
 func DelGlobal(name string) bool {
-	return DictDel(&Globals, PyStr(name))
+	return DictDelStr(&Globals, name)
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1430,229 +1488,139 @@ func (p *Parser) ParseExpr(eval bool) PyVal {
 	if p.Match(TOK_LAMBDA) {
 		return p.ParseLambda(eval)
 	}
-	val := p.ParseOr(eval)
-	if p.Match(TOK_IF) {
-		cond := p.ParseOr(eval)
+	val := p.ParseClimb(PREC_OR, eval)
+	for p.Match(TOK_IF) {
+		cond := p.ParseClimb(PREC_OR, eval)
 		p.Expect(TOK_ELSE)
-		elseVal := p.ParseExpr(eval && !IsTruthy(cond))
 		if eval {
 			if IsTruthy(cond) {
+				p.ParseExpr(false)
 				return val
 			} else {
-				return elseVal
+				val = p.ParseClimb(PREC_OR, true)
+				continue
 			}
+		} else {
+			val = p.ParseClimb(PREC_OR, false)
+			continue
+		}
+	}
+	return val
+}
+
+const PREC_NONE    = 0
+const PREC_OR      = 1
+const PREC_AND     = 2
+const PREC_COMPARE = 3
+const PREC_BITOR   = 4
+const PREC_BITXOR  = 5
+const PREC_BITAND  = 6
+const PREC_SHIFT   = 7
+const PREC_ADDSUB  = 8
+const PREC_MULDIV  = 9
+const PREC_POWER   = 10
+
+func (p *Parser) InfixPrec(op byte) int {
+	if op == TOK_OR {
+		return PREC_OR
+	}
+	if op == TOK_AND {
+		return PREC_AND
+	}
+	if op == TOK_EQ || op == TOK_NE || op == TOK_LT || op == TOK_LE || op == TOK_GT || op == TOK_GE || op == TOK_IN {
+		return PREC_COMPARE
+	}
+	if op == TOK_NOT && p.PeekNext().Kind == TOK_IN {
+		return PREC_COMPARE
+	}
+	if op == TOK_PIPE {
+		return PREC_BITOR
+	}
+	if op == TOK_CARET {
+		return PREC_BITXOR
+	}
+	if op == TOK_AMP {
+		return PREC_BITAND
+	}
+	if op == TOK_SHL || op == TOK_SHR {
+		return PREC_SHIFT
+	}
+	if op == TOK_PLUS || op == TOK_MINUS {
+		return PREC_ADDSUB
+	}
+	if op == TOK_STAR || op == TOK_SLASH || op == TOK_PERCENT {
+		return PREC_MULDIV
+	}
+	if op == TOK_POW {
+		return PREC_POWER
+	}
+	return PREC_NONE
+}
+
+func EvalBinary(op byte, lhs PyVal, rhs PyVal) PyVal {
+	if op == TOK_PLUS {
+		return PyAdd(lhs, rhs)
+	}
+	if op == TOK_MINUS {
+		return PySub(lhs, rhs)
+	}
+	if op == TOK_STAR {
+		return PyMul(lhs, rhs)
+	}
+	if op == TOK_SLASH {
+		return PyDiv(lhs, rhs)
+	}
+	if op == TOK_PERCENT {
+		return PyMod(lhs, rhs)
+	}
+	if op == TOK_POW {
+		if lhs.Tag != VAL_INT || rhs.Tag != VAL_INT {
+			panic("TypeError: unsupported operand type for **")
+		}
+		return PyInt(PyPow(lhs.IntVal, rhs.IntVal))
+	}
+	if op == TOK_SHL || op == TOK_SHR || op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET {
+		return PyBitwise(lhs, rhs, op)
+	}
+	if op == TOK_EQ || op == TOK_NE || op == TOK_LT || op == TOK_LE || op == TOK_GT || op == TOK_GE {
+		return PyBool(PyCompare(lhs, rhs, op))
+	}
+	if op == TOK_IN {
+		return PyBool(PyContains(rhs, lhs))
+	}
+	if op == TOK_NOT {
+		return PyBool(!PyContains(rhs, lhs))
+	}
+	panic("SyntaxError: unknown operator")
+	return PyNone()
+}
+
+func (p *Parser) ParsePrefix(eval bool) PyVal {
+	k := p.Peek().Kind
+	if k == TOK_NOT || k == TOK_PLUS || k == TOK_MINUS || k == TOK_TILDE {
+		p.Next()
+		prec := PREC_POWER
+		if k == TOK_NOT {
+			prec = PREC_COMPARE
+		}
+		rhs := p.ParseClimb(prec, eval)
+		if eval {
+			if k == TOK_NOT {
+				return PyBool(!IsTruthy(rhs))
+			}
+			if k == TOK_PLUS {
+				return rhs
+			}
+			if rhs.Tag != VAL_INT {
+				panic("TypeError: bad operand type for unary operator")
+			}
+			if k == TOK_MINUS {
+				return PyInt(0 - rhs.IntVal)
+			}
+			return PyInt(-rhs.IntVal - 1)
 		}
 		return PyNone()
 	}
-	return val
-}
-
-func (p *Parser) ParseOr(eval bool) PyVal {
-	val := p.ParseAnd(eval)
-	for p.Match(TOK_OR) {
-		if eval && IsTruthy(val) {
-			p.ParseAnd(false)
-		} else {
-			val = p.ParseAnd(eval)
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseAnd(eval bool) PyVal {
-	val := p.ParseNot(eval)
-	for p.Match(TOK_AND) {
-		if eval && !IsTruthy(val) {
-			p.ParseNot(false)
-		} else {
-			val = p.ParseNot(eval)
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseNot(eval bool) PyVal {
-	if p.Match(TOK_NOT) {
-		val := p.ParseNot(eval)
-		if eval {
-			return PyBool(!IsTruthy(val))
-		}
-		return PyNone()
-	}
-	return p.ParseComparison(eval)
-}
-
-func (p *Parser) ParseComparison(eval bool) PyVal {
-	val := p.ParseBitOr(eval)
-	for {
-		k := p.Peek().Kind
-		if k == TOK_EQ || k == TOK_NE || k == TOK_LT || k == TOK_LE || k == TOK_GT || k == TOK_GE {
-			p.Next()
-			rhs := p.ParseBitOr(eval)
-			if eval {
-				val = PyBool(PyCompare(val, rhs, k))
-			}
-		} else if k == TOK_IN {
-			p.Next()
-			rhs := p.ParseBitOr(eval)
-			if eval {
-				val = PyBool(PyContains(rhs, val))
-			}
-		} else if k == TOK_NOT && p.PeekNext().Kind == TOK_IN {
-			p.Next()
-			p.Next()
-			rhs := p.ParseBitOr(eval)
-			if eval {
-				val = PyBool(!PyContains(rhs, val))
-			}
-		} else {
-			break
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseBitOr(eval bool) PyVal {
-	val := p.ParseBitXor(eval)
-	for p.Match(TOK_PIPE) {
-		rhs := p.ParseBitXor(eval)
-		if eval {
-			val = PyBitwise(val, rhs, TOK_PIPE)
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseBitXor(eval bool) PyVal {
-	val := p.ParseBitAnd(eval)
-	for p.Match(TOK_CARET) {
-		rhs := p.ParseBitAnd(eval)
-		if eval {
-			val = PyBitwise(val, rhs, TOK_CARET)
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseBitAnd(eval bool) PyVal {
-	val := p.ParseShift(eval)
-	for p.Match(TOK_AMP) {
-		rhs := p.ParseShift(eval)
-		if eval {
-			val = PyBitwise(val, rhs, TOK_AMP)
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseShift(eval bool) PyVal {
-	val := p.ParseAddSub(eval)
-	for {
-		if p.Match(TOK_SHL) {
-			rhs := p.ParseAddSub(eval)
-			if eval {
-				val = PyBitwise(val, rhs, TOK_SHL)
-			}
-		} else if p.Match(TOK_SHR) {
-			rhs := p.ParseAddSub(eval)
-			if eval {
-				val = PyBitwise(val, rhs, TOK_SHR)
-			}
-		} else {
-			break
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseAddSub(eval bool) PyVal {
-	val := p.ParseMulDiv(eval)
-	for {
-		if p.Match(TOK_PLUS) {
-			rhs := p.ParseMulDiv(eval)
-			if eval {
-				val = PyAdd(val, rhs)
-			}
-		} else if p.Match(TOK_MINUS) {
-			rhs := p.ParseMulDiv(eval)
-			if eval {
-				val = PySub(val, rhs)
-			}
-		} else {
-			break
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseMulDiv(eval bool) PyVal {
-	val := p.ParseUnary(eval)
-	for {
-		if p.Match(TOK_STAR) {
-			rhs := p.ParseUnary(eval)
-			if eval {
-				val = PyMul(val, rhs)
-			}
-		} else if p.Match(TOK_SLASH) {
-			rhs := p.ParseUnary(eval)
-			if eval {
-				val = PyDiv(val, rhs)
-			}
-		} else if p.Match(TOK_PERCENT) {
-			rhs := p.ParseUnary(eval)
-			if eval {
-				val = PyMod(val, rhs)
-			}
-		} else {
-			break
-		}
-	}
-	return val
-}
-
-func (p *Parser) ParseUnary(eval bool) PyVal {
-	if p.Match(TOK_PLUS) {
-		return p.ParseUnary(eval)
-	}
-	if p.Match(TOK_MINUS) {
-		val := p.ParseUnary(eval)
-		if eval {
-			if val.Tag != VAL_INT {
-				panic("TypeError: bad operand type for unary -")
-			}
-			return PyInt(0 - val.IntVal)
-		}
-		return PyNone()
-	}
-	if p.Match(TOK_TILDE) {
-		val := p.ParseUnary(eval)
-		if eval {
-			if val.Tag != VAL_INT {
-				panic("TypeError: bad operand type for unary ~")
-			}
-			return PyInt(-val.IntVal - 1)
-		}
-		return PyNone()
-	}
-	return p.ParsePower(eval)
-}
-
-func (p *Parser) ParsePower(eval bool) PyVal {
-	val := p.ParsePostfix(eval)
-	if p.Match(TOK_POW) {
-		rhs := p.ParseUnary(eval)
-		if eval {
-			if val.Tag != VAL_INT || rhs.Tag != VAL_INT {
-				panic("TypeError: unsupported operand type for **")
-			}
-			return PyInt(PyPow(val.IntVal, rhs.IntVal))
-		}
-		return PyNone()
-	}
-	return val
-}
-
-func (p *Parser) ParsePostfix(eval bool) PyVal {
 	val := p.ParseAtom(eval)
 	for {
 		if p.Match(TOK_LBRACK) {
@@ -1664,6 +1632,52 @@ func (p *Parser) ParsePostfix(eval bool) PyVal {
 		}
 	}
 	return val
+}
+
+func (p *Parser) ParseClimb(minPrec int, eval bool) PyVal {
+	lhs := p.ParsePrefix(eval)
+	for {
+		op := p.Peek().Kind
+		prec := p.InfixPrec(op)
+		if prec <= PREC_NONE || prec < minPrec {
+			break
+		}
+		p.Next()
+
+		evalRhs := eval
+		if op == TOK_OR && eval && IsTruthy(lhs) {
+			evalRhs = false
+		} else if op == TOK_AND && eval && !IsTruthy(lhs) {
+			evalRhs = false
+		}
+
+		if op == TOK_NOT {
+			p.Next() // consume TOK_IN for "not in"
+		}
+		nextPrec := prec + 1
+		if op == TOK_POW {
+			nextPrec = prec
+		}
+		rhs := p.ParseClimb(nextPrec, evalRhs)
+		if eval {
+			if op == TOK_OR {
+				if !IsTruthy(lhs) {
+					lhs = rhs
+				}
+			} else if op == TOK_AND {
+				if IsTruthy(lhs) {
+					lhs = rhs
+				}
+			} else {
+				lhs = EvalBinary(op, lhs, rhs)
+			}
+		}
+	}
+	return lhs
+}
+
+func (p *Parser) ParseOr(eval bool) PyVal {
+	return p.ParseClimb(PREC_OR, eval)
 }
 
 func (p *Parser) ParseIndexOrSlice(target PyVal, eval bool) PyVal {
@@ -1751,32 +1765,28 @@ func (p *Parser) ParseIndexOrSlice(target PyVal, eval bool) PyVal {
 	return PyNone()
 }
 
-func (p *Parser) ParseCall(target PyVal, eval bool) PyVal {
-	fnName := ""
-	if target.Tag == VAL_STR {
-		fnName = target.AsStr()
+func AppendArg(args *slice[PyVal], arg PyVal, count *word) {
+	c := *count
+	if c >= args.Cap {
+		newCap := args.Cap * 2
+		newSl := FarMakeSlice[PyVal](newCap)
+		for i := word(0); i < c; i++ {
+			newSl.Put(i, args.Get(i))
+		}
+		freeslice(*args)
+		*args = newSl
 	}
+	args.Put(c, arg)
+	*count = c + 1
+}
 
-	var args slice[PyVal]
-	if eval {
-		args = FarMakeSlice[PyVal](4)
-	}
+func (p *Parser) ParseCallArgs(eval bool, args *slice[PyVal]) word {
 	var argCount word = 0
 	if !p.Match(TOK_RPAREN) {
 		for {
 			arg := p.ParseExpr(eval)
 			if eval {
-				if argCount >= args.Cap {
-					newCap := args.Cap * 2
-					newSl := FarMakeSlice[PyVal](newCap)
-					for i := word(0); i < argCount; i++ {
-						newSl.Put(i, args.Get(i))
-					}
-					freeslice(args)
-					args = newSl
-				}
-				args.Put(argCount, arg)
-				argCount++
+				AppendArg(args, arg, &argCount)
 			}
 			if p.Match(TOK_COMMA) {
 				if p.Match(TOK_RPAREN) {
@@ -1788,6 +1798,15 @@ func (p *Parser) ParseCall(target PyVal, eval bool) PyVal {
 			break
 		}
 	}
+	return argCount
+}
+
+func (p *Parser) ParseCall(target PyVal, eval bool) PyVal {
+	var args slice[PyVal]
+	if eval {
+		args = FarMakeSlice[PyVal](4)
+	}
+	argCount := p.ParseCallArgs(eval, &args)
 
 	if !eval {
 		return PyNone()
@@ -1798,7 +1817,7 @@ func (p *Parser) ParseCall(target PyVal, eval bool) PyVal {
 		lam := target.AsLambda()
 		res = ExecLambda(lam, args, argCount)
 	} else if target.Tag == VAL_STR {
-		res = ExecBuiltin(fnName, args, argCount)
+		res = ExecBuiltin(target.AsStr(), args, argCount)
 	} else {
 		freeslice(args)
 		panic("TypeError: object is not callable")
@@ -1810,45 +1829,56 @@ func (p *Parser) ParseCall(target PyVal, eval bool) PyVal {
 	return res
 }
 
-func ExecLambda(lam PyLambda, args slice[PyVal], argCount word) PyVal {
+func EnterLambda(lam PyLambda, args slice[PyVal]) word {
 	paramCount := lam.ParamCount
-	if argCount != paramCount {
+	base := SavedScopeCount
+	for i := word(0); i < paramCount; i++ {
+		pName := lam.Params.Get(i)
+		var sv SavedVar
+		sv.name = pName
+		v, ok := GetGlobal(pName)
+		if ok {
+			sv.val = v
+		} else {
+			sv.val.Tag = -1
+		}
+		if SavedScopeCount >= LambdaScopeStack.Cap {
+			panic("RuntimeError: maximum recursion depth exceeded")
+		}
+		LambdaScopeStack.Put(SavedScopeCount, sv)
+		SavedScopeCount++
+		SetGlobal(pName, args.Get(i))
+	}
+	return base
+}
+
+func ExitLambda(base word) {
+	for SavedScopeCount > base {
+		SavedScopeCount--
+		sv := LambdaScopeStack.Get(SavedScopeCount)
+		if sv.val.Tag >= 0 {
+			SetGlobal(sv.name, sv.val)
+		} else {
+			DelGlobal(sv.name)
+		}
+	}
+}
+
+func ExecLambda(lam PyLambda, args slice[PyVal], argCount word) PyVal {
+	if argCount != lam.ParamCount {
 		panic("TypeError: lambda argument count mismatch")
 	}
 
-	var oldVals [4]PyVal
-	if paramCount > 4 {
-		panic("ValueError: too many arguments to lambda (max 4)")
-	}
-
-	for i := word(0); i < paramCount; i++ {
-		pName := lam.Params.Get(i)
-		v, ok := GetGlobal(pName)
-		if ok {
-			oldVals[i] = v
-		} else {
-			oldVals[i].Tag = -1
-		}
-		SetGlobal(pName, args.Get(i))
-	}
-
-	defer func() {
-		for i := word(0); i < paramCount; i++ {
-			pName := lam.Params.Get(i)
-			v := oldVals[i]
-			if v.Tag >= 0 {
-				SetGlobal(pName, v)
-			} else {
-				DelGlobal(pName)
-			}
-		}
-	}()
+	base := EnterLambda(lam, args)
 
 	var bodyParser Parser
 	bodyParser.toks = lam.BodyToks
 	bodyParser.pos = 0
 
-	return bodyParser.ParseExpr(true)
+	ret := bodyParser.ParseExpr(true)
+
+	ExitLambda(base)
+	return ret
 }
 
 func ExecBuiltin(fnName string, args slice[PyVal], argCount word) PyVal {

@@ -86,6 +86,12 @@ bar = lambda temp_var: temp_var * 2
 bar(7)
 apply = lambda fn, arg: fn(arg)
 apply(lambda x: x + 100, 50)
+tri = lambda n: (n if n < 2 else n + tri(n - 1))
+tri(1)
+tri(2)
+tri(3)
+tri(4)
+tri(5)
 type(square)
 str(square)
 10 / 0

@@ -2259,9 +2259,12 @@ func (b *Backend) emitSlicePut(
 		buf.WriteString(fmt.Sprintf("    ldx   #%d\n", elemSize))
 		buf.WriteString("    jsr   __mul16\n")
 		buf.WriteString("    leax  d,y           ; X = base + index * size\n")
-		aligned := (elemSize + 1) & ^1
-		for off := 0; off < aligned; off += 2 {
-			buf.WriteString(fmt.Sprintf("    puls  d\n    std   %d,x\n", off))
+		for off := 0; off < elemSize; off += 2 {
+			if off+2 <= elemSize {
+				buf.WriteString(fmt.Sprintf("    puls  d\n    std   %d,x\n", off))
+			} else {
+				buf.WriteString(fmt.Sprintf("    puls  d\n    sta   %d,x\n", off))
+			}
 		}
 	}
 }
