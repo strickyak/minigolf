@@ -113,38 +113,58 @@ if [ -t 0 ]; then
 else
     # Piped/scripted input: synchronize with Phase 2 so early input isn't consumed by Phase 1 Tcl
     exec python3 -c "
-import subprocess, sys, threading
+import subprocess, sys, time, os, threading
 
-cmd = ['$TETHER', '-wire', '$WIRE', '-pc', '$PC_DIR', '-bootmode=81', '-cooked'] + sys.argv[1:]
+cmd = ['$TETHER', '-wire', '$WIRE', '-pc', '$PC_DIR', '-bootmode=81', '-cooked', '-cooked-drain=3s'] + sys.argv[1:]
 proc = subprocess.Popen(
     cmd,
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT,
-    text=True,
-    bufsize=1
+    bufsize=0
 )
 
-def feed():
-    for line in iter(proc.stdout.readline, ''):
-        sys.stdout.write(line)
-        sys.stdout.flush()
-        if 'Phase 2 started' in line:
-            try:
-                data = sys.stdin.read()
-                proc.stdin.write(data)
-                proc.stdin.flush()
-            except (BrokenPipeError, OSError):
-                pass
-            break
-    for line in iter(proc.stdout.readline, ''):
-        sys.stdout.write(line)
-        sys.stdout.flush()
+shell_ready = threading.Event()
 
-t = threading.Thread(target=feed)
-t.start()
+def reader():
+    buf = b''
+    while True:
+        try:
+            chunk = os.read(proc.stdout.fileno(), 1024)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+            sys.stdout.buffer.flush()
+            if not shell_ready.is_set():
+                buf += chunk
+                if b'$ ' in buf or b'SHELL:FORK:OK' in buf:
+                    shell_ready.set()
+        except OSError:
+            break
+
+def writer():
+    shell_ready.wait()
+    time.sleep(0.1)
+    while True:
+        try:
+            chunk = os.read(sys.stdin.fileno(), 1024)
+            if not chunk:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+                break
+            proc.stdin.write(chunk)
+            proc.stdin.flush()
+        except OSError:
+            break
+
+t_in = threading.Thread(target=writer, daemon=True)
+t_out = threading.Thread(target=reader, daemon=True)
+t_in.start()
+t_out.start()
+
 proc.wait()
-t.join()
 sys.exit(proc.returncode)
 " "$@"
 fi
