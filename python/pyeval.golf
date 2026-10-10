@@ -1,0 +1,2114 @@
+package main
+
+// ═══════════════════════════════════════════════════════════════════
+// MiniGolf Python Expression Evaluator for big6809
+// ═══════════════════════════════════════════════════════════════════
+
+// Value Tags
+const VAL_NONE = 0
+const VAL_INT  = 1
+const VAL_BOOL = 2
+const VAL_STR  = 3
+const VAL_LIST = 4
+const VAL_DICT = 5
+
+// Token Kinds
+const TOK_EOF     = 0
+const TOK_INT     = 1
+const TOK_STR     = 2
+const TOK_IDENT   = 3
+const TOK_PLUS    = 4  // +
+const TOK_MINUS   = 5  // -
+const TOK_STAR    = 6  // *
+const TOK_SLASH   = 7  // /
+const TOK_PERCENT = 8  // %
+const TOK_POW     = 9  // **
+const TOK_EQ      = 10 // ==
+const TOK_NE      = 11 // !=
+const TOK_LT      = 12 // <
+const TOK_LE      = 13 // <=
+const TOK_GT      = 14 // >
+const TOK_GE      = 15 // >=
+const TOK_ASSIGN  = 16 // =
+const TOK_LPAREN  = 17 // (
+const TOK_RPAREN  = 18 // )
+const TOK_LBRACK  = 19 // [
+const TOK_RBRACK  = 20 // ]
+const TOK_LBRACE  = 21 // {
+const TOK_RBRACE  = 22 // }
+const TOK_COMMA   = 23 // ,
+const TOK_COLON   = 24 // :
+const TOK_AMP     = 25 // &
+const TOK_PIPE    = 26 // |
+const TOK_CARET   = 27 // ^
+const TOK_TILDE   = 28 // ~
+const TOK_SHL     = 29 // <<
+const TOK_SHR     = 30 // >>
+
+// Keywords
+const TOK_AND     = 31 // and
+const TOK_OR      = 32 // or
+const TOK_NOT     = 33 // not
+const TOK_IN      = 34 // in
+const TOK_IF      = 35 // if
+const TOK_ELSE    = 36 // else
+const TOK_FOR     = 37 // for
+const TOK_TRUE    = 38 // True
+const TOK_FALSE   = 39 // False
+const TOK_NONE    = 40 // None
+const TOK_BYE     = 41 // bye
+const TOK_EXIT    = 42 // exit
+
+// ═══════════════════════════════════════════════════════════════════
+// Core Structures
+// ═══════════════════════════════════════════════════════════════════
+
+type PyVal struct {
+	Tag    int
+	IntVal int
+	FarRef word
+	Base   word
+	Len    word
+	Cap    word
+}
+
+type PyDictEntry struct {
+	Key PyVal
+	Val PyVal
+}
+
+type Token struct {
+	Kind   byte
+	IntVal int
+	StrVal string
+}
+
+// TokenGuard releases token memory from the Far Heap via destructor
+type TokenGuard struct {
+	toks slice[Token]
+}
+
+func (g *TokenGuard) destructor() {
+	if g.toks.FarRef != 0 {
+		freeslice(g.toks)
+		g.toks.FarRef = 0
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Value Constructors & Slices in Far Heap
+// ═══════════════════════════════════════════════════════════════════
+
+func PyNone() PyVal {
+	var v PyVal
+	v.Tag = VAL_NONE
+	return v
+}
+
+func PyInt(n int) PyVal {
+	var v PyVal
+	v.Tag = VAL_INT
+	v.IntVal = n
+	return v
+}
+
+func PyBool(b bool) PyVal {
+	var v PyVal
+	v.Tag = VAL_BOOL
+	if b {
+		v.IntVal = 1
+	} else {
+		v.IntVal = 0
+	}
+	return v
+}
+
+func PyStr(s string) PyVal {
+	var v PyVal
+	v.Tag = VAL_STR
+	dup := strdup(s)
+	v.FarRef = dup.FarRef
+	v.Base = dup.Base
+	v.Len = dup.Len
+	v.Cap = dup.Cap
+	return v
+}
+
+func (v *PyVal) AsStr() string {
+	var s string
+	s.FarRef = v.FarRef
+	s.Base = v.Base
+	s.Len = v.Len
+	s.Cap = v.Cap
+	return s
+}
+
+func (v *PyVal) AsListSlice() slice[PyVal] {
+	var s slice[PyVal]
+	s.FarRef = v.FarRef
+	s.Base = v.Base
+	s.Len = v.Cap
+	s.Cap = v.Cap
+	return s
+}
+
+func (v *PyVal) AsDictSlice() slice[PyDictEntry] {
+	var s slice[PyDictEntry]
+	s.FarRef = v.FarRef
+	s.Base = v.Base
+	s.Len = v.Cap
+	s.Cap = v.Cap
+	return s
+}
+
+func MakeList(cap word) PyVal {
+	var v PyVal
+	v.Tag = VAL_LIST
+	if cap > 0 {
+		s := FarMakeSlice[PyVal](cap)
+		v.FarRef = s.FarRef
+		v.Base = s.Base
+		v.Len = 0
+		v.Cap = cap
+	}
+	return v
+}
+
+func MakeDict(cap word) PyVal {
+	var v PyVal
+	v.Tag = VAL_DICT
+	if cap > 0 {
+		s := FarMakeSlice[PyDictEntry](cap)
+		v.FarRef = s.FarRef
+		v.Base = s.Base
+		v.Len = 0
+		v.Cap = cap
+	}
+	return v
+}
+
+func chr(i word) string {
+	var z string
+	z = FarMakeSlice[byte](2)
+	z.Put(0, byte(i))
+	z.Put(1, 0)
+	z.Len = 1
+	z.Cap = 2
+	return z
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// List & Dict Operations
+// ═══════════════════════════════════════════════════════════════════
+
+func ListAppend(l *PyVal, item PyVal) {
+	if l.Len >= l.Cap {
+		newCap := l.Cap * 2
+		if newCap < 4 {
+			newCap = 4
+		}
+		newSl := FarMakeSlice[PyVal](newCap)
+		if l.Len > 0 {
+			oldSl := l.AsListSlice()
+			for i := word(0); i < l.Len; i++ {
+				newSl.Put(i, oldSl.Get(i))
+			}
+			if l.FarRef != 0 {
+				freeslice(oldSl)
+			}
+		}
+		l.FarRef = newSl.FarRef
+		l.Base = newSl.Base
+		l.Cap = newCap
+	}
+	sl := l.AsListSlice()
+	sl.Put(l.Len, item)
+	l.Len++
+}
+
+func ListGet(l *PyVal, idx int) PyVal {
+	if idx < 0 {
+		idx = int(l.Len) + idx
+	}
+	if idx < 0 || word(idx) >= l.Len {
+		panic("IndexError: list index out of range")
+	}
+	sl := l.AsListSlice()
+	return sl.Get(word(idx))
+}
+
+func ListSet(l *PyVal, idx int, val PyVal) {
+	if idx < 0 {
+		idx = int(l.Len) + idx
+	}
+	if idx < 0 || word(idx) >= l.Len {
+		panic("IndexError: list assignment index out of range")
+	}
+	sl := l.AsListSlice()
+	sl.Put(word(idx), val)
+}
+
+func ListSlice(l *PyVal, start int, stop int) PyVal {
+	if start < 0 {
+		start = int(l.Len) + start
+		if start < 0 {
+			start = 0
+		}
+	}
+	if word(start) > l.Len {
+		start = int(l.Len)
+	}
+	if stop < 0 {
+		stop = int(l.Len) + stop
+		if stop < 0 {
+			stop = 0
+		}
+	}
+	if word(stop) > l.Len {
+		stop = int(l.Len)
+	}
+	if stop < start {
+		stop = start
+	}
+	count := word(stop - start)
+	res := MakeList(count)
+	if count > 0 {
+		sl := l.AsListSlice()
+		for i := word(0); i < count; i++ {
+			ListAppend(&res, sl.Get(word(start)+i))
+		}
+	}
+	return res
+}
+
+func DictGet(d *PyVal, k PyVal) (PyVal, bool) {
+	if d.Len == 0 || d.FarRef == 0 {
+		return PyNone(), false
+	}
+	sl := d.AsDictSlice()
+	for i := word(0); i < d.Len; i++ {
+		e := sl.Get(i)
+		if PyEqual(e.Key, k) {
+			return e.Val, true
+		}
+	}
+	return PyNone(), false
+}
+
+func DictSet(d *PyVal, k PyVal, val PyVal) {
+	if d.Len > 0 && d.FarRef != 0 {
+		sl := d.AsDictSlice()
+		for i := word(0); i < d.Len; i++ {
+			e := sl.Get(i)
+			if PyEqual(e.Key, k) {
+				e.Val = val
+				sl.Put(i, e)
+				return
+			}
+		}
+	}
+
+	if d.Len >= d.Cap {
+		newCap := d.Cap * 2
+		if newCap < 4 {
+			newCap = 4
+		}
+		newSl := FarMakeSlice[PyDictEntry](newCap)
+		if d.Len > 0 {
+			oldSl := d.AsDictSlice()
+			for i := word(0); i < d.Len; i++ {
+				newSl.Put(i, oldSl.Get(i))
+			}
+			if d.FarRef != 0 {
+				freeslice(oldSl)
+			}
+		}
+		d.FarRef = newSl.FarRef
+		d.Base = newSl.Base
+		d.Cap = newCap
+	}
+	sl := d.AsDictSlice()
+	var newE PyDictEntry
+	newE.Key = k
+	newE.Val = val
+	sl.Put(d.Len, newE)
+	d.Len++
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Global Variable Environment (Dictionary in Far Heap)
+// ═══════════════════════════════════════════════════════════════════
+
+var Globals PyVal
+
+func InitGlobals() {
+	Globals = MakeDict(16)
+}
+
+func SetGlobal(name string, val PyVal) {
+	DictSet(&Globals, PyStr(name), val)
+}
+
+func GetGlobal(name string) (PyVal, bool) {
+	return DictGet(&Globals, PyStr(name))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Equality, Truthiness, & Comparisons
+// ═══════════════════════════════════════════════════════════════════
+
+func IsTruthy(v PyVal) bool {
+	if v.Tag == VAL_NONE {
+		return false
+	}
+	if v.Tag == VAL_BOOL || v.Tag == VAL_INT {
+		return v.IntVal != 0
+	}
+	if v.Tag == VAL_STR || v.Tag == VAL_LIST || v.Tag == VAL_DICT {
+		return v.Len > 0
+	}
+	return true
+}
+
+func PyEqual(a PyVal, b PyVal) bool {
+	if a.Tag != b.Tag {
+		if (a.Tag == VAL_INT || a.Tag == VAL_BOOL) && (b.Tag == VAL_INT || b.Tag == VAL_BOOL) {
+			return a.IntVal == b.IntVal
+		}
+		return false
+	}
+	if a.Tag == VAL_NONE {
+		return true
+	}
+	if a.Tag == VAL_INT || a.Tag == VAL_BOOL {
+		return a.IntVal == b.IntVal
+	}
+	if a.Tag == VAL_STR {
+		sa := a.AsStr()
+		sb := b.AsStr()
+		return streq(sa, sb)
+	}
+	if a.Tag == VAL_LIST {
+		if a.Len != b.Len {
+			return false
+		}
+		sla := a.AsListSlice()
+		slb := b.AsListSlice()
+		for i := word(0); i < a.Len; i++ {
+			if !PyEqual(sla.Get(i), slb.Get(i)) {
+				return false
+			}
+		}
+		return true
+	}
+	if a.Tag == VAL_DICT {
+		if a.Len != b.Len {
+			return false
+		}
+		sla := a.AsDictSlice()
+		for i := word(0); i < a.Len; i++ {
+			entry := sla.Get(i)
+			valB, ok := DictGet(&b, entry.Key)
+			if !ok || !PyEqual(entry.Val, valB) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func PyCompare(a PyVal, b PyVal, op byte) bool {
+	if op == TOK_EQ {
+		return PyEqual(a, b)
+	}
+	if op == TOK_NE {
+		return !PyEqual(a, b)
+	}
+	if a.Tag == VAL_INT && b.Tag == VAL_INT {
+		if op == TOK_LT {
+			return a.IntVal < b.IntVal
+		}
+		if op == TOK_LE {
+			return a.IntVal <= b.IntVal
+		}
+		if op == TOK_GT {
+			return a.IntVal > b.IntVal
+		}
+		if op == TOK_GE {
+			return a.IntVal >= b.IntVal
+		}
+	}
+	if a.Tag == VAL_STR && b.Tag == VAL_STR {
+		cmp := strcmp(a.AsStr(), b.AsStr())
+		if op == TOK_LT {
+			return cmp < 0
+		}
+		if op == TOK_LE {
+			return cmp <= 0
+		}
+		if op == TOK_GT {
+			return cmp > 0
+		}
+		if op == TOK_GE {
+			return cmp >= 0
+		}
+	}
+	panic("TypeError: '<' not supported between instances")
+	return false
+}
+
+func PyContains(container PyVal, item PyVal) bool {
+	if container.Tag == VAL_LIST {
+		sl := container.AsListSlice()
+		for i := word(0); i < container.Len; i++ {
+			if PyEqual(sl.Get(i), item) {
+				return true
+			}
+		}
+		return false
+	}
+	if container.Tag == VAL_DICT {
+		_, found := DictGet(&container, item)
+		return found
+	}
+	if container.Tag == VAL_STR {
+		if item.Tag != VAL_STR {
+			panic("TypeError: 'in <string>' requires string as left operand")
+		}
+		hay := container.AsStr()
+		needle := item.AsStr()
+		if needle.Len == 0 {
+			return true
+		}
+		if needle.Len > hay.Len {
+			return false
+		}
+		limit := hay.Len - needle.Len + 1
+		for i := word(0); i < limit; i++ {
+			match := true
+			for j := word(0); j < needle.Len; j++ {
+				if hay.Get(i+j) != needle.Get(j) {
+					match = false
+					break
+				}
+			}
+			if match {
+				return true
+			}
+		}
+		return false
+	}
+	panic("TypeError: argument of type is not iterable")
+	return false
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Arithmetic & String / List Operators
+// ═══════════════════════════════════════════════════════════════════
+
+func StrConcat(a *PyVal, b *PyVal) PyVal {
+	sa := a.AsStr()
+	sb := b.AsStr()
+	totalLen := sa.Len + sb.Len
+	dest := FarMakeSlice[byte](totalLen + 1)
+	for i := word(0); i < sa.Len; i++ {
+		dest.Put(i, sa.Get(i))
+	}
+	for j := word(0); j < sb.Len; j++ {
+		dest.Put(sa.Len+j, sb.Get(j))
+	}
+	dest.Put(totalLen, 0)
+	var res PyVal
+	res.Tag = VAL_STR
+	res.FarRef = dest.FarRef
+	res.Base = dest.Base
+	res.Len = totalLen
+	res.Cap = totalLen + 1
+	return res
+}
+
+func StrRepeat(a *PyVal, n int) PyVal {
+	if n <= 0 {
+		return PyStr("")
+	}
+	sa := a.AsStr()
+	totalLen := sa.Len * word(n)
+	dest := FarMakeSlice[byte](totalLen + 1)
+	var p word = 0
+	for k := 0; k < n; k++ {
+		for i := word(0); i < sa.Len; i++ {
+			dest.Put(p, sa.Get(i))
+			p++
+		}
+	}
+	dest.Put(totalLen, 0)
+	var res PyVal
+	res.Tag = VAL_STR
+	res.FarRef = dest.FarRef
+	res.Base = dest.Base
+	res.Len = totalLen
+	res.Cap = totalLen + 1
+	return res
+}
+
+func StrSlice(s *PyVal, start int, stop int) PyVal {
+	if start < 0 {
+		start = int(s.Len) + start
+		if start < 0 {
+			start = 0
+		}
+	}
+	if word(start) > s.Len {
+		start = int(s.Len)
+	}
+	if stop < 0 {
+		stop = int(s.Len) + stop
+		if stop < 0 {
+			stop = 0
+		}
+	}
+	if word(stop) > s.Len {
+		stop = int(s.Len)
+	}
+	if stop < start {
+		stop = start
+	}
+	count := word(stop - start)
+	var res PyVal
+	res.Tag = VAL_STR
+	if count > 0 {
+		dest := FarMakeSlice[byte](count + 1)
+		src := s.AsStr()
+		for i := word(0); i < count; i++ {
+			dest.Put(i, src.Get(word(start)+i))
+		}
+		dest.Put(count, 0)
+		res.FarRef = dest.FarRef
+		res.Base = dest.Base
+		res.Len = count
+		res.Cap = count + 1
+	}
+	return res
+}
+
+func ListConcat(a *PyVal, b *PyVal) PyVal {
+	totalLen := a.Len + b.Len
+	res := MakeList(totalLen)
+	var sa slice[PyVal]
+	sa.FarRef = a.FarRef
+	sa.Base = a.Base
+	sa.Len = a.Len
+	sa.Cap = a.Cap
+	for i := word(0); i < a.Len; i++ {
+		ListAppend(&res, sa.Get(i))
+	}
+	var sb slice[PyVal]
+	sb.FarRef = b.FarRef
+	sb.Base = b.Base
+	sb.Len = b.Len
+	sb.Cap = b.Cap
+	for j := word(0); j < b.Len; j++ {
+		ListAppend(&res, sb.Get(j))
+	}
+	return res
+}
+
+func ListRepeat(a *PyVal, n int) PyVal {
+	if n <= 0 {
+		return MakeList(0)
+	}
+	totalLen := a.Len * word(n)
+	res := MakeList(totalLen)
+	var sa slice[PyVal]
+	sa.FarRef = a.FarRef
+	sa.Base = a.Base
+	sa.Len = a.Len
+	sa.Cap = a.Cap
+	for k := 0; k < n; k++ {
+		for i := word(0); i < a.Len; i++ {
+			ListAppend(&res, sa.Get(i))
+		}
+	}
+	return res
+}
+
+func PyPow(a int, b int) int {
+	if b < 0 {
+		panic("ValueError: negative exponent not supported")
+	}
+	var res int = 1
+	base := a
+	exp := b
+	for exp > 0 {
+		if (exp & 1) != 0 {
+			res = res * base
+		}
+		base = base * base
+		exp = exp >> 1
+	}
+	return res
+}
+
+func PyAdd(a PyVal, b PyVal) PyVal {
+	if a.Tag == VAL_INT && b.Tag == VAL_INT {
+		return PyInt(a.IntVal + b.IntVal)
+	}
+	if a.Tag == VAL_STR && b.Tag == VAL_STR {
+		return StrConcat(&a, &b)
+	}
+	if a.Tag == VAL_LIST && b.Tag == VAL_LIST {
+		return ListConcat(&a, &b)
+	}
+	panic("TypeError: unsupported operand type(s) for +")
+	return PyNone()
+}
+
+func PySub(a PyVal, b PyVal) PyVal {
+	if a.Tag == VAL_INT && b.Tag == VAL_INT {
+		return PyInt(a.IntVal - b.IntVal)
+	}
+	panic("TypeError: unsupported operand type(s) for -")
+	return PyNone()
+}
+
+func PyMul(a PyVal, b PyVal) PyVal {
+	if a.Tag == VAL_INT && b.Tag == VAL_INT {
+		return PyInt(a.IntVal * b.IntVal)
+	}
+	if a.Tag == VAL_STR && b.Tag == VAL_INT {
+		return StrRepeat(&a, b.IntVal)
+	}
+	if a.Tag == VAL_INT && b.Tag == VAL_STR {
+		return StrRepeat(&b, a.IntVal)
+	}
+	if a.Tag == VAL_LIST && b.Tag == VAL_INT {
+		return ListRepeat(&a, b.IntVal)
+	}
+	if a.Tag == VAL_INT && b.Tag == VAL_LIST {
+		return ListRepeat(&b, a.IntVal)
+	}
+	panic("TypeError: unsupported operand type(s) for *")
+	return PyNone()
+}
+
+func PyDiv(a PyVal, b PyVal) PyVal {
+	if a.Tag == VAL_INT && b.Tag == VAL_INT {
+		if b.IntVal == 0 {
+			panic("ZeroDivisionError: division by zero")
+		}
+		return PyInt(a.IntVal / b.IntVal)
+	}
+	panic("TypeError: unsupported operand type(s) for /")
+	return PyNone()
+}
+
+func PyMod(a PyVal, b PyVal) PyVal {
+	if a.Tag == VAL_INT && b.Tag == VAL_INT {
+		if b.IntVal == 0 {
+			panic("ZeroDivisionError: integer modulo by zero")
+		}
+		res := a.IntVal % b.IntVal
+		if (res < 0 && b.IntVal > 0) || (res > 0 && b.IntVal < 0) {
+			res = res + b.IntVal
+		}
+		return PyInt(res)
+	}
+	panic("TypeError: unsupported operand type(s) for %")
+	return PyNone()
+}
+
+func PyBitwise(a PyVal, b PyVal, op byte) PyVal {
+	if a.Tag == VAL_INT && b.Tag == VAL_INT {
+		if op == TOK_AMP {
+			return PyInt(a.IntVal & b.IntVal)
+		}
+		if op == TOK_PIPE {
+			return PyInt(a.IntVal | b.IntVal)
+		}
+		if op == TOK_CARET {
+			return PyInt(a.IntVal ^ b.IntVal)
+		}
+		if op == TOK_SHL {
+			return PyInt(a.IntVal << b.IntVal)
+		}
+		if op == TOK_SHR {
+			return PyInt(a.IntVal >> b.IntVal)
+		}
+	}
+	panic("TypeError: unsupported operand type(s) for bitwise op")
+	return PyNone()
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Builtin Conversions & Functions
+// ═══════════════════════════════════════════════════════════════════
+
+func PyToStr(v PyVal) PyVal {
+	if v.Tag == VAL_STR {
+		return v
+	}
+	if v.Tag == VAL_INT {
+		n := v.IntVal
+		isNeg := false
+		if n < 0 {
+			isNeg = true
+			n = 0 - n
+		}
+		var buf [10]byte
+		var p word = 0
+		if n == 0 {
+			buf[0] = '0'
+			p = 1
+		} else {
+			for n > 0 {
+				buf[p] = byte(n%10) + '0'
+				n = n / 10
+				p++
+			}
+		}
+		totalLen := p
+		if isNeg {
+			totalLen++
+		}
+		dest := FarMakeSlice[byte](totalLen + 1)
+		var w word = 0
+		if isNeg {
+			dest.Put(0, '-')
+			w = 1
+		}
+		for p > 0 {
+			p--
+			dest.Put(w, buf[p])
+			w++
+		}
+		dest.Put(totalLen, 0)
+		var res PyVal
+		res.Tag = VAL_STR
+		res.FarRef = dest.FarRef
+		res.Base = dest.Base
+		res.Len = totalLen
+		res.Cap = totalLen + 1
+		return res
+	}
+	if v.Tag == VAL_BOOL {
+		if v.IntVal != 0 {
+			return PyStr("True")
+		}
+		return PyStr("False")
+	}
+	if v.Tag == VAL_NONE {
+		return PyStr("None")
+	}
+	return PyStr("<object>")
+}
+
+func PyToInt(v PyVal) PyVal {
+	if v.Tag == VAL_INT {
+		return v
+	}
+	if v.Tag == VAL_BOOL {
+		return PyInt(v.IntVal)
+	}
+	if v.Tag == VAL_STR {
+		s := v.AsStr()
+		if s.Len == 0 {
+			panic("ValueError: invalid literal for int(): ''")
+		}
+		var sum int = 0
+		var i word = 0
+		isNeg := false
+		c0 := s.Get(0)
+		if c0 == '-' {
+			isNeg = true
+			i = 1
+		} else if c0 == '+' {
+			i = 1
+		}
+		for i < s.Len {
+			c := s.Get(i)
+			if c >= '0' && c <= '9' {
+				sum = sum*10 + int(c-'0')
+			} else {
+				panic("ValueError: invalid literal for int()")
+			}
+			i++
+		}
+		if isNeg {
+			sum = 0 - sum
+		}
+		return PyInt(sum)
+	}
+	panic("TypeError: int() argument must be string or number")
+	return PyNone()
+}
+
+func MakeRange(start int, stop int) PyVal {
+	var count word = 0
+	if stop > start {
+		count = word(stop - start)
+	}
+	res := MakeList(count)
+	curr := start
+	for curr < stop {
+		ListAppend(&res, PyInt(curr))
+		curr++
+	}
+	return res
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Printing / Formatting
+// ═══════════════════════════════════════════════════════════════════
+
+func PrintPyVal(v PyVal, repr bool) {
+	if v.Tag == VAL_NONE {
+		print("None")
+	} else if v.Tag == VAL_BOOL {
+		if v.IntVal != 0 {
+			print("True")
+		} else {
+			print("False")
+		}
+	} else if v.Tag == VAL_INT {
+		print_int(v.IntVal)
+	} else if v.Tag == VAL_STR {
+		s := v.AsStr()
+		if repr {
+			putchar('\'')
+			for i := word(0); i < s.Len; i++ {
+				c := s.Get(i)
+				if c == '\'' {
+					putchar('\\')
+					putchar('\'')
+				} else if c == '\n' {
+					putchar('\\')
+					putchar('n')
+				} else if c == '\t' {
+					putchar('\\')
+					putchar('t')
+				} else if c == '\\' {
+					putchar('\\')
+					putchar('\\')
+				} else {
+					putchar(c)
+				}
+			}
+			putchar('\'')
+		} else {
+			for i := word(0); i < s.Len; i++ {
+				putchar(s.Get(i))
+			}
+		}
+	} else if v.Tag == VAL_LIST {
+		putchar('[')
+		var sl slice[PyVal]
+		sl.FarRef = v.FarRef
+		sl.Base = v.Base
+		sl.Len = v.Len
+		sl.Cap = v.Cap
+		for i := word(0); i < v.Len; i++ {
+			if i > 0 {
+				print(", ")
+			}
+			PrintPyVal(sl.Get(i), true)
+		}
+		putchar(']')
+	} else if v.Tag == VAL_DICT {
+		putchar('{')
+		var entries slice[PyDictEntry]
+		entries.FarRef = v.FarRef
+		entries.Base = v.Base
+		entries.Len = v.Len
+		entries.Cap = v.Cap
+		for i := word(0); i < v.Len; i++ {
+			if i > 0 {
+				print(", ")
+			}
+			e := entries.Get(i)
+			PrintPyVal(e.Key, true)
+			print(": ")
+			PrintPyVal(e.Val, true)
+		}
+		putchar('}')
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Tokenizer
+// ═══════════════════════════════════════════════════════════════════
+
+func TokenizeNumber(line string, i *word, n word) Token {
+	var val int = 0
+	idx := *i
+	for idx < n {
+		d := line.Get(idx)
+		if d >= '0' && d <= '9' {
+			val = val*10 + int(d-'0')
+			idx++
+		} else {
+			break
+		}
+	}
+	*i = idx
+	var t Token
+	t.Kind = TOK_INT
+	t.IntVal = val
+	return t
+}
+
+func TokenizeString(line string, i *word, n word, quote byte) Token {
+	idx := *i
+	var strCap word = 16
+	strBuf := FarMakeSlice[byte](strCap)
+	var strLen word = 0
+	for idx < n {
+		sc := line.Get(idx)
+		if sc == quote {
+			idx++
+			break
+		}
+		if sc == '\\' && idx+1 < n {
+			idx++
+			esc := line.Get(idx)
+			if esc == 'n' {
+				sc = 10
+			} else if esc == 't' {
+				sc = 9
+			} else if esc == 'r' {
+				sc = 13
+			} else if esc == '\\' {
+				sc = '\\'
+			} else if esc == '\'' {
+				sc = '\''
+			} else if esc == '"' {
+				sc = '"'
+			} else if esc == '0' {
+				sc = 0
+			} else {
+				sc = esc
+			}
+		}
+		if strLen >= strCap {
+			newCap := strCap * 2
+			newBuf := FarMakeSlice[byte](newCap)
+			for k := word(0); k < strLen; k++ {
+				newBuf.Put(k, strBuf.Get(k))
+			}
+			freeslice(strBuf)
+			strBuf = newBuf
+			strCap = newCap
+		}
+		strBuf.Put(strLen, sc)
+		strLen++
+		idx++
+	}
+	if strLen >= strCap {
+		newBuf := FarMakeSlice[byte](strLen + 1)
+		for k := word(0); k < strLen; k++ {
+			newBuf.Put(k, strBuf.Get(k))
+		}
+		freeslice(strBuf)
+		strBuf = newBuf
+	}
+	strBuf.Put(strLen, 0)
+	var sVal string
+	sVal.FarRef = strBuf.FarRef
+	sVal.Base = strBuf.Base
+	sVal.Len = strLen
+	sVal.Cap = strLen + 1
+	*i = idx
+
+	var t Token
+	t.Kind = TOK_STR
+	t.StrVal = sVal
+	return t
+}
+
+func TokenizeIdent(line string, i *word, n word) Token {
+	idx := *i
+	start := idx
+	for idx < n {
+		ic := line.Get(idx)
+		if (ic >= 'a' && ic <= 'z') || (ic >= 'A' && ic <= 'Z') || (ic >= '0' && ic <= '9') || ic == '_' {
+			idx++
+		} else {
+			break
+		}
+	}
+	idStr := line.Chop(start, idx)
+	*i = idx
+	var t Token
+	if streq(idStr, "and") {
+		t.Kind = TOK_AND
+	} else if streq(idStr, "or") {
+		t.Kind = TOK_OR
+	} else if streq(idStr, "not") {
+		t.Kind = TOK_NOT
+	} else if streq(idStr, "in") {
+		t.Kind = TOK_IN
+	} else if streq(idStr, "if") {
+		t.Kind = TOK_IF
+	} else if streq(idStr, "else") {
+		t.Kind = TOK_ELSE
+	} else if streq(idStr, "for") {
+		t.Kind = TOK_FOR
+	} else if streq(idStr, "True") {
+		t.Kind = TOK_TRUE
+	} else if streq(idStr, "False") {
+		t.Kind = TOK_FALSE
+	} else if streq(idStr, "None") {
+		t.Kind = TOK_NONE
+	} else if streq(idStr, "bye") {
+		t.Kind = TOK_BYE
+	} else if streq(idStr, "exit") {
+		t.Kind = TOK_EXIT
+	} else {
+		t.Kind = TOK_IDENT
+		t.StrVal = strdup(idStr)
+	}
+	return t
+}
+
+func TokenizeTwoCharOp(c byte, c2 byte, i *word) (Token, bool) {
+	var t Token
+	if c == '*' && c2 == '*' {
+		*i = *i + 2
+		t.Kind = TOK_POW
+		return t, true
+	}
+	if c == '=' && c2 == '=' {
+		*i = *i + 2
+		t.Kind = TOK_EQ
+		return t, true
+	}
+	if c == '!' && c2 == '=' {
+		*i = *i + 2
+		t.Kind = TOK_NE
+		return t, true
+	}
+	if c == '<' && c2 == '=' {
+		*i = *i + 2
+		t.Kind = TOK_LE
+		return t, true
+	}
+	if c == '<' && c2 == '<' {
+		*i = *i + 2
+		t.Kind = TOK_SHL
+		return t, true
+	}
+	if c == '>' && c2 == '=' {
+		*i = *i + 2
+		t.Kind = TOK_GE
+		return t, true
+	}
+	if c == '>' && c2 == '>' {
+		*i = *i + 2
+		t.Kind = TOK_SHR
+		return t, true
+	}
+	return t, false
+}
+
+func TokenizeSingleCharOp(c byte) Token {
+	var t Token
+	if c == '+' {
+		t.Kind = TOK_PLUS
+	} else if c == '-' {
+		t.Kind = TOK_MINUS
+	} else if c == '*' {
+		t.Kind = TOK_STAR
+	} else if c == '/' {
+		t.Kind = TOK_SLASH
+	} else if c == '%' {
+		t.Kind = TOK_PERCENT
+	} else if c == '=' {
+		t.Kind = TOK_ASSIGN
+	} else if c == '<' {
+		t.Kind = TOK_LT
+	} else if c == '>' {
+		t.Kind = TOK_GT
+	} else if c == '&' {
+		t.Kind = TOK_AMP
+	} else if c == '|' {
+		t.Kind = TOK_PIPE
+	} else if c == '^' {
+		t.Kind = TOK_CARET
+	} else if c == '~' {
+		t.Kind = TOK_TILDE
+	} else if c == '(' {
+		t.Kind = TOK_LPAREN
+	} else if c == ')' {
+		t.Kind = TOK_RPAREN
+	} else if c == '[' {
+		t.Kind = TOK_LBRACK
+	} else if c == ']' {
+		t.Kind = TOK_RBRACK
+	} else if c == '{' {
+		t.Kind = TOK_LBRACE
+	} else if c == '}' {
+		t.Kind = TOK_RBRACE
+	} else if c == ',' {
+		t.Kind = TOK_COMMA
+	} else if c == ':' {
+		t.Kind = TOK_COLON
+	} else {
+		panic("SyntaxError: unrecognized character")
+	}
+	return t
+}
+
+func Tokenize(line string) slice[Token] {
+	var toks slice[Token]
+	toks = FarMakeSlice[Token](16)
+	var tokCount word = 0
+	n := line.Len
+	var i word = 0
+
+	for i < n {
+		c := line.Get(i)
+		if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+			i++
+			continue
+		}
+		if c == '#' {
+			break
+		}
+
+		if tokCount >= toks.Cap {
+			newCap := toks.Cap * 2
+			newToks := FarMakeSlice[Token](newCap)
+			for k := word(0); k < tokCount; k++ {
+				newToks.Put(k, toks.Get(k))
+			}
+			freeslice(toks)
+			toks = newToks
+		}
+
+		if c >= '0' && c <= '9' {
+			t := TokenizeNumber(line, &i, n)
+			toks.Put(tokCount, t)
+			tokCount++
+			continue
+		}
+
+		if c == '\'' || c == '"' {
+			quote := c
+			i++
+			t := TokenizeString(line, &i, n, quote)
+			toks.Put(tokCount, t)
+			tokCount++
+			continue
+		}
+
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' {
+			t := TokenizeIdent(line, &i, n)
+			toks.Put(tokCount, t)
+			tokCount++
+			continue
+		}
+
+		if i+1 < n {
+			c2 := line.Get(i + 1)
+			t2, ok := TokenizeTwoCharOp(c, c2, &i)
+			if ok {
+				toks.Put(tokCount, t2)
+				tokCount++
+				continue
+			}
+		}
+
+		t := TokenizeSingleCharOp(c)
+		i++
+		toks.Put(tokCount, t)
+		tokCount++
+	}
+
+	if tokCount >= toks.Cap {
+		newToks := FarMakeSlice[Token](tokCount + 1)
+		for k := word(0); k < tokCount; k++ {
+			newToks.Put(k, toks.Get(k))
+		}
+		freeslice(toks)
+		toks = newToks
+	}
+	var eofTok Token
+	eofTok.Kind = TOK_EOF
+	toks.Put(tokCount, eofTok)
+	tokCount++
+	toks.Len = tokCount
+	return toks
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Parser & Evaluator
+// ═══════════════════════════════════════════════════════════════════
+
+type Parser struct {
+	toks slice[Token]
+	pos  word
+}
+
+func (p *Parser) Peek() Token {
+	if p.pos < p.toks.Len {
+		return p.toks.Get(p.pos)
+	}
+	var t Token
+	t.Kind = TOK_EOF
+	return t
+}
+
+func (p *Parser) PeekNext() Token {
+	if p.pos+1 < p.toks.Len {
+		return p.toks.Get(p.pos + 1)
+	}
+	var t Token
+	t.Kind = TOK_EOF
+	return t
+}
+
+func (p *Parser) Next() Token {
+	t := p.Peek()
+	if p.pos < p.toks.Len {
+		p.pos++
+	}
+	return t
+}
+
+func (p *Parser) Match(kind byte) bool {
+	if p.Peek().Kind == kind {
+		p.Next()
+		return true
+	}
+	return false
+}
+
+func (p *Parser) Expect(kind byte) Token {
+	t := p.Next()
+	if t.Kind != kind {
+		panic("SyntaxError: unexpected token")
+	}
+	return t
+}
+
+// ── Expression Parsing with Precedence Climbing ──
+
+func (p *Parser) ParseExpr(eval bool) PyVal {
+	val := p.ParseOr(eval)
+	if p.Match(TOK_IF) {
+		cond := p.ParseOr(eval)
+		p.Expect(TOK_ELSE)
+		elseVal := p.ParseExpr(eval && !IsTruthy(cond))
+		if eval {
+			if IsTruthy(cond) {
+				return val
+			} else {
+				return elseVal
+			}
+		}
+		return PyNone()
+	}
+	return val
+}
+
+func (p *Parser) ParseOr(eval bool) PyVal {
+	val := p.ParseAnd(eval)
+	for p.Match(TOK_OR) {
+		if eval && IsTruthy(val) {
+			p.ParseAnd(false)
+		} else {
+			val = p.ParseAnd(eval)
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseAnd(eval bool) PyVal {
+	val := p.ParseNot(eval)
+	for p.Match(TOK_AND) {
+		if eval && !IsTruthy(val) {
+			p.ParseNot(false)
+		} else {
+			val = p.ParseNot(eval)
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseNot(eval bool) PyVal {
+	if p.Match(TOK_NOT) {
+		val := p.ParseNot(eval)
+		if eval {
+			return PyBool(!IsTruthy(val))
+		}
+		return PyNone()
+	}
+	return p.ParseComparison(eval)
+}
+
+func (p *Parser) ParseComparison(eval bool) PyVal {
+	val := p.ParseBitOr(eval)
+	for {
+		k := p.Peek().Kind
+		if k == TOK_EQ || k == TOK_NE || k == TOK_LT || k == TOK_LE || k == TOK_GT || k == TOK_GE {
+			p.Next()
+			rhs := p.ParseBitOr(eval)
+			if eval {
+				val = PyBool(PyCompare(val, rhs, k))
+			}
+		} else if k == TOK_IN {
+			p.Next()
+			rhs := p.ParseBitOr(eval)
+			if eval {
+				val = PyBool(PyContains(rhs, val))
+			}
+		} else if k == TOK_NOT && p.PeekNext().Kind == TOK_IN {
+			p.Next()
+			p.Next()
+			rhs := p.ParseBitOr(eval)
+			if eval {
+				val = PyBool(!PyContains(rhs, val))
+			}
+		} else {
+			break
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseBitOr(eval bool) PyVal {
+	val := p.ParseBitXor(eval)
+	for p.Match(TOK_PIPE) {
+		rhs := p.ParseBitXor(eval)
+		if eval {
+			val = PyBitwise(val, rhs, TOK_PIPE)
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseBitXor(eval bool) PyVal {
+	val := p.ParseBitAnd(eval)
+	for p.Match(TOK_CARET) {
+		rhs := p.ParseBitAnd(eval)
+		if eval {
+			val = PyBitwise(val, rhs, TOK_CARET)
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseBitAnd(eval bool) PyVal {
+	val := p.ParseShift(eval)
+	for p.Match(TOK_AMP) {
+		rhs := p.ParseShift(eval)
+		if eval {
+			val = PyBitwise(val, rhs, TOK_AMP)
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseShift(eval bool) PyVal {
+	val := p.ParseAddSub(eval)
+	for {
+		if p.Match(TOK_SHL) {
+			rhs := p.ParseAddSub(eval)
+			if eval {
+				val = PyBitwise(val, rhs, TOK_SHL)
+			}
+		} else if p.Match(TOK_SHR) {
+			rhs := p.ParseAddSub(eval)
+			if eval {
+				val = PyBitwise(val, rhs, TOK_SHR)
+			}
+		} else {
+			break
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseAddSub(eval bool) PyVal {
+	val := p.ParseMulDiv(eval)
+	for {
+		if p.Match(TOK_PLUS) {
+			rhs := p.ParseMulDiv(eval)
+			if eval {
+				val = PyAdd(val, rhs)
+			}
+		} else if p.Match(TOK_MINUS) {
+			rhs := p.ParseMulDiv(eval)
+			if eval {
+				val = PySub(val, rhs)
+			}
+		} else {
+			break
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseMulDiv(eval bool) PyVal {
+	val := p.ParseUnary(eval)
+	for {
+		if p.Match(TOK_STAR) {
+			rhs := p.ParseUnary(eval)
+			if eval {
+				val = PyMul(val, rhs)
+			}
+		} else if p.Match(TOK_SLASH) {
+			rhs := p.ParseUnary(eval)
+			if eval {
+				val = PyDiv(val, rhs)
+			}
+		} else if p.Match(TOK_PERCENT) {
+			rhs := p.ParseUnary(eval)
+			if eval {
+				val = PyMod(val, rhs)
+			}
+		} else {
+			break
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseUnary(eval bool) PyVal {
+	if p.Match(TOK_PLUS) {
+		return p.ParseUnary(eval)
+	}
+	if p.Match(TOK_MINUS) {
+		val := p.ParseUnary(eval)
+		if eval {
+			if val.Tag != VAL_INT {
+				panic("TypeError: bad operand type for unary -")
+			}
+			return PyInt(0 - val.IntVal)
+		}
+		return PyNone()
+	}
+	if p.Match(TOK_TILDE) {
+		val := p.ParseUnary(eval)
+		if eval {
+			if val.Tag != VAL_INT {
+				panic("TypeError: bad operand type for unary ~")
+			}
+			return PyInt(-val.IntVal - 1)
+		}
+		return PyNone()
+	}
+	return p.ParsePower(eval)
+}
+
+func (p *Parser) ParsePower(eval bool) PyVal {
+	val := p.ParsePostfix(eval)
+	if p.Match(TOK_POW) {
+		rhs := p.ParseUnary(eval)
+		if eval {
+			if val.Tag != VAL_INT || rhs.Tag != VAL_INT {
+				panic("TypeError: unsupported operand type for **")
+			}
+			return PyInt(PyPow(val.IntVal, rhs.IntVal))
+		}
+		return PyNone()
+	}
+	return val
+}
+
+func (p *Parser) ParsePostfix(eval bool) PyVal {
+	val := p.ParseAtom(eval)
+	for {
+		if p.Match(TOK_LBRACK) {
+			val = p.ParseIndexOrSlice(val, eval)
+		} else if p.Match(TOK_LPAREN) {
+			val = p.ParseCall(val, eval)
+		} else {
+			break
+		}
+	}
+	return val
+}
+
+func (p *Parser) ParseIndexOrSlice(target PyVal, eval bool) PyVal {
+	isSlice := false
+	var startVal int = 0
+	var stopVal int = 32767
+
+	if p.Match(TOK_COLON) {
+		isSlice = true
+		if !p.Match(TOK_RBRACK) {
+			stopValExpr := p.ParseExpr(eval)
+			p.Expect(TOK_RBRACK)
+			if eval {
+				if stopValExpr.Tag != VAL_INT {
+					panic("TypeError: slice index must be int")
+				}
+				stopVal = stopValExpr.IntVal
+			}
+		}
+	} else {
+		firstExpr := p.ParseExpr(eval)
+		if p.Match(TOK_COLON) {
+			isSlice = true
+			if eval {
+				if firstExpr.Tag != VAL_INT {
+					panic("TypeError: slice index must be int")
+				}
+				startVal = firstExpr.IntVal
+			}
+			if !p.Match(TOK_RBRACK) {
+				stopValExpr := p.ParseExpr(eval)
+				p.Expect(TOK_RBRACK)
+				if eval {
+					if stopValExpr.Tag != VAL_INT {
+						panic("TypeError: slice index must be int")
+					}
+					stopVal = stopValExpr.IntVal
+				}
+			}
+		} else {
+			p.Expect(TOK_RBRACK)
+			if eval {
+				if target.Tag == VAL_LIST {
+					if firstExpr.Tag != VAL_INT {
+						panic("TypeError: list indices must be integers")
+					}
+					return ListGet(&target, firstExpr.IntVal)
+				} else if target.Tag == VAL_STR {
+					if firstExpr.Tag != VAL_INT {
+						panic("TypeError: string indices must be integers")
+					}
+					idx := firstExpr.IntVal
+					if idx < 0 {
+						idx = int(target.Len) + idx
+					}
+					if idx < 0 || word(idx) >= target.Len {
+						panic("IndexError: string index out of range")
+					}
+					s := target.AsStr()
+					oneChar := chr(word(s.Get(word(idx))))
+					return PyStr(oneChar)
+				} else if target.Tag == VAL_DICT {
+					res, found := DictGet(&target, firstExpr)
+					if !found {
+						panic("KeyError")
+					}
+					return res
+				} else {
+					panic("TypeError: object is not subscriptable")
+				}
+			}
+			return PyNone()
+		}
+	}
+
+	if eval {
+		if target.Tag == VAL_LIST {
+			return ListSlice(&target, startVal, stopVal)
+		} else if target.Tag == VAL_STR {
+			return StrSlice(&target, startVal, stopVal)
+		} else {
+			panic("TypeError: object is not sliceable")
+		}
+	}
+	return PyNone()
+}
+
+func (p *Parser) ParseCall(target PyVal, eval bool) PyVal {
+	fnName := ""
+	if target.Tag == VAL_STR {
+		fnName = target.AsStr()
+	}
+
+	var args slice[PyVal]
+	if eval {
+		args = FarMakeSlice[PyVal](4)
+	}
+	var argCount word = 0
+	if !p.Match(TOK_RPAREN) {
+		for {
+			arg := p.ParseExpr(eval)
+			if eval {
+				if argCount >= args.Cap {
+					newCap := args.Cap * 2
+					newSl := FarMakeSlice[PyVal](newCap)
+					for i := word(0); i < argCount; i++ {
+						newSl.Put(i, args.Get(i))
+					}
+					freeslice(args)
+					args = newSl
+				}
+				args.Put(argCount, arg)
+				argCount++
+			}
+			if p.Match(TOK_COMMA) {
+				if p.Match(TOK_RPAREN) {
+					break
+				}
+				continue
+			}
+			p.Expect(TOK_RPAREN)
+			break
+		}
+	}
+
+	if !eval {
+		return PyNone()
+	}
+
+	res := ExecBuiltin(fnName, args, argCount)
+	freeslice(args)
+	return res
+}
+
+func ExecBuiltin(fnName string, args slice[PyVal], argCount word) PyVal {
+	if streq(fnName, "len") {
+		if argCount != 1 {
+			panic("TypeError: len() takes exactly one argument")
+		}
+		arg := args.Get(0)
+		if arg.Tag == VAL_STR || arg.Tag == VAL_LIST || arg.Tag == VAL_DICT {
+			return PyInt(int(arg.Len))
+		}
+		panic("TypeError: object of this type has no len()")
+	}
+	if streq(fnName, "print") {
+		for i := word(0); i < argCount; i++ {
+			if i > 0 {
+				putchar(' ')
+			}
+			PrintPyVal(args.Get(i), false)
+		}
+		putchar(10)
+		return PyNone()
+	}
+	if streq(fnName, "str") {
+		if argCount != 1 {
+			panic("TypeError: str() takes 1 argument")
+		}
+		return PyToStr(args.Get(0))
+	}
+	if streq(fnName, "int") {
+		if argCount != 1 {
+			panic("TypeError: int() takes 1 argument")
+		}
+		return PyToInt(args.Get(0))
+	}
+	if streq(fnName, "range") {
+		if argCount == 1 {
+			stop := args.Get(0)
+			if stop.Tag != VAL_INT {
+				panic("TypeError: range() integer expected")
+			}
+			return MakeRange(0, stop.IntVal)
+		} else if argCount == 2 {
+			start := args.Get(0)
+			stop := args.Get(1)
+			if start.Tag != VAL_INT || stop.Tag != VAL_INT {
+				panic("TypeError: range() integer expected")
+			}
+			return MakeRange(start.IntVal, stop.IntVal)
+		} else {
+			panic("TypeError: range() expects 1 or 2 arguments")
+		}
+	}
+	if streq(fnName, "exit") {
+		status := 0
+		if argCount >= 1 {
+			a0 := args.Get(0)
+			if a0.Tag == VAL_INT {
+				status = a0.IntVal
+			}
+		}
+		ExitProgram(status)
+		return PyNone()
+	}
+	if streq(fnName, "type") {
+		if argCount != 1 {
+			panic("TypeError: type() takes 1 argument")
+		}
+		arg := args.Get(0)
+		if arg.Tag == VAL_NONE {
+			return PyStr("<class 'NoneType'>")
+		}
+		if arg.Tag == VAL_BOOL {
+			return PyStr("<class 'bool'>")
+		}
+		if arg.Tag == VAL_INT {
+			return PyStr("<class 'int'>")
+		}
+		if arg.Tag == VAL_STR {
+			return PyStr("<class 'str'>")
+		}
+		if arg.Tag == VAL_LIST {
+			return PyStr("<class 'list'>")
+		}
+		if arg.Tag == VAL_DICT {
+			return PyStr("<class 'dict'>")
+		}
+	}
+
+	panic("NameError: name is not callable")
+	return PyNone()
+}
+
+func (p *Parser) ParseAtom(eval bool) PyVal {
+	t := p.Peek()
+	if t.Kind == TOK_INT {
+		p.Next()
+		if eval {
+			return PyInt(t.IntVal)
+		}
+		return PyNone()
+	}
+	if t.Kind == TOK_STR {
+		p.Next()
+		if eval {
+			return PyStr(t.StrVal)
+		}
+		return PyNone()
+	}
+	if t.Kind == TOK_TRUE {
+		p.Next()
+		if eval {
+			return PyBool(true)
+		}
+		return PyNone()
+	}
+	if t.Kind == TOK_FALSE {
+		p.Next()
+		if eval {
+			return PyBool(false)
+		}
+		return PyNone()
+	}
+	if t.Kind == TOK_NONE {
+		p.Next()
+		if eval {
+			return PyNone()
+		}
+		return PyNone()
+	}
+	if t.Kind == TOK_IDENT {
+		p.Next()
+		if eval {
+			if p.Peek().Kind == TOK_LPAREN {
+				return PyStr(t.StrVal)
+			}
+			val, ok := GetGlobal(t.StrVal)
+			if !ok {
+				panic("NameError: name is not defined")
+			}
+			return val
+		}
+		return PyNone()
+	}
+	if t.Kind == TOK_EXIT {
+		p.Next()
+		if eval {
+			if p.Peek().Kind == TOK_LPAREN {
+				return PyStr("exit")
+			}
+			ExitProgram(0)
+			return PyNone()
+		}
+		return PyNone()
+	}
+	if t.Kind == TOK_LPAREN {
+		p.Next()
+		val := p.ParseExpr(eval)
+		p.Expect(TOK_RPAREN)
+		return val
+	}
+	if t.Kind == TOK_LBRACK {
+		return p.ParseListOrComprehension(eval)
+	}
+	if t.Kind == TOK_LBRACE {
+		return p.ParseDictLiteral(eval)
+	}
+
+	panic("SyntaxError: invalid syntax")
+	return PyNone()
+}
+
+func (p *Parser) ParseListOrComprehension(eval bool) PyVal {
+	p.Expect(TOK_LBRACK)
+	if p.Match(TOK_RBRACK) {
+		if eval {
+			return MakeList(0)
+		}
+		return PyNone()
+	}
+
+	startExprPos := p.pos
+	p.ParseExpr(false)
+	endExprPos := p.pos
+
+	if p.Match(TOK_FOR) {
+		varNameTok := p.Expect(TOK_IDENT)
+		varName := varNameTok.StrVal
+		p.Expect(TOK_IN)
+		iterVal := p.ParseOr(eval)
+
+		hasIf := false
+		startIfPos := word(0)
+		if p.Match(TOK_IF) {
+			hasIf = true
+			startIfPos = p.pos
+			p.ParseOr(false)
+		}
+		p.Expect(TOK_RBRACK)
+
+		if !eval {
+			return PyNone()
+		}
+
+		res := MakeList(4)
+		if iterVal.Tag == VAL_LIST {
+			sl := iterVal.AsListSlice()
+			for i := word(0); i < iterVal.Len; i++ {
+				item := sl.Get(i)
+				SetGlobal(varName, item)
+
+				if hasIf {
+					savePos := p.pos
+					p.pos = startIfPos
+					condVal := p.ParseOr(true)
+					p.pos = savePos
+					if !IsTruthy(condVal) {
+						continue
+					}
+				}
+
+				savePos := p.pos
+				p.pos = startExprPos
+				itemVal := p.ParseExpr(true)
+				p.pos = savePos
+				ListAppend(&res, itemVal)
+			}
+		} else if iterVal.Tag == VAL_STR {
+			s := iterVal.AsStr()
+			for i := word(0); i < iterVal.Len; i++ {
+				chStr := chr(word(s.Get(i)))
+				SetGlobal(varName, PyStr(chStr))
+
+				if hasIf {
+					savePos := p.pos
+					p.pos = startIfPos
+					condVal := p.ParseOr(true)
+					p.pos = savePos
+					if !IsTruthy(condVal) {
+						continue
+					}
+				}
+
+				savePos := p.pos
+				p.pos = startExprPos
+				itemVal := p.ParseExpr(true)
+				p.pos = savePos
+				ListAppend(&res, itemVal)
+			}
+		} else {
+			panic("TypeError: object is not iterable")
+		}
+		return res
+	}
+
+	p.pos = startExprPos
+	res := MakeList(4)
+	firstElem := p.ParseExpr(eval)
+	if eval {
+		ListAppend(&res, firstElem)
+	}
+	for p.Match(TOK_COMMA) {
+		if p.Peek().Kind == TOK_RBRACK {
+			break
+		}
+		elem := p.ParseExpr(eval)
+		if eval {
+			ListAppend(&res, elem)
+		}
+	}
+	p.Expect(TOK_RBRACK)
+	if eval {
+		return res
+	}
+	return PyNone()
+}
+
+func (p *Parser) ParseDictLiteral(eval bool) PyVal {
+	p.Expect(TOK_LBRACE)
+	if p.Match(TOK_RBRACE) {
+		if eval {
+			return MakeDict(0)
+		}
+		return PyNone()
+	}
+
+	res := MakeDict(4)
+	for {
+		key := p.ParseExpr(eval)
+		p.Expect(TOK_COLON)
+		val := p.ParseExpr(eval)
+		if eval {
+			DictSet(&res, key, val)
+		}
+		if p.Match(TOK_COMMA) {
+			if p.Peek().Kind == TOK_RBRACE {
+				break
+			}
+			continue
+		}
+		break
+	}
+	p.Expect(TOK_RBRACE)
+	if eval {
+		return res
+	}
+	return PyNone()
+}
+
+func (p *Parser) ParseStatement() (PyVal, bool) {
+	if p.Peek().Kind == TOK_EOF {
+		return PyNone(), false
+	}
+
+	if p.Peek().Kind == TOK_BYE || (p.Peek().Kind == TOK_EXIT && p.PeekNext().Kind != TOK_LPAREN) {
+		ExitProgram(0)
+		return PyNone(), false
+	}
+
+	if p.Peek().Kind == TOK_IDENT && p.PeekNext().Kind == TOK_ASSIGN {
+		idTok := p.Next()
+		p.Next() // consume =
+		val := p.ParseExpr(true)
+		SetGlobal(idTok.StrVal, val)
+		return val, true
+	}
+
+	if p.Peek().Kind == TOK_IDENT && p.PeekNext().Kind == TOK_LBRACK {
+		savePos := p.pos
+		idTok := p.Next() // IDENT
+		p.Next()          // [
+		key := p.ParseExpr(true)
+		if p.Match(TOK_RBRACK) && p.Match(TOK_ASSIGN) {
+			val := p.ParseExpr(true)
+			obj, ok := GetGlobal(idTok.StrVal)
+			if !ok {
+				panic("NameError: name is not defined")
+			}
+			if obj.Tag == VAL_DICT {
+				DictSet(&obj, key, val)
+				SetGlobal(idTok.StrVal, obj)
+			} else if obj.Tag == VAL_LIST {
+				if key.Tag != VAL_INT {
+					panic("TypeError: list indices must be integers")
+				}
+				ListSet(&obj, key.IntVal, val)
+				SetGlobal(idTok.StrVal, obj)
+			} else {
+				panic("TypeError: object does not support item assignment")
+			}
+			return val, true
+		}
+		p.pos = savePos
+	}
+
+	val := p.ParseExpr(true)
+	return val, true
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// REPL Execution & Line Reading
+// ═══════════════════════════════════════════════════════════════════
+
+var ShouldExit bool = false
+var ExitStatus int = 0
+
+func ExitProgram(status int) {
+	ShouldExit = true
+	ExitStatus = status
+	pokeb(0xFF05, byte(status))
+}
+
+func EvalLine(line string) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			// Panic occurred: error message was already emitted by builtin_panic
+		}
+	}()
+
+	toks := Tokenize(line)
+	var guard TokenGuard
+	guard.toks = toks
+
+	var p Parser
+	p.toks = toks
+	p.pos = 0
+
+	val, hasVal := p.ParseStatement()
+	if hasVal && !ShouldExit {
+		PrintPyVal(val, true)
+		putchar(10)
+	}
+}
+
+var LineBuf [256]byte
+
+func ReadLine() (string, bool) {
+	var length word = 0
+	for {
+		c := getchar()
+		if c == 0 {
+			continue
+		}
+		if c == 255 || c == 4 {
+			if length > 0 {
+				break
+			}
+			var empty string
+			return empty, false
+		}
+		if c == 13 || c == 10 {
+			break
+		}
+		if c == 8 || c == 127 {
+			if length > 0 {
+				length--
+			}
+			continue
+		}
+		if length < 250 {
+			LineBuf[length] = c
+			length++
+		}
+	}
+	dest := FarMakeSlice[byte](length + 1)
+	for i := word(0); i < length; i++ {
+		dest.Put(i, LineBuf[i])
+	}
+	dest.Put(length, 0)
+	var res string
+	res.FarRef = dest.FarRef
+	res.Base = dest.Base
+	res.Len = length
+	res.Cap = length + 1
+	return res, true
+}
+
+func main() {
+	InitGlobals()
+	for !ShouldExit {
+		print(">>> ")
+		line, ok := ReadLine()
+		if !ok || ShouldExit {
+			break
+		}
+		if line.Len == 0 {
+			continue
+		}
+		EvalLine(line)
+	}
+}

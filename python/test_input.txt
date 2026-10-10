@@ -1,0 +1,69 @@
+1 + 2 * 3
+(1 + 2) * 3
+2 ** 10
+17 / 5
+17 % 5
+-42
+1 << 8
+512 >> 3
+15 & 6
+15 | 16
+15 ^ 6
+~0
+1 < 2
+2 <= 2
+3 > 2
+3 >= 4
+10 == 10
+10 != 20
+False and 1/0
+True or 1/0
+not True
+not False
+x = 100
+y = 25
+x + y
+x - y
+s = 'hello'
+s + ' world'
+s * 3
+s[1]
+s[1:4]
+'ell' in s
+'xyz' in s
+lst = [10, 20, 30]
+lst[0]
+lst[-1]
+lst[1:3]
+lst[1] = 99
+lst
+lst + [40, 50]
+[0] * 3
+20 not in lst
+99 in lst
+d = {'name': 'hatvan', 'arch': 6809}
+d['name']
+d['os'] = 9
+d['arch']
+'os' in d
+'kernel' in d
+42 if True else 0
+42 if False else 0
+[n * n for n in range(5)]
+[n for n in range(10) if n % 2 == 1]
+[c for c in 'abc']
+len(s)
+len(lst)
+len(d)
+str(12345)
+int('9876')
+type(x)
+type(s)
+type(lst)
+type(d)
+print('Evaluating Python on big6809:', 6809)
+10 / 0
+foo_bar
+lst[100]
+'recovered'
+bye
