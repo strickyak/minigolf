@@ -541,76 +541,31 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 		}
 	}
 
-	// Pass 2: Allocate stack slots for instructions that produce used values or phis.
-	// To minimize stack frame size, purely intra-block temporaries share scratch slots.
-	defBlock := make(map[int]*bigir.BasicBlock)
-	for _, bb := range fn.Blocks {
-		for _, instr := range bb.Instructions {
-			defBlock[instr.GetID()] = bb
-		}
-	}
+	// Pass 2: Allocate stack slots using function-wide live-range interval coloring.
+	// Variables with non-overlapping live ranges share stack slots across basic blocks.
+	candidates := make([]int, 0)
+	candSet := make(map[int]bool)
+	instrSize := make(map[int]int)
 
-	crossBlock := make(map[int]bool)
 	for _, bb := range fn.Blocks {
 		for _, instr := range bb.Instructions {
 			id := instr.GetID()
-			if phi, ok := instr.(*bigir.Phi); ok {
-				crossBlock[phi.GetID()] = true
-				for _, edge := range phi.Edges {
-					getLeafInstrIDs(edge.Value, func(eid int) {
-						crossBlock[eid] = true
-					})
-				}
-			}
-			if typ := instr.Type(); typ.Size > 2 {
-				switch instr.(type) {
-				case *bigir.NearCall, *bigir.FarCall, *bigir.IndirectCall, *bigir.SliceGet, *bigir.FarLoad:
-					if !usedInstrs[id] {
-						crossBlock[id] = true
-					}
-				}
-			}
-			sz := getInstrSlotSize(instr)
-			if sz != 2 && sz != 8 {
-				crossBlock[id] = true
-			}
-			for _, op := range getBigIROperands(instr) {
-				getLeafInstrIDs(op, func(opID int) {
-					if db, ok := defBlock[opID]; ok && db != bb {
-						crossBlock[opID] = true
-					}
-				})
-			}
-		}
-		if bb.Terminator != nil {
-			for _, op := range getBigIRTerminatorOperands(bb.Terminator) {
-				getLeafInstrIDs(op, func(opID int) {
-					if db, ok := defBlock[opID]; ok && db != bb {
-						crossBlock[opID] = true
-					}
-				})
-			}
-		}
-	}
-
-	// Allocate dedicated slots for cross-block instructions
-	for _, bb := range fn.Blocks {
-		for _, instr := range bb.Instructions {
-			id := instr.GetID()
-			if addressTaken[id] || !crossBlock[id] || jmpSlots[id] > 0 {
+			if id <= 0 {
 				continue
 			}
-
+			if addressTaken[id] || jmpSlots[id] > 0 {
+				continue
+			}
 			switch instr.(type) {
-			case *bigir.ConstByte, *bigir.ConstWord, *bigir.AddressOfGlobal, *bigir.AddressOfLocal, *bigir.FuncRef:
+			case *bigir.ConstByte, *bigir.ConstWord, *bigir.ConstFarRef, *bigir.ConstString, *bigir.ConstStruct, *bigir.ConstArray, *bigir.FuncRef:
+				continue
+			case *bigir.AddressOfGlobal, *bigir.AddressOfLocal:
 				continue
 			}
-
 			isPhi := false
 			if _, ok := instr.(*bigir.Phi); ok {
 				isPhi = true
 			}
-
 			typ := instr.Type()
 			isCallWithStructRet := false
 			switch instr.(type) {
@@ -622,137 +577,266 @@ func (b *Backend) emitFunction(buf *bytes.Buffer, fn *bigir.Function, stringDesc
 			if !usedInstrs[id] && !isPhi && !isCallWithStructRet {
 				continue
 			}
-
-			if typ.Size <= 0 {
+			if typ.Size <= 0 && !isPhi {
 				continue
 			}
 
 			sz := getInstrSlotSize(instr)
-			curLocalOffset += sz
-			localOffsets[id] = curLocalOffset
+			if sz <= 0 {
+				sz = 2
+			}
+			sz = (sz + 1) & ^1 // align to 2 bytes
+			instrSize[id] = sz
+			candidates = append(candidates, id)
+			candSet[id] = true
 		}
 	}
 
-	// Compute live ranges and allocate intra-block scratch slots
-	type intraColor struct {
-		freeAt int
+	// Build CFG successors
+	succs := make(map[int][]*bigir.BasicBlock)
+	for _, bb := range fn.Blocks {
+		succs[bb.ID] = nil
+		if bb.Terminator != nil {
+			switch t := bb.Terminator.(type) {
+			case *bigir.Branch:
+				if t.Target != nil {
+					succs[bb.ID] = append(succs[bb.ID], t.Target)
+				}
+			case *bigir.CondBranch:
+				if t.TrueTarget != nil {
+					succs[bb.ID] = append(succs[bb.ID], t.TrueTarget)
+				}
+				if t.FalseTarget != nil && t.FalseTarget != t.TrueTarget {
+					succs[bb.ID] = append(succs[bb.ID], t.FalseTarget)
+				}
+			}
+		}
 	}
-	maxScratch2 := 0
-	maxScratch8 := 0
-	blockScratch2Assigned := make(map[int]int)
-	blockScratch8Assigned := make(map[int]int)
+
+	getPhiUsesFromEdge := func(from, to *bigir.BasicBlock) []int {
+		var res []int
+		for _, instr := range to.Instructions {
+			if phi, ok := instr.(*bigir.Phi); ok {
+				for _, edge := range phi.Edges {
+					if edge.Block == from {
+						getLeafInstrIDs(edge.Value, func(id int) {
+							if candSet[id] {
+								res = append(res, id)
+							}
+						})
+						break
+					}
+				}
+			}
+		}
+		return res
+	}
+
+	// Compute Liveness (LiveIn & LiveOut) via backward fixpoint iteration
+	liveIn := make(map[int]map[int]bool)
+	liveOut := make(map[int]map[int]bool)
+	for _, bb := range fn.Blocks {
+		liveIn[bb.ID] = make(map[int]bool)
+		liveOut[bb.ID] = make(map[int]bool)
+	}
+
+	changed := true
+	for changed {
+		changed = false
+		for bIdx := len(fn.Blocks) - 1; bIdx >= 0; bIdx-- {
+			bb := fn.Blocks[bIdx]
+
+			newLiveOut := make(map[int]bool)
+			for _, succ := range succs[bb.ID] {
+				for v := range liveIn[succ.ID] {
+					newLiveOut[v] = true
+				}
+				for _, v := range getPhiUsesFromEdge(bb, succ) {
+					newLiveOut[v] = true
+				}
+			}
+
+			if len(newLiveOut) != len(liveOut[bb.ID]) {
+				changed = true
+			} else {
+				for v := range newLiveOut {
+					if !liveOut[bb.ID][v] {
+						changed = true
+						break
+					}
+				}
+			}
+			liveOut[bb.ID] = newLiveOut
+
+			newLiveIn := make(map[int]bool)
+			for v := range newLiveOut {
+				newLiveIn[v] = true
+			}
+
+			if bb.Terminator != nil {
+				for _, op := range getBigIRTerminatorOperands(bb.Terminator) {
+					getLeafInstrIDs(op, func(id int) {
+						if candSet[id] {
+							newLiveIn[id] = true
+						}
+					})
+				}
+			}
+
+			for i := len(bb.Instructions) - 1; i >= 0; i-- {
+				instr := bb.Instructions[i]
+				d := instr.GetID()
+				if candSet[d] {
+					delete(newLiveIn, d)
+				}
+				if _, isPhi := instr.(*bigir.Phi); !isPhi {
+					for _, op := range getBigIROperands(instr) {
+						getLeafInstrIDs(op, func(id int) {
+							if candSet[id] {
+								newLiveIn[id] = true
+							}
+						})
+					}
+				}
+			}
+
+			if len(newLiveIn) != len(liveIn[bb.ID]) {
+				changed = true
+				liveIn[bb.ID] = newLiveIn
+			} else {
+				for v := range newLiveIn {
+					if !liveIn[bb.ID][v] {
+						changed = true
+						liveIn[bb.ID] = newLiveIn
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Build Interference Graph
+	interferes := make(map[int]map[int]bool)
+	for _, id := range candidates {
+		interferes[id] = make(map[int]bool)
+	}
+
+	addInterference := func(u, v int) {
+		if u != v && candSet[u] && candSet[v] {
+			interferes[u][v] = true
+			interferes[v][u] = true
+		}
+	}
+
+	addInterferenceAll := func(live map[int]bool) {
+		for u := range live {
+			for v := range live {
+				if u != v {
+					interferes[u][v] = true
+				}
+			}
+		}
+	}
 
 	for _, bb := range fn.Blocks {
-		startIdx := make(map[int]int)
-		endIdx := make(map[int]int)
-
-		for i, instr := range bb.Instructions {
-			id := instr.GetID()
-			if addressTaken[id] || crossBlock[id] || !usedInstrs[id] || jmpSlots[id] > 0 {
-				continue
-			}
-			switch instr.(type) {
-			case *bigir.ConstByte, *bigir.ConstWord, *bigir.AddressOfGlobal, *bigir.AddressOfLocal, *bigir.FuncRef:
-				continue
-			}
-			if instr.Type().Size <= 0 {
-				continue
-			}
-			startIdx[id] = i
-			endIdx[id] = i
+		curLive := make(map[int]bool)
+		for v := range liveOut[bb.ID] {
+			curLive[v] = true
 		}
-
-		for i, instr := range bb.Instructions {
-			for _, op := range getBigIROperands(instr) {
-				getLeafInstrIDs(op, func(opID int) {
-					if _, ok := startIdx[opID]; ok {
-						if i > endIdx[opID] {
-							endIdx[opID] = i
-						}
-					}
-				})
-			}
-		}
+		addInterferenceAll(curLive)
 
 		if bb.Terminator != nil {
-			termIdx := len(bb.Instructions)
 			for _, op := range getBigIRTerminatorOperands(bb.Terminator) {
-				getLeafInstrIDs(op, func(opID int) {
-					if _, ok := startIdx[opID]; ok {
-						if termIdx > endIdx[opID] {
-							endIdx[opID] = termIdx
-						}
+				getLeafInstrIDs(op, func(id int) {
+					if candSet[id] {
+						curLive[id] = true
 					}
 				})
 			}
+			addInterferenceAll(curLive)
 		}
 
-		var active2 []*intraColor
-		var active8 []*intraColor
+		for i := len(bb.Instructions) - 1; i >= 0; i-- {
+			instr := bb.Instructions[i]
+			d := instr.GetID()
 
-		for _, instr := range bb.Instructions {
-			id := instr.GetID()
-			if _, ok := startIdx[id]; !ok {
-				continue
+			if _, isPhi := instr.(*bigir.Phi); isPhi {
+				if candSet[d] {
+					for v := range curLive {
+						addInterference(d, v)
+					}
+					delete(curLive, d)
+				}
+			} else {
+				var opIDs []int
+				for _, op := range getBigIROperands(instr) {
+					getLeafInstrIDs(op, func(id int) {
+						if candSet[id] {
+							opIDs = append(opIDs, id)
+						}
+					})
+				}
+
+				if candSet[d] {
+					for v := range curLive {
+						addInterference(d, v)
+					}
+					for _, opID := range opIDs {
+						addInterference(d, opID)
+					}
+					delete(curLive, d)
+				}
+
+				for _, opID := range opIDs {
+					curLive[opID] = true
+				}
+				addInterferenceAll(curLive)
 			}
-			sz := getInstrSlotSize(instr)
-			if sz == 2 {
-				assigned := -1
-				for slotIdx, c := range active2 {
-					if startIdx[id] > c.freeAt {
-						assigned = slotIdx
-						c.freeAt = endIdx[id]
+		}
+	}
+
+	// Sort candidates: largest size first, then highest degree of interference
+	sort.Slice(candidates, func(i, j int) bool {
+		ci, cj := candidates[i], candidates[j]
+		if instrSize[ci] != instrSize[cj] {
+			return instrSize[ci] > instrSize[cj]
+		}
+		if len(interferes[ci]) != len(interferes[cj]) {
+			return len(interferes[ci]) > len(interferes[cj])
+		}
+		return ci < cj
+	})
+
+	// Assign stack slots using interval coloring (first-fit non-overlapping)
+	baseOffset := curLocalOffset
+	maxOffset := baseOffset
+
+	for _, id := range candidates {
+		sz := instrSize[id]
+		off := baseOffset + sz
+		for {
+			conflict := false
+			for uID := range interferes[id] {
+				if uOff, assigned := localOffsets[uID]; assigned {
+					uSz := instrSize[uID]
+					if !(off <= uOff-uSz || off-sz >= uOff) {
+						conflict = true
 						break
 					}
 				}
-				if assigned == -1 {
-					assigned = len(active2)
-					active2 = append(active2, &intraColor{freeAt: endIdx[id]})
-				}
-				blockScratch2Assigned[id] = assigned
-			} else if sz == 8 {
-				assigned := -1
-				for slotIdx, c := range active8 {
-					if startIdx[id] > c.freeAt {
-						assigned = slotIdx
-						c.freeAt = endIdx[id]
-						break
-					}
-				}
-				if assigned == -1 {
-					assigned = len(active8)
-					active8 = append(active8, &intraColor{freeAt: endIdx[id]})
-				}
-				blockScratch8Assigned[id] = assigned
 			}
+			if !conflict {
+				localOffsets[id] = off
+				if off > maxOffset {
+					maxOffset = off
+				}
+				break
+			}
+			off += 2
 		}
-
-		if len(active2) > maxScratch2 {
-			maxScratch2 = len(active2)
-		}
-		if len(active8) > maxScratch8 {
-			maxScratch8 = len(active8)
-		}
 	}
 
-	scratch2Offsets := make([]int, maxScratch2)
-	for i := 0; i < maxScratch2; i++ {
-		curLocalOffset += 2
-		scratch2Offsets[i] = curLocalOffset
-	}
-
-	scratch8Offsets := make([]int, maxScratch8)
-	for i := 0; i < maxScratch8; i++ {
-		curLocalOffset += 8
-		scratch8Offsets[i] = curLocalOffset
-	}
-
-	for id, slotIdx := range blockScratch2Assigned {
-		localOffsets[id] = scratch2Offsets[slotIdx]
-	}
-	for id, slotIdx := range blockScratch8Assigned {
-		localOffsets[id] = scratch8Offsets[slotIdx]
-	}
+	curLocalOffset = maxOffset
 	frameSize := (curLocalOffset + 3) & ^3
 	if frameSize < 16 {
 		frameSize = 16
@@ -916,7 +1000,6 @@ func (b *Backend) emitInstruction(
 			}
 			buf.WriteString(fmt.Sprintf("    std   -%d,u             ; store bitcast v%d\n", slot, i.GetID()))
 		}
-
 
 	case *bigir.SliceGet:
 		b.emitSliceGet(buf, fn, i, i.Slice, i.Index, 2, paramOffsets, localOffsets, stringDescs, tracker)
@@ -1491,7 +1574,7 @@ func (b *Backend) emitBinaryOp(
 		default:
 			buf.WriteString("    pshs  d\n") // push Left
 			b.loadValToD(buf, i.Right, paramOffsets, localOffsets, stringDescs)
-			buf.WriteString("    pshs  d\n") // push Right
+			buf.WriteString("    pshs  d\n")   // push Right
 			buf.WriteString("    ldd   2,s\n") // D = Left
 			buf.WriteString("    subd  ,s\n")  // D = Left - Right
 			buf.WriteString("    leas  4,s\n")
@@ -2762,4 +2845,3 @@ func (b *Backend) emitTerminator(
 		buf.WriteString(fmt.Sprintf("    lbra  .L_%s_bb%d\n", mName, t.TrueTarget.ID))
 	}
 }
-
