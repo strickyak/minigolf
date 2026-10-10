@@ -3774,26 +3774,57 @@ func (b *Backend) emitFunc(f *ir.Function) {
 		for _, blk := range f.Blocks {
 			if br, ok := blk.Terminator.(*ir.Branch); ok {
 				condVal := br.Condition
-				if cmp2, ok := condVal.(*ir.Compare); ok && cmp2.Op == "neq" && uses[cmp2.GetID()] == 1 {
-					if b.isZeroVal(cmp2.Right) {
-						leftVal := cmp2.Left
-						var casts []*ir.Cast
-						for {
-							if c, ok := leftVal.(*ir.Cast); ok {
-								casts = append(casts, c)
-								leftVal = c.Operand
+				if cmp2, ok := condVal.(*ir.Compare); ok && cmp2.Op == "neq" && uses[cmp2.GetID()] == 1 && b.isZeroVal(cmp2.Right) {
+					leftVal := cmp2.Left
+					var casts []*ir.Cast
+					for {
+						if c, ok := leftVal.(*ir.Cast); ok {
+							casts = append(casts, c)
+							leftVal = c.Operand
+							continue
+						}
+						break
+					}
+					if innerCmp, ok := leftVal.(*ir.Compare); ok && uses[innerCmp.GetID()] == 1 {
+						idx := len(blk.Instructions) - 1
+						for idx >= 0 {
+							if _, isMarker := blk.Instructions[idx].(*ir.SourceMarker); isMarker {
+								idx--
 								continue
 							}
 							break
 						}
-						if innerCmp, ok := leftVal.(*ir.Compare); ok && uses[innerCmp.GetID()] == 1 {
-							condVal = innerCmp
-							b.fusedCompares[cmp2.GetID()] = true
-							if zi, ok := cmp2.Right.(*ir.ZeroInit); ok {
-								b.fusedCompares[zi.GetID()] = true
+						if idx >= 0 && blk.Instructions[idx].GetID() == cmp2.GetID() {
+							idx--
+							for idx >= 0 {
+								inst := blk.Instructions[idx]
+								if _, isMarker := inst.(*ir.SourceMarker); isMarker {
+									idx--
+									continue
+								}
+								isCast := false
+								for _, c := range casts {
+									if inst.GetID() == c.GetID() {
+										isCast = true
+										break
+									}
+								}
+								if isCast {
+									idx--
+									continue
+								}
+								break
 							}
-							for _, c := range casts {
-								b.fusedCompares[c.GetID()] = true
+							if idx >= 0 && blk.Instructions[idx].GetID() == innerCmp.GetID() {
+								b.fusedCompares[cmp2.GetID()] = true
+								b.fusedCompares[innerCmp.GetID()] = true
+								if zi, ok := cmp2.Right.(*ir.ZeroInit); ok {
+									b.fusedCompares[zi.GetID()] = true
+								}
+								for _, c := range casts {
+									b.fusedCompares[c.GetID()] = true
+								}
+								continue
 							}
 						}
 					}
@@ -3802,14 +3833,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 					var lastInstr ir.Instruction
 					for j := len(blk.Instructions) - 1; j >= 0; j-- {
 						if _, isMarker := blk.Instructions[j].(*ir.SourceMarker); !isMarker {
-							id := blk.Instructions[j].GetID()
-							if id == cmp.GetID() || b.fusedCompares[id] {
-								lastInstr = blk.Instructions[j]
-								break
-							}
+							lastInstr = blk.Instructions[j]
+							break
 						}
 					}
-					if lastInstr != nil && (lastInstr.GetID() == cmp.GetID() || b.fusedCompares[lastInstr.GetID()]) {
+					if lastInstr != nil && lastInstr.GetID() == cmp.GetID() {
 						b.fusedCompares[cmp.GetID()] = true
 					}
 				}

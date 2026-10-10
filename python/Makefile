@@ -10,7 +10,7 @@ DECB = $(BUILD_DIR)/pyeval.decb
 DECB_HV = $(BUILD_DIR)/pyeval-hv.decb
 TCL = $(BUILD_DIR)/mode81.tcl
 
-.PHONY: all clean test run-gep9 run-tfr911
+.PHONY: all clean test run-gep9 run-tfr911 run-gep9-hatvan
 
 all: $(DECB) $(DECB_HV) $(TCL)
 
@@ -46,3 +46,7 @@ run-gep9: all
 
 run-tfr911: all
 	./run_py_tfr911.sh
+
+run-gep9-hatvan: all
+	./run_py_gep9_hatvan.sh
+
