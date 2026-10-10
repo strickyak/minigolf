@@ -11,6 +11,7 @@ const VAL_BOOL = 2
 const VAL_STR  = 3
 const VAL_LIST = 4
 const VAL_DICT = 5
+const VAL_LAMBDA = 6
 
 // Token Kinds
 const TOK_EOF     = 0
@@ -58,6 +59,7 @@ const TOK_FALSE   = 39 // False
 const TOK_NONE    = 40 // None
 const TOK_BYE     = 41 // bye
 const TOK_EXIT    = 42 // exit
+const TOK_LAMBDA  = 43 // lambda
 
 // ═══════════════════════════════════════════════════════════════════
 // Core Structures
@@ -75,6 +77,12 @@ type PyVal struct {
 type PyDictEntry struct {
 	Key PyVal
 	Val PyVal
+}
+
+type PyLambda struct {
+	ParamCount word
+	Params     slice[string]
+	BodyToks   slice[Token]
 }
 
 type Token struct {
@@ -185,6 +193,32 @@ func MakeDict(cap word) PyVal {
 		v.Cap = cap
 	}
 	return v
+}
+
+func MakeLambda(paramCount word, params slice[string], bodyToks slice[Token]) PyVal {
+	var v PyVal
+	v.Tag = VAL_LAMBDA
+	v.IntVal = int(paramCount)
+	sl := FarMakeSlice[PyLambda](1)
+	var lam PyLambda
+	lam.ParamCount = paramCount
+	lam.Params = params
+	lam.BodyToks = bodyToks
+	sl.Put(0, lam)
+	v.FarRef = sl.FarRef
+	v.Base = sl.Base
+	v.Len = 1
+	v.Cap = 1
+	return v
+}
+
+func (v *PyVal) AsLambda() PyLambda {
+	var sl slice[PyLambda]
+	sl.FarRef = v.FarRef
+	sl.Base = v.Base
+	sl.Len = v.Len
+	sl.Cap = v.Cap
+	return sl.Get(0)
 }
 
 func chr(i word) string {
@@ -335,6 +369,25 @@ func DictSet(d *PyVal, k PyVal, val PyVal) {
 	d.Len++
 }
 
+func DictDel(d *PyVal, k PyVal) bool {
+	if d.Len == 0 || d.FarRef == 0 {
+		return false
+	}
+	sl := d.AsDictSlice()
+	for i := word(0); i < d.Len; i++ {
+		e := sl.Get(i)
+		if PyEqual(e.Key, k) {
+			for j := i; j+1 < d.Len; j++ {
+				tmp := sl.Get(j+1)
+				sl.Put(j, tmp)
+			}
+			d.Len--
+			return true
+		}
+	}
+	return false
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Global Variable Environment (Dictionary in Far Heap)
 // ═══════════════════════════════════════════════════════════════════
@@ -351,6 +404,10 @@ func SetGlobal(name string, val PyVal) {
 
 func GetGlobal(name string) (PyVal, bool) {
 	return DictGet(&Globals, PyStr(name))
+}
+
+func DelGlobal(name string) bool {
+	return DictDel(&Globals, PyStr(name))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -414,6 +471,9 @@ func PyEqual(a PyVal, b PyVal) bool {
 			}
 		}
 		return true
+	}
+	if a.Tag == VAL_LAMBDA {
+		return a.FarRef == b.FarRef && a.Base == b.Base
 	}
 	return false
 }
@@ -800,6 +860,9 @@ func PyToStr(v PyVal) PyVal {
 	if v.Tag == VAL_NONE {
 		return PyStr("None")
 	}
+	if v.Tag == VAL_LAMBDA {
+		return PyStr("<function <lambda>>")
+	}
 	return PyStr("<object>")
 }
 
@@ -931,6 +994,8 @@ func PrintPyVal(v PyVal, repr bool) {
 			PrintPyVal(e.Val, true)
 		}
 		putchar('}')
+	} else if v.Tag == VAL_LAMBDA {
+		print("<function <lambda>>")
 	}
 }
 
@@ -1063,6 +1128,8 @@ func TokenizeIdent(line string, i *word, n word) Token {
 		t.Kind = TOK_BYE
 	} else if streq(idStr, "exit") {
 		t.Kind = TOK_EXIT
+	} else if streq(idStr, "lambda") {
+		t.Kind = TOK_LAMBDA
 	} else {
 		t.Kind = TOK_IDENT
 		t.StrVal = strdup(idStr)
@@ -1293,7 +1360,76 @@ func (p *Parser) Expect(kind byte) Token {
 
 // ── Expression Parsing with Precedence Climbing ──
 
+func (p *Parser) ParseLambda(eval bool) PyVal {
+	var paramCap word = 4
+	var paramSl slice[string]
+	if eval {
+		paramSl = FarMakeSlice[string](paramCap)
+	}
+	var paramCount word = 0
+
+	if p.Peek().Kind != TOK_COLON {
+		for {
+			idTok := p.Expect(TOK_IDENT)
+			if eval {
+				if paramCount >= paramCap {
+					newCap := paramCap * 2
+					newSl := FarMakeSlice[string](newCap)
+					for i := word(0); i < paramCount; i++ {
+						newSl.Put(i, paramSl.Get(i))
+					}
+					freeslice(paramSl)
+					paramSl = newSl
+					paramCap = newCap
+				}
+				paramSl.Put(paramCount, strdup(idTok.StrVal))
+				paramCount++
+			}
+			if p.Match(TOK_COMMA) {
+				if p.Peek().Kind == TOK_COLON {
+					break
+				}
+				continue
+			}
+			break
+		}
+	}
+	p.Expect(TOK_COLON)
+
+	startBodyPos := p.pos
+	p.ParseExpr(false)
+	endBodyPos := p.pos
+
+	if !eval {
+		return PyNone()
+	}
+
+	paramSl.Len = paramCount
+
+	bodyLen := endBodyPos - startBodyPos
+	bodyToks := FarMakeSlice[Token](bodyLen + 1)
+	for i := word(0); i < bodyLen; i++ {
+		srcTok := p.toks.Get(startBodyPos + i)
+		var dstTok Token
+		dstTok.Kind = srcTok.Kind
+		dstTok.IntVal = srcTok.IntVal
+		if srcTok.StrVal.Len > 0 {
+			dstTok.StrVal = strdup(srcTok.StrVal)
+		}
+		bodyToks.Put(i, dstTok)
+	}
+	var eofTok Token
+	eofTok.Kind = TOK_EOF
+	bodyToks.Put(bodyLen, eofTok)
+	bodyToks.Len = bodyLen + 1
+
+	return MakeLambda(paramCount, paramSl, bodyToks)
+}
+
 func (p *Parser) ParseExpr(eval bool) PyVal {
+	if p.Match(TOK_LAMBDA) {
+		return p.ParseLambda(eval)
+	}
 	val := p.ParseOr(eval)
 	if p.Match(TOK_IF) {
 		cond := p.ParseOr(eval)
@@ -1657,9 +1793,62 @@ func (p *Parser) ParseCall(target PyVal, eval bool) PyVal {
 		return PyNone()
 	}
 
-	res := ExecBuiltin(fnName, args, argCount)
-	freeslice(args)
+	var res PyVal
+	if target.Tag == VAL_LAMBDA {
+		lam := target.AsLambda()
+		res = ExecLambda(lam, args, argCount)
+	} else if target.Tag == VAL_STR {
+		res = ExecBuiltin(fnName, args, argCount)
+	} else {
+		freeslice(args)
+		panic("TypeError: object is not callable")
+	}
+
+	if args.FarRef != 0 {
+		freeslice(args)
+	}
 	return res
+}
+
+func ExecLambda(lam PyLambda, args slice[PyVal], argCount word) PyVal {
+	paramCount := lam.ParamCount
+	if argCount != paramCount {
+		panic("TypeError: lambda argument count mismatch")
+	}
+
+	var oldVals [4]PyVal
+	if paramCount > 4 {
+		panic("ValueError: too many arguments to lambda (max 4)")
+	}
+
+	for i := word(0); i < paramCount; i++ {
+		pName := lam.Params.Get(i)
+		v, ok := GetGlobal(pName)
+		if ok {
+			oldVals[i] = v
+		} else {
+			oldVals[i].Tag = -1
+		}
+		SetGlobal(pName, args.Get(i))
+	}
+
+	defer func() {
+		for i := word(0); i < paramCount; i++ {
+			pName := lam.Params.Get(i)
+			v := oldVals[i]
+			if v.Tag >= 0 {
+				SetGlobal(pName, v)
+			} else {
+				DelGlobal(pName)
+			}
+		}
+	}()
+
+	var bodyParser Parser
+	bodyParser.toks = lam.BodyToks
+	bodyParser.pos = 0
+
+	return bodyParser.ParseExpr(true)
 }
 
 func ExecBuiltin(fnName string, args slice[PyVal], argCount word) PyVal {
@@ -1747,6 +1936,9 @@ func ExecBuiltin(fnName string, args slice[PyVal], argCount word) PyVal {
 		if arg.Tag == VAL_DICT {
 			return PyStr("<class 'dict'>")
 		}
+		if arg.Tag == VAL_LAMBDA {
+			return PyStr("<class 'function'>")
+		}
 	}
 
 	panic("NameError: name is not callable")
@@ -1793,14 +1985,14 @@ func (p *Parser) ParseAtom(eval bool) PyVal {
 	if t.Kind == TOK_IDENT {
 		p.Next()
 		if eval {
+			val, ok := GetGlobal(t.StrVal)
+			if ok {
+				return val
+			}
 			if p.Peek().Kind == TOK_LPAREN {
 				return PyStr(t.StrVal)
 			}
-			val, ok := GetGlobal(t.StrVal)
-			if !ok {
-				panic("NameError: name is not defined")
-			}
-			return val
+			panic("NameError: name is not defined")
 		}
 		return PyNone()
 	}

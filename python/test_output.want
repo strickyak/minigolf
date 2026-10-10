@@ -63,11 +63,45 @@
 >>> '<class \'dict\'>'
 >>> Evaluating Python on big6809: 6809
 None
+>>> <function <lambda>>
+>>> 25
+>>> <function <lambda>>
+>>> 30
+>>> <function <lambda>>
+>>> 42
+>>> 37
+>>> <function <lambda>>
+>>> 36
+>>> [<function <lambda>>, <function <lambda>>]
+>>> 11
+>>> 20
+>>> [0, 3, 6, 9]
+>>> 1000
+>>> <function <lambda>>
+>>> 1025
+>>> 99
+>>> <function <lambda>>
+>>> 11
+>>> 99
+>>> <function <lambda>>
+>>> 14
+>>> <function <lambda>>
+>>> 150
+>>> '<class \'function\'>'
+>>> '<function <lambda>>'
 >>> 
 *PANIC* ZeroDivisionError: division by zero
 >>> 
 *PANIC* NameError: name is not defined
 >>> 
 *PANIC* IndexError: list index out of range
+>>> 
+*PANIC* NameError: name is not defined
+>>> 
+*PANIC* TypeError: lambda argument count mismatch
+>>> 
+*PANIC* TypeError: lambda argument count mismatch
+>>> 
+*PANIC* TypeError: lambda argument count mismatch
 >>> 'recovered'
 >>> 

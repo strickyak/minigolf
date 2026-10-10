@@ -62,8 +62,38 @@ type(s)
 type(lst)
 type(d)
 print('Evaluating Python on big6809:', 6809)
+square = lambda x: x * x
+square(5)
+add = lambda a, b: a + b
+add(10, 20)
+get_ans = lambda: 42
+get_ans()
+(lambda x, y: x * 10 + y)(3, 7)
+f = square
+f(6)
+ops = [lambda x: x + 1, lambda x: x * 2]
+ops[0](10)
+ops[1](10)
+[(lambda x: x * 3)(n) for n in range(4)]
+BASE = 1000
+add_base = lambda x: x + BASE
+add_base(25)
+p = 99
+foo = lambda p: p + 1
+foo(10)
+p
+bar = lambda temp_var: temp_var * 2
+bar(7)
+apply = lambda fn, arg: fn(arg)
+apply(lambda x: x + 100, 50)
+type(square)
+str(square)
 10 / 0
 foo_bar
 lst[100]
+temp_var
+square()
+square(1, 2)
+get_ans(1)
 'recovered'
 bye

@@ -54,7 +54,7 @@ else
     exec python3 -c "
 import subprocess, sys, threading
 
-cmd = ['$TETHER', '-wire', '$WIRE', '-pc', '$BUILD_DIR', '-bootmode=81'] + sys.argv[1:]
+cmd = ['$TETHER', '-wire', '$WIRE', '-pc', '$BUILD_DIR', '-bootmode=81', '-cooked'] + sys.argv[1:]
 proc = subprocess.Popen(
     cmd,
     stdin=subprocess.PIPE,
