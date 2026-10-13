@@ -1,0 +1,10 @@
+package slice
+
+func New[T any](capacity word) slice[T] {
+	var s slice[T]
+	if capacity > 0 {
+		s.Base = alloc(capacity * sizeof[T]())
+		s.Cap = capacity
+	}
+	return s
+}
