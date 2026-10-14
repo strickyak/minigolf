@@ -13,6 +13,11 @@ func peekw(addr word) word        { return *((*word)(addr)) }
 func pokeb(addr word, value byte) { *((*byte)(addr)) = value }
 func pokew(addr word, value word) { *((*word)(addr)) = value }
 
+func vpeekb(addr word) byte        { return *((*byte)(addr)) }
+func vpeekw(addr word) word        { return *((*word)(addr)) }
+func vpokeb(addr word, value byte) { *((*byte)(addr)) = value }
+func vpokew(addr word, value word) { *((*word)(addr)) = value }
+
 func alloc(size word) word {
 	return 0
 }

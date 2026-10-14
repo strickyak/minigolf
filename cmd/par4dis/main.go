@@ -10,11 +10,11 @@ import (
 )
 
 func main() {
-	outFlag := flag.String("o", "", "Output disassembly path (.p4a)")
+	outFlag := flag.String("o", "", "Output disassembly path (.p4s)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: par4dis [options] <input.p4p>\n\n")
-		fmt.Fprintf(os.Stderr, "Par4 Bytecode Disassembler (*.p4p -> *.p4a)\n\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "Par4 Bytecode Disassembler (*.p4p -> *.p4s)\n\nOptions:\n")
 		flag.PrintDefaults()
 	}
 

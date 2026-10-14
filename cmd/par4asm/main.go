@@ -13,8 +13,8 @@ func main() {
 	outFlag := flag.String("o", "", "Output binary path (.p4p)")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: par4asm [options] <input.p4a>\n\n")
-		fmt.Fprintf(os.Stderr, "Par4 Bytecode Assembler (*.p4a -> *.p4p)\n\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "Usage: par4asm [options] <input.p4s>\n\n")
+		fmt.Fprintf(os.Stderr, "Par4 Bytecode Assembler (*.p4s/*.p4a -> *.p4p)\n\nOptions:\n")
 		flag.PrintDefaults()
 	}
 
@@ -40,7 +40,9 @@ func main() {
 
 	outFile := *outFlag
 	if outFile == "" {
-		if strings.HasSuffix(inputFile, ".p4a") {
+		if strings.HasSuffix(inputFile, ".p4s") {
+			outFile = strings.TrimSuffix(inputFile, ".p4s") + ".p4p"
+		} else if strings.HasSuffix(inputFile, ".p4a") {
 			outFile = strings.TrimSuffix(inputFile, ".p4a") + ".p4p"
 		} else if strings.HasSuffix(inputFile, ".p3a") {
 			outFile = strings.TrimSuffix(inputFile, ".p3a") + ".p4p"

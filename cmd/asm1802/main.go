@@ -128,6 +128,100 @@ func getBranchInfo(mnem string) (byte, byte, bool) {
 	return 0, 0, false
 }
 
+// splitColonStatements splits a line into multiple statements separated by ':'
+// taking quotes into account.
+func splitColonStatements(s string) []string {
+	var parts []string
+	var cur strings.Builder
+	inQuote := false
+	quoteChar := byte(0)
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if inQuote {
+			cur.WriteByte(ch)
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == quoteChar {
+				inQuote = false
+			}
+		} else {
+			if ch == '"' || ch == '\'' {
+				inQuote = true
+				quoteChar = ch
+				cur.WriteByte(ch)
+			} else if ch == ':' {
+				part := strings.TrimSpace(cur.String())
+				if part != "" {
+					parts = append(parts, part)
+				}
+				cur.Reset()
+			} else {
+				cur.WriteByte(ch)
+			}
+		}
+	}
+	part := strings.TrimSpace(cur.String())
+	if part != "" {
+		parts = append(parts, part)
+	}
+	return parts
+}
+
+func (a *Assembler) addStatement(label, mnemonic, opsStr, filename string, lineNum int, srcLine *SourceLine) {
+	stmt := &Statement{
+		Label:    label,
+		Mnemonic: strings.ToUpper(mnemonic),
+		RawOps:   opsStr,
+		LineNum:  lineNum,
+		File:     filename,
+		SrcLine:  srcLine,
+	}
+
+	// Classify directives
+	switch stmt.Mnemonic {
+	case "":
+		stmt.Type = StmtComment
+	case "ORG", ".ORG":
+		stmt.Type = StmtOrg
+	case "EQU", ".EQU", "=":
+		stmt.Type = StmtEqu
+	case "DB", "DEFB", "FCB", ".BYTE", ".DB":
+		stmt.Type = StmtDataByte
+	case "DW", "DEFW", "FDB", ".WORD", ".DW":
+		stmt.Type = StmtDataWord
+	case "DS", "DEFS", "RMB", ".BLKB", ".FILL", ".RES", ".SPACE":
+		stmt.Type = StmtReserve
+	case "ALIGN", ".ALIGN", "PAGE", ".PAGE":
+		stmt.Type = StmtAlign
+	case "ASCII", "FCC", ".ASCII":
+		stmt.Type = StmtDataByte
+	case "ASCIZ", ".ASCIZ", ".STRING":
+		stmt.Type = StmtDataByte
+	case "END", ".END":
+		stmt.Type = StmtEnd
+	default:
+		stmt.Type = StmtInstruction
+		if shortOpc, longOpc, ok := getBranchInfo(stmt.Mnemonic); ok {
+			stmt.IsBranch = true
+			stmt.IsRelaxable = true
+			stmt.BranchTarget = strings.TrimSpace(stmt.RawOps)
+			stmt.ShortOpcode = shortOpc
+			stmt.LongOpcode = longOpc
+			if strings.HasPrefix(stmt.Mnemonic, "L") || strings.HasPrefix(stmt.Mnemonic, "J") {
+				stmt.Size = 3
+			} else {
+				stmt.Size = 2
+			}
+		}
+	}
+
+	a.statements = append(a.statements, stmt)
+}
+
 func (a *Assembler) LoadSource(filename string, r io.Reader) error {
 	scanner := bufio.NewScanner(r)
 	lineNum := 0
@@ -149,94 +243,51 @@ func (a *Assembler) LoadSource(filename string, r io.Reader) error {
 			continue
 		}
 
-		var label, mnemonic, opsStr string
+		var label string
+		var codeToSplit string
 		hasLeadingSpace := len(codePart) > 0 && (codePart[0] == ' ' || codePart[0] == '\t')
 
 		if !hasLeadingSpace {
+			// Labels begin in column 1 (no leading whitespace)
 			fields := strings.Fields(codePart)
 			if len(fields) > 0 {
 				first := fields[0]
 				if strings.HasSuffix(first, ":") {
 					label = first[:len(first)-1]
-					rest := strings.TrimSpace(codePart[len(first):])
-					if rest != "" {
-						subFields := strings.Fields(rest)
-						mnemonic = subFields[0]
-						opsStr = strings.TrimSpace(rest[len(mnemonic):])
-					}
+					codeToSplit = strings.TrimSpace(codePart[len(first):])
+				} else if len(fields) > 1 && (strings.EqualFold(fields[1], "EQU") || strings.EqualFold(fields[1], "=") || strings.EqualFold(fields[1], ".EQU")) {
+					label = first
+					a.addStatement(label, fields[1], strings.TrimSpace(codePart[len(first)+len(fields[1])+1:]), filename, lineNum, srcLine)
+					continue
 				} else {
-					if len(fields) > 1 && (strings.EqualFold(fields[1], "EQU") || strings.EqualFold(fields[1], "=") || strings.EqualFold(fields[1], ".EQU")) {
-						label = first
-						mnemonic = fields[1]
-						opsStr = strings.TrimSpace(codePart[len(first)+len(fields[1])+1:])
-					} else {
-						label = first
-						rest := strings.TrimSpace(codePart[len(first):])
-						if rest != "" {
-							subFields := strings.Fields(rest)
-							mnemonic = subFields[0]
-							opsStr = strings.TrimSpace(rest[len(mnemonic):])
-						}
-					}
+					label = first
+					codeToSplit = strings.TrimSpace(codePart[len(first):])
 				}
 			}
 		} else {
-			trimmedCode := strings.TrimSpace(codePart)
-			fields := strings.Fields(trimmedCode)
-			if len(fields) > 0 {
-				mnemonic = fields[0]
-				opsStr = strings.TrimSpace(trimmedCode[len(mnemonic):])
+			codeToSplit = strings.TrimSpace(codePart)
+		}
+
+		parts := splitColonStatements(codeToSplit)
+		if len(parts) == 0 {
+			if label != "" {
+				a.addStatement(label, "", "", filename, lineNum, srcLine)
 			}
-		}
-
-		stmt := &Statement{
-			Label:    label,
-			Mnemonic: strings.ToUpper(mnemonic),
-			RawOps:   opsStr,
-			LineNum:  lineNum,
-			File:     filename,
-			SrcLine:  srcLine,
-		}
-
-		// Classify directives
-		switch stmt.Mnemonic {
-		case "":
-			stmt.Type = StmtComment
-		case "ORG", ".ORG":
-			stmt.Type = StmtOrg
-		case "EQU", ".EQU", "=":
-			stmt.Type = StmtEqu
-		case "DB", "DEFB", "FCB", ".BYTE", ".DB":
-			stmt.Type = StmtDataByte
-		case "DW", "DEFW", "FDB", ".WORD", ".DW":
-			stmt.Type = StmtDataWord
-		case "DS", "DEFS", "RMB", ".BLKB", ".FILL", ".RES", ".SPACE":
-			stmt.Type = StmtReserve
-		case "ALIGN", ".ALIGN", "PAGE", ".PAGE":
-			stmt.Type = StmtAlign
-		case "ASCII", "FCC", ".ASCII":
-			stmt.Type = StmtDataByte
-		case "ASCIZ", ".ASCIZ", ".STRING":
-			stmt.Type = StmtDataByte
-		case "END", ".END":
-			stmt.Type = StmtEnd
-		default:
-			stmt.Type = StmtInstruction
-			if shortOpc, longOpc, ok := getBranchInfo(stmt.Mnemonic); ok {
-				stmt.IsBranch = true
-				stmt.IsRelaxable = true
-				stmt.BranchTarget = strings.TrimSpace(stmt.RawOps)
-				stmt.ShortOpcode = shortOpc
-				stmt.LongOpcode = longOpc
-				if strings.HasPrefix(stmt.Mnemonic, "L") || strings.HasPrefix(stmt.Mnemonic, "J") {
-					stmt.Size = 3
-				} else {
-					stmt.Size = 2
+		} else {
+			for i, p := range parts {
+				stmtLabel := ""
+				if i == 0 {
+					stmtLabel = label
 				}
+				subFields := strings.Fields(p)
+				if len(subFields) == 0 {
+					continue
+				}
+				mnem := subFields[0]
+				ops := strings.TrimSpace(p[len(mnem):])
+				a.addStatement(stmtLabel, mnem, ops, filename, lineNum, srcLine)
 			}
 		}
-
-		a.statements = append(a.statements, stmt)
 	}
 
 	return scanner.Err()
@@ -872,7 +923,7 @@ func (a *Assembler) encodeInstruction(stmt *Statement) ([]byte, error) {
 		return []byte{
 			0xF8, hi, // LDI HIGH
 			0xB0 | rn, // PHI Rn
-			0xF8, lo, // LDI LOW
+			0xF8, lo,  // LDI LOW
 			0xA0 | rn, // PLO Rn
 		}, nil
 	}
@@ -969,11 +1020,17 @@ func (a *Assembler) Assemble() error {
 
 func (a *Assembler) executePass() error {
 	a.currPC = 0x0000
+	if a.pass == 2 {
+		for _, sl := range a.sourceLines {
+			sl.Encoded = nil
+			sl.HasPC = false
+		}
+	}
 
 	for _, stmt := range a.statements {
 		stmt.PC = a.currPC
 		if stmt.SrcLine != nil && stmt.Type != StmtComment {
-			if !stmt.SrcLine.HasPC || a.pass == 2 {
+			if !stmt.SrcLine.HasPC {
 				stmt.SrcLine.PC = stmt.PC
 				stmt.SrcLine.HasPC = true
 			}
@@ -1048,7 +1105,7 @@ func (a *Assembler) executePass() error {
 			stmt.Size = len(bytesList)
 			stmt.Encoded = bytesList
 			if stmt.SrcLine != nil && a.pass == 2 {
-				stmt.SrcLine.Encoded = bytesList
+				stmt.SrcLine.Encoded = append(stmt.SrcLine.Encoded, bytesList...)
 			}
 
 		case StmtDataWord:
@@ -1059,7 +1116,7 @@ func (a *Assembler) executePass() error {
 			stmt.Size = len(wordsList)
 			stmt.Encoded = wordsList
 			if stmt.SrcLine != nil && a.pass == 2 {
-				stmt.SrcLine.Encoded = wordsList
+				stmt.SrcLine.Encoded = append(stmt.SrcLine.Encoded, wordsList...)
 			}
 
 		case StmtReserve:
@@ -1085,7 +1142,7 @@ func (a *Assembler) executePass() error {
 				stmt.Size = len(enc)
 				stmt.Encoded = enc
 				if stmt.SrcLine != nil && a.pass == 2 {
-					stmt.SrcLine.Encoded = enc
+					stmt.SrcLine.Encoded = append(stmt.SrcLine.Encoded, enc...)
 				}
 			}
 		}

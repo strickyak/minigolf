@@ -61,19 +61,19 @@ func (d *Disassembler) Disassemble() (string, error) {
 	sb.WriteString("; ====================================================================\n\n")
 
 	offset := HeaderSize
-	// Read Global Variable Table
-	if offset+d.globalsCount > len(d.data) {
+	// Read Global Variable Table (2 bytes per global)
+	if offset+d.globalsCount*2 > len(d.data) {
 		return "", fmt.Errorf("truncated globals table")
 	}
 	d.globalSizes = make([]int, d.globalsCount)
 	for i := 0; i < d.globalsCount; i++ {
-		d.globalSizes[i] = int(d.data[offset+i])
+		d.globalSizes[i] = int(binary.BigEndian.Uint16(d.data[offset+i*2 : offset+(i+1)*2]))
 		sb.WriteString(fmt.Sprintf(".global gvar_%d: %d\n", i, d.globalSizes[i]))
 	}
 	if d.globalsCount > 0 {
 		sb.WriteString("\n")
 	}
-	offset += d.globalsCount
+	offset += d.globalsCount * 2
 
 	// String Pool
 	if offset+d.stringPoolSize > len(d.data) {

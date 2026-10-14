@@ -240,15 +240,15 @@ func (vm *VM) loadBinary(data []byte) error {
 	vm.CodeSize = codeSize
 
 	offset := HeaderSize
-	// Read Global Variable Table
-	if offset+globalsCount > len(data) {
+	// Read Global Variable Table (2 bytes per global)
+	if offset+globalsCount*2 > len(data) {
 		return fmt.Errorf("truncated globals table")
 	}
 	vm.GlobalSizes = make([]int, globalsCount)
 	for i := 0; i < globalsCount; i++ {
-		vm.GlobalSizes[i] = int(data[offset+i])
+		vm.GlobalSizes[i] = int(binary.BigEndian.Uint16(data[offset+i*2 : offset+(i+1)*2]))
 	}
-	offset += globalsCount
+	offset += globalsCount * 2
 
 	// Read String Pool
 	if offset+strPoolSize > len(data) {

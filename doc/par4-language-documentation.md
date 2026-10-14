@@ -122,19 +122,19 @@ To keep the initial 1802 VM interpreter (`par4vmc`) small (<3 KB), simplify its 
 The `.p4p` binary executable format is structured as follows:
 
 ```text
-+---------------------------------------------------------------+
-| 1. Header (16 bytes)                                          |
-+---------------------------------------------------------------+
-| 2. Global Variable Table (1 byte per global: size in bytes)   |
-+---------------------------------------------------------------+
-| 3. Raw String Pool (Length-prefixed, null-terminated bytes)   |
-+---------------------------------------------------------------+
-| 4. Function Table (10 bytes per function)                     |
-+---------------------------------------------------------------+
-| 5. Local Variable Tables (Packed sizes in bytes)              |
-+---------------------------------------------------------------+
-| 6. Bytecode Section (Stream of 1-byte opcodes and arguments)  |
-+---------------------------------------------------------------+
++-----------------------------------------------------------------------+
+| 1. Header (16 bytes)                                                  |
++-----------------------------------------------------------------------+
+| 2. Global Variable Table (2 bytes per global: 16-bit size in bytes)   |
++-----------------------------------------------------------------------+
+| 3. Raw String Pool (Length-prefixed, null-terminated bytes)           |
++-----------------------------------------------------------------------+
+| 4. Function Table (10 bytes per function)                             |
++-----------------------------------------------------------------------+
+| 5. Local Variable Tables (Packed sizes in bytes)                      |
++-----------------------------------------------------------------------+
+| 6. Bytecode Section (Stream of 1-byte opcodes and arguments)          |
++-----------------------------------------------------------------------+
 ```
 
 ### 2.1 Header Specification (16 Bytes)
@@ -152,7 +152,11 @@ Multi-byte integers are stored in **Big-Endian** order.
 | `0x0C` | 2 | `EntryFunc` | Function index of the entry point (`main`). |
 | `0x0E` | 2 | `CodeSize` | Total byte size of the Bytecode Section. |
 
-### 2.2 Function Table Entry (10 Bytes)
+### 2.2 Global Variable Table (`GlobalsCount * 2` Bytes)
+
+Each entry in the Global Variable Table is stored as a 16-bit big-endian integer representing the variable's byte size (supporting static arrays, buffers, and tables up to 64 KB). The total length of this section is `GlobalsCount * 2` bytes.
+
+### 2.3 Function Table Entry (10 Bytes)
 * `ArgCount` (1 byte): Number of parameter variables.
 * `LocalCount` (1 byte): Number of local variables.
 * `FrameSize` (2 bytes): Total local frame size in bytes ($\sum \text{local sizes}$).
@@ -550,7 +554,7 @@ Par4 supports both tagged and boolean switch statements:
   * `int`, `int16`: Forbidden at compile-time (`use unsigned 'word' or 'byte'`).
   * User-defined generic templates: e.g. `type Tree[K, V] struct` or `func Map[T](...)`.
   * Floating-point types: `float32`, `float64`.
-  * Stack-allocated fixed buffers: Buffers must be declared `.global` or allocated via `alloc()`.
+  * Stack-allocated fixed buffers: Small local array buffers (`[N]byte` up to 255 bytes) are supported. Larger buffers must be declared `.global` or allocated via `alloc()`.
   * `defer` statements and named return values.
 
 ---

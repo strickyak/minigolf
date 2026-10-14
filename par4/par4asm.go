@@ -235,6 +235,10 @@ func (a *Assembler) pass1(lines []string) error {
 			if len(parts) >= 3 {
 				if parts[2] == "slice" || parts[2] == "string" {
 					size = 6
+				} else if parts[2] == "byte" || parts[2] == "bool" {
+					size = 1
+				} else if parts[2] == "word" {
+					size = 2
 				} else if sz, err := strconv.Atoi(parts[2]); err == nil {
 					size = sz
 				}
@@ -276,6 +280,10 @@ func (a *Assembler) pass1(lines []string) error {
 			if len(parts) >= 3 {
 				if parts[2] == "slice" || parts[2] == "string" {
 					size = 6
+				} else if parts[2] == "byte" || parts[2] == "bool" {
+					size = 1
+				} else if parts[2] == "word" {
+					size = 2
 				} else if sz, err := strconv.Atoi(parts[2]); err == nil {
 					size = sz
 				}
@@ -296,6 +304,10 @@ func (a *Assembler) pass1(lines []string) error {
 			if len(parts) >= 3 {
 				if parts[2] == "slice" || parts[2] == "string" {
 					size = 6
+				} else if parts[2] == "byte" || parts[2] == "bool" {
+					size = 1
+				} else if parts[2] == "word" {
+					size = 2
 				} else if sz, err := strconv.Atoi(parts[2]); err == nil {
 					size = sz
 				}
@@ -400,9 +412,15 @@ func (a *Assembler) pass2() ([]byte, error) {
 	for _, fn := range a.functions {
 		fn.varTableOff = len(localVarsBytes)
 		for _, p := range fn.params {
+			if p.size > 255 {
+				return nil, fmt.Errorf("function %s param %s size %d exceeds max 255", fn.name, p.name, p.size)
+			}
 			localVarsBytes = append(localVarsBytes, byte(p.size))
 		}
 		for _, l := range fn.locals {
+			if l.size > 255 {
+				return nil, fmt.Errorf("function %s local %s size %d exceeds max 255", fn.name, l.name, l.size)
+			}
 			localVarsBytes = append(localVarsBytes, byte(l.size))
 		}
 	}
@@ -450,10 +468,10 @@ func (a *Assembler) pass2() ([]byte, error) {
 	binary.BigEndian.PutUint16(header[12:14], uint16(a.entryFuncIdx))
 	binary.BigEndian.PutUint16(header[14:16], uint16(len(bytecode)))
 
-	// 2. Global Variable Table
-	globalsTable := make([]byte, len(a.globals))
+	// 2. Global Variable Table (2 bytes per global, Big-Endian uint16)
+	globalsTable := make([]byte, len(a.globals)*2)
 	for i, g := range a.globals {
-		globalsTable[i] = byte(g.size)
+		binary.BigEndian.PutUint16(globalsTable[i*2:(i+1)*2], uint16(g.size))
 	}
 
 	// 3. String Pool: a.stringPool

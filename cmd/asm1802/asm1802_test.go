@@ -45,19 +45,19 @@ func TestRegisterOps(t *testing.T) {
 `
 	bin, _ := assembleString(t, src)
 	expected := []byte{
-		0x10,       // INC R0
-		0x1F,       // INC R15
-		0x1F,       // INC RF
-		0x22,       // DEC R2
-		0x43,       // LDA R3
-		0x54,       // STR R4
-		0x85,       // GLO R5
-		0x96,       // GHI R6
-		0xA7,       // PLO R7
-		0xB8,       // PHI R8
-		0xDE,       // SEP RE
-		0xE2,       // SEX R2
-		0x01,       // LDN R1
+		0x10, // INC R0
+		0x1F, // INC R15
+		0x1F, // INC RF
+		0x22, // DEC R2
+		0x43, // LDA R3
+		0x54, // STR R4
+		0x85, // GLO R5
+		0x96, // GHI R6
+		0xA7, // PLO R7
+		0xB8, // PHI R8
+		0xDE, // SEP RE
+		0xE2, // SEX R2
+		0x01, // LDN R1
 	}
 
 	if !bytes.Equal(bin, expected) {
@@ -107,22 +107,22 @@ func TestALUAndImmediateOps(t *testing.T) {
 		0x7C, 0x00, // ADCI 0
 		0x7D, 0x00, // SDBI 0
 		0x7F, 0x00, // SMBI 0
-		0xF0,       // LDX
-		0xF4,       // ADD
-		0xF5,       // SD
-		0xF7,       // SM
-		0xF2,       // AND
-		0xF1,       // OR
-		0xF3,       // XOR
-		0x74,       // ADC
-		0x75,       // SDB
-		0x77,       // SMB
-		0xF6,       // SHR
-		0xFE,       // SHL
-		0x76,       // SHRC
-		0x7E,       // SHLC
-		0x72,       // LDXA
-		0x73,       // STXD
+		0xF0, // LDX
+		0xF4, // ADD
+		0xF5, // SD
+		0xF7, // SM
+		0xF2, // AND
+		0xF1, // OR
+		0xF3, // XOR
+		0x74, // ADC
+		0x75, // SDB
+		0x77, // SMB
+		0xF6, // SHR
+		0xFE, // SHL
+		0x76, // SHRC
+		0x7E, // SHLC
+		0x72, // LDXA
+		0x73, // STXD
 	}
 
 	if !bytes.Equal(bin, expected) {
@@ -153,22 +153,22 @@ target:
 `
 	bin, _ := assembleString(t, src)
 	expected := []byte{
-		0xC4,             // NOP
-		0x30, 0x00,       // BR $0200
-		0x32, 0x00,       // BZ $0200
-		0x3A, 0x00,       // BNZ $0200
-		0x33, 0x00,       // BDF $0200
-		0x3B, 0x00,       // BNF $0200
-		0x31, 0x00,       // BQ $0200
-		0x39, 0x00,       // BNQ $0200
-		0x34, 0x00,       // B1 $0200
-		0x3C, 0x00,       // BN1 $0200
+		0xC4,       // NOP
+		0x30, 0x00, // BR $0200
+		0x32, 0x00, // BZ $0200
+		0x3A, 0x00, // BNZ $0200
+		0x33, 0x00, // BDF $0200
+		0x3B, 0x00, // BNF $0200
+		0x31, 0x00, // BQ $0200
+		0x39, 0x00, // BNQ $0200
+		0x34, 0x00, // B1 $0200
+		0x3C, 0x00, // BN1 $0200
 		0x38,             // SKP
 		0xC0, 0x12, 0x34, // LBR $1234
 		0xC2, 0x56, 0x78, // LBZ $5678
-		0xC8,             // LSKP
-		0xCE,             // LSZ
-		0xC6,             // LSNZ
+		0xC8, // LSKP
+		0xCE, // LSZ
+		0xC6, // LSNZ
 	}
 
 	if !bytes.Equal(bin, expected) {
@@ -265,7 +265,7 @@ MY_VAL EQU $1234
 		0xF8, 0x12, // LDI $12
 		0xB3,       // PHI R3
 		0xF8, 0x34, // LDI $34
-		0xA3,       // PLO R3
+		0xA3, // PLO R3
 		// LDI HIGH(MY_VAL)
 		0xF8, 0x12,
 		// LDI LOW(MY_VAL)
@@ -350,5 +350,27 @@ start:
 	expectedExecHdr := []byte{0xFF, 0x00, 0x00, 0x01, 0x00}
 	if !bytes.Equal(out[14:19], expectedExecHdr) {
 		t.Fatalf("Invalid exec header:\nGot:  %X\nWant: %X", out[14:19], expectedExecHdr)
+	}
+}
+
+func TestColonInstructionChaining(t *testing.T) {
+	src := `
+	ORG $1000
+start:  LDI $42 : PLO R1 : GLO R1 ; chain with label in col 1
+	INC R1 : DEC R2 : SEX R2  ; chain with leading spaces
+	DB "hello:world"           ; colon inside string literal must be preserved
+`
+	bin, _ := assembleString(t, src)
+	expected := []byte{
+		0xF8, 0x42, // LDI $42
+		0xA1, // PLO R1
+		0x81, // GLO R1
+		0x11, // INC R1
+		0x22, // DEC R2
+		0xE2, // SEX R2
+		'h', 'e', 'l', 'l', 'o', ':', 'w', 'o', 'r', 'l', 'd',
+	}
+	if !bytes.Equal(bin, expected) {
+		t.Fatalf("Chaining mismatch:\nGot:  %X\nWant: %X", bin, expected)
 	}
 }
