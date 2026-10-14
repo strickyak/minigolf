@@ -9,7 +9,7 @@ cstart:
 _start3:
 	; Now running with P = 3 (R3 is PC).
 	; Set stack pointer R2 to top of user RAM (below $FF00 page)
-	LOAD    R2, $EFF0
+	LOAD    R2, $FEF0
 	SEX     R2
 
 	; Initialize console output port pointer RF = $FF00
@@ -1091,6 +1091,14 @@ __panic:
 	LDN     RC
 	PLO     R7
 
+	; Store panic message pointer in v_prelude._panic_
+	LOAD    RC, v_prelude._panic_
+	GHI     R7
+	STR     RC
+	INC     RC
+	GLO     R7
+	STR     RC
+
 	; Push string argument
 	GLO     R7
 	STXD
@@ -1111,6 +1119,27 @@ __panic:
 	INC     R2
 	INC     R2
 
+__longjmp_chain:
+	LOAD    RD, v_prelude._jmp_chain_
+	LDA     RD
+	PHI     RC
+	LDN     RD
+	PLO     RC
+	GLO     RC
+	LBNZ    __longjmp_rc
+	GHI     RC
+	LBNZ    __longjmp_rc
+
+	LOAD    R7, .L_empty_chain_msg
+	GLO     R7
+	STXD
+	GHI     R7
+	STXD
+	SEP     R4
+	DW      _printf
+	INC     R2
+	INC     R2
+
 	LOAD    R7, 1
 	GLO     R7
 	STXD
@@ -1118,5 +1147,33 @@ __panic:
 	SEP     R4
 	DW      _exit
 
+__longjmp_rc:
+	INC     RC
+	INC     RC
+	LDA     RC
+	PHI     RD
+	LDA     RC
+	PLO     RD
+	LDA     RC
+	PHI     R2
+	LDA     RC
+	PLO     R2
+	LDA     RC
+	PHI     RB
+	LDA     RC
+	PLO     RB
+	LDA     RC
+	PHI     R6
+	LDN     RC
+	PLO     R6
+	LOAD    R7, 1
+	GHI     RD
+	PHI     RC
+	GLO     RD
+	PLO     RC
+	LBR     __call_rc
+
 .L_panic_fmt:
-	ASCIZ   "\n*PANIC*: %s\n"
+	ASCIZ   "\n*PANIC* %s\n"
+.L_empty_chain_msg:
+	ASCIZ   "\n*** ABORT\n\n*** EMPTY_RE_CHAIN\n"

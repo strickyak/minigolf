@@ -169,6 +169,11 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 			id := instr.GetID()
 			canon := b.resolveSlot(f, id)
 
+			if _, ok := instr.(*ir.SetJmp); ok {
+				currentOffset += 16
+				b.jmpSlots[id] = currentOffset
+			}
+
 			switch instr.(type) {
 			case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
 				if !addressTaken[id] && !addressTaken[canon] {
@@ -181,19 +186,16 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 				continue
 			}
 
+			if instr.Type().Equals(ir.TypeVoid) || instr.Type().Name == "" {
+				continue
+			}
 			size := b.getTypeSize(instr.Type())
 			if size == 0 {
-				continue
+				size = 1
 			}
 			currentOffset += size
 			b.slots[canon] = currentOffset
 			b.slots[id] = currentOffset
-
-			if _, ok := instr.(*ir.SetJmp); ok {
-				currentOffset += 16
-				b.jmpSlots[id] = currentOffset
-				b.jmpSlots[canon] = currentOffset
-			}
 		}
 	}
 
@@ -207,7 +209,11 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 		}
 	}
 
-	b.stackSize = alignVal(currentOffset, 2)
+	if currentOffset > 0 {
+		b.stackSize = alignVal(currentOffset+1, 2)
+	} else {
+		b.stackSize = 0
+	}
 }
 
 func (b *Backend) emitAddrToRC(d int) {
@@ -349,6 +355,9 @@ func (b *Backend) emitLoadAddr(reg string, val ir.Value) {
 	switch v := val.(type) {
 	case *ir.Parameter:
 		off := b.paramSlots[v.Name]
+		if b.getTypeSize(v.Typ) == 1 {
+			off += 1
+		}
 		b.emitAddrToRC(off)
 		if reg != "RC" {
 			b.buf.WriteString(fmt.Sprintf("\tGHI RC\n\tPHI %s\n\tGLO RC\n\tPLO %s\n", reg, reg))
@@ -363,6 +372,8 @@ func (b *Backend) emitLoadAddr(reg string, val ir.Value) {
 		b.buf.WriteString(fmt.Sprintf("\tLOAD %s, v_%s\n", reg, v.Name))
 	case *ir.AddressOfGlobal:
 		b.buf.WriteString(fmt.Sprintf("\tLOAD %s, v_%s\n", reg, v.Global.Name))
+	case *ir.AddressOfFunc:
+		b.buf.WriteString(fmt.Sprintf("\tLOAD %s, %s\n", reg, v.Func.EmitName()))
 	default:
 		log.Panicf("emitLoadAddr: unsupported value %T", val)
 	}
@@ -641,30 +652,9 @@ func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
 		b.buf.WriteString("\tGHI R8\n\tSTR RC\n\tINC RC\n\tGLO R8\n\tSTR RC\n")
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblDone))
 	case "_propagate_panic_":
-		lblDone := b.nextLabel()
-		lblAbort := b.nextLabel()
-		lblCheckChain := b.nextLabel()
-		lblDoJmp := b.nextLabel()
 		b.buf.WriteString("\tLOAD RC, v_prelude._panic_\n")
-		b.buf.WriteString("\tLDA RC\n\tPHI R7\n\tLDN RC\n\tPLO R7\n")
-		b.buf.WriteString(fmt.Sprintf("\tGLO R7\n\tBNZ %s\n\tGHI R7\n\tBZ %s\n%s:\n", lblCheckChain, lblDone, lblCheckChain))
-		b.buf.WriteString("\tLOAD RC, v_prelude._jmp_chain_\n")
-		b.buf.WriteString("\tLDA RC\n\tPHI R7\n\tLDN RC\n\tPLO R7\n")
-		b.buf.WriteString(fmt.Sprintf("\tGLO R7\n\tBNZ %s\n\tGHI R7\n\tBZ %s\n%s:\n", lblDoJmp, lblAbort, lblDoJmp))
-		// Longjmp to top chain jmpbuf (in R7)
-		b.buf.WriteString("\tGHI R7\n\tPHI RC\n\tGLO R7\n\tPLO RC\n")
-		// Resume PC from RC+2
-		b.buf.WriteString("\tINC RC\n\tINC RC\n\tLDA RC\n\tPHI RD\n\tLDN RC\n\tPLO RD\n")
-		// SP from RC+4
-		b.buf.WriteString("\tINC RC\n\tLDA RC\n\tPHI R2\n\tLDN RC\n\tPLO R2\n")
-		// FP (RB) from RC+6
-		b.buf.WriteString("\tINC RC\n\tLDA RC\n\tPHI RB\n\tLDN RC\n\tPLO RB\n")
-		b.buf.WriteString("\tLOAD R7, 1\n")
-		b.buf.WriteString("\tGHI RD\n\tPHI R3\n\tGLO RD\n\tPLO R3\n")
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lblAbort))
-		b.buf.WriteString("\tLOAD R7, .L_empty_chain_msg\n\tGLO R7\n\tSTXD\n\tGHI R7\n\tSTXD\n\tSEP R4\n\tDW  _printf\n\tINC R2\n\tINC R2\n")
-		b.buf.WriteString("\tLOAD R7, 1\n\tGLO R7\n\tSTXD\n\tINC R2\n\tSEP R4\n\tDW  _exit\n")
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lblDone))
+		b.buf.WriteString("\tLDA RC\n\tLBNZ __longjmp_chain\n")
+		b.buf.WriteString("\tLDN RC\n\tLBNZ __longjmp_chain\n")
 	default:
 		log.Panicf("emitBuiltinCall: unhandled builtin %s", i.Name)
 	}
@@ -699,6 +689,10 @@ func (b *Backend) emitSetJmp(i *ir.SetJmp) {
 	b.emitAddrToRC(-jmpSlot + 6)
 	b.buf.WriteString("\tGHI RB\n\tSTR RC\n\tINC RC\n\tGLO RB\n\tSTR RC\n")
 
+	// Save SCRT link register (R6) at RC+8
+	b.emitAddrToRC(-jmpSlot + 8)
+	b.buf.WriteString("\tGHI R6\n\tSTR RC\n\tINC RC\n\tGLO R6\n\tSTR RC\n")
+
 	b.buf.WriteString("\tLOAD R7, 0\n")
 	b.buf.WriteString(fmt.Sprintf("\tLBR  %s\n", lblDone))
 	b.buf.WriteString(fmt.Sprintf("%s:\n", lblResume))
@@ -709,21 +703,7 @@ func (b *Backend) emitSetJmp(i *ir.SetJmp) {
 
 func (b *Backend) emitLongJmp(i *ir.LongJmp) {
 	b.loadVal(i.JmpBuf, "RC")
-	// RC points to jmpbuf
-	// jmpbuf layout:
-	// +0: prev chain (2 bytes)
-	// +2: resume PC (2 bytes)
-	// +4: SP (2 bytes)
-	// +6: FP / RB (2 bytes)
-	b.buf.WriteString("\tINC RC\n\tINC RC\n")
-	b.buf.WriteString("\tLDA RC\n\tPHI RD\n\tLDN RC\n\tPLO RD\n") // RD = resume PC, RC at +3
-	b.buf.WriteString("\tINC RC\n")
-	b.buf.WriteString("\tLDA RC\n\tPHI R2\n\tLDN RC\n\tPLO R2\n") // R2 = SP, RC at +5
-	b.buf.WriteString("\tINC RC\n")
-	b.buf.WriteString("\tLDA RC\n\tPHI RB\n\tLDN RC\n\tPLO RB\n") // RB = FP
-	// Jump to resume PC in RD via RA trampoline (since P=3, cannot change R3 directly)
-	lblTrampoline := b.nextLabel()
-	b.buf.WriteString(fmt.Sprintf("\tLOAD RA, %s\n\tSEP RA\n%s:\n\tGHI RD\n\tPHI R3\n\tGLO RD\n\tPLO R3\n\tSEP R3\n", lblTrampoline, lblTrampoline))
+	b.buf.WriteString("\tLBR  __longjmp_rc\n")
 }
 
 func (b *Backend) emitPhiAssignments(currentBlock *ir.BasicBlock, targetBlock *ir.BasicBlock) {
@@ -759,7 +739,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.buf.WriteString(fmt.Sprintf("\t; %s\n", i.Comment))
 
 	case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof:
-		// Stored on demand by loadVal
+		if _, ok := b.slots[id]; ok {
+			b.loadVal(i, "R7")
+			b.storeResult(id)
+		}
 
 	case *ir.ZeroInit:
 		sz := b.getTypeSize(i.Typ)
@@ -884,8 +867,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.ExtractElement:
 		eltSize := b.getTypeSize(i.Typ)
-		b.emitLoadAddr("RA", i.Array)
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
+			b.emitLoadAddr("RA", i.Array)
 			byteOffset := int(cIdx.Val) * eltSize
 			b.emitAddConst("RA", byteOffset)
 		} else {
@@ -893,7 +876,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if eltSize > 1 {
 				b.buf.WriteString(fmt.Sprintf("\tLOAD R8, %d\n\tSEP R4\n\tDW  __mul16\n", eltSize))
 			}
-			b.buf.WriteString("\tGHI RA\n\tPHI R8\n\tGLO RA\n\tPLO R8\n")
+			b.emitLoadAddr("R8", i.Array)
 			b.buf.WriteString("\tSEP R4\n\tDW  __add16\n")
 			b.buf.WriteString("\tGHI R7\n\tPHI RA\n\tGLO R7\n\tPLO RA\n")
 		}
@@ -915,9 +898,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.emitMemCopy(arraySize)
 
 		eltSize := b.getTypeSize(i.Val.Type())
-		b.emitAddrToRC(-b.slots[id])
-		b.buf.WriteString("\tGHI RC\n\tPHI RD\n\tGLO RC\n\tPLO RD\n")
 		if cIdx, ok := i.Index.(*ir.ConstWord); ok {
+			b.emitAddrToRC(-b.slots[id])
+			b.buf.WriteString("\tGHI RC\n\tPHI RD\n\tGLO RC\n\tPLO RD\n")
 			byteOffset := int(cIdx.Val) * eltSize
 			b.emitAddConst("RD", byteOffset)
 		} else {
@@ -925,7 +908,8 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if eltSize > 1 {
 				b.buf.WriteString(fmt.Sprintf("\tLOAD R8, %d\n\tSEP R4\n\tDW  __mul16\n", eltSize))
 			}
-			b.buf.WriteString("\tGHI RD\n\tPHI R8\n\tGLO RD\n\tPLO R8\n")
+			b.emitAddrToRC(-b.slots[id])
+			b.buf.WriteString("\tGHI RC\n\tPHI R8\n\tGLO RC\n\tPLO R8\n")
 			b.buf.WriteString("\tSEP R4\n\tDW  __add16\n")
 			b.buf.WriteString("\tGHI R7\n\tPHI RD\n\tGLO R7\n\tPLO RD\n")
 		}
@@ -974,8 +958,15 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.emitUnaryOp(i)
 
 	case *ir.Cast:
-		b.loadVal(i.Operand, "R7")
-		b.storeResult(id)
+		dstSz := b.getTypeSize(i.Typ)
+		if dstSz > 2 {
+			b.emitLoadAddr("RA", i.Operand)
+			b.emitAddrToRC(-b.slots[id])
+			b.emitMemCopy(dstSz)
+		} else {
+			b.loadVal(i.Operand, "R7")
+			b.storeResult(id)
+		}
 
 	case *ir.Call:
 		totalArgBytes := 0
@@ -1209,7 +1200,6 @@ func (b *Backend) emitGlobals(prog *ir.Program) {
 
 	if len(b.rodata) > 0 {
 		b.buf.WriteString("\n; ── Read-Only Data (Strings & Format Literals) ───────────────────────────────\n")
-		b.buf.WriteString(".L_empty_chain_msg:\n\tASCIZ \"\\n*** ABORT\\n\\n*** EMPTY_RE_CHAIN\\n\"\n")
 		for _, entry := range b.rodata {
 			b.buf.WriteString(fmt.Sprintf("%s:\n\tASCIZ %q\n", entry.lbl, entry.str))
 		}
