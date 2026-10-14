@@ -8,60 +8,60 @@ import "os"
 
 // Value Tags
 const VAL_NONE = 0
-const VAL_INT  = 1
+const VAL_INT = 1
 const VAL_BOOL = 2
-const VAL_STR  = 3
+const VAL_STR = 3
 const VAL_LIST = 4
 const VAL_DICT = 5
 const VAL_LAMBDA = 6
 
 // Token Kinds
-const TOK_EOF     = 0
-const TOK_INT     = 1
-const TOK_STR     = 2
-const TOK_IDENT   = 3
-const TOK_PLUS    = 4  // +
-const TOK_MINUS   = 5  // -
-const TOK_STAR    = 6  // *
-const TOK_SLASH   = 7  // /
-const TOK_PERCENT = 8  // %
-const TOK_POW     = 9  // **
-const TOK_EQ      = 10 // ==
-const TOK_NE      = 11 // !=
-const TOK_LT      = 12 // <
-const TOK_LE      = 13 // <=
-const TOK_GT      = 14 // >
-const TOK_GE      = 15 // >=
-const TOK_ASSIGN  = 16 // =
-const TOK_LPAREN  = 17 // (
-const TOK_RPAREN  = 18 // )
-const TOK_LBRACK  = 19 // [
-const TOK_RBRACK  = 20 // ]
-const TOK_LBRACE  = 21 // {
-const TOK_RBRACE  = 22 // }
-const TOK_COMMA   = 23 // ,
-const TOK_COLON   = 24 // :
-const TOK_AMP     = 25 // &
-const TOK_PIPE    = 26 // |
-const TOK_CARET   = 27 // ^
-const TOK_TILDE   = 28 // ~
-const TOK_SHL     = 29 // <<
-const TOK_SHR     = 30 // >>
+const TOK_EOF = 0
+const TOK_INT = 1
+const TOK_STR = 2
+const TOK_IDENT = 3
+const TOK_PLUS = 4    // +
+const TOK_MINUS = 5   // -
+const TOK_STAR = 6    // *
+const TOK_SLASH = 7   // /
+const TOK_PERCENT = 8 // %
+const TOK_POW = 9     // **
+const TOK_EQ = 10     // ==
+const TOK_NE = 11     // !=
+const TOK_LT = 12     // <
+const TOK_LE = 13     // <=
+const TOK_GT = 14     // >
+const TOK_GE = 15     // >=
+const TOK_ASSIGN = 16 // =
+const TOK_LPAREN = 17 // (
+const TOK_RPAREN = 18 // )
+const TOK_LBRACK = 19 // [
+const TOK_RBRACK = 20 // ]
+const TOK_LBRACE = 21 // {
+const TOK_RBRACE = 22 // }
+const TOK_COMMA = 23  // ,
+const TOK_COLON = 24  // :
+const TOK_AMP = 25    // &
+const TOK_PIPE = 26   // |
+const TOK_CARET = 27  // ^
+const TOK_TILDE = 28  // ~
+const TOK_SHL = 29    // <<
+const TOK_SHR = 30    // >>
 
 // Keywords
-const TOK_AND     = 31 // and
-const TOK_OR      = 32 // or
-const TOK_NOT     = 33 // not
-const TOK_IN      = 34 // in
-const TOK_IF      = 35 // if
-const TOK_ELSE    = 36 // else
-const TOK_FOR     = 37 // for
-const TOK_TRUE    = 38 // True
-const TOK_FALSE   = 39 // False
-const TOK_NONE    = 40 // None
-const TOK_BYE     = 41 // bye
-const TOK_EXIT    = 42 // exit
-const TOK_LAMBDA  = 43 // lambda
+const TOK_AND = 31    // and
+const TOK_OR = 32     // or
+const TOK_NOT = 33    // not
+const TOK_IN = 34     // in
+const TOK_IF = 35     // if
+const TOK_ELSE = 36   // else
+const TOK_FOR = 37    // for
+const TOK_TRUE = 38   // True
+const TOK_FALSE = 39  // False
+const TOK_NONE = 40   // None
+const TOK_BYE = 41    // bye
+const TOK_EXIT = 42   // exit
+const TOK_LAMBDA = 43 // lambda
 
 // ═══════════════════════════════════════════════════════════════════
 // Core Structures
@@ -380,7 +380,7 @@ func DictDel(d *PyVal, k PyVal) bool {
 		e := sl.Get(i)
 		if PyEqual(e.Key, k) {
 			for j := i; j+1 < d.Len; j++ {
-				tmp := sl.Get(j+1)
+				tmp := sl.Get(j + 1)
 				sl.Put(j, tmp)
 			}
 			d.Len--
@@ -428,7 +428,7 @@ func DictDelStr(d *PyVal, name string) bool {
 		e := sl.Get(i)
 		if e.Key.Tag == VAL_STR && streq(e.Key.AsStr(), name) {
 			for j := i; j+1 < d.Len; j++ {
-				tmp := sl.Get(j+1)
+				tmp := sl.Get(j + 1)
 				sl.Put(j, tmp)
 			}
 			d.Len--
@@ -1510,17 +1510,17 @@ func (p *Parser) ParseExpr(eval bool) PyVal {
 	return val
 }
 
-const PREC_NONE    = 0
-const PREC_OR      = 1
-const PREC_AND     = 2
+const PREC_NONE = 0
+const PREC_OR = 1
+const PREC_AND = 2
 const PREC_COMPARE = 3
-const PREC_BITOR   = 4
-const PREC_BITXOR  = 5
-const PREC_BITAND  = 6
-const PREC_SHIFT   = 7
-const PREC_ADDSUB  = 8
-const PREC_MULDIV  = 9
-const PREC_POWER   = 10
+const PREC_BITOR = 4
+const PREC_BITXOR = 5
+const PREC_BITAND = 6
+const PREC_SHIFT = 7
+const PREC_ADDSUB = 8
+const PREC_MULDIV = 9
+const PREC_POWER = 10
 
 func (p *Parser) InfixPrec(op byte) int {
 	if op == TOK_OR {

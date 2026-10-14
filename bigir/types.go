@@ -36,9 +36,9 @@ type Field struct {
 type Type struct {
 	Kind        TypeKind
 	Name        string
-	Size        int   // Size in bytes
-	ElementType *Type // For Slice, Array, NearPtr
-	ArrayLen    int   // For Array
+	Size        int     // Size in bytes
+	ElementType *Type   // For Slice, Array, NearPtr
+	ArrayLen    int     // For Array
 	Fields      []Field // For Struct
 }
 
@@ -97,6 +97,7 @@ func (t Type) String() string {
 		return "unknown"
 	}
 }
+
 // Equals reports whether two types are structurally equal.
 func (t Type) Equals(other Type) bool {
 	if t.Kind != other.Kind || t.Size != other.Size || t.Name != other.Name || t.ArrayLen != other.ArrayLen {
@@ -120,13 +121,13 @@ func (t Type) Equals(other Type) bool {
 }
 
 var (
-	TypeVoid     = Type{Kind: KindVoid, Name: "void", Size: 0}
-	TypeNoReturn = Type{Kind: KindNoReturn, Name: "noreturn", Size: 0}
-	TypeBool     = Type{Kind: KindBool, Name: "bool", Size: 1}
-	TypeByte     = Type{Kind: KindByte, Name: "byte", Size: 1}
-	TypeWord     = Type{Kind: KindWord, Name: "word", Size: 2}
-	TypeInt      = Type{Kind: KindInt, Name: "int", Size: 2}
-	TypeFarRef   = Type{Kind: KindFarRef, Name: "far_ref", Size: 2}
+	TypeVoid      = Type{Kind: KindVoid, Name: "void", Size: 0}
+	TypeNoReturn  = Type{Kind: KindNoReturn, Name: "noreturn", Size: 0}
+	TypeBool      = Type{Kind: KindBool, Name: "bool", Size: 1}
+	TypeByte      = Type{Kind: KindByte, Name: "byte", Size: 1}
+	TypeWord      = Type{Kind: KindWord, Name: "word", Size: 2}
+	TypeInt       = Type{Kind: KindInt, Name: "int", Size: 2}
+	TypeFarRef    = Type{Kind: KindFarRef, Name: "far_ref", Size: 2}
 	TypeFarString = Type{
 		Kind:        KindFarString,
 		Name:        "string",

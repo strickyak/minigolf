@@ -233,11 +233,11 @@ func (o *slice[T]) Put(i word, x T) {
 	}
 	p := i * sizeof[T]()
 	if o.FarRef == 0 {
-		poke[T](o.Base + p, x)
+		poke[T](o.Base+p, x)
 		return
 	}
 	MapWindow0(o.FarRef)
-	poke[T](0x4000 + o.Base + p, x)
+	poke[T](0x4000+o.Base+p, x)
 }
 
 func (o *slice[T]) Get1(i word) T {
@@ -258,11 +258,11 @@ func (o *slice[T]) Put1(i word, x T) {
 	}
 	p := i * sizeof[T]()
 	if o.FarRef == 0 {
-		poke[T](o.Base + p, x)
+		poke[T](o.Base+p, x)
 		return
 	}
 	MapWindow1(o.FarRef)
-	poke[T](0x6000 + o.Base + p, x)
+	poke[T](0x6000+o.Base+p, x)
 }
 
 func (o *slice[T]) Chop(start word, limit word) slice[T] {
@@ -427,7 +427,7 @@ func FarAlloc(nbytes word) (word, word) {
 		for curr_off != 0 {
 			chunk := (*ChunkHeader)(win + curr_off)
 			if chunk.size >= need_size {
-				if chunk.size >= need_size + sizeof[ChunkHeader]() + 4 {
+				if chunk.size >= need_size+sizeof[ChunkHeader]()+4 {
 					rem_off := curr_off + need_size
 					rem_size := chunk.size - need_size
 					rem_chunk := (*ChunkHeader)(win + rem_off)
@@ -470,7 +470,7 @@ func FarAlloc(nbytes word) (word, word) {
 }
 
 func FarFree(blk word, off word) {
-	if blk == 0 || off < sizeof[FarBlockHeader]() + sizeof[ChunkHeader]() {
+	if blk == 0 || off < sizeof[FarBlockHeader]()+sizeof[ChunkHeader]() {
 		return
 	}
 	MapWindow2(blk)
@@ -505,7 +505,7 @@ func FarFree(blk word, off word) {
 		pchunk.next_offset = chunk_off
 	}
 
-	if curr_off != 0 && chunk_off + chunk.size == curr_off {
+	if curr_off != 0 && chunk_off+chunk.size == curr_off {
 		next_chunk := (*ChunkHeader)(win + curr_off)
 		chunk.size = chunk.size + next_chunk.size
 		chunk.next_offset = next_chunk.next_offset
@@ -513,7 +513,7 @@ func FarFree(blk word, off word) {
 
 	if prev_off != 0 {
 		pchunk := (*ChunkHeader)(win + prev_off)
-		if prev_off + pchunk.size == chunk_off {
+		if prev_off+pchunk.size == chunk_off {
 			pchunk.size = pchunk.size + chunk.size
 			pchunk.next_offset = chunk.next_offset
 		}
