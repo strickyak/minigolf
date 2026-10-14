@@ -3,7 +3,7 @@
 
 cstart:
 	; Set stack pointer
-	ld      sp, $8000
+	ld      sp, $FE00
 
 	; Call MiniGolf runtime initialization (if generated)
 	; call  f_prelude__init_0

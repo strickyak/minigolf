@@ -505,7 +505,7 @@ func (b *Backend) loadVal(val ir.Value, reg string) {
 		case *ir.ConstByte:
 			b.buf.WriteString(fmt.Sprintf("\tld   hl, %d\n", v.Val))
 		case *ir.ConstWord:
-			b.buf.WriteString(fmt.Sprintf("\tld   hl, %d\n", v.Val))
+			b.buf.WriteString(fmt.Sprintf("\tld   hl, %d\n", v.Val&0xFFFF))
 		case *ir.Sizeof:
 			sz := b.getTypeSize(v.TargetTyp)
 			b.buf.WriteString(fmt.Sprintf("\tld   hl, %d\n", sz))
@@ -544,7 +544,7 @@ func (b *Backend) loadVal(val ir.Value, reg string) {
 		case *ir.ConstByte:
 			b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n", v.Val))
 		case *ir.ConstWord:
-			b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n", v.Val))
+			b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n", v.Val&0xFFFF))
 		case *ir.Sizeof:
 			sz := b.getTypeSize(v.TargetTyp)
 			b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n", sz))
@@ -685,113 +685,105 @@ func (b *Backend) emitPhiAssignments(from, to *ir.BasicBlock) {
 }
 
 func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
-	sz := b.getTypeSize(i.Typ)
+	origSz := b.getTypeSize(i.Typ)
+	sz := origSz
 	if sz == 1 {
-		b.loadVal(i.Left, "a")
-		if cb, ok := i.Right.(*ir.ConstByte); ok {
-			switch i.Op {
-			case "add":
-				if cb.Val == 0 {
-					// no-op
-				} else if cb.Val == 1 {
-					b.buf.WriteString("\tinc  a\n")
-				} else if cb.Val == 2 {
-					b.buf.WriteString("\tinc  a\n\tinc  a\n")
-				} else {
-					b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", cb.Val))
+		switch i.Op {
+		case "add", "sub", "and", "bitand", "or", "bitor", "xor", "bitxor", "andnot":
+			b.loadVal(i.Left, "a")
+			if cb, ok := i.Right.(*ir.ConstByte); ok {
+				switch i.Op {
+				case "add":
+					if cb.Val == 0 {
+						// no-op
+					} else if cb.Val == 1 {
+						b.buf.WriteString("\tinc  a\n")
+					} else if cb.Val == 2 {
+						b.buf.WriteString("\tinc  a\n\tinc  a\n")
+					} else {
+						b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", cb.Val))
+					}
+				case "sub":
+					if cb.Val == 0 {
+						// no-op
+					} else if cb.Val == 1 {
+						b.buf.WriteString("\tdec  a\n")
+					} else if cb.Val == 2 {
+						b.buf.WriteString("\tdec  a\n\tdec  a\n")
+					} else {
+						b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", cb.Val))
+					}
+				case "and", "bitand":
+					b.buf.WriteString(fmt.Sprintf("\tand  %d\n", cb.Val))
+				case "or", "bitor":
+					b.buf.WriteString(fmt.Sprintf("\tor   %d\n", cb.Val))
+				case "xor", "bitxor":
+					b.buf.WriteString(fmt.Sprintf("\txor  %d\n", cb.Val))
+				case "andnot":
+					b.loadVal(i.Right, "b")
+					b.buf.WriteString("\tld   a, b\n\tcpl\n\tld   b, a\n")
+					b.loadVal(i.Left, "a")
+					b.buf.WriteString("\tand  b\n")
 				}
-			case "sub":
-				if cb.Val == 0 {
-					// no-op
-				} else if cb.Val == 1 {
-					b.buf.WriteString("\tdec  a\n")
-				} else if cb.Val == 2 {
-					b.buf.WriteString("\tdec  a\n\tdec  a\n")
-				} else {
-					b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", cb.Val))
+			} else if cw, ok := i.Right.(*ir.ConstWord); ok {
+				v := cw.Val & 0xFF
+				switch i.Op {
+				case "add":
+					if v == 0 {
+						// no-op
+					} else if v == 1 {
+						b.buf.WriteString("\tinc  a\n")
+					} else if v == 2 {
+						b.buf.WriteString("\tinc  a\n\tinc  a\n")
+					} else {
+						b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", v))
+					}
+				case "sub":
+					if v == 0 {
+						// no-op
+					} else if v == 1 {
+						b.buf.WriteString("\tdec  a\n")
+					} else if v == 2 {
+						b.buf.WriteString("\tdec  a\n\tdec  a\n")
+					} else {
+						b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", v))
+					}
+				case "and", "bitand":
+					b.buf.WriteString(fmt.Sprintf("\tand  %d\n", v))
+				case "or", "bitor":
+					b.buf.WriteString(fmt.Sprintf("\tor   %d\n", v))
+				case "xor", "bitxor":
+					b.buf.WriteString(fmt.Sprintf("\txor  %d\n", v))
+				case "andnot":
+					b.loadVal(i.Right, "b")
+					b.buf.WriteString("\tld   a, b\n\tcpl\n\tld   b, a\n")
+					b.loadVal(i.Left, "a")
+					b.buf.WriteString("\tand  b\n")
 				}
-			case "and", "bitand":
-				b.buf.WriteString(fmt.Sprintf("\tand  %d\n", cb.Val))
-			case "or", "bitor":
-				b.buf.WriteString(fmt.Sprintf("\tor   %d\n", cb.Val))
-			case "xor", "bitxor":
-				b.buf.WriteString(fmt.Sprintf("\txor  %d\n", cb.Val))
-			default:
+			} else {
 				b.loadVal(i.Right, "b")
 				switch i.Op {
+				case "add":
+					b.buf.WriteString("\tadd  a, b\n")
+				case "sub":
+					b.buf.WriteString("\tsub  b\n")
+				case "and", "bitand":
+					b.buf.WriteString("\tand  b\n")
+				case "or", "bitor":
+					b.buf.WriteString("\tor   b\n")
+				case "xor", "bitxor":
+					b.buf.WriteString("\txor  b\n")
 				case "andnot":
 					b.buf.WriteString("\tld   a, b\n\tcpl\n\tld   b, a\n")
 					b.loadVal(i.Left, "a")
 					b.buf.WriteString("\tand  b\n")
-				default:
-					sz = 2
 				}
 			}
-		} else if cw, ok := i.Right.(*ir.ConstWord); ok {
-			v := cw.Val & 0xFF
-			switch i.Op {
-			case "add":
-				if v == 0 {
-					// no-op
-				} else if v == 1 {
-					b.buf.WriteString("\tinc  a\n")
-				} else if v == 2 {
-					b.buf.WriteString("\tinc  a\n\tinc  a\n")
-				} else {
-					b.buf.WriteString(fmt.Sprintf("\tadd  a, %d\n", v))
-				}
-			case "sub":
-				if v == 0 {
-					// no-op
-				} else if v == 1 {
-					b.buf.WriteString("\tdec  a\n")
-				} else if v == 2 {
-					b.buf.WriteString("\tdec  a\n\tdec  a\n")
-				} else {
-					b.buf.WriteString(fmt.Sprintf("\tsub  %d\n", v))
-				}
-			case "and", "bitand":
-				b.buf.WriteString(fmt.Sprintf("\tand  %d\n", v))
-			case "or", "bitor":
-				b.buf.WriteString(fmt.Sprintf("\tor   %d\n", v))
-			case "xor", "bitxor":
-				b.buf.WriteString(fmt.Sprintf("\txor  %d\n", v))
-			default:
-				b.loadVal(i.Right, "b")
-				switch i.Op {
-				case "andnot":
-					b.buf.WriteString("\tld   a, b\n\tcpl\n\tld   b, a\n")
-					b.loadVal(i.Left, "a")
-					b.buf.WriteString("\tand  b\n")
-				default:
-					sz = 2
-				}
-			}
-		} else {
-			b.loadVal(i.Right, "b")
-			switch i.Op {
-			case "add":
-				b.buf.WriteString("\tadd  a, b\n")
-			case "sub":
-				b.buf.WriteString("\tsub  b\n")
-			case "and", "bitand":
-				b.buf.WriteString("\tand  b\n")
-			case "or", "bitor":
-				b.buf.WriteString("\tor   b\n")
-			case "xor", "bitxor":
-				b.buf.WriteString("\txor  b\n")
-			case "andnot":
-				b.buf.WriteString("\tld   a, b\n\tcpl\n\tld   b, a\n")
-				b.loadVal(i.Left, "a")
-				b.buf.WriteString("\tand  b\n")
-			default:
-				// Fall back to 16-bit operation
-				sz = 2
-			}
-		}
-		if sz == 1 {
 			b.storeResult(i.GetID())
 			return
+		default:
+			// Fall back to 16-bit operation
+			sz = 2
 		}
 	}
 
@@ -875,6 +867,10 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 			for j := uint64(0); j < cVal.Val; j++ {
 				b.buf.WriteString("\tadd  hl, hl\n")
 			}
+		} else if cByte, ok := i.Right.(*ir.ConstByte); ok && cByte.Val <= 4 {
+			for j := uint8(0); j < cByte.Val; j++ {
+				b.buf.WriteString("\tadd  hl, hl\n")
+			}
 		} else {
 			b.loadVal(i.Right, "de")
 			b.buf.WriteString("\tld   c, e\n\tcall __shl16\n")
@@ -890,6 +886,9 @@ func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 		log.Panicf("emitBinaryOp: unsupported op %s", i.Op)
 	}
 
+	if origSz == 1 {
+		b.buf.WriteString("\tld   a, l\n")
+	}
 	b.storeResult(i.GetID())
 }
 
@@ -1048,9 +1047,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.storeResult(id)
 		} else {
 			b.emitLoadAddr("de", i)
-			b.buf.WriteString(fmt.Sprintf("\txor  a\n\tld   bc, %d\n", sz))
+			b.buf.WriteString(fmt.Sprintf("\tld   bc, %d\n", sz))
 			lblLoop := b.nextLabel()
-			b.buf.WriteString(fmt.Sprintf("%s:\n\tld   (de), a\n\tinc  de\n\tdec  bc\n\tld   a, b\n\tor   c\n\tjmp  nz, %s\n", lblLoop, lblLoop))
+			b.buf.WriteString(fmt.Sprintf("%s:\n\txor  a\n\tld   (de), a\n\tinc  de\n\tdec  bc\n\tld   a, b\n\tor   c\n\tjmp  nz, %s\n", lblLoop, lblLoop))
 		}
 
 	case *ir.BinaryOp:
@@ -1087,6 +1086,12 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.Cast:
 		srcSz := b.getTypeSize(i.Operand.Type())
 		dstSz := b.getTypeSize(i.Typ)
+		if dstSz > 2 {
+			b.emitLoadAddr("hl", i.Operand)
+			b.emitLoadAddr("de", i)
+			b.emitMemCopy("(de)", "(hl)", dstSz)
+			return
+		}
 		if dstSz == 1 {
 			if srcSz == 1 {
 				b.loadVal(i.Operand, "a")
@@ -1163,26 +1168,28 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if addrStr, ok := b.getDirectGlobalAddr(i.Ptr); ok {
 			if sz == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tld   a, (%s)\n", addrStr))
+				b.storeResult(id)
 			} else if sz == 2 {
 				b.buf.WriteString(fmt.Sprintf("\tld   hl, (%s)\n", addrStr))
+				b.storeResult(id)
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tld   hl, %s\n", addrStr))
 				b.emitLoadAddr("de", i)
 				b.emitMemCopy("(de)", "(hl)", sz)
 			}
-			b.storeResult(id)
 			return
 		}
 		b.loadVal(i.Ptr, "hl")
 		if sz == 1 {
 			b.buf.WriteString("\tld   a, (hl)\n")
+			b.storeResult(id)
 		} else if sz == 2 {
 			b.buf.WriteString("\tld   e, (hl)\n\tinc  hl\n\tld   d, (hl)\n\tex   de, hl\n")
+			b.storeResult(id)
 		} else {
 			b.emitLoadAddr("de", i)
 			b.emitMemCopy("(de)", "(hl)", sz)
 		}
-		b.storeResult(id)
 
 	case *ir.StorePtr:
 		sz := b.getTypeSize(i.Val.Type())
@@ -1271,7 +1278,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			} else if eltSize == 2 {
 				b.buf.WriteString("\tadd  hl, hl\n\tadd  hl, de\n\tex   de, hl\n")
 			} else {
-				b.buf.WriteString(fmt.Sprintf("\tld   de, %d\n\tcall __mul16\n\tex   de, hl\n\tpop  hl\n\tadd  hl, de\n\tex   de, hl\n", eltSize))
+				b.buf.WriteString(fmt.Sprintf("\tpush de\n\tld   de, %d\n\tcall __mul16\n\tex   de, hl\n\tpop  hl\n\tadd  hl, de\n\tex   de, hl\n", eltSize))
 			}
 		}
 		b.storeToAddr("(de)", i.Val, eltSize)
@@ -1296,6 +1303,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 		}
 		retSize := b.getTypeSize(i.Typ)
+		if retSize > 2 {
+			b.emitLoadAddr("hl", i)
+			b.buf.WriteString("\tld   b, h\n\tld   c, l\n")
+		}
 		b.buf.WriteString(fmt.Sprintf("\tcall %s\n", i.Func.EmitName()))
 		hasRet := !i.Typ.Equals(ir.TypeVoid) && retSize <= 2
 		b.emitCallStackCleanup(totalArgBytes, hasRet)
@@ -1313,6 +1324,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			if sz > 2 {
 				b.buf.WriteString(fmt.Sprintf("\tld   hl, -%d\n\tadd  hl, sp\n\tld   sp, hl\n", pushSize))
 				b.emitLoadAddr("hl", arg)
+				b.buf.WriteString("\tld   d, h\n\tld   e, l\n")
 				b.buf.WriteString(fmt.Sprintf("\tld   hl, 0\n\tadd  hl, sp\n\tex   de, hl\n\tld   bc, %d\n\tldir\n", sz))
 			} else {
 				b.loadVal(arg, "hl")
@@ -1320,6 +1332,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			}
 		}
 		retSize := b.getTypeSize(i.Typ)
+		if retSize > 2 {
+			b.emitLoadAddr("hl", i)
+			b.buf.WriteString("\tld   b, h\n\tld   c, l\n")
+		}
 		b.loadVal(i.FuncPtr, "hl")
 		b.buf.WriteString("\tcall __call_hl\n")
 		hasRet := !i.Typ.Equals(ir.TypeVoid) && retSize <= 2
@@ -1773,6 +1789,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 	if b.stackSize > 0 {
 		b.buf.WriteString(fmt.Sprintf("\tld   hl, -%d\n\tadd  hl, sp\n\tld   sp, hl\n", b.stackSize))
 	}
+	retSize := b.getTypeSize(f.ReturnType)
+	if retSize > 2 {
+		d := b.frameBias - b.retPtrSlot
+		b.buf.WriteString(fmt.Sprintf("\tld   %s, c\n\tld   %s, b\n", ixDisp(d), ixDisp(d+1)))
+	}
 
 	for blkIdx, blk := range f.Blocks {
 		b.buf.WriteString(fmt.Sprintf(".L_%s_b%d:\n", f.Name, blk.ID))
@@ -1881,6 +1902,11 @@ func (b *Backend) emitFunc(f *ir.Function) {
 						b.buf.WriteString("\tld   l, a\n\tld   h, 0\n")
 					} else if sz == 2 {
 						b.loadVal(term.Val, "hl")
+					} else if sz > 2 {
+						b.emitLoadAddr("hl", term.Val)
+						d := b.frameBias - b.retPtrSlot
+						b.buf.WriteString(fmt.Sprintf("\tld   e, %s\n\tld   d, %s\n", ixDisp(d), ixDisp(d+1)))
+						b.emitMemCopy("(de)", "(hl)", sz)
 					}
 				}
 				if b.frameBias > 0 {
@@ -1940,7 +1966,7 @@ func (b *Backend) emitData(val ir.Value) {
 	case *ir.ConstByte:
 		b.buf.WriteString(fmt.Sprintf("\tdefb %d\n", v.Val))
 	case *ir.ConstWord:
-		b.buf.WriteString(fmt.Sprintf("\tdefw %d\n", v.Val))
+		b.buf.WriteString(fmt.Sprintf("\tdefw %d\n", v.Val&0xFFFF))
 	case *ir.AddressOfGlobal:
 		b.buf.WriteString(fmt.Sprintf("\tdefw v_%s\n", v.Global.Name))
 	case *ir.ConstStruct:
