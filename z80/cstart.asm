@@ -2,8 +2,8 @@
 	org     $1000
 
 cstart:
-	; Set stack pointer
-	ld      sp, $FE00
+	; Set stack pointer (grows down into $0000..$0FFF below $1000 code start)
+	ld      sp, $1000
 
 	; Call MiniGolf runtime initialization (if generated)
 	; call  f_prelude__init_0

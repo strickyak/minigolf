@@ -235,6 +235,11 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 			id := instr.GetID()
 			canon := b.resolveSlot(f, id)
 
+			if _, ok := instr.(*ir.SetJmp); ok {
+				currentOffset += 16
+				b.jmpSlots[id] = currentOffset
+			}
+
 			switch instr.(type) {
 			case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof, *ir.AddressOfGlobal, *ir.AddressOfFunc:
 				if !addressTaken[id] && !addressTaken[canon] {
@@ -247,19 +252,16 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 				continue
 			}
 
+			if instr.Type().Equals(ir.TypeVoid) || instr.Type().Name == "" {
+				continue
+			}
 			size := b.getTypeSize(instr.Type())
 			if size == 0 {
-				continue
+				size = 1
 			}
 			currentOffset += size
 			b.slots[canon] = currentOffset
 			b.slots[id] = currentOffset
-
-			if _, ok := instr.(*ir.SetJmp); ok {
-				currentOffset += 16
-				b.jmpSlots[id] = currentOffset
-				b.jmpSlots[canon] = currentOffset
-			}
 		}
 	}
 
@@ -629,6 +631,9 @@ func (b *Backend) emitMemCopy(destAddr, srcAddr string, size int) {
 }
 
 func (b *Backend) storeToAddr(destAddr string, val ir.Value, size int) {
+	if size <= 0 {
+		return
+	}
 	if destAddr == "(de)" {
 		if size == 1 {
 			b.loadVal(val, "a")
@@ -1015,13 +1020,25 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 	case *ir.SourceMarker:
 		b.buf.WriteString(fmt.Sprintf("\t; %s\n", i.Comment))
 
-	case *ir.ConstByte, *ir.ConstWord, *ir.Sizeof:
-		// Emitted on-demand at use sites in loadVal
+	case *ir.ConstByte:
+		if _, ok := b.slots[id]; ok {
+			b.loadVal(i, "a")
+			b.storeResult(id)
+		}
+		return
+
+	case *ir.ConstWord, *ir.Sizeof:
+		if _, ok := b.slots[id]; ok {
+			b.loadVal(i, "hl")
+			b.storeResult(id)
+		}
 		return
 
 	case *ir.Load:
 		sz := b.getTypeSize(i.Global.Typ)
-		if sz == 1 {
+		if sz == 0 {
+			return
+		} else if sz == 1 {
 			b.buf.WriteString(fmt.Sprintf("\tld   a, (v_%s)\n", i.Global.Name))
 			b.storeResult(id)
 		} else if sz == 2 {
@@ -1039,7 +1056,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.ZeroInit:
 		sz := b.getTypeSize(i.Typ)
-		if sz == 1 {
+		if sz == 0 {
+			return
+		} else if sz == 1 {
 			b.buf.WriteString("\txor  a\n")
 			b.storeResult(id)
 		} else if sz == 2 {
@@ -1114,7 +1133,10 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.storeResult(id)
 
 	case *ir.AddressOfGlobal, *ir.AddressOfFunc:
-		// Emitted on-demand at use sites in loadVal
+		if _, ok := b.slots[id]; ok {
+			b.loadVal(i, "hl")
+			b.storeResult(id)
+		}
 		return
 
 	case *ir.AddressOfField:
@@ -1165,6 +1187,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.LoadPtr:
 		sz := b.getTypeSize(i.Typ)
+		if sz == 0 {
+			return
+		}
 		if addrStr, ok := b.getDirectGlobalAddr(i.Ptr); ok {
 			if sz == 1 {
 				b.buf.WriteString(fmt.Sprintf("\tld   a, (%s)\n", addrStr))
@@ -1193,6 +1218,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 
 	case *ir.StorePtr:
 		sz := b.getTypeSize(i.Val.Type())
+		if sz == 0 {
+			return
+		}
 		if addrStr, ok := b.getDirectGlobalAddr(i.Ptr); ok {
 			if sz == 1 {
 				b.loadVal(i.Val, "a")
@@ -1382,7 +1410,7 @@ func (b *Backend) emitSetJmp(i *ir.SetJmp) {
 	lblDone := b.nextLabel()
 
 	// Compute jmpbuf address in HL
-	b.buf.WriteString(fmt.Sprintf("\tpush ix\n\tpop  hl\n\tld   de, -%d\n\tadd  hl, de\n", jmpSlot))
+	b.emitLocalAddr("hl", b.frameBias-jmpSlot)
 	// Save prev chain
 	b.buf.WriteString("\tld   de, (v_prelude._jmp_chain_)\n\tld   (hl), e\n\tinc  hl\n\tld   (hl), d\n\tdec  hl\n")
 	// Update chain to point to this jmpbuf
@@ -1404,12 +1432,7 @@ func (b *Backend) emitSetJmp(i *ir.SetJmp) {
 
 func (b *Backend) emitLongJmp(i *ir.LongJmp) {
 	b.loadVal(i.JmpBuf, "hl")
-	// Restore IX from offset 6
-	b.buf.WriteString("\tld   de, 6\n\tadd  hl, de\n\tld   e, (hl)\n\tinc  hl\n\tld   d, (hl)\n\tpush de\n\tpop  ix\n")
-	// Resume PC from offset 2
-	b.loadVal(i.JmpBuf, "hl")
-	b.buf.WriteString("\tinc  hl\n\tinc  hl\n\tld   e, (hl)\n\tinc  hl\n\tld   d, (hl)\n")
-	b.buf.WriteString("\tpush de\n\tret\n") // Jump to resume PC
+	b.buf.WriteString("\tjp   __longjmp_hl\n")
 }
 
 func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
@@ -1448,28 +1471,13 @@ func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblDone))
 	case "_propagate_panic_":
 		lblDone := b.nextLabel()
-		lblAbort := b.nextLabel()
 		b.buf.WriteString("\tld   hl, (v_prelude._panic_)\n")
 		b.buf.WriteString("\tld   a, h\n\tor   l\n")
 		b.buf.WriteString(fmt.Sprintf("\tjr   z, %s\n", lblDone))
 		b.buf.WriteString("\tld   hl, (v_prelude._jmp_chain_)\n")
 		b.buf.WriteString("\tld   a, h\n\tor   l\n")
-		b.buf.WriteString(fmt.Sprintf("\tjr   z, %s\n", lblAbort))
-		// Restore IX from offset 6
-		b.buf.WriteString("\tpush hl\n")
-		b.buf.WriteString("\tld   de, 6\n\tadd  hl, de\n\tld   e, (hl)\n\tinc  hl\n\tld   d, (hl)\n\tpush de\n\tpop  ix\n")
-		// Restore SP from offset 4
-		b.buf.WriteString("\tpop  hl\n\tpush hl\n")
-		b.buf.WriteString("\tld   de, 4\n\tadd  hl, de\n\tld   e, (hl)\n\tinc  hl\n\tld   d, (hl)\n\tex   de, hl\n\tld   sp, hl\n")
-		// Load resume PC from offset 2
-		b.buf.WriteString("\tpop  hl\n")
-		b.buf.WriteString("\tinc  hl\n\tinc  hl\n\tld   e, (hl)\n\tinc  hl\n\tld   d, (hl)\n")
-		// Return 1 in A / HL from setjmp
-		b.buf.WriteString("\tld   a, 1\n\tld   hl, 1\n")
-		b.buf.WriteString("\tpush de\n\tret\n")
-		b.buf.WriteString(fmt.Sprintf("%s:\n", lblAbort))
-		b.buf.WriteString("\tld   hl, .L_empty_chain_msg\n\tpush hl\n\tcall _printf\n\tpop  bc\n")
-		b.buf.WriteString("\tld   hl, 1\n\tpush hl\n\tcall _exit\n")
+		b.buf.WriteString("\tjmp  nz, __longjmp_hl\n")
+		b.buf.WriteString("\tjmp  .L_panic_abort\n")
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblDone))
 	default:
 		log.Panicf("emitBuiltinCall: unhandled builtin %s", i.Name)
@@ -2155,8 +2163,58 @@ __sar16:
 	jmp  nz, .L_sar_loop
 	ret
 
+f_prelude__mul_byte:
+	ld   hl, 2
+	add  hl, sp
+	ld   e, (hl)
+	ld   d, 0
+	inc  hl
+	inc  hl
+	ld   l, (hl)
+	ld   h, 0
+	jp   __mul16
+
+__longjmp_hl:
+	inc  hl
+	inc  hl
+	ld   c, (hl)
+	inc  hl
+	ld   b, (hl)
+	inc  hl
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	inc  hl
+	ld   a, (hl)
+	inc  hl
+	ld   h, (hl)
+	ld   l, a
+	push hl
+	pop  ix
+	ex   de, hl
+	ld   sp, hl
+	push bc
+	ret
+
 _panic:
+	ld   hl, 2
+	add  hl, sp
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	ld   (v_prelude._panic_), de
+	push de
 	ld   hl, .L_panic_msg_fmt
+	push hl
+	call _printf
+	pop  bc
+	pop  bc
+	ld   hl, (v_prelude._jmp_chain_)
+	ld   a, h
+	or   l
+	jmp  nz, __longjmp_hl
+.L_panic_abort:
+	ld   hl, .L_empty_chain_msg
 	push hl
 	call _printf
 	pop  bc
@@ -2171,7 +2229,7 @@ _panic:
 .L_div_zero_str:
 	defb "division by zero", 0
 .L_panic_msg_fmt:
-	defb "\n*PANIC*\n", 0
+	defb "\n*PANIC* %s\n", 0
 .L_empty_chain_msg:
 	defb "\n*** ABORT\n\n*** EMPTY_RE_CHAIN\n", 0
 `)
