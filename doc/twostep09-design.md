@@ -12,10 +12,10 @@ In the classic 6809, instructions varied from 1 to 5 bytes, and `$10`/`$11` pref
 
 ### The Core Rules of `twostep09`
 
-1. **Every Machine Instruction is 2 Bytes**:
-   - **Byte 0**: Opcode and addressing mode (`$00..$FF`).
-   - **Byte 1**: Postbyte (8-bit immediate, 8-bit direct-page offset, 8-bit branch offset, 8-bit indexed postbyte, 8-bit register-pair/mask, 8-bit low byte paired with `T`, or ignored for inherent ops).
-   - The Program Counter (`PC`) **always** advances by `+2` per instruction fetch.
+1. **Every Machine Instruction is 2 Bytes (Even-Aligned)**:
+   - **Byte 0 (even address)**: Opcode and addressing mode (`$00..$FF`).
+   - **Byte 1 (odd address)**: Postbyte (8-bit immediate, 8-bit direct-page offset, 8-bit branch offset, 8-bit indexed postbyte, 8-bit register-pair/mask, 8-bit low byte paired with `T`, or ignored for inherent ops).
+   - **Low bit of `PC` is hardwired to `0`**: `PC` always increments by `+2`, and any operation that loads or modifies `PC` (`BRA`/`Bcc`/`BSR`, `LBRA`/`LBSR`, `JMP`, `JSR`, `RTS`, `PULS PC`/`PULU PC`, `TFR r,PC`, `EXG r,PC`) clamps bit 0 to `0` (`PC <- target & $FFFE`). It is **impossible** to execute the middle (postbyte) of an instruction.
 2. **No `$10` or `$11` Prefixes**:
    - All opcodes live in a single flat 256-entry table (`$00..$FF`).
    - Opcode **`$10`**—formerly the Page 2 prefix byte!—is reborn as **`LDT #imm8`** (*Load Top-Byte Register*).
@@ -55,7 +55,7 @@ In the classic 6809, instructions varied from 1 to 5 bytes, and `$10`/`$11` pref
 +---------------+---------------+
 |               S               |  S (16-bit System Stack / Index)
 +---------------+---------------+
-|              PC               |  PC (16-bit Program Counter, reset = $0100)
+|            PC            | 0 |  PC (16-bit Program Counter, bit 0 = 0, reset = $0100)
 +---------------+---------------+
                 +---------------+
                 |       T       |  T (8-bit Top-Byte Register for 16-bit operands)
@@ -84,7 +84,7 @@ In the classic 6809, instructions varied from 1 to 5 bytes, and `$10`/`$11` pref
 | `$2` | `Y` | 16-bit | Index Y (loaded/stored via `TFR D,Y` / `TFR Y,D` or `PSH`/`PUL`) |
 | `$3` | `U` | 16-bit | User Stack Pointer |
 | `$4` | `S` | 16-bit | Hardware/System Stack Pointer |
-| `$5` | `PC` | 16-bit | Program Counter (`TFR D,PC` jumps to `D`) |
+| `$5` | `PC` | 16-bit | Program Counter (bit 0 hardwired to `0`; `TFR D,PC` sets `PC <- D & $FFFE`) |
 | `$8` | `A` | 8-bit | High byte of `D` |
 | `$9` | `B` | 8-bit | Low byte of `D` |
 | `$A` | `CC` | 8-bit | Condition Codes (`N`, `Z`, `V`, `C`, `H`) |
@@ -101,8 +101,8 @@ In the classic 6809, instructions varied from 1 to 5 bytes, and `$10`/`$11` pref
 | **Immediate 16-bit (`IMM16 via T`)** | Opcode | `lo8` | 16-bit constant `#((T << 8) \| lo8)` |
 | **Direct Page (`DIR`)** | Opcode | `dir8` | $\text{EA} = \text{\$0000} + \text{dir8}$ (Zero Page) |
 | **Extended (`EXT via T`)** | Opcode | `lo8` | $\text{EA} = (\text{T} \ll 8) \mid \text{lo8}$ |
-| **Relative 8-bit (`REL8`)** | Opcode | `rel8` | $\text{PC}_{\text{target}} = (\text{PC} + 2) + \text{sext8}(\text{rel8})$ |
-| **Relative 16-bit (`REL16 via T`)** | Opcode | `lo8` | $\text{PC}_{\text{target}} = (\text{PC} + 2) + \text{int16}((\text{T} \ll 8) \mid \text{lo8})$ |
+| **Relative 8-bit (`REL8`)** | Opcode | `rel8` | $\text{PC}_{\text{target}} = ((\text{PC} + 2) + \text{sext8}(\text{rel8})) \ \& \ \text{\$FFFE}$ |
+| **Relative 16-bit (`REL16 via T`)** | Opcode | `lo8` | $\text{PC}_{\text{target}} = ((\text{PC} + 2) + \text{int16}((\text{T} \ll 8) \mid \text{lo8})) \ \& \ \text{\$FFFE}$ |
 | **Indexed (`IDX`)** | Opcode | `idx8` | Zero-extra-byte 6809 indexed postbyte (see table below) |
 
 ### Allowed Indexed Postbytes (`IDX`)
@@ -176,7 +176,7 @@ Every instruction in the `$7x` (Extended RMW + `JMP`), `$Bx` (Extended `A`/`X`/`
 ### 4.3 Long Branches (`LBRA` `$16`, `LBSR` `$17` $\rightarrow$ `rel16 = T:lo`)
 
 In the `$1x` column, `LBRA` (`$16`) and `LBSR` (`$17`) form a signed 16-bit PC-relative offset from `(T << 8) | lo`:
-$$\text{PC}_{\text{target}} = (\text{PC} + 2) + \text{int16}((\text{T} \ll 8) \mid \text{lo})$$
+$$\text{PC}_{\text{target}} = ((\text{PC} + 2) + \text{int16}((\text{T} \ll 8) \mid \text{lo})) \ \& \ \text{\$FFFE}$$
 
 ```nasm
 ; --- Assembler expansion of "LBRA target" (4 bytes) ---
