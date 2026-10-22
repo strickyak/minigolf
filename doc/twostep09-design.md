@@ -75,7 +75,10 @@ In the classic 6809, instructions varied from 1 to 5 bytes, and `$10`/`$11` pref
 
 ### Register Encoding (`TFR` / `EXG` Postbyte)
 
-`TFR r1,r2` (`$1F postbyte`) and `EXG r1,r2` (`$1E postbyte`) encode source in the high nibble (`bits 7..4`) and destination in the low nibble (`bits 3..0`). Nibble `$B` (formerly `DP`) is assigned to `T`:
+`TFR r1,r2` (`$1F postbyte`) and `EXG r1,r2` (`$1E postbyte`) encode source in the high nibble (`bits 7..4`) and destination in the low nibble (`bits 3..0`).
+- **TFR from nonexistent registers copies zeros** (`$00` for 8-bit, `$0000` for 16-bit). *(Bonus: `TFR 6,X` loads `$0000` into `X` in 2 bytes!)*
+- **TFR to nonexistent registers is a `NOP`** (value is discarded).
+- **`EXG` with a nonexistent register** applies both rules: the existing register receives `0` and the nonexistent register discards the exchanged value.
 
 | Nibble | Register | Width | Notes |
 | :---: | :---: | :---: | :--- |
@@ -85,10 +88,12 @@ In the classic 6809, instructions varied from 1 to 5 bytes, and `$10`/`$11` pref
 | `$3` | `U` | 16-bit | User Stack Pointer |
 | `$4` | `S` | 16-bit | Hardware/System Stack Pointer |
 | `$5` | `PC` | 16-bit | Program Counter (bit 0 hardwired to `0`; `TFR D,PC` sets `PC <- D & $FFFE`) |
+| `$6..$7` | *(none)* | 16-bit | Nonexistent: reads as `$0000`, writes are `NOP` |
 | `$8` | `A` | 8-bit | High byte of `D` |
 | `$9` | `B` | 8-bit | Low byte of `D` |
 | `$A` | `CC` | 8-bit | Condition Codes (`N`, `Z`, `V`, `C`, `H`) |
 | `$B` | `T` | 8-bit | Top-Byte Register (`TFR A,T` sets `T` dynamically!) |
+| `$C..$F` | *(none)* | 8-bit | Nonexistent: reads as `$00`, writes are `NOP` |
 
 ---
 
@@ -205,25 +210,26 @@ Every single primary 6809 instruction (except removed interrupt instructions `SW
 - `@T:lo` = 16-bit Extended Effective Address `(T << 8) | lo`
 - `r8` = 8-bit signed PC-relative offset
 - `T:r8` = 16-bit signed PC-relative offset `(T << 8) | r8`
+- `UOP` = **Undefined Opcode**: acts identically to a 2-byte `NOP` (consumes the postbyte, advances `PC` by `+2`, and modifies no registers, memory, or flags)
 
 | Low \ High | `$0x` (DIR RMW) | `$1x` (MISC) | `$2x` (REL8) | `$3x` (LEA/STK) | `$4x` (ACC A) | `$5x` (ACC B) | `$6x` (IDX RMW) | `$7x` (EXT RMW) |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **`x0`** | `NEG <d` | **`LDT #i`** | `BRA r8` | `LEAX idx` | `NEGA` | `NEGB` | `NEG idx` | `NEG @T:lo` |
-| **`x1`** | — | — | `BRN r8` | `LEAY idx` | — | — | — | — |
-| **`x2`** | — | `NOP` | `BHI r8` | `LEAS idx` | — | — | — | — |
-| **`x3`** | `COM <d` | — | `BLS r8` | `LEAU idx` | `COMA` | `COMB` | `COM idx` | `COM @T:lo` |
-| **`x4`** | `LSR <d` | — | `BCC r8` | `PSHS m8` | `LSRA` | `LSRB` | `LSR idx` | `LSR @T:lo` |
-| **`x5`** | — | — | `BCS r8` | `PULS m8` | — | — | — | — |
+| **`x1`** | `UOP` | `UOP` | `BRN r8` | `LEAY idx` | `UOP` | `UOP` | `UOP` | `UOP` |
+| **`x2`** | `UOP` | `NOP` | `BHI r8` | `LEAS idx` | `UOP` | `UOP` | `UOP` | `UOP` |
+| **`x3`** | `COM <d` | `UOP` | `BLS r8` | `LEAU idx` | `COMA` | `COMB` | `COM idx` | `COM @T:lo` |
+| **`x4`** | `LSR <d` | `UOP` | `BCC r8` | `PSHS m8` | `LSRA` | `LSRB` | `LSR idx` | `LSR @T:lo` |
+| **`x5`** | `UOP` | `UOP` | `BCS r8` | `PULS m8` | `UOP` | `UOP` | `UOP` | `UOP` |
 | **`x6`** | `ROR <d` | `LBRA T:r8` | `BNE r8` | `PSHU m8` | `RORA` | `RORB` | `ROR idx` | `ROR @T:lo` |
 | **`x7`** | `ASR <d` | `LBSR T:r8` | `BEQ r8` | `PULU m8` | `ASRA` | `ASRB` | `ASR idx` | `ASR @T:lo` |
-| **`x8`** | `ASL <d` | — | `BVC r8` | — | `ASLA` | `ASLB` | `ASL idx` | `ASL @T:lo` |
+| **`x8`** | `ASL <d` | `UOP` | `BVC r8` | `UOP` | `ASLA` | `ASLB` | `ASL idx` | `ASL @T:lo` |
 | **`x9`** | `ROL <d` | `DAA` | `BVS r8` | `RTS` | `ROLA` | `ROLB` | `ROL idx` | `ROL @T:lo` |
 | **`xA`** | `DEC <d` | `ORCC #i` | `BPL r8` | `ABX` | `DECA` | `DECB` | `DEC idx` | `DEC @T:lo` |
-| **`xB`** | — | — | `BMI r8` | — | — | — | — | — |
-| **`xC`** | `INC <d` | `ANDCC #i` | `BGE r8` | — | `INCA` | `INCB` | `INC idx` | `INC @T:lo` |
+| **`xB`** | `UOP` | `UOP` | `BMI r8` | `UOP` | `UOP` | `UOP` | `UOP` | `UOP` |
+| **`xC`** | `INC <d` | `ANDCC #i` | `BGE r8` | `UOP` | `INCA` | `INCB` | `INC idx` | `INC @T:lo` |
 | **`xD`** | `TST <d` | `SEX` | `BLT r8` | `MUL` | `TSTA` | `TSTB` | `TST idx` | `TST @T:lo` |
-| **`xE`** | `JMP <d` | `EXG r,r` | `BGT r8` | — | — | — | `JMP idx` | `JMP @T:lo` |
-| **`xF`** | `CLR <d` | `TFR r,r` | `BLE r8` | — | `CLRA` | `CLRB` | `CLR idx` | `CLR @T:lo` |
+| **`xE`** | `JMP <d` | `EXG r,r` | `BGT r8` | `UOP` | `UOP` | `UOP` | `JMP idx` | `JMP @T:lo` |
+| **`xF`** | `CLR <d` | `TFR r,r` | `BLE r8` | `UOP` | `CLRA` | `CLRB` | `CLR idx` | `CLR @T:lo` |
 
 | Low \ High | `$8x` (A/X IMM) | `$9x` (A/X DIR) | `$Ax` (A/X IDX) | `$Bx` (A/X EXT) | `$Cx` (B/D/U IMM) | `$Dx` (B/D/U DIR) | `$Ex` (B/D/U IDX) | `$Fx` (B/D/U EXT) |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -234,15 +240,15 @@ Every single primary 6809 instruction (except removed interrupt instructions `SW
 | **`x4`** | `ANDA #i` | `ANDA <d` | `ANDA idx` | `ANDA @T:lo` | `ANDB #i` | `ANDB <d` | `ANDB idx` | `ANDB @T:lo` |
 | **`x5`** | `BITA #i` | `BITA <d` | `BITA idx` | `BITA @T:lo` | `BITB #i` | `BITB <d` | `BITB idx` | `BITB @T:lo` |
 | **`x6`** | `LDA #i` | `LDA <d` | `LDA idx` | `LDA @T:lo` | `LDB #i` | `LDB <d` | `LDB idx` | `LDB @T:lo` |
-| **`x7`** | — | `STA <d` | `STA idx` | `STA @T:lo` | — | `STB <d` | `STB idx` | `STB @T:lo` |
+| **`x7`** | `UOP` | `STA <d` | `STA idx` | `STA @T:lo` | `UOP` | `STB <d` | `STB idx` | `STB @T:lo` |
 | **`x8`** | `EORA #i` | `EORA <d` | `EORA idx` | `EORA @T:lo` | `EORB #i` | `EORB <d` | `EORB idx` | `EORB @T:lo` |
 | **`x9`** | `ADCA #i` | `ADCA <d` | `ADCA idx` | `ADCA @T:lo` | `ADCB #i` | `ADCB <d` | `ADCB idx` | `ADCB @T:lo` |
 | **`xA`** | `ORA #i` | `ORA <d` | `ORA idx` | `ORA @T:lo` | `ORB #i` | `ORB <d` | `ORB idx` | `ORB @T:lo` |
 | **`xB`** | `ADDA #i` | `ADDA <d` | `ADDA idx` | `ADDA @T:lo` | `ADDB #i` | `ADDB <d` | `ADDB idx` | `ADDB @T:lo` |
 | **`xC`** | `CMPX #T:lo` | `CMPX <d` | `CMPX idx` | `CMPX @T:lo` | `LDD #T:lo` | `LDD <d` | `LDD idx` | `LDD @T:lo` |
-| **`xD`** | `BSR r8` | `JSR <d` | `JSR idx` | `JSR @T:lo` | — | `STD <d` | `STD idx` | `STD @T:lo` |
+| **`xD`** | `BSR r8` | `JSR <d` | `JSR idx` | `JSR @T:lo` | `UOP` | `STD <d` | `STD idx` | `STD @T:lo` |
 | **`xE`** | `LDX #T:lo` | `LDX <d` | `LDX idx` | `LDX @T:lo` | `LDU #T:lo` | `LDU <d` | `LDU idx` | `LDU @T:lo` |
-| **`xF`** | — | `STX <d` | `STX idx` | `STX @T:lo` | — | `STU <d` | `STU idx` | `STU @T:lo` |
+| **`xF`** | `UOP` | `STX <d` | `STX idx` | `STX @T:lo` | `UOP` | `STU <d` | `STU idx` | `STU @T:lo` |
 
 ---
 
