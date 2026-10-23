@@ -50,6 +50,16 @@ perf/*/disasm/
 *.o
 /asm6809
 /asm68k
+/asm1802
+/asmz80
+/decb-dump
+/git-tracks
+/par4asm
+/par4dis
+/par4vmp
+build/
+_log
+_out
 __pycache__/
 .mods
 

@@ -29,14 +29,14 @@ const (
 type RegID int
 
 const (
-	RegD RegID = 0
-	RegX RegID = 1
-	RegY RegID = 2
-	RegU RegID = 3
-	RegS RegID = 4
+	RegD  RegID = 0
+	RegX  RegID = 1
+	RegY  RegID = 2
+	RegU  RegID = 3
+	RegS  RegID = 4
 	RegPC RegID = 5
-	RegA RegID = 8
-	RegB RegID = 9
+	RegA  RegID = 8
+	RegB  RegID = 9
 	RegCC RegID = 10
 	RegDP RegID = 11
 )
@@ -78,10 +78,10 @@ type Statement struct {
 	SrcLine  *SourceLine
 
 	// Directive info
-	OrgAddr uint32
-	EquExpr string
-	DataExprs []string
-	StrData string
+	OrgAddr      uint32
+	EquExpr      string
+	DataExprs    []string
+	StrData      string
 	ReserveBytes int
 
 	// Branch relaxation info
@@ -101,17 +101,17 @@ type Statement struct {
 	ExtSize           int
 
 	// General instruction info
-	Mode       AddrMode
-	Opcode     []byte
-	ImmVal     int64
-	ImmSize    int // 1 or 2
-	TargetSym  string
-	TargetDisp int64
-	Postbyte   byte
-	IndexDisp  int64
+	Mode          AddrMode
+	Opcode        []byte
+	ImmVal        int64
+	ImmSize       int // 1 or 2
+	TargetSym     string
+	TargetDisp    int64
+	Postbyte      byte
+	IndexDisp     int64
 	IndexDispSize int // 0 (5-bit), 1 (8-bit), 2 (16-bit)
-	IsPCRel    bool
-	IsIndirect bool
+	IsPCRel       bool
+	IsIndirect    bool
 }
 
 // OpInfo stores encoding information for a mnemonic.
@@ -137,40 +137,41 @@ type OpInfo struct {
 
 var opcodes = map[string]*OpInfo{
 	// Inherent instructions
-	"clra":  {Inherent: []byte{0x4F}},
-	"clrb":  {Inherent: []byte{0x5F}},
-	"coma":  {Inherent: []byte{0x43}},
-	"comb":  {Inherent: []byte{0x53}},
-	"nega":  {Inherent: []byte{0x40}},
-	"negb":  {Inherent: []byte{0x50}},
-	"inca":  {Inherent: []byte{0x4C}},
-	"incb":  {Inherent: []byte{0x5C}},
-	"deca":  {Inherent: []byte{0x4A}},
-	"decb":  {Inherent: []byte{0x5A}},
-	"tsta":  {Inherent: []byte{0x4D}},
-	"tstb":  {Inherent: []byte{0x5D}},
-	"asla":  {Inherent: []byte{0x48}},
-	"aslb":  {Inherent: []byte{0x58}},
-	"lsla":  {Inherent: []byte{0x48}},
-	"lslb":  {Inherent: []byte{0x58}},
-	"asra":  {Inherent: []byte{0x47}},
-	"asrb":  {Inherent: []byte{0x57}},
-	"lsra":  {Inherent: []byte{0x44}},
-	"lsrb":  {Inherent: []byte{0x54}},
-	"rola":  {Inherent: []byte{0x49}},
-	"rolb":  {Inherent: []byte{0x59}},
-	"rora":  {Inherent: []byte{0x46}},
-	"rorb":  {Inherent: []byte{0x56}},
-	"mul":   {Inherent: []byte{0x3D}},
-	"rts":   {Inherent: []byte{0x39}},
-	"rti":   {Inherent: []byte{0x3B}},
-	"nop":   {Inherent: []byte{0x12}},
-	"sex":   {Inherent: []byte{0x1D}},
-	"sync":  {Inherent: []byte{0x13}},
-	"swi":   {Inherent: []byte{0x3F}},
-	"swi2":  {Inherent: []byte{0x10, 0x3F}},
-	"swi3":  {Inherent: []byte{0x11, 0x3F}},
-	"daa":   {Inherent: []byte{0x19}},
+	"clra": {Inherent: []byte{0x4F}},
+	"clrb": {Inherent: []byte{0x5F}},
+	"coma": {Inherent: []byte{0x43}},
+	"comb": {Inherent: []byte{0x53}},
+	"nega": {Inherent: []byte{0x40}},
+	"negb": {Inherent: []byte{0x50}},
+	"inca": {Inherent: []byte{0x4C}},
+	"incb": {Inherent: []byte{0x5C}},
+	"deca": {Inherent: []byte{0x4A}},
+	"decb": {Inherent: []byte{0x5A}},
+	"tsta": {Inherent: []byte{0x4D}},
+	"tstb": {Inherent: []byte{0x5D}},
+	"asla": {Inherent: []byte{0x48}},
+	"aslb": {Inherent: []byte{0x58}},
+	"lsla": {Inherent: []byte{0x48}},
+	"lslb": {Inherent: []byte{0x58}},
+	"asra": {Inherent: []byte{0x47}},
+	"asrb": {Inherent: []byte{0x57}},
+	"lsra": {Inherent: []byte{0x44}},
+	"lsrb": {Inherent: []byte{0x54}},
+	"rola": {Inherent: []byte{0x49}},
+	"rolb": {Inherent: []byte{0x59}},
+	"rora": {Inherent: []byte{0x46}},
+	"rorb": {Inherent: []byte{0x56}},
+	"mul":  {Inherent: []byte{0x3D}},
+	"abx":  {Inherent: []byte{0x3A}},
+	"rts":  {Inherent: []byte{0x39}},
+	"rti":  {Inherent: []byte{0x3B}},
+	"nop":  {Inherent: []byte{0x12}},
+	"sex":  {Inherent: []byte{0x1D}},
+	"sync": {Inherent: []byte{0x13}},
+	"swi":  {Inherent: []byte{0x3F}},
+	"swi2": {Inherent: []byte{0x10, 0x3F}},
+	"swi3": {Inherent: []byte{0x11, 0x3F}},
+	"daa":  {Inherent: []byte{0x19}},
 
 	// Single-operand memory instructions (clr, neg, com, lsr, ror, asr, asl, lsl, rol, dec, inc, tst, jmp, jsr)
 	"clr": {Dir: []byte{0x0F}, Idx: []byte{0x6F}, Ext: []byte{0x7F}},

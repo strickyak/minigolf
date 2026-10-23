@@ -70,4 +70,3 @@ func TestAssemblerExtendedInstructions(t *testing.T) {
 		t.Fatalf("Assemble failed: %v", err)
 	}
 }
-

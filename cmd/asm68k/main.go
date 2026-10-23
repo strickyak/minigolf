@@ -24,23 +24,23 @@ const (
 
 // EA represents an Effective Address
 type EA struct {
-	Mode   uint8
-	Reg    uint8
-	ExtLen int      // bytes of extension data
-	ExtWords []uint16 // extension words
-	SymName string   // if unresolved symbol
-	SymDisp int32    // displacement added to symbol
-	IsPCRel bool     // PC-relative
-	BranchTarget string // for branch instructions
+	Mode         uint8
+	Reg          uint8
+	ExtLen       int      // bytes of extension data
+	ExtWords     []uint16 // extension words
+	SymName      string   // if unresolved symbol
+	SymDisp      int32    // displacement added to symbol
+	IsPCRel      bool     // PC-relative
+	BranchTarget string   // for branch instructions
 }
 
 type SourceLine struct {
-	File     string
-	LineNum  int
-	Raw      string
-	PC       uint32
-	HasPC    bool
-	Encoded  []byte
+	File    string
+	LineNum int
+	Raw     string
+	PC      uint32
+	HasPC   bool
+	Encoded []byte
 }
 
 type Statement struct {

@@ -64,5 +64,5 @@ func main() {
 // repeatedFlag collects multiple -flag=value occurrences.
 type repeatedFlag []string
 
-func (f *repeatedFlag) String() string  { return strings.Join(*f, ",") }
+func (f *repeatedFlag) String() string     { return strings.Join(*f, ",") }
 func (f *repeatedFlag) Set(v string) error { *f = append(*f, v); return nil }

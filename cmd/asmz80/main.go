@@ -918,7 +918,7 @@ func (a *Assembler) encodeInstruction(stmt *Statement) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if (rstVal & 7) != 0 || rstVal < 0 || rstVal > 0x38 {
+		if (rstVal&7) != 0 || rstVal < 0 || rstVal > 0x38 {
 			return nil, fmt.Errorf("invalid RST target: %d", rstVal)
 		}
 		return []byte{byte(0xC7 | rstVal)}, nil
