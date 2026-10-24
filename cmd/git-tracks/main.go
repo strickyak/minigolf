@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -39,19 +40,28 @@ var trackColors = []string{
 	"\033[91;1m", // Bright Red
 }
 
+type RepoSpec struct {
+	Index    int // 1-based repo index
+	Arg      string
+	RootPath string
+}
+
 type BranchInfo struct {
-	Name   string
-	Hash   string
-	IsHead bool
+	Name    string
+	RawName string
+	RepoIdx int
+	Hash    string
+	IsHead  bool
 }
 
 type CommitNode struct {
-	Hash     string
-	Parents  []string
-	Children []string
-	Branches []string
-	IsHead   bool
-	TopoIdx  int
+	Hash         string
+	Parents      []string
+	Children     []string
+	Branches     []string
+	HeadBranches map[string]bool
+	IsHead       bool
+	TopoIdx      int
 }
 
 type Edge struct {
@@ -66,96 +76,199 @@ type ContractedGraph struct {
 	InEdges  map[string][]Edge // Station hash -> incoming edges
 }
 
-func runGit(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+func runGitInDir(dir string, args ...string) (string, error) {
+	fullArgs := append([]string{"-C", dir}, args...)
+	cmd := exec.Command("git", fullArgs...)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		return "", fmt.Errorf("git -C %s %s: %w", dir, strings.Join(args, " "), err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
 
-func loadRepo(includeRemotes bool) ([]BranchInfo, map[string]*CommitNode, []string, error) {
-	headRef, _ := runGit("symbolic-ref", "--short", "HEAD")
-
-	refArgs := []string{"for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"}
-	if includeRemotes {
-		refArgs = append(refArgs, "refs/remotes/")
-	}
-	refOut, err := runGit(refArgs...)
+func resolveRepoDir(arg string) (string, error) {
+	info, err := os.Stat(arg)
 	if err != nil {
-		return nil, nil, nil, err
+		return "", err
 	}
+	searchDir := arg
+	if !info.IsDir() {
+		searchDir = filepath.Dir(arg)
+	}
+	if top, err := runGitInDir(searchDir, "rev-parse", "--show-toplevel"); err == nil && top != "" {
+		return top, nil
+	}
+	if gitDir, err := runGitInDir(searchDir, "rev-parse", "--git-dir"); err == nil && gitDir != "" {
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(searchDir, gitDir)
+		}
+		return filepath.Clean(gitDir), nil
+	}
+	return "", fmt.Errorf("%q is not inside a git repository", arg)
+}
 
+func loadRepos(args []string, includeRemotes bool) ([]RepoSpec, []BranchInfo, map[string]*CommitNode, []string, error) {
+	if len(args) == 0 {
+		args = []string{"."}
+	}
+	multiRepo := len(args) > 1
+
+	var repos []RepoSpec
 	var branches []BranchInfo
 	branchByCommit := make(map[string][]string)
+	headBranchByCommit := make(map[string]map[string]bool)
 	headCommits := make(map[string]bool)
-
-	for _, line := range strings.Split(refOut, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-		name, hash := parts[0], parts[1]
-		if strings.HasSuffix(name, "/HEAD") || name == "origin" {
-			continue
-		}
-		isHead := (name == headRef)
-		branches = append(branches, BranchInfo{Name: name, Hash: hash, IsHead: isHead})
-		branchByCommit[hash] = append(branchByCommit[hash], name)
-		if isHead {
-			headCommits[hash] = true
-		}
-	}
-
-	sort.Slice(branches, func(i, j int) bool {
-		return branches[i].Name < branches[j].Name
-	})
-
-	revArgs := []string{"rev-list", "--parents", "--topo-order", "--reverse", "--branches"}
-	if includeRemotes {
-		revArgs = []string{"rev-list", "--parents", "--topo-order", "--reverse", "--all"}
-	}
-	revOut, err := runGit(revArgs...)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
 	commits := make(map[string]*CommitNode)
-	var order []string
-	for idx, line := range strings.Split(revOut, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		hash := parts[0]
-		parents := parts[1:]
-		node := &CommitNode{
-			Hash:     hash,
-			Parents:  parents,
-			Branches: branchByCommit[hash],
-			IsHead:   headCommits[hash],
-			TopoIdx:  idx,
-		}
-		commits[hash] = node
-		order = append(order, hash)
-	}
+	var encounterOrder []string
 
-	for _, h := range order {
-		node := commits[h]
-		for _, p := range node.Parents {
-			if pn, ok := commits[p]; ok {
-				pn.Children = append(pn.Children, h)
+	for i, arg := range args {
+		repoIdx := i + 1
+		rootPath, err := resolveRepoDir(arg)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		repos = append(repos, RepoSpec{
+			Index:    repoIdx,
+			Arg:      arg,
+			RootPath: rootPath,
+		})
+
+		headRef, _ := runGitInDir(rootPath, "symbolic-ref", "--short", "HEAD")
+
+		refArgs := []string{"for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/"}
+		if includeRemotes {
+			refArgs = append(refArgs, "refs/remotes/")
+		}
+		refOut, err := runGitInDir(rootPath, refArgs...)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+
+		var repoBranches []BranchInfo
+		for _, line := range strings.Split(refOut, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Fields(line)
+			if len(parts) < 2 {
+				continue
+			}
+			rawName, hash := parts[0], parts[1]
+			if strings.HasSuffix(rawName, "/HEAD") || rawName == "origin" {
+				continue
+			}
+			displayName := rawName
+			if multiRepo {
+				displayName = fmt.Sprintf("$%d:%s", repoIdx, rawName)
+			}
+			isHead := (rawName == headRef)
+			repoBranches = append(repoBranches, BranchInfo{
+				Name:    displayName,
+				RawName: rawName,
+				RepoIdx: repoIdx,
+				Hash:    hash,
+				IsHead:  isHead,
+			})
+		}
+
+		sort.Slice(repoBranches, func(a, b int) bool {
+			return repoBranches[a].RawName < repoBranches[b].RawName
+		})
+
+		for _, b := range repoBranches {
+			branches = append(branches, b)
+			branchByCommit[b.Hash] = append(branchByCommit[b.Hash], b.Name)
+			if b.IsHead {
+				headCommits[b.Hash] = true
+				if headBranchByCommit[b.Hash] == nil {
+					headBranchByCommit[b.Hash] = make(map[string]bool)
+				}
+				headBranchByCommit[b.Hash][b.Name] = true
+			}
+		}
+
+		revArgs := []string{"rev-list", "--parents", "--topo-order", "--reverse", "--branches"}
+		if includeRemotes {
+			revArgs = []string{"rev-list", "--parents", "--topo-order", "--reverse", "--all"}
+		}
+		revOut, err := runGitInDir(rootPath, revArgs...)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+
+		for _, line := range strings.Split(revOut, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Fields(line)
+			hash := parts[0]
+			parents := parts[1:]
+			if _, exists := commits[hash]; !exists {
+				commits[hash] = &CommitNode{
+					Hash:    hash,
+					Parents: parents,
+				}
+				encounterOrder = append(encounterOrder, hash)
 			}
 		}
 	}
 
-	return branches, commits, order, nil
+	// Attach merged branch labels and build children adjacency lists
+	for h, node := range commits {
+		node.Branches = branchByCommit[h]
+		node.HeadBranches = headBranchByCommit[h]
+		node.IsHead = headCommits[h]
+	}
+
+	inDegree := make(map[string]int, len(commits))
+	encounterRank := make(map[string]int, len(encounterOrder))
+	for idx, h := range encounterOrder {
+		encounterRank[h] = idx
+	}
+
+	for _, h := range encounterOrder {
+		node := commits[h]
+		for _, p := range node.Parents {
+			if pn, ok := commits[p]; ok {
+				pn.Children = append(pn.Children, h)
+				inDegree[h]++
+			}
+		}
+	}
+
+	// Compute unified topological order (oldest -> newest) across all repos
+	var ready []string
+	for _, h := range encounterOrder {
+		if inDegree[h] == 0 {
+			ready = append(ready, h)
+		}
+	}
+
+	var order []string
+	for len(ready) > 0 {
+		// Pick earliest encountered ready commit for stable ordering
+		bestIdx := 0
+		for i := 1; i < len(ready); i++ {
+			if encounterRank[ready[i]] < encounterRank[ready[bestIdx]] {
+				bestIdx = i
+			}
+		}
+		cur := ready[bestIdx]
+		ready = append(ready[:bestIdx], ready[bestIdx+1:]...)
+		commits[cur].TopoIdx = len(order)
+		order = append(order, cur)
+
+		for _, ch := range commits[cur].Children {
+			inDegree[ch]--
+			if inDegree[ch] == 0 {
+				ready = append(ready, ch)
+			}
+		}
+	}
+
+	return repos, branches, commits, order, nil
 }
 
 // buildFullContractedGraph keeps roots, branch tips/named commits, forks (children > 1), and merges (parents > 1).
@@ -195,14 +308,46 @@ func buildFullContractedGraph(commits map[string]*CommitNode, order []string) *C
 	return cg
 }
 
+type bitMask struct {
+	words []uint64
+}
+
+func newBitMask(numBits int) bitMask {
+	return bitMask{words: make([]uint64, (numBits+63)/64)}
+}
+
+func (b *bitMask) set(bit int) {
+	b.words[bit/64] |= 1 << uint(bit%64)
+}
+
+func (b *bitMask) orFrom(other bitMask) {
+	for i := range b.words {
+		b.words[i] |= other.words[i]
+	}
+}
+
+func (b bitMask) key() string {
+	var sb strings.Builder
+	for i, w := range b.words {
+		if i > 0 {
+			sb.WriteByte(':')
+		}
+		fmt.Fprintf(&sb, "%016x", w)
+	}
+	return sb.String()
+}
+
 // buildBranchSkeletonGraph collapses internal self-merges whose commits all belong to the exact same set of branches.
 // Every commit is labeled by the bitmask of branches that can reach it (its descendant branches).
 func buildBranchSkeletonGraph(branches []BranchInfo, commits map[string]*CommitNode, order []string) *ContractedGraph {
-	// Compute reachability bitmask: which branch tips can reach commit h?
-	reachMask := make(map[string]uint64)
+	nBranches := len(branches)
+	reachMask := make(map[string]bitMask, len(order))
+	for _, h := range order {
+		reachMask[h] = newBitMask(nBranches)
+	}
 	for i, b := range branches {
-		if i < 64 {
-			reachMask[b.Hash] |= (1 << uint(i))
+		if rm, ok := reachMask[b.Hash]; ok {
+			rm.set(i)
 		}
 	}
 	// Propagate from newest to oldest
@@ -210,39 +355,48 @@ func buildBranchSkeletonGraph(branches []BranchInfo, commits map[string]*CommitN
 		h := order[i]
 		m := reachMask[h]
 		for _, p := range commits[h].Parents {
-			reachMask[p] |= m
+			if pm, ok := reachMask[p]; ok {
+				pm.orFrom(m)
+			}
 		}
 	}
 
-	// Group commits by identical non-zero reachMask, and find transitions between masks.
-	maskCount := make(map[uint64]int)
-	maskRepNewest := make(map[uint64]string) // newest commit with this mask
-	maskRepOldest := make(map[uint64]string) // oldest commit with this mask
+	maskKey := make(map[string]string, len(order))
+	maskRepNewest := make(map[string]string)
 
 	for _, h := range order {
-		m := reachMask[h]
-		maskCount[m]++
-		if _, ok := maskRepOldest[m]; !ok {
-			maskRepOldest[m] = h
-		}
-		maskRepNewest[m] = h
+		k := reachMask[h].key()
+		maskKey[h] = k
+		maskRepNewest[k] = h
 	}
 
-	// Each distinct reachMask has a newest commit (the station where Either a branch sits OR branches diverge!).
-	// Wait: let's also include the oldest root commit as the starting station!
-	rootHash := order[0]
 	isStation := make(map[string]bool)
-	isStation[rootHash] = true
 	for _, h := range order {
-		if len(commits[h].Branches) > 0 {
+		c := commits[h]
+		// 1. Root commits (no parents)
+		if len(c.Parents) == 0 {
 			isStation[h] = true
 		}
+		// 2. Named branch commits
+		if len(c.Branches) > 0 {
+			isStation[h] = true
+		}
+		// 3. Inter-branch merge commits (parents have distinct branch-reachability sets)
+		if len(c.Parents) > 1 {
+			firstKey := maskKey[c.Parents[0]]
+			for _, p := range c.Parents[1:] {
+				if maskKey[p] != firstKey {
+					isStation[h] = true
+					break
+				}
+			}
+		}
 	}
+	// 4. Branch-set fork points / newest commit of each distinct branch-reachability set
 	for _, newestH := range maskRepNewest {
 		isStation[newestH] = true
 	}
 
-	// Build DAG between these stations based on reachMask transitions
 	var stations []string
 	for _, h := range order {
 		if isStation[h] {
@@ -250,9 +404,6 @@ func buildBranchSkeletonGraph(branches []BranchInfo, commits map[string]*CommitN
 		}
 	}
 
-	// For each station, find its immediate predecessor station(s) via parent paths,
-	// and count the exact number of commits in the equivalence class between them.
-	// Using BFS/DFS backwards from station `h` stopping at any other station.
 	cg := &ContractedGraph{
 		Nodes:    stations,
 		OutEdges: make(map[string][]Edge),
@@ -260,7 +411,7 @@ func buildBranchSkeletonGraph(branches []BranchInfo, commits map[string]*CommitN
 	}
 
 	for _, h := range stations {
-		if h == rootHash {
+		if len(commits[h].Parents) == 0 {
 			continue
 		}
 		// Find all commits strictly after ancestor stations up to h
@@ -287,7 +438,6 @@ func buildBranchSkeletonGraph(branches []BranchInfo, commits map[string]*CommitN
 			}
 		}
 
-		// Keep only immediate predecessor stations (not ancestors of another predStation)
 		var preds []string
 		for ps := range predStations {
 			preds = append(preds, ps)
@@ -301,7 +451,6 @@ func buildBranchSkeletonGraph(branches []BranchInfo, commits map[string]*CommitN
 		for _, cand := range preds {
 			isTransitive := false
 			for _, other := range directPreds {
-				// check if cand is ancestor of other
 				if isAncestorInMap(cand, other, commits) {
 					isTransitive = true
 					break
@@ -325,6 +474,58 @@ func buildBranchSkeletonGraph(branches []BranchInfo, commits map[string]*CommitN
 	}
 
 	return cg
+}
+
+// splitConnectedComponents partitions a ContractedGraph into weakly connected components
+// so independent repos (sharing no commits) render as clean separate track systems.
+func splitConnectedComponents(cg *ContractedGraph, commits map[string]*CommitNode) []*ContractedGraph {
+	visited := make(map[string]bool)
+	var components []*ContractedGraph
+
+	for _, startNode := range cg.Nodes {
+		if visited[startNode] {
+			continue
+		}
+		compSet := make(map[string]bool)
+		queue := []string{startNode}
+		visited[startNode] = true
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			compSet[cur] = true
+			for _, e := range cg.OutEdges[cur] {
+				if !visited[e.To] {
+					visited[e.To] = true
+					queue = append(queue, e.To)
+				}
+			}
+			for _, e := range cg.InEdges[cur] {
+				if !visited[e.From] {
+					visited[e.From] = true
+					queue = append(queue, e.From)
+				}
+			}
+		}
+
+		sub := &ContractedGraph{
+			OutEdges: make(map[string][]Edge),
+			InEdges:  make(map[string][]Edge),
+		}
+		for _, h := range cg.Nodes {
+			if compSet[h] {
+				sub.Nodes = append(sub.Nodes, h)
+				if outs, ok := cg.OutEdges[h]; ok {
+					sub.OutEdges[h] = outs
+				}
+				if ins, ok := cg.InEdges[h]; ok {
+					sub.InEdges[h] = ins
+				}
+			}
+		}
+		components = append(components, sub)
+	}
+
+	return components
 }
 
 func isAncestorInMap(anc, desc string, commits map[string]*CommitNode) bool {
@@ -422,7 +623,7 @@ func formatStationLabel(h string, commits map[string]*CommitNode) (string, strin
 	if len(c.Branches) > 0 {
 		var parts []string
 		for _, b := range c.Branches {
-			if c.IsHead && b == c.Branches[len(c.Branches)-1] {
+			if c.HeadBranches[b] {
 				parts = append(parts, b+"*")
 			} else {
 				parts = append(parts, b)
@@ -435,7 +636,7 @@ func formatStationLabel(h string, commits map[string]*CommitNode) (string, strin
 		if len(c.Branches) > 1 {
 			return lbl, ansiBgMagenta
 		}
-		if c.Branches[0] == "main" {
+		if c.Branches[0] == "main" || strings.HasSuffix(c.Branches[0], ":main") {
 			return lbl, ansiBgBlue
 		}
 		return lbl, ansiBgYellow
@@ -443,7 +644,7 @@ func formatStationLabel(h string, commits map[string]*CommitNode) (string, strin
 	return "[" + h[:6] + "]", ansiBgGray
 }
 
-// RenderContractedGraph renders a ContractedGraph left-to-right onto a Canvas.
+// RenderContractedGraph renders a single connected component left-to-right onto a Canvas.
 func RenderContractedGraph(cg *ContractedGraph, commits map[string]*CommitNode) *Canvas {
 	cv := NewCanvas(2, 1)
 	var lanes []*ActiveLane // each index is a track row (lane r uses canvas row r*2)
@@ -716,6 +917,35 @@ func RenderContractedGraph(cg *ContractedGraph, commits map[string]*CommitNode) 
 	return cv
 }
 
+func renderAndPrintAllComponents(cg *ContractedGraph, commits map[string]*CommitNode, maxWidth int) {
+	comps := splitConnectedComponents(cg, commits)
+	for i, comp := range comps {
+		if i > 0 {
+			fmt.Println()
+		}
+		if len(comps) > 1 {
+			fmt.Printf("  %s--- Track Component %d (Root %s) ---%s\n",
+				ansiDim, i+1, comp.Nodes[0][:6], ansiReset)
+		}
+		cv := RenderContractedGraph(comp, commits)
+		cv.PrintWrapped(maxWidth)
+	}
+}
+
+func (cv *Canvas) isCleanSplitCol(c int) bool {
+	if c <= 0 || c >= cv.Cols {
+		return true
+	}
+	for r := 0; r < cv.Rows; r++ {
+		ch := cv.Grid[r][c].Ch
+		chPrev := cv.Grid[r][c-1].Ch
+		if (ch != ' ' && ch != '═') || (chPrev != ' ' && chPrev != '═') {
+			return false
+		}
+	}
+	return true
+}
+
 func (cv *Canvas) PrintWrapped(maxWidth int) {
 	if maxWidth <= 0 || cv.Cols <= maxWidth {
 		cv.printSlice(0, cv.Cols, false, false)
@@ -729,25 +959,29 @@ func (cv *Canvas) PrintWrapped(maxWidth int) {
 			cv.printSlice(start, cv.Cols, start > 0, false)
 			break
 		}
-		// Find a clean column to split on (all cells in column c and c-1 must be ' ' or '═')
-		splitCol := end
-		for c := end; c > start+maxWidth/2; c-- {
-			clean := true
-			for r := 0; r < cv.Rows; r++ {
-				ch := cv.Grid[r][c].Ch
-				chPrev := cv.Grid[r][c-1].Ch
-				if (ch != ' ' && ch != '═') || (chPrev != ' ' && chPrev != '═') {
-					clean = false
-					break
-				}
-			}
-			if clean {
+		// Search backwards from `end` to `start + 1` for a clean track column to split on
+		splitCol := -1
+		for c := end; c > start+1; c-- {
+			if cv.isCleanSplitCol(c) {
 				splitCol = c
 				break
 			}
 		}
-		cv.printSlice(start, splitCol, start > 0, true)
-		fmt.Println()
+		// If a single badge starting at `start` is wider than `maxWidth`, advance forward to the next clean column
+		if splitCol == -1 {
+			splitCol = cv.Cols
+			for c := end + 1; c < cv.Cols; c++ {
+				if cv.isCleanSplitCol(c) {
+					splitCol = c
+					break
+				}
+			}
+		}
+		hasMore := splitCol < cv.Cols
+		cv.printSlice(start, splitCol, start > 0, hasMore)
+		if hasMore {
+			fmt.Println()
+		}
 		start = splitCol
 	}
 }
@@ -798,6 +1032,20 @@ func (cv *Canvas) printSlice(cStart, cEnd int, hasLeftCont, hasRightCont bool) {
 	}
 }
 
+func printRepoLegend(repos []RepoSpec) {
+	if len(repos) <= 1 {
+		return
+	}
+	fmt.Printf("%s=== Repositories (%d) ===%s\n", ansiBold+ansiCyan, len(repos), ansiReset)
+	for _, r := range repos {
+		fmt.Printf("  %s$%d:%s %s  %s(%s)%s\n",
+			ansiBold+ansiGreen, r.Index, ansiReset,
+			r.RootPath,
+			ansiDim, r.Arg, ansiReset)
+	}
+	fmt.Println()
+}
+
 func printBranchSummary(branches []BranchInfo, commits map[string]*CommitNode) {
 	fmt.Printf("%s=== Git Branch Inclusion & Topology (%d branches) ===%s\n", ansiBold+ansiCyan, len(branches), ansiReset)
 	for _, b := range branches {
@@ -828,7 +1076,7 @@ func printBranchSummary(branches []BranchInfo, commits map[string]*CommitNode) {
 		if len(notes) > 0 {
 			noteStr = "  (" + strings.Join(notes, "; ") + ")"
 		}
-		fmt.Printf(" %s %s%-18s%s %s%s%s%s\n",
+		fmt.Printf(" %s %s%-22s%s %s%s%s%s\n",
 			headMark,
 			ansiBold+ansiYellow, b.Name, ansiReset,
 			ansiDim, b.Hash[:6], ansiReset,
@@ -841,9 +1089,13 @@ func main() {
 	allFlag := flag.Bool("all", false, "Include remote tracking branches")
 	fullFlag := flag.Bool("full", true, "Show full commit DAG with all historical fork/merge diamonds")
 	widthFlag := flag.Int("w", 100, "Max panel width before wrapping (0 for no wrap)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: git-tracks [options] [repo1 repo2 ...]\n\nOptions:\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
-	branches, commits, order, err := loadRepo(*allFlag)
+	repos, branches, commits, order, err := loadRepos(flag.Args(), *allFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "git-tracks: %v\n", err)
 		os.Exit(1)
@@ -853,13 +1105,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	printRepoLegend(repos)
 	printBranchSummary(branches, commits)
 
 	// 1. High-level Branch Skeleton Railroad Diagram
 	fmt.Printf("%s=== Branch Railroad Diagram (Time: Left ──► Right) ===%s\n", ansiBold+ansiCyan, ansiReset)
 	skelGraph := buildBranchSkeletonGraph(branches, commits, order)
-	skelCanvas := RenderContractedGraph(skelGraph, commits)
-	skelCanvas.PrintWrapped(*widthFlag)
+	renderAndPrintAllComponents(skelGraph, commits, *widthFlag)
 
 	// 2. Full Commit DAG Railroad Diagram (if it has more stations than the branch skeleton)
 	if *fullFlag {
@@ -868,8 +1120,7 @@ func main() {
 			fmt.Println()
 			fmt.Printf("%s=== Full Commit-DAG Railroad Diagram (All %d Fork/Merge/Named Stations) ===%s\n",
 				ansiBold+ansiCyan, len(fullGraph.Nodes), ansiReset)
-			fullCanvas := RenderContractedGraph(fullGraph, commits)
-			fullCanvas.PrintWrapped(*widthFlag)
+			renderAndPrintAllComponents(fullGraph, commits, *widthFlag)
 		}
 	}
 }
