@@ -51,6 +51,7 @@ perf/*/disasm/
 /asm6809
 /asm68k
 /asm1802
+/asm6502
 /asmz80
 /decb-dump
 /git-tracks
