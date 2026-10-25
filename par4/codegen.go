@@ -342,10 +342,6 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	g.addLocal("_tmp_cap", KindScalar)
 	g.addLocal("_tmp_len", KindScalar)
 	g.addLocal("_tmp_addr", KindScalar)
-	g.addLocal("_swap_0", KindSlice)
-	g.addLocal("_swap_1", KindSlice)
-	g.addLocal("_swap_2", KindSlice)
-	g.addLocal("_swap_3", KindSlice)
 
 	// Emit function header
 	g.emitComment("====================================================================")
@@ -371,22 +367,10 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 		}
 	}
 
-	// Emit .local directives
-	for _, lName := range g.localOrder {
-		sz := g.localSizes[lName]
-		if sz == 6 {
-			g.emit("    .local %s: slice", lName)
-		} else if sz == 2 {
-			g.emit("    .local %s: word", lName)
-		} else if sz == 1 {
-			g.emit("    .local %s: byte", lName)
-		} else {
-			g.emit("    .local %s: %d", lName, sz)
-		}
-	}
-	if len(g.paramOrder) > 0 || len(g.localOrder) > 0 {
-		g.emit("")
-	}
+	// Compile function body into a temporary buffer first so we only emit
+	// synthetic scratch .local directives (_pbuf, _tmp_*, _swap_*) that are actually used.
+	savedOut := g.out
+	g.out = strings.Builder{}
 
 	// Emit global variable initializers if this is the entry function
 	if isEntry {
@@ -420,6 +404,32 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	// Default return safeguard
 	g.emit("    RET_VOID")
 	g.emit(".endfunction\n")
+
+	bodyStr := g.out.String()
+	g.out = savedOut
+
+	// Emit .local directives (skipping unused synthetic '_' scratch locals)
+	emittedLocals := 0
+	for _, lName := range g.localOrder {
+		if strings.HasPrefix(lName, "_") && !strings.Contains(bodyStr, " "+lName+"\n") {
+			continue
+		}
+		emittedLocals++
+		sz := g.localSizes[lName]
+		if sz == 6 {
+			g.emit("    .local %s: slice", lName)
+		} else if sz == 2 {
+			g.emit("    .local %s: word", lName)
+		} else if sz == 1 {
+			g.emit("    .local %s: byte", lName)
+		} else {
+			g.emit("    .local %s: %d", lName, sz)
+		}
+	}
+	if len(g.paramOrder) > 0 || emittedLocals > 0 {
+		g.emit("")
+	}
+	g.out.WriteString(bodyStr)
 }
 
 func (g *Generator) addLocal(name string, kind TypeKind) {
@@ -752,6 +762,7 @@ func (g *Generator) compileAssign(s *ast.AssignStatement) {
 		tempVars := make([]string, len(s.Values))
 		for i, rhs := range s.Values {
 			tempVars[i] = fmt.Sprintf("_swap_%d", i)
+			g.addLocal(tempVars[i], KindScalar)
 			g.compileExpression(rhs)
 			g.emit("    STORE_LOCAL %s", tempVars[i])
 		}
