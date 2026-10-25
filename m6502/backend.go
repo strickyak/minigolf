@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/strickyak/minigolf/ir"
@@ -28,6 +29,7 @@ type Backend struct {
 	slots         map[int]int    // instruction ID -> positive byte offset from ZP_FP (>= 2)
 	jmpSlots      map[int]int    // SetJmp ID -> positive jmpbuf offset from ZP_FP (>= 2)
 	paramSlots    map[string]int // param name -> positive offset from ZP_FP (>= frameSize)
+	pureScalars   map[int]bool   // frame offset -> true if non-address-taken scalar (<= 2 bytes)
 	typeMap       map[int]ir.Type
 	frameSize     int
 	retPtrSlot    int
@@ -41,6 +43,7 @@ func New() *Backend {
 		slots:         make(map[int]int),
 		jmpSlots:      make(map[int]int),
 		paramSlots:    make(map[string]int),
+		pureScalars:   make(map[int]bool),
 		typeMap:       make(map[int]ir.Type),
 		IncludeCStart: true,
 	}
@@ -123,6 +126,7 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 	b.slots = make(map[int]int)
 	b.jmpSlots = make(map[int]int)
 	b.paramSlots = make(map[string]int)
+	b.pureScalars = make(map[int]bool)
 	b.typeMap = make(map[int]ir.Type)
 
 	// Bytes 0..1 at (ZP_FP)+0..1 hold the saved caller ZP_FP.
@@ -152,7 +156,7 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 		}
 	}
 
-	// Allocate small (<= 2 byte) slots first so scalar locals/temps stay at
+	// Allocate small (<= 2 byte) scalar slots first so scalar locals/temps stay at
 	// offsets <= 254 even when the function has large struct/array locals.
 	for pass := 0; pass < 2; pass++ {
 		for _, blk := range f.Blocks {
@@ -174,6 +178,9 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 
 				if off, ok := b.slots[canon]; ok {
 					b.slots[id] = off
+					if addressTaken[id] || addressTaken[canon] || instr.Type().IsAStruct() || instr.Type().IsAnArray() {
+						delete(b.pureScalars, off)
+					}
 					continue
 				}
 
@@ -184,9 +191,13 @@ func (b *Backend) allocateSlots(f *ir.Function) {
 				if size == 0 {
 					size = 1
 				}
-				if (pass == 0 && size <= 2) || (pass == 1 && size > 2) {
+				isScalar := size <= 2 && !instr.Type().IsAStruct() && !instr.Type().IsAnArray()
+				if (pass == 0 && isScalar) || (pass == 1 && !isScalar) {
 					b.slots[canon] = currentOffset
 					b.slots[id] = currentOffset
+					if isScalar && !addressTaken[id] && !addressTaken[canon] && currentOffset <= 254 {
+						b.pureScalars[currentOffset] = true
+					}
 					currentOffset += alignVal(size, 2)
 				}
 			}
@@ -238,17 +249,53 @@ func (b *Backend) emitLoadConst(reg string, val uint16) {
 	hi := byte((val >> 8) & 0xFF)
 	if lo == hi {
 		b.buf.WriteString(fmt.Sprintf("\tLDA #$%02X\n\tSTA %s\n\tSTA %s+1\n", lo, reg, reg))
-	} else {
-		b.buf.WriteString(fmt.Sprintf("\tLDA #$%02X\n\tSTA %s\n\tLDA #$%02X\n\tSTA %s+1\n", lo, reg, hi, reg))
+		return
 	}
+	switch reg {
+	case "ZP_R0":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #$%02X\n\tLDA #$%02X\n\tJSR __const_r0_ay\n", lo, hi))
+		return
+	case "ZP_R1":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #$%02X\n\tLDA #$%02X\n\tJSR __const_r1_ay\n", lo, hi))
+		return
+	case "ZP_RA":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #$%02X\n\tLDA #$%02X\n\tJSR __const_ra_ay\n", lo, hi))
+		return
+	case "ZP_RC":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #$%02X\n\tLDA #$%02X\n\tJSR __const_rc_ay\n", lo, hi))
+		return
+	}
+	b.buf.WriteString(fmt.Sprintf("\tLDA #$%02X\n\tSTA %s\n\tLDA #$%02X\n\tSTA %s+1\n", lo, reg, hi, reg))
 }
 
 func (b *Backend) emitLoadSym(reg string, sym string) {
+	switch reg {
+	case "ZP_R0":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #<%s\n\tLDA #>%s\n\tJSR __const_r0_ay\n", sym, sym))
+		return
+	case "ZP_R1":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #<%s\n\tLDA #>%s\n\tJSR __const_r1_ay\n", sym, sym))
+		return
+	case "ZP_RA":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #<%s\n\tLDA #>%s\n\tJSR __const_ra_ay\n", sym, sym))
+		return
+	case "ZP_RC":
+		b.buf.WriteString(fmt.Sprintf("\tLDY #<%s\n\tLDA #>%s\n\tJSR __const_rc_ay\n", sym, sym))
+		return
+	}
 	b.buf.WriteString(fmt.Sprintf("\tLDA #<%s\n\tSTA %s\n\tLDA #>%s\n\tSTA %s+1\n", sym, reg, sym, reg))
 }
 
 func (b *Backend) emitCopyReg(dst, src string) {
 	if dst == src {
+		return
+	}
+	if src == "ZP_R0" && dst == "ZP_RC" {
+		b.buf.WriteString("\tJSR __mov_rc_r0\n")
+		return
+	}
+	if src == "ZP_R0" && dst == "ZP_RA" {
+		b.buf.WriteString("\tJSR __mov_ra_r0\n")
 		return
 	}
 	b.buf.WriteString(fmt.Sprintf("\tLDA %s\n\tSTA %s\n\tLDA %s+1\n\tSTA %s+1\n", src, dst, src, dst))
@@ -309,6 +356,10 @@ func (b *Backend) emitAddConst(reg string, offset int) {
 	if offset == 0 {
 		return
 	}
+	if offset == 1 && reg == "ZP_R0" {
+		b.buf.WriteString("\tJSR __inc_r0\n")
+		return
+	}
 	if offset > 0 && offset <= 255 {
 		switch reg {
 		case "ZP_R0":
@@ -321,6 +372,14 @@ func (b *Backend) emitAddConst(reg string, offset int) {
 			b.buf.WriteString(fmt.Sprintf("\tLDY #%d\n\tJSR __add_rc_y\n", offset))
 			return
 		}
+	}
+	if offset < 0 && offset >= -255 && reg == "ZP_R0" {
+		if offset == -1 {
+			b.buf.WriteString("\tJSR __dec_r0\n")
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tLDY #%d\n\tJSR __sub_r0_y\n", -offset))
+		}
+		return
 	}
 	if offset == 1 {
 		lbl := b.nextLabel()
@@ -524,9 +583,44 @@ func (b *Backend) emitMemClear(sz int) {
 	b.buf.WriteString("\tJSR __memclear_rd\n")
 }
 
+func (b *Backend) constSmallU16(val ir.Value) (uint16, bool) {
+	if val == nil {
+		return 0, false
+	}
+	switch v := val.(type) {
+	case *ir.ConstByte:
+		return uint16(v.Val), true
+	case *ir.ConstWord:
+		u := uint16(v.Val)
+		if u <= 255 {
+			return u, true
+		}
+	case *ir.Sizeof:
+		sz := b.getTypeSize(v.TargetTyp)
+		if sz >= 0 && sz <= 255 {
+			return uint16(sz), true
+		}
+	}
+	return 0, false
+}
+
 func (b *Backend) emitBinaryOp(i *ir.BinaryOp) {
 	id := i.GetID()
 	b.loadVal(i.Left, "ZP_R0")
+
+	if cval, ok := b.constSmallU16(i.Right); ok {
+		switch i.Op {
+		case "add", "+":
+			b.emitAddConst("ZP_R0", int(cval))
+			b.storeResult(id)
+			return
+		case "sub", "-":
+			b.emitAddConst("ZP_R0", -int(cval))
+			b.storeResult(id)
+			return
+		}
+	}
+
 	b.loadVal(i.Right, "ZP_R1")
 
 	isUnsigned := i.Left.Type().IsWord() || i.Left.Type().IsByte() || i.Left.Type().IsAPointer()
@@ -597,6 +691,26 @@ func (b *Backend) emitCompare(i *ir.Compare) {
 		}
 	}
 	b.loadVal(i.Left, "ZP_R0")
+	if cval, ok := b.constSmallU16(i.Right); ok {
+		switch i.Op {
+		case "eq":
+			if cval == 0 {
+				b.buf.WriteString("\tJSR __is_zero_r0\n")
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tLDY #%d\n\tJSR __cmpeq_r0_y\n", cval))
+			}
+			b.storeResult(id)
+			return
+		case "neq":
+			if cval == 0 {
+				b.buf.WriteString("\tJSR __is_nonzero_r0\n")
+			} else {
+				b.buf.WriteString(fmt.Sprintf("\tLDY #%d\n\tJSR __cmpne_r0_y\n", cval))
+			}
+			b.storeResult(id)
+			return
+		}
+	}
 	b.loadVal(i.Right, "ZP_R1")
 	isUnsigned := i.Left.Type().IsWord() || i.Left.Type().IsByte() || i.Left.Type().IsAPointer()
 
@@ -909,7 +1023,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		sz := b.getTypeSize(i.Typ)
 		if sz == 1 {
 			b.loadVal(i.Ptr, "ZP_RC")
-			b.buf.WriteString("\tLDY #0\n\tLDA (ZP_RC),Y\n\tSTA ZP_R0\n\tLDA #0\n\tSTA ZP_R0+1\n")
+			b.buf.WriteString("\tJSR __load_r0_b_rc\n")
 			b.storeResult(id)
 		} else if sz == 2 {
 			b.loadVal(i.Ptr, "ZP_RC")
@@ -926,7 +1040,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if sz == 1 {
 			b.loadVal(i.Ptr, "ZP_RC")
 			b.loadVal(i.Val, "ZP_R0")
-			b.buf.WriteString("\tLDY #0\n\tLDA ZP_R0\n\tSTA (ZP_RC),Y\n")
+			b.buf.WriteString("\tJSR __store_r0_b_rc\n")
 		} else if sz == 2 {
 			b.loadVal(i.Ptr, "ZP_RC")
 			b.loadVal(i.Val, "ZP_R0")
@@ -942,7 +1056,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.emitLoadAddr("ZP_RA", i.Struct)
 		b.emitAddConst("ZP_RA", byteOffset)
 		if fieldSize == 1 {
-			b.buf.WriteString("\tLDY #0\n\tLDA (ZP_RA),Y\n\tSTA ZP_R0\n\tLDA #0\n\tSTA ZP_R0+1\n")
+			b.buf.WriteString("\tJSR __load_r0_b_ra\n")
 			b.storeResult(id)
 		} else if fieldSize == 2 {
 			b.buf.WriteString("\tJSR __load_r0_ra\n")
@@ -962,7 +1076,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		if fieldSize == 1 {
 			b.loadVal(i.Val, "ZP_R0")
 			b.emitAddrToReg("ZP_RC", b.slots[id]+byteOffset)
-			b.buf.WriteString("\tLDY #0\n\tLDA ZP_R0\n\tSTA (ZP_RC),Y\n")
+			b.buf.WriteString("\tJSR __store_r0_b_rc\n")
 		} else if fieldSize == 2 {
 			b.loadVal(i.Val, "ZP_R0")
 			b.emitAddrToReg("ZP_RC", b.slots[id]+byteOffset)
@@ -979,7 +1093,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.loadVal(i.Ptr, "ZP_RA")
 		b.emitAddConst("ZP_RA", byteOffset)
 		if fieldSize == 1 {
-			b.buf.WriteString("\tLDY #0\n\tLDA (ZP_RA),Y\n\tSTA ZP_R0\n\tLDA #0\n\tSTA ZP_R0+1\n")
+			b.buf.WriteString("\tJSR __load_r0_b_ra\n")
 			b.storeResult(id)
 		} else if fieldSize == 2 {
 			b.buf.WriteString("\tJSR __load_r0_ra\n")
@@ -996,7 +1110,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		b.emitAddConst("ZP_RC", byteOffset)
 		if fieldSize == 1 {
 			b.loadVal(i.Val, "ZP_R0")
-			b.buf.WriteString("\tLDY #0\n\tLDA ZP_R0\n\tSTA (ZP_RC),Y\n")
+			b.buf.WriteString("\tJSR __store_r0_b_rc\n")
 		} else if fieldSize == 2 {
 			b.loadVal(i.Val, "ZP_R0")
 			b.buf.WriteString("\tJSR __store_r0_rc\n")
@@ -1022,7 +1136,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 			b.emitCopyReg("ZP_RA", "ZP_R0")
 		}
 		if eltSize == 1 {
-			b.buf.WriteString("\tLDY #0\n\tLDA (ZP_RA),Y\n\tSTA ZP_R0\n\tLDA #0\n\tSTA ZP_R0+1\n")
+			b.buf.WriteString("\tJSR __load_r0_b_ra\n")
 			b.storeResult(id)
 		} else if eltSize == 2 {
 			b.buf.WriteString("\tJSR __load_r0_ra\n")
@@ -1054,7 +1168,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 		if eltSize == 1 {
 			b.loadVal(i.Val, "ZP_R0")
-			b.buf.WriteString("\tLDY #0\n\tLDA ZP_R0\n\tSTA (ZP_RD),Y\n")
+			b.buf.WriteString("\tJSR __store_r0_b_rd\n")
 		} else if eltSize == 2 {
 			b.loadVal(i.Val, "ZP_R0")
 			b.buf.WriteString("\tJSR __store_r0_rd\n")
@@ -1106,7 +1220,7 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		} else {
 			b.loadVal(i.Operand, "ZP_R0")
 			if dstSz == 1 {
-				b.buf.WriteString("\tLDA #0\n\tSTA ZP_R0+1\n")
+				b.buf.WriteString("\tJSR __zext_r0\n")
 			}
 			b.storeResult(id)
 		}
@@ -1188,6 +1302,9 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 func (b *Backend) emitFunc(f *ir.Function) {
 	b.allocateSlots(f)
 	fName := f.EmitName()
+
+	var savedBuf bytes.Buffer
+	savedBuf, b.buf = b.buf, savedBuf
 
 	b.buf.WriteString(fmt.Sprintf("\n; ── Function: %s (frameSize=%d) ─────────────────────────────────────────\n", fName, b.frameSize))
 	b.buf.WriteString(fmt.Sprintf("%s:\n", fName))
@@ -1273,6 +1390,10 @@ func (b *Backend) emitFunc(f *ir.Function) {
 			log.Panicf("emitFunc: unhandled terminator %T", blk.Terminator)
 		}
 	}
+
+	funcAsm := optimizeFuncAsm(b.buf.String(), b.pureScalars)
+	b.buf = savedBuf
+	b.buf.WriteString(funcAsm)
 }
 
 func (b *Backend) emitData(val ir.Value) {
@@ -1392,122 +1513,399 @@ func (b *Backend) Generate(prog *ir.Program) string {
 
 	b.emitGlobals(prog)
 
-	return optimizeAsm(b.buf.String())
+	return b.buf.String()
 }
 
 func normLine(s string) string {
+	if idx := strings.IndexByte(s, ';'); idx >= 0 {
+		s = s[:idx]
+	}
 	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 }
 
-func optimizeAsm(asm string) string {
+func parseLDYImm(norm string) (int, bool) {
+	if !strings.HasPrefix(norm, "LDY #") {
+		return 0, false
+	}
+	arg := strings.TrimSpace(strings.TrimPrefix(norm, "LDY #"))
+	if strings.HasPrefix(arg, "$") || strings.HasPrefix(arg, "<") || strings.HasPrefix(arg, ">") {
+		return 0, false
+	}
+	v, err := strconv.Atoi(arg)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+func isZeroExtR0Producer(norm string) bool {
+	switch norm {
+	case "JSR __cmpeq16", "JSR __cmpne16",
+		"JSR __cmplt16_u", "JSR __cmpgte16_u", "JSR __cmpgt16_u", "JSR __cmplte16_u",
+		"JSR __cmplt16_s", "JSR __cmpgte16_s", "JSR __cmpgt16_s", "JSR __cmplte16_s",
+		"JSR __is_zero_r0", "JSR __is_nonzero_r0",
+		"JSR __cmpeq_r0_y", "JSR __cmpne_r0_y",
+		"JSR __zero_r0", "JSR __const_r0_y", "JSR __const_r0_1",
+		"JSR __load_r0_b_y", "JSR __load_r0_b_rc", "JSR __load_r0_b_ra",
+		"JSR __zext_r0":
+		return true
+	}
+	return false
+}
+
+func setsAFromR0Byte(norm string) bool {
+	switch norm {
+	case "JSR __cmpeq16", "JSR __cmpne16",
+		"JSR __cmplt16_u", "JSR __cmpgte16_u", "JSR __cmpgt16_u", "JSR __cmplte16_u",
+		"JSR __cmplt16_s", "JSR __cmpgte16_s", "JSR __cmpgt16_s", "JSR __cmplte16_s",
+		"JSR __is_zero_r0", "JSR __is_nonzero_r0",
+		"JSR __cmpeq_r0_y", "JSR __cmpne_r0_y",
+		"JSR __load_r0_b_y", "JSR __store_r0_b_y",
+		"JSR __load_r0_b_rc", "JSR __load_r0_b_ra",
+		"JSR __zext_r0":
+		return true
+	}
+	return false
+}
+
+func optimizeFuncAsm(asm string, pureScalars map[int]bool) string {
 	lines := strings.Split(asm, "\n")
 
-	for pass := 0; pass < 4; pass++ {
-		changed := false
-		var out []string
-		n := len(lines)
-
-		for i := 0; i < n; i++ {
-			line := lines[i]
-			trimmed := strings.TrimSpace(line)
-
-			if trimmed == "" || strings.HasPrefix(trimmed, ";") {
-				out = append(out, line)
-				continue
+	findNext := func(lines []string, from int) int {
+		for j := from; j < len(lines); j++ {
+			t := strings.TrimSpace(lines[j])
+			if t != "" && !strings.HasPrefix(t, ";") {
+				return j
 			}
+		}
+		return -1
+	}
 
-			norm := normLine(trimmed)
-
-			findNext := func(from int) int {
-				for j := from; j < n; j++ {
-					t := strings.TrimSpace(lines[j])
-					if t != "" && !strings.HasPrefix(t, ";") {
-						return j
-					}
-				}
-				return -1
+	findPrev := func(lines []string, from int) int {
+		for j := from; j >= 0; j-- {
+			t := strings.TrimSpace(lines[j])
+			if t != "" && !strings.HasPrefix(t, ";") {
+				return j
 			}
+		}
+		return -1
+	}
 
-			next1 := findNext(i + 1)
+	// Run 2 outer rounds of peephole + dead-store elimination
+	for round := 0; round < 2; round++ {
+		for pass := 0; pass < 4; pass++ {
+			changed := false
+			var out []string
+			n := len(lines)
 
-			// 1. Redundant JMP to immediate next label:
-			//    JMP .L_foo
-			//    .L_foo:
-			if strings.HasPrefix(norm, "JMP ") && !strings.HasPrefix(norm, "JMP (") {
-				target := strings.TrimSpace(strings.TrimPrefix(norm, "JMP "))
-				if next1 >= 0 && normLine(lines[next1]) == target+":" {
-					changed = true
+			for i := 0; i < n; i++ {
+				line := lines[i]
+				trimmed := strings.TrimSpace(line)
+
+				if trimmed == "" || strings.HasPrefix(trimmed, ";") {
+					out = append(out, line)
 					continue
 				}
-			}
 
-			// 2. Redundant 1-byte or 2-byte store to slot followed immediately by reload of same slot into ZP_R0 or ZP_RC:
-			//    LDY #k
-			//    JSR __store_r0_y (or __store_r0_b_y)
-			//    LDY #k
-			//    JSR __load_r0_y / JSR __load_rc_y (or __load_r0_b_y)
-			if strings.HasPrefix(norm, "LDY #") && next1 >= 0 {
-				n1Norm := normLine(lines[next1])
-				if n1Norm == "JSR __store_r0_y" {
-					next2 := findNext(next1 + 1)
-					if next2 >= 0 && normLine(lines[next2]) == norm {
-						next3 := findNext(next2 + 1)
-						if next3 >= 0 {
-							n3Norm := normLine(lines[next3])
-							if n3Norm == "JSR __load_r0_y" || n3Norm == "JSR __load_rc_y" {
+				norm := normLine(trimmed)
+				next1 := findNext(lines, i+1)
+
+				// 1. Redundant JMP to immediate next label
+				if strings.HasPrefix(norm, "JMP ") && !strings.HasPrefix(norm, "JMP (") {
+					target := strings.TrimSpace(strings.TrimPrefix(norm, "JMP "))
+					if next1 >= 0 && normLine(lines[next1]) == target+":" {
+						changed = true
+						continue
+					}
+				}
+
+				// 2. Store to slot followed immediately by reload of same slot
+				if strings.HasPrefix(norm, "LDY #") && next1 >= 0 {
+					n1Norm := normLine(lines[next1])
+					if n1Norm == "JSR __store_r0_y" {
+						next2 := findNext(lines, next1+1)
+						if next2 >= 0 && normLine(lines[next2]) == norm {
+							next3 := findNext(lines, next2+1)
+							if next3 >= 0 {
+								n3Norm := normLine(lines[next3])
+								if n3Norm == "JSR __load_r0_y" {
+									lines[next2] = ";" + lines[next2]
+									lines[next3] = ";" + lines[next3]
+									changed = true
+								} else if n3Norm == "JSR __load_rc_y" {
+									if !strings.Contains(lines[next1], "uses_rc") {
+										lines[next1] = lines[next1] + " ; uses_rc"
+									}
+									lines[next2] = ";" + lines[next2]
+									lines[next3] = ";" + lines[next3]
+									changed = true
+								}
+							}
+						}
+					} else if n1Norm == "JSR __store_r0_b_y" {
+						next2 := findNext(lines, next1+1)
+						if next2 >= 0 && normLine(lines[next2]) == norm {
+							next3 := findNext(lines, next2+1)
+							if next3 >= 0 && normLine(lines[next3]) == "JSR __load_r0_b_y" {
+								if !strings.Contains(lines[next1], "uses_zext") {
+									lines[next1] = lines[next1] + " ; uses_zext"
+								}
 								lines[next2] = ";" + lines[next2]
 								lines[next3] = ";" + lines[next3]
 								changed = true
 							}
 						}
 					}
-				} else if n1Norm == "JSR __store_r0_b_y" {
-					next2 := findNext(next1 + 1)
-					if next2 >= 0 && normLine(lines[next2]) == norm {
-						next3 := findNext(next2 + 1)
-						if next3 >= 0 && normLine(lines[next3]) == "JSR __load_r0_b_y" {
-							lines[next2] = ";" + lines[next2]
-							lines[next3] = ";" + lines[next3]
-							changed = true
-						}
-					}
 				}
-			}
 
-			// 3. Branch inversion over unconditional JMP:
-			//    BNE L1
-			//    JMP L2
-			//    L1:
-			// -> BEQ L2
-			//    L1:
-			if (strings.HasPrefix(norm, "BNE ") || strings.HasPrefix(norm, "BEQ ")) && next1 >= 0 {
-				parts := strings.Fields(norm)
-				if len(parts) == 2 {
-					bcc := parts[0]
-					t1 := parts[1]
-					n1Norm := normLine(lines[next1])
-					if strings.HasPrefix(n1Norm, "JMP ") && !strings.HasPrefix(n1Norm, "JMP (") {
-						t2 := strings.TrimSpace(strings.TrimPrefix(n1Norm, "JMP "))
-						next2 := findNext(next1 + 1)
-						if next2 >= 0 && normLine(lines[next2]) == t1+":" {
-							inv := "BEQ"
-							if bcc == "BEQ" {
-								inv = "BNE"
+				// 3. Branch inversion over unconditional JMP
+				if (strings.HasPrefix(norm, "BNE ") || strings.HasPrefix(norm, "BEQ ")) && next1 >= 0 {
+					parts := strings.Fields(norm)
+					if len(parts) == 2 {
+						bcc := parts[0]
+						t1 := parts[1]
+						n1Norm := normLine(lines[next1])
+						if strings.HasPrefix(n1Norm, "JMP ") && !strings.HasPrefix(n1Norm, "JMP (") {
+							t2 := strings.TrimSpace(strings.TrimPrefix(n1Norm, "JMP "))
+							next2 := findNext(lines, next1+1)
+							if next2 >= 0 && normLine(lines[next2]) == t1+":" {
+								inv := "BEQ"
+								if bcc == "BEQ" {
+									inv = "BNE"
+								}
+								out = append(out, fmt.Sprintf("\t%s %s", inv, t2))
+								lines[next1] = ";" + lines[next1]
+								changed = true
+								continue
 							}
-							out = append(out, fmt.Sprintf("\t%s %s", inv, t2))
-							lines[next1] = ";" + lines[next1]
-							changed = true
-							continue
+						}
+					}
+				}
+
+				out = append(out, line)
+			}
+			lines = out
+			if !changed {
+				break
+			}
+		}
+
+		// Dead-store elimination on pureScalars (non-address-taken <= 2 byte scalars)
+		if len(pureScalars) > 0 {
+			readSlots := make(map[int]bool)
+			for i := 0; i < len(lines); i++ {
+				trimmed := strings.TrimSpace(lines[i])
+				if trimmed == "" || strings.HasPrefix(trimmed, ";") {
+					continue
+				}
+				if k, ok := parseLDYImm(normLine(trimmed)); ok && pureScalars[k] {
+					next1 := findNext(lines, i+1)
+					if next1 >= 0 {
+						n1Norm := normLine(lines[next1])
+						switch n1Norm {
+						case "JSR __load_r0_y", "JSR __load_r0_b_y",
+							"JSR __load_r1_y", "JSR __load_r1_b_y",
+							"JSR __load_ra_y", "JSR __load_rc_y",
+							"JSR __addr_r0_y", "JSR __addr_r1_y",
+							"JSR __addr_ra_y", "JSR __addr_rc_y", "JSR __addr_rd_y",
+							"LDA (ZP_FP),Y":
+							readSlots[k] = true
 						}
 					}
 				}
 			}
 
-			out = append(out, line)
+			for i := 0; i < len(lines); i++ {
+				trimmed := strings.TrimSpace(lines[i])
+				if trimmed == "" || strings.HasPrefix(trimmed, ";") {
+					continue
+				}
+				if k, ok := parseLDYImm(normLine(trimmed)); ok && pureScalars[k] && !readSlots[k] {
+					next1 := findNext(lines, i+1)
+					if next1 >= 0 {
+						n1Norm := normLine(lines[next1])
+						if n1Norm == "JSR __store_r0_y" {
+							lines[i] = ";" + lines[i]
+							if strings.Contains(lines[next1], "uses_rc") {
+								lines[next1] = "\tJSR __mov_rc_r0"
+							} else {
+								lines[next1] = ";" + lines[next1]
+							}
+						} else if n1Norm == "JSR __store_r0_b_y" {
+							lines[i] = ";" + lines[i]
+							if strings.Contains(lines[next1], "uses_zext") {
+								prev := findPrev(lines, i-1)
+								if prev >= 0 && isZeroExtR0Producer(normLine(lines[prev])) {
+									lines[next1] = ";" + lines[next1]
+								} else {
+									lines[next1] = "\tJSR __zext_r0"
+								}
+							} else {
+								lines[next1] = ";" + lines[next1]
+							}
+						}
+					}
+				}
+			}
 		}
-		lines = out
-		if !changed {
-			break
+	}
+
+	// Elide redundant LDA ZP_R0 before BNE/BEQ when A and Z already reflect ZP_R0
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		if normLine(trimmed) == "LDA ZP_R0" {
+			prev := findPrev(lines, i-1)
+			next1 := findNext(lines, i+1)
+			if prev >= 0 && next1 >= 0 {
+				pNorm := normLine(lines[prev])
+				nNorm := normLine(lines[next1])
+				if setsAFromR0Byte(pNorm) && (strings.HasPrefix(nNorm, "BNE ") || strings.HasPrefix(nNorm, "BEQ ")) {
+					lines[i] = ";" + lines[i]
+				}
+			}
+		}
+	}
+
+	// Final pass: collapse multi-instruction idioms into compact JSR helpers
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		norm := normLine(trimmed)
+		next1 := findNext(lines, i+1)
+		if next1 < 0 {
+			continue
+		}
+		n1Norm := normLine(lines[next1])
+
+		// JSR __zero_r0 + JSR __push_r0 -> JSR __push_0
+		if norm == "JSR __zero_r0" && n1Norm == "JSR __push_r0" {
+			lines[i] = "\tJSR __push_0"
+			lines[next1] = ";" + lines[next1]
+			continue
+		}
+
+		// LDY #<lo> + LDA #<hi> + JSR __const_r0_ay + JSR __push_r0 -> LDY #<lo> + LDA #<hi> + JSR __push_ay
+		if strings.HasPrefix(norm, "LDY #") && strings.HasPrefix(n1Norm, "LDA #") {
+			next2 := findNext(lines, next1+1)
+			if next2 >= 0 && normLine(lines[next2]) == "JSR __const_r0_ay" {
+				next3 := findNext(lines, next2+1)
+				if next3 >= 0 && normLine(lines[next3]) == "JSR __push_r0" {
+					lines[next2] = "\tJSR __push_ay"
+					lines[next3] = ";" + lines[next3]
+					continue
+				}
+			}
+		}
+
+		if k, ok := parseLDYImm(norm); ok {
+			next2 := findNext(lines, next1+1)
+			var n2Norm string
+			if next2 >= 0 {
+				n2Norm = normLine(lines[next2])
+			}
+
+			// LDY #k + JSR __const_r0_y + JSR __push_r0
+			if n1Norm == "JSR __const_r0_y" && n2Norm == "JSR __push_r0" {
+				if k == 0 {
+					lines[i] = "\tJSR __push_0"
+					lines[next1] = ";" + lines[next1]
+					lines[next2] = ";" + lines[next2]
+				} else if k == 1 {
+					lines[i] = "\tJSR __push_1"
+					lines[next1] = ";" + lines[next1]
+					lines[next2] = ";" + lines[next2]
+				} else if k == 2 {
+					lines[i] = "\tJSR __push_2"
+					lines[next1] = ";" + lines[next1]
+					lines[next2] = ";" + lines[next2]
+				} else {
+					lines[next1] = "\tJSR __push_y"
+					lines[next2] = ";" + lines[next2]
+				}
+				continue
+			}
+
+			// LDY #k + JSR __load_r0_y + JSR __push_r0
+			if n1Norm == "JSR __load_r0_y" && n2Norm == "JSR __push_r0" {
+				if k >= 2 && k <= 24 && k%2 == 0 {
+					lines[i] = fmt.Sprintf("\tJSR __push_slot_%d", k)
+					lines[next1] = ";" + lines[next1]
+					lines[next2] = ";" + lines[next2]
+				} else {
+					lines[next1] = "\tJSR __push_slot_y"
+					lines[next2] = ";" + lines[next2]
+				}
+				continue
+			}
+
+			// LDY #k + JSR __load_r0_b_y + JSR __push_r0
+			if n1Norm == "JSR __load_r0_b_y" && n2Norm == "JSR __push_r0" {
+				if k >= 2 && k <= 16 && k%2 == 0 {
+					lines[i] = fmt.Sprintf("\tJSR __push_slot_b_%d", k)
+					lines[next1] = ";" + lines[next1]
+					lines[next2] = ";" + lines[next2]
+				} else {
+					lines[next1] = "\tJSR __push_slot_b_y"
+					lines[next2] = ";" + lines[next2]
+				}
+				continue
+			}
+
+			// Hot-offset frame helpers (even offsets 2..32)
+			if k >= 2 && k <= 32 && k%2 == 0 {
+				switch n1Norm {
+				case "JSR __load_r0_y":
+					lines[i] = fmt.Sprintf("\tJSR __load_r0_%d", k)
+					lines[next1] = ";" + lines[next1]
+					continue
+				case "JSR __load_r0_b_y":
+					lines[i] = fmt.Sprintf("\tJSR __load_r0_b_%d", k)
+					lines[next1] = ";" + lines[next1]
+					continue
+				case "JSR __load_r1_y":
+					lines[i] = fmt.Sprintf("\tJSR __load_r1_%d", k)
+					lines[next1] = ";" + lines[next1]
+					continue
+				case "JSR __store_r0_y":
+					lines[i] = fmt.Sprintf("\tJSR __store_r0_%d", k)
+					lines[next1] = ";" + lines[next1]
+					continue
+				case "JSR __store_r0_b_y":
+					lines[i] = fmt.Sprintf("\tJSR __store_r0_b_%d", k)
+					lines[next1] = ";" + lines[next1]
+					continue
+				case "JSR __addr_r0_y":
+					if k <= 24 {
+						lines[i] = fmt.Sprintf("\tJSR __addr_r0_%d", k)
+						lines[next1] = ";" + lines[next1]
+						continue
+					}
+				case "JSR __add_sp_y":
+					if k <= 8 {
+						lines[i] = fmt.Sprintf("\tJSR __add_sp_%d", k)
+						lines[next1] = ";" + lines[next1]
+						continue
+					}
+				}
+			}
+
+			if k == 1 {
+				switch n1Norm {
+				case "JSR __const_r0_y":
+					lines[i] = "\tJSR __const_r0_1"
+					lines[next1] = ";" + lines[next1]
+					continue
+				case "JSR __const_r1_y":
+					lines[i] = "\tJSR __const_r1_1"
+					lines[next1] = ";" + lines[next1]
+					continue
+				}
+			}
 		}
 	}
 

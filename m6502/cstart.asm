@@ -134,7 +134,101 @@ __sub_sp_y:
 	STA     ZP_RC+1
 	RTS
 
+; Push helpers for constants and frame slots
+__push_0:
+	LDA     #0
+	TAY
+	BEQ     __push_ay
+__push_1:
+	LDY     #1
+	BNE     __push_y
+__push_2:
+	LDY     #2
+__push_y:
+	LDA     #0
+__push_ay:
+	STY     ZP_R0
+	STA     ZP_R0+1
+	JMP     __push_r0
+
+__push_slot_2:
+	LDY     #2
+	BNE     __push_slot_y
+__push_slot_4:
+	LDY     #4
+	BNE     __push_slot_y
+__push_slot_6:
+	LDY     #6
+	BNE     __push_slot_y
+__push_slot_8:
+	LDY     #8
+	BNE     __push_slot_y
+__push_slot_10:
+	LDY     #10
+	BNE     __push_slot_y
+__push_slot_12:
+	LDY     #12
+	BNE     __push_slot_y
+__push_slot_14:
+	LDY     #14
+	BNE     __push_slot_y
+__push_slot_16:
+	LDY     #16
+	BNE     __push_slot_y
+__push_slot_18:
+	LDY     #18
+	BNE     __push_slot_y
+__push_slot_20:
+	LDY     #20
+	BNE     __push_slot_y
+__push_slot_22:
+	LDY     #22
+	BNE     __push_slot_y
+__push_slot_24:
+	LDY     #24
+__push_slot_y:
+	JSR     __load_r0_y
+	JMP     __push_r0
+
+__push_slot_b_2:
+	LDY     #2
+	BNE     __push_slot_b_y
+__push_slot_b_4:
+	LDY     #4
+	BNE     __push_slot_b_y
+__push_slot_b_6:
+	LDY     #6
+	BNE     __push_slot_b_y
+__push_slot_b_8:
+	LDY     #8
+	BNE     __push_slot_b_y
+__push_slot_b_10:
+	LDY     #10
+	BNE     __push_slot_b_y
+__push_slot_b_12:
+	LDY     #12
+	BNE     __push_slot_b_y
+__push_slot_b_14:
+	LDY     #14
+	BNE     __push_slot_b_y
+__push_slot_b_16:
+	LDY     #16
+__push_slot_b_y:
+	JSR     __load_r0_b_y
+	JMP     __push_r0
+
 ; Add Y bytes (1..255) to ZP_SP (caller argument cleanup)
+__add_sp_2:
+	LDY     #2
+	BNE     __add_sp_y
+__add_sp_4:
+	LDY     #4
+	BNE     __add_sp_y
+__add_sp_6:
+	LDY     #6
+	BNE     __add_sp_y
+__add_sp_8:
+	LDY     #8
 __add_sp_y:
 	TYA
 	CLC
@@ -150,6 +244,53 @@ __call_rc:
 	JMP     (ZP_RC)
 
 ; Load 2 bytes at (ZP_FP),Y into ZP_R0 / ZP_R1 / ZP_RA / ZP_RC
+__load_r0_2:
+	LDY     #2
+	BNE     __load_r0_y
+__load_r0_4:
+	LDY     #4
+	BNE     __load_r0_y
+__load_r0_6:
+	LDY     #6
+	BNE     __load_r0_y
+__load_r0_8:
+	LDY     #8
+	BNE     __load_r0_y
+__load_r0_10:
+	LDY     #10
+	BNE     __load_r0_y
+__load_r0_12:
+	LDY     #12
+	BNE     __load_r0_y
+__load_r0_14:
+	LDY     #14
+	BNE     __load_r0_y
+__load_r0_16:
+	LDY     #16
+	BNE     __load_r0_y
+__load_r0_18:
+	LDY     #18
+	BNE     __load_r0_y
+__load_r0_20:
+	LDY     #20
+	BNE     __load_r0_y
+__load_r0_22:
+	LDY     #22
+	BNE     __load_r0_y
+__load_r0_24:
+	LDY     #24
+	BNE     __load_r0_y
+__load_r0_26:
+	LDY     #26
+	BNE     __load_r0_y
+__load_r0_28:
+	LDY     #28
+	BNE     __load_r0_y
+__load_r0_30:
+	LDY     #30
+	BNE     __load_r0_y
+__load_r0_32:
+	LDY     #32
 __load_r0_y:
 	LDA     (ZP_FP),Y
 	STA     ZP_R0
@@ -158,13 +299,107 @@ __load_r0_y:
 	STA     ZP_R0+1
 	RTS
 
+__load_r0_b_2:
+	LDY     #2
+	BNE     __load_r0_b_y
+__load_r0_b_4:
+	LDY     #4
+	BNE     __load_r0_b_y
+__load_r0_b_6:
+	LDY     #6
+	BNE     __load_r0_b_y
+__load_r0_b_8:
+	LDY     #8
+	BNE     __load_r0_b_y
+__load_r0_b_10:
+	LDY     #10
+	BNE     __load_r0_b_y
+__load_r0_b_12:
+	LDY     #12
+	BNE     __load_r0_b_y
+__load_r0_b_14:
+	LDY     #14
+	BNE     __load_r0_b_y
+__load_r0_b_16:
+	LDY     #16
+	BNE     __load_r0_b_y
+__load_r0_b_18:
+	LDY     #18
+	BNE     __load_r0_b_y
+__load_r0_b_20:
+	LDY     #20
+	BNE     __load_r0_b_y
+__load_r0_b_22:
+	LDY     #22
+	BNE     __load_r0_b_y
+__load_r0_b_24:
+	LDY     #24
+	BNE     __load_r0_b_y
+__load_r0_b_26:
+	LDY     #26
+	BNE     __load_r0_b_y
+__load_r0_b_28:
+	LDY     #28
+	BNE     __load_r0_b_y
+__load_r0_b_30:
+	LDY     #30
+	BNE     __load_r0_b_y
+__load_r0_b_32:
+	LDY     #32
 __load_r0_b_y:
-	LDA     (ZP_FP),Y
-	STA     ZP_R0
 	LDA     #0
 	STA     ZP_R0+1
+	LDA     (ZP_FP),Y
+	STA     ZP_R0
 	RTS
 
+__load_r1_2:
+	LDY     #2
+	BNE     __load_r1_y
+__load_r1_4:
+	LDY     #4
+	BNE     __load_r1_y
+__load_r1_6:
+	LDY     #6
+	BNE     __load_r1_y
+__load_r1_8:
+	LDY     #8
+	BNE     __load_r1_y
+__load_r1_10:
+	LDY     #10
+	BNE     __load_r1_y
+__load_r1_12:
+	LDY     #12
+	BNE     __load_r1_y
+__load_r1_14:
+	LDY     #14
+	BNE     __load_r1_y
+__load_r1_16:
+	LDY     #16
+	BNE     __load_r1_y
+__load_r1_18:
+	LDY     #18
+	BNE     __load_r1_y
+__load_r1_20:
+	LDY     #20
+	BNE     __load_r1_y
+__load_r1_22:
+	LDY     #22
+	BNE     __load_r1_y
+__load_r1_24:
+	LDY     #24
+	BNE     __load_r1_y
+__load_r1_26:
+	LDY     #26
+	BNE     __load_r1_y
+__load_r1_28:
+	LDY     #28
+	BNE     __load_r1_y
+__load_r1_30:
+	LDY     #30
+	BNE     __load_r1_y
+__load_r1_32:
+	LDY     #32
 __load_r1_y:
 	LDA     (ZP_FP),Y
 	STA     ZP_R1
@@ -174,10 +409,10 @@ __load_r1_y:
 	RTS
 
 __load_r1_b_y:
-	LDA     (ZP_FP),Y
-	STA     ZP_R1
 	LDA     #0
 	STA     ZP_R1+1
+	LDA     (ZP_FP),Y
+	STA     ZP_R1
 	RTS
 
 __load_ra_y:
@@ -197,6 +432,53 @@ __load_rc_y:
 	RTS
 
 ; Store 2 bytes from ZP_R0 into (ZP_FP),Y and copy ZP_R0 to ZP_RC
+__store_r0_2:
+	LDY     #2
+	BNE     __store_r0_y
+__store_r0_4:
+	LDY     #4
+	BNE     __store_r0_y
+__store_r0_6:
+	LDY     #6
+	BNE     __store_r0_y
+__store_r0_8:
+	LDY     #8
+	BNE     __store_r0_y
+__store_r0_10:
+	LDY     #10
+	BNE     __store_r0_y
+__store_r0_12:
+	LDY     #12
+	BNE     __store_r0_y
+__store_r0_14:
+	LDY     #14
+	BNE     __store_r0_y
+__store_r0_16:
+	LDY     #16
+	BNE     __store_r0_y
+__store_r0_18:
+	LDY     #18
+	BNE     __store_r0_y
+__store_r0_20:
+	LDY     #20
+	BNE     __store_r0_y
+__store_r0_22:
+	LDY     #22
+	BNE     __store_r0_y
+__store_r0_24:
+	LDY     #24
+	BNE     __store_r0_y
+__store_r0_26:
+	LDY     #26
+	BNE     __store_r0_y
+__store_r0_28:
+	LDY     #28
+	BNE     __store_r0_y
+__store_r0_30:
+	LDY     #30
+	BNE     __store_r0_y
+__store_r0_32:
+	LDY     #32
 __store_r0_y:
 	LDA     ZP_R0
 	STA     (ZP_FP),Y
@@ -208,14 +490,81 @@ __store_r0_y:
 	RTS
 
 ; Store 1 byte from ZP_R0 into (ZP_FP),Y and zero-extend ZP_R0
+__store_r0_b_2:
+	LDY     #2
+	BNE     __store_r0_b_y
+__store_r0_b_4:
+	LDY     #4
+	BNE     __store_r0_b_y
+__store_r0_b_6:
+	LDY     #6
+	BNE     __store_r0_b_y
+__store_r0_b_8:
+	LDY     #8
+	BNE     __store_r0_b_y
+__store_r0_b_10:
+	LDY     #10
+	BNE     __store_r0_b_y
+__store_r0_b_12:
+	LDY     #12
+	BNE     __store_r0_b_y
+__store_r0_b_14:
+	LDY     #14
+	BNE     __store_r0_b_y
+__store_r0_b_16:
+	LDY     #16
+	BNE     __store_r0_b_y
+__store_r0_b_18:
+	LDY     #18
+	BNE     __store_r0_b_y
+__store_r0_b_20:
+	LDY     #20
+	BNE     __store_r0_b_y
+__store_r0_b_22:
+	LDY     #22
+	BNE     __store_r0_b_y
+__store_r0_b_24:
+	LDY     #24
+	BNE     __store_r0_b_y
+__store_r0_b_26:
+	LDY     #26
+	BNE     __store_r0_b_y
+__store_r0_b_28:
+	LDY     #28
+	BNE     __store_r0_b_y
+__store_r0_b_30:
+	LDY     #30
+	BNE     __store_r0_b_y
+__store_r0_b_32:
+	LDY     #32
 __store_r0_b_y:
-	LDA     ZP_R0
-	STA     (ZP_FP),Y
 	LDA     #0
 	STA     ZP_R0+1
+	LDA     ZP_R0
+	STA     (ZP_FP),Y
 	RTS
 
-; Load/Store 2 bytes via (ZP_RA) or (ZP_RC) or (ZP_RD)
+__zext_r0:
+	LDA     #0
+	STA     ZP_R0+1
+	LDA     ZP_R0
+	RTS
+
+__mov_rc_r0:
+	LDA     ZP_R0
+	STA     ZP_RC
+	LDA     ZP_R0+1
+	STA     ZP_RC+1
+	RTS
+
+__mov_ra_r0:
+	LDA     ZP_R0
+	STA     ZP_RA
+	LDA     ZP_R0+1
+	STA     ZP_RA+1
+	RTS
+
+; Load/Store 1 or 2 bytes via (ZP_RA) or (ZP_RC) or (ZP_RD)
 __load_r0_rc:
 	LDY     #0
 	LDA     (ZP_RC),Y
@@ -223,6 +572,13 @@ __load_r0_rc:
 	INY
 	LDA     (ZP_RC),Y
 	STA     ZP_R0+1
+	RTS
+
+__load_r0_b_rc:
+	LDY     #0
+	STY     ZP_R0+1
+	LDA     (ZP_RC),Y
+	STA     ZP_R0
 	RTS
 
 __load_r0_ra:
@@ -234,12 +590,25 @@ __load_r0_ra:
 	STA     ZP_R0+1
 	RTS
 
+__load_r0_b_ra:
+	LDY     #0
+	STY     ZP_R0+1
+	LDA     (ZP_RA),Y
+	STA     ZP_R0
+	RTS
+
 __store_r0_rc:
 	LDY     #0
 	LDA     ZP_R0
 	STA     (ZP_RC),Y
 	INY
 	LDA     ZP_R0+1
+	STA     (ZP_RC),Y
+	RTS
+
+__store_r0_b_rc:
+	LDY     #0
+	LDA     ZP_R0
 	STA     (ZP_RC),Y
 	RTS
 
@@ -252,26 +621,54 @@ __store_r0_rd:
 	STA     (ZP_RD),Y
 	RTS
 
-; Load small unsigned constant Y (0..255) into ZP_R0 / ZP_R1
+__store_r0_b_rd:
+	LDY     #0
+	LDA     ZP_R0
+	STA     (ZP_RD),Y
+	RTS
+
+; Load small unsigned constant Y (0..255) or 16-bit (A:Y) into ZP_R0 / ZP_R1 / ZP_RA / ZP_RC
 __zero_r0:
 	LDA     #0
 	STA     ZP_R0
 	STA     ZP_R0+1
 	RTS
 
+__const_r0_1:
+	LDY     #1
 __const_r0_y:
-	STY     ZP_R0
 	LDA     #0
+__const_r0_ay:
+	STY     ZP_R0
 	STA     ZP_R0+1
 	RTS
 
+__const_r1_1:
+	LDY     #1
 __const_r1_y:
-	STY     ZP_R1
 	LDA     #0
+__const_r1_ay:
+	STY     ZP_R1
 	STA     ZP_R1+1
 	RTS
 
-; Add Y (1..255) to 16-bit ZP_R0 / ZP_RA / ZP_RC
+__const_ra_ay:
+	STY     ZP_RA
+	STA     ZP_RA+1
+	RTS
+
+__const_rc_ay:
+	STY     ZP_RC
+	STA     ZP_RC+1
+	RTS
+
+; Add/Sub Y (1..255) to 16-bit ZP_R0 / ZP_RA / ZP_RC
+__inc_r0:
+	INC     ZP_R0
+	BNE     .L_add_r0_nc
+	INC     ZP_R0+1
+	RTS
+
 __add_r0_y:
 	TYA
 	CLC
@@ -280,6 +677,19 @@ __add_r0_y:
 	BCC     .L_add_r0_nc
 	INC     ZP_R0+1
 .L_add_r0_nc:
+	RTS
+
+__dec_r0:
+	LDY     #1
+__sub_r0_y:
+	STY     ZP_RE
+	SEC
+	LDA     ZP_R0
+	SBC     ZP_RE
+	STA     ZP_R0
+	BCS     .L_sub_r0_nb
+	DEC     ZP_R0+1
+.L_sub_r0_nb:
 	RTS
 
 __add_ra_y:
@@ -303,6 +713,41 @@ __add_rc_y:
 	RTS
 
 ; Compute ZP_Rx = ZP_FP + Y (0..255) or ZP_FP + (A:Y)
+__addr_r0_2:
+	LDY     #2
+	BNE     __addr_r0_y
+__addr_r0_4:
+	LDY     #4
+	BNE     __addr_r0_y
+__addr_r0_6:
+	LDY     #6
+	BNE     __addr_r0_y
+__addr_r0_8:
+	LDY     #8
+	BNE     __addr_r0_y
+__addr_r0_10:
+	LDY     #10
+	BNE     __addr_r0_y
+__addr_r0_12:
+	LDY     #12
+	BNE     __addr_r0_y
+__addr_r0_14:
+	LDY     #14
+	BNE     __addr_r0_y
+__addr_r0_16:
+	LDY     #16
+	BNE     __addr_r0_y
+__addr_r0_18:
+	LDY     #18
+	BNE     __addr_r0_y
+__addr_r0_20:
+	LDY     #20
+	BNE     __addr_r0_y
+__addr_r0_22:
+	LDY     #22
+	BNE     __addr_r0_y
+__addr_r0_24:
+	LDY     #24
 __addr_r0_y:
 	LDA     #0
 __addr_r0_ay:
@@ -964,6 +1409,32 @@ __sdivmod16:
 	RTS
 
 ; ── 16-Bit Comparison Helpers ────────────────────────────────────────────────
+
+__is_zero_r0:
+	LDA     ZP_R0
+	ORA     ZP_R0+1
+	BEQ     .L_cmp_true
+	BNE     .L_cmp_false
+
+__is_nonzero_r0:
+	LDA     ZP_R0
+	ORA     ZP_R0+1
+	BNE     .L_cmp_true
+	BEQ     .L_cmp_false
+
+__cmpeq_r0_y:
+	CPY     ZP_R0
+	BNE     .L_cmp_false
+	LDA     ZP_R0+1
+	BEQ     .L_cmp_true
+	BNE     .L_cmp_false
+
+__cmpne_r0_y:
+	CPY     ZP_R0
+	BNE     .L_cmp_true
+	LDA     ZP_R0+1
+	BNE     .L_cmp_true
+	BEQ     .L_cmp_false
 
 __cmpeq16:
 	LDA     ZP_R0
