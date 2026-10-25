@@ -20,6 +20,7 @@ import (
 	"github.com/strickyak/minigolf/ctranslator"
 	"github.com/strickyak/minigolf/ir"
 	"github.com/strickyak/minigolf/lexer"
+	"github.com/strickyak/minigolf/m6502"
 	"github.com/strickyak/minigolf/m6809"
 	"github.com/strickyak/minigolf/m68k"
 	"github.com/strickyak/minigolf/np"
@@ -544,7 +545,8 @@ func main() {
 	if archLower == "m6809" || archLower == "6809" || archLower == "m" || archLower == "big6809" ||
 		archLower == "m68k" || archLower == "68000" || archLower == "k" ||
 		archLower == "z80" || archLower == "z" ||
-		archLower == "1802" || archLower == "cdp1802" || archLower == "c" || archLower == "cosmac" {
+		archLower == "1802" || archLower == "cdp1802" || archLower == "c" || archLower == "cosmac" ||
+		archLower == "6502" || archLower == "m6502" || archLower == "5" {
 		if _, ok := cDefines["unix"]; !ok {
 			cDefines["unix"] = "0"
 		}
@@ -1226,6 +1228,54 @@ func main() {
 			os.Exit(1)
 		}
 		log.Printf("Successfully compiled via CDP1802 to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=6502 / -m=5 / -m=m6502 : Generate MOS 6502 assembly from IR and exit cleanly
+	if archLower == "6502" || archLower == "m6502" || archLower == "5" {
+		builder := ir.NewBuilder(resolveCallback, 2)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
+		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
+
+		optConfig := opt.Config{
+			EnableConstFold:        !*noConstfold,
+			EnableDBE:              !*noDbe,
+			EnableDCE:              !*noDce,
+			EnableCopyProp:         !*noCopyProp,
+			EnableCSE:              !*noCse,
+			EnableStrengthRed:      !*noStrengthRed,
+			EnablePhiSimp:          !*noPhisimp,
+			EnableStackAlloc:       !*noStackAlloc,
+			EnableBranchFold:       !*noBranchFold,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:    *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
+			EnableDebugOpt:         *debugOpt,
+			WordSize:               2,
+		}
+		builder.AnnotateLeafLevels(*debugOpt)
+		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
+
+		backend := m6502.New()
+		asmCode := backend.Generate(irProg)
+
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (MOS 6502 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing M6502 output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via M6502 to: %s", *outFlag)
 		os.Exit(0)
 	}
 

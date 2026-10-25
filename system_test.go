@@ -147,7 +147,7 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 	if backend == "amd64" || backend == "x86_64" {
 		ext = ".s"
 	}
-	if backend == "m6809" || backend == "z80" || backend == "z" || backend == "1802" || backend == "c" || backend == "cdp1802" || backend == "cosmac" {
+	if backend == "m6809" || backend == "z80" || backend == "z" || backend == "1802" || backend == "c" || backend == "cdp1802" || backend == "cosmac" || backend == "6502" || backend == "m6502" || backend == "5" {
 		ext = ".asm"
 	}
 	if backend == "m68k" || backend == "k" {
@@ -227,6 +227,20 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 
 	case "1802", "c", "cdp1802", "cosmac":
 		cmd = exec.Command("bash", "runc.sh", midFile)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		t.Logf("Running: %v", cmd)
+		if err := cmd.Run(); err != nil {
+			if expectRunError {
+				return // Success: execution failed as expected
+			}
+			t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
+		} else if expectRunError {
+			t.Fatalf("Expected run error for backend %s but execution succeeded", backend)
+		}
+
+	case "6502", "m6502", "5":
+		cmd = exec.Command("bash", "run5.sh", midFile)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		t.Logf("Running: %v", cmd)
@@ -337,6 +351,44 @@ func TestSystemTriangles_1802(t *testing.T) {
 
 func TestSystemTrianglesByte_1802(t *testing.T) {
 	testBackend(t, "1802", "demos/triangles_byte.golf", expectedOutputByte, false, false)
+}
+
+func TestSystemTriangles_6502(t *testing.T) {
+	testBackend(t, "6502", "demos/triangles.golf", expectedOutput, false, false)
+}
+
+func TestSystemTrianglesByte_6502(t *testing.T) {
+	testBackend(t, "6502", "demos/triangles_byte.golf", expectedOutputByte, false, false)
+}
+
+func TestSystemGolfFiles_6502(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping 6502 system tests in short mode")
+	}
+	files, err := filepath.Glob("tests/*.golf")
+	if err != nil {
+		t.Fatalf("Failed to glob tests/*.golf: %v", err)
+	}
+	for _, file := range files {
+		if strings.HasSuffix(file, ".bad.golf") || strings.HasSuffix(file, "_nomoto.golf") {
+			continue
+		}
+		expectCompileError := strings.HasSuffix(file, ".error.golf")
+		expectRunError := strings.HasSuffix(file, ".panic.golf")
+		var expectedStr string
+		if !expectCompileError && !expectRunError {
+			wantFile := strings.TrimSuffix(file, ".golf") + ".want"
+			wantBytes, err := os.ReadFile(wantFile)
+			if err != nil {
+				t.Fatalf("Failed to read want file %s: %v", wantFile, err)
+			}
+			expectedStr = string(wantBytes)
+		}
+		file := file
+		t.Run(filepath.Base(file), func(t *testing.T) {
+			testBackend(t, "6502", file, expectedStr, expectCompileError, expectRunError)
+		})
+	}
 }
 
 var cdp1802PassingGolfTests = []string{

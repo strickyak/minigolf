@@ -424,7 +424,7 @@ func isDirectiveOrMnemonic(word string) bool {
 		return true
 	}
 	switch u {
-	case "ORG", "EQU", "DB", "FCB", "BYTE", "DEFB", "ASC", "ASCII", "FCC",
+	case "ORG", "EQU", "DB", "FCB", "BYTE", "DEFB", "ASC", "ASCII", "FCC", "ASCIZ", "STRINGZ", "FCN",
 		"DW", "FDB", "FCW", "WORD", "DEFW",
 		"DS", "RMB", "ZMB", "BSZ", "DEFS", "RES",
 		"ALIGN", "END", "GLOBAL", "GLOBL", "EXTERN", "EXTRN":
@@ -530,7 +530,7 @@ func (a *Assembler) parseLine(line, filename string, lineNum int, srcLine *Sourc
 		stmt.Type = StmtOrg
 	case "EQU":
 		stmt.Type = StmtEqu
-	case "DB", "FCB", "BYTE", "DEFB", "ASC", "ASCII", "FCC":
+	case "DB", "FCB", "BYTE", "DEFB", "ASC", "ASCII", "FCC", "ASCIZ", "STRINGZ", "FCN":
 		stmt.Type = StmtDataByte
 	case "DW", "FDB", "FCW", "WORD", "DEFW":
 		stmt.Type = StmtDataWord
@@ -943,6 +943,15 @@ func (a *Assembler) computeDataBytes(rawOps string, pc uint32) ([]byte, error) {
 						out = append(out, '\t')
 					case '0':
 						out = append(out, 0)
+					case 'x':
+						if i+2 < len(q) {
+							if v, err := strconv.ParseUint(q[i+1:i+3], 16, 8); err == nil {
+								out = append(out, byte(v))
+								i += 2
+								continue
+							}
+						}
+						out = append(out, 'x')
 					default:
 						out = append(out, q[i])
 					}
@@ -1070,6 +1079,9 @@ func (a *Assembler) Assemble() error {
 				}
 			case StmtDataByte:
 				b, _ := a.computeDataBytes(stmt.RawOps, a.currPC)
+				if stmt.Mnemonic == "ASCIZ" || stmt.Mnemonic == "STRINGZ" || stmt.Mnemonic == "FCN" {
+					b = append(b, 0)
+				}
 				stmt.Size = len(b)
 				a.currPC += uint32(stmt.Size)
 			case StmtDataWord:
@@ -1157,6 +1169,9 @@ func (a *Assembler) Assemble() error {
 			b, err := a.computeDataBytes(stmt.RawOps, stmt.PC)
 			if err != nil {
 				return fmt.Errorf("%s:%d: %v", stmt.File, stmt.LineNum, err)
+			}
+			if stmt.Mnemonic == "ASCIZ" || stmt.Mnemonic == "STRINGZ" || stmt.Mnemonic == "FCN" {
+				b = append(b, 0)
 			}
 			stmt.Encoded = b
 		case StmtDataWord:
