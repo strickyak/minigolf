@@ -305,6 +305,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 			var qname string
 			if s.Receiver != nil {
 				var rawBase string
+				hasIndex := false
 				var findRawBase func(expr ast.Expression)
 				findRawBase = func(expr ast.Expression) {
 					switch e := expr.(type) {
@@ -312,6 +313,7 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 						//zach//fmt.Printf("EVALUATING POINTER_TYPE, CheckNil=%v\n", b.CheckNil)
 						findRawBase(e.Elt)
 					case *ast.IndexExpression:
+						hasIndex = true
 						if ident, ok := e.Left.(*ast.Identifier); ok {
 							rawBase = ident.Value
 						}
@@ -320,6 +322,9 @@ func (b *Builder) Build(astProg *ast.Program) *Program {
 					}
 				}
 				findRawBase(s.Receiver.Type)
+				if hasIndex && len(s.TypeParameters) == 0 {
+					continue
+				}
 				qname = b.currentPackage + "." + rawBase + "_" + s.Name.Value
 			} else {
 				qname = b.currentPackage + "." + s.Name.Value

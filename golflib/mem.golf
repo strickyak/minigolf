@@ -1,11 +1,11 @@
-package _
+package mem
 
 type List[T any] struct {
 	guts slice[T]
 }
 
-func (o *List[T]) Get(i word) {
-	return o.guts[i]
+func (o *List[T]) Len() word {
+	return o.guts.Len
 }
 func (o *List[T]) Append(x T) {
 	o.guts.Append(x)
@@ -21,8 +21,22 @@ func (o *List[T]) Put(i word, x T) {
 func (o *List[T]) Get(i word) T {
 	return o.guts[i]
 }
+func (o *List[T]) At(i word) *T {
+	return (*T)(o.guts.Address(i))
+}
 func (o *List[T]) Chop(i word, j word) slice[T] {
 	return o.guts[i:j]
+}
+func (o *List[T]) Init() {
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+func (o *List[T]) Clear() {
+	o.guts.Len = 0
+}
+func (o *List[T]) Pop() T {
+	return o.guts.Pop()
 }
 func (o *List[T]) destructor() {
 	if o.guts.Base == 0 {
@@ -35,10 +49,86 @@ func (o *List[T]) destructor() {
 	o.guts.Len = 0
 }
 
+type ListD[DT any] struct {
+	guts slice[DT]
+}
+
+func (o *ListD[DT]) Len() word {
+	return o.guts.Len
+}
+func (o *ListD[DT]) Get(i word) DT {
+	return o.guts[i]
+}
+func (o *ListD[DT]) At(i word) *DT {
+	return (*DT)(o.guts.Address(i))
+}
+func (o *ListD[DT]) Put(i word, x DT) {
+	o.guts[i] = x
+}
+func (o *ListD[DT]) Append(x DT) {
+	o.guts.Append(x)
+}
+func (o *ListD[DT]) Init() {
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+func (o *ListD[DT]) Clear() {
+	for i := word(0); i < o.guts.Len; i++ {
+		p := (*DT)(o.guts.Address(i))
+		p.destructor()
+	}
+	o.guts.Len = 0
+}
+func (o *ListD[DT]) destructor() {
+	if o.guts.Base == 0 {
+		return
+	}
+	for i := word(0); i < o.guts.Len; i++ {
+		p := (*DT)(o.guts.Address(i))
+		p.destructor()
+	}
+	free(o.guts.Base)
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+
 type Buffer struct {
 	guts slice[byte]
 }
 
+func (o *Buffer) Init() {
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+func (o *Buffer) Len() word {
+	return o.guts.Len
+}
+func (o *Buffer) Clear() {
+	o.guts.Len = 0
+}
+func (o *Buffer) Take() string {
+	s := o.guts
+	o.guts.Base = 0
+	o.guts.Len = 0
+	o.guts.Cap = 0
+	return s
+}
+func (o *Buffer) TakeNul() string {
+	if o.guts.Base == 0 {
+		var z string
+		return z
+	}
+	o.guts.Append(0)
+	s := o.guts
+	s.Len--
+	o.guts.Base = 0
+	o.guts.Len = 0
+	o.guts.Cap = 0
+	return s
+}
 func (o *Buffer) destructor() {
 	if o.guts.Base == 0 {
 		return

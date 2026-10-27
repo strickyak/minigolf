@@ -371,3 +371,139 @@ func main() {
 		t.Fatalf("Output mismatch: got %q, want %q", stdout.String(), "LIVE BRANCH\n")
 	}
 }
+
+func TestPar4ManagedMemListAndSmap(t *testing.T) {
+	preludeBytes, err := os.ReadFile("../golflib/prelude.golf")
+	if err != nil {
+		t.Fatalf("ReadFile prelude.golf: %v", err)
+	}
+	memBytes, err := os.ReadFile("../golflib/mem.golf")
+	if err != nil {
+		t.Fatalf("ReadFile mem.golf: %v", err)
+	}
+	smapBytes, err := os.ReadFile("../golflib/smap.golf")
+	if err != nil {
+		t.Fatalf("ReadFile smap.golf: %v", err)
+	}
+
+	mainSrc := `package main
+
+import "mem"
+import "smap"
+
+type Token struct {
+	Kind word
+	Text string
+}
+
+var vars smap.Smap[string]
+
+func makeGreeting(name string) string {
+	var b mem.Buffer
+	b.Init()
+	b.AppendString("Hello, ")
+	b.AppendString(name)
+	b.Append('!')
+	return b.Take()
+}
+
+func testTokensAndBuffers() {
+	var b mem.Buffer
+	b.Init()
+	b.AppendString("temporary buffer")
+
+	var toks mem.List[Token]
+	toks.Init()
+	toks.Append(Token{Kind: 10, Text: "echo"})
+	toks.Append(Token{Kind: 20, Text: "world"})
+	println(toks.Len())
+	t0 := toks.Get(0)
+	t1 := toks.Get(1)
+	println(t0.Kind, t0.Text)
+	println(t1.Kind, t1.Text)
+}
+
+func main() {
+	freeBefore := BytesFree()
+	s := makeGreeting("Par4")
+	println(s)
+	free((*byte)(s.Base))
+	testTokensAndBuffers()
+	freeAfter := BytesFree()
+	println(freeBefore == freeAfter)
+
+	vars.Insert("FOO", "alpha")
+	vars.Insert("BAR", "beta")
+	vars.Insert("FOO", "gamma")
+	v1, ok1 := vars.Lookup("FOO")
+	if ok1 {
+		println(v1)
+	}
+	v2, ok2 := vars.Lookup("BAR")
+	if ok2 {
+		println(v2)
+	}
+}
+`
+	p1 := parser.New(lexer.Lex(string(preludeBytes), "prelude.golf"))
+	prog := p1.ParseProgram("prelude")
+	if len(p1.Errors()) > 0 {
+		t.Fatalf("prelude parse errors: %v", p1.Errors())
+	}
+
+	p2 := parser.New(lexer.Lex(string(memBytes), "mem.golf"))
+	prog2 := p2.ParseProgram("mem")
+	if len(p2.Errors()) > 0 {
+		t.Fatalf("mem parse errors: %v", p2.Errors())
+	}
+	prog.Statements = append(prog.Statements, prog2.Statements...)
+
+	p3 := parser.New(lexer.Lex(string(smapBytes), "smap.golf"))
+	prog3 := p3.ParseProgram("smap")
+	if len(p3.Errors()) > 0 {
+		t.Fatalf("smap parse errors: %v", p3.Errors())
+	}
+	prog.Statements = append(prog.Statements, prog3.Statements...)
+
+	p4 := parser.New(lexer.Lex(mainSrc, "main.golf"))
+	prog4 := p4.ParseProgram("main")
+	if len(p4.Errors()) > 0 {
+		t.Fatalf("main parse errors: %v", p4.Errors())
+	}
+	prog.Statements = append(prog.Statements, prog4.Statements...)
+
+	resolver := semantic.NewResolver(map[string]string{"prelude.HEAP_SIZE": "4000"})
+	resolver.Resolve(prog)
+	analyzer := semantic.New(resolver)
+	analyzer.Analyze(prog)
+	if len(analyzer.Errors()) > 0 {
+		t.Fatalf("Semantic errors: %v", analyzer.Errors())
+	}
+	analyzer.TrimDeadFunctions(prog)
+
+	backend := par4.New()
+	asm := backend.Generate(prog)
+
+	bin, err := par4.Assemble(asm)
+	if err != nil {
+		t.Fatalf("Assemble failed: %v\nAssembly:\n%s", err, asm)
+	}
+
+	vm, err := par4.NewVM(bin)
+	if err != nil {
+		t.Fatalf("NewVM failed: %v", err)
+	}
+	var stdout bytes.Buffer
+	vm.Stdout = &stdout
+	exitCode, err := vm.Run()
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("Expected exit code 0, got %d", exitCode)
+	}
+	want := "Hello, Par4!\n2\n10 echo\n20 world\n1\ngamma\nbeta\n"
+	if stdout.String() != want {
+		t.Fatalf("Output mismatch:\nGot:\n%s\nWant:\n%s", stdout.String(), want)
+	}
+}

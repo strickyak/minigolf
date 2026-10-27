@@ -418,7 +418,35 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 				for _, tp := range s.TypeParameters {
 					tparams = append(tparams, tp.Value)
 				}
-				a.genericTemplates[qname] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
+				tmplName := qname
+				if s.Receiver != nil {
+					var rawBase string
+					var findRawBase func(expr ast.Expression)
+					findRawBase = func(expr ast.Expression) {
+						switch e := expr.(type) {
+						case *ast.PointerType:
+							findRawBase(e.Elt)
+						case *ast.IndexExpression:
+							if ident, ok := e.Left.(*ast.Identifier); ok {
+								rawBase = ident.Value
+							}
+						case *ast.Identifier:
+							rawBase = e.Value
+						}
+					}
+					findRawBase(s.Receiver.Type)
+					if rawBase != "" {
+						if !strings.Contains(rawBase, ".") {
+							if _, ok := a.globalScope.Resolve("prelude." + rawBase); ok {
+								rawBase = "prelude." + rawBase
+							} else {
+								rawBase = a.currentPackage + "." + rawBase
+							}
+						}
+						tmplName = rawBase + "_" + s.Name.Value
+					}
+				}
+				a.genericTemplates[tmplName] = &GenericTemplate{TypeParams: tparams, Tokens: s.Tokens}
 			}
 
 			a.funcMap[qname] = s
@@ -498,6 +526,7 @@ func (a *Analyzer) Analyze(program *ast.Program) {
 	// Pass 2: Reachability-driven Type Checking (DCE)
 	a.markReachable("main.main")
 	a.markReachable("prelude.init_0")
+	a.markReachable("prelude.init")
 	// Magic functions are pre-seeded as reachable so TrimDeadFunctions never
 	// removes them before the IR builder gets a chance to emit implicit calls.
 	for name := range a.magicFuncs {
@@ -1103,6 +1132,9 @@ func (a *Analyzer) instantiateGeneric(instName, rawGenericName string, argTyps [
 		//fmt.Printf("DEBUG INSTANTIATE: Defined TYPE %s as %T in globalScope\n", instName, ts)
 		a.program.Statements = append(a.program.Statements, &ast.PackageStatement{Name: &ast.Identifier{Value: defPkg}})
 		a.program.Statements = append(a.program.Statements, ts)
+		if _, hasDtor := a.genericTemplates[rawGenericName+"_destructor"]; hasDtor {
+			a.instantiateGeneric(instName+"_destructor", rawGenericName+"_destructor", argTyps, instantiateToken)
+		}
 	} else if fs, ok := stmt.(*ast.FuncStatement); ok {
 		// Keep original name and receiver
 		fs.TypeParameters = nil
@@ -1384,32 +1416,41 @@ func (a *Analyzer) analyzeExpression(expr ast.Expression) ast.Expression {
 			baseTypStr := a.exprToString(leftTyp)
 			baseTypStr = strings.TrimPrefix(baseTypStr, "*")
 
-			// Check for struct field first!
-			lookupTypStr := baseTypStr
-			for {
-				if _, ok := a.genericTemplates[lookupTypStr]; ok {
-					break
-				}
-				if _, ok := a.genericTemplates[a.currentPackage+"."+lookupTypStr]; ok {
-					break
-				}
-				idx := strings.LastIndex(lookupTypStr, "_")
-				if idx == -1 {
-					lookupTypStr = baseTypStr // Revert if no generic template matched
-					break
-				}
-				lookupTypStr = lookupTypStr[:idx]
-			}
-
-			structDef, ok := a.globalScope.Resolve(lookupTypStr)
+			// Check for struct field first! Prefer instantiated struct definition over uninstantiated template.
+			structDef, ok := a.globalScope.Resolve(baseTypStr)
 			if !ok {
-				structDef, ok = a.globalScope.Resolve(a.currentPackage + "." + lookupTypStr)
+				structDef, ok = a.globalScope.Resolve(a.currentPackage + "." + baseTypStr)
+			}
+			if !ok {
+				lookupTypStr := baseTypStr
+				for {
+					if _, ok := a.genericTemplates[lookupTypStr]; ok {
+						break
+					}
+					if _, ok := a.genericTemplates[a.currentPackage+"."+lookupTypStr]; ok {
+						break
+					}
+					idx := strings.LastIndex(lookupTypStr, "_")
+					if idx == -1 {
+						lookupTypStr = baseTypStr // Revert if no generic template matched
+						break
+					}
+					lookupTypStr = lookupTypStr[:idx]
+				}
+
+				structDef, ok = a.globalScope.Resolve(lookupTypStr)
+				if !ok {
+					structDef, ok = a.globalScope.Resolve(a.currentPackage + "." + lookupTypStr)
+				}
 			}
 			if ok {
 				if st, ok := structDef.Type.(*ast.StructType); ok {
 					for _, f := range st.Fields {
 						if f.Name.Value == e.Right.Value {
-							typ = f.Type
+							typ = a.analyzeExpression(f.Type)
+							if typ == UnknownType || typ == nil {
+								typ = f.Type
+							}
 							//fmt.Printf("DEBUG STRUCT: Found field %s of type %T (%s)\n", f.Name.Value, typ, a.exprToString(typ))
 							break
 						}

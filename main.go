@@ -132,7 +132,7 @@ func topoSortModules(importEdges map[string][]string, initFuncsByModule map[stri
 	return result
 }
 
-func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch string, isEmbiggen bool) *ast.Program {
+func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch string, isEmbiggen bool, golfDefines map[string]string) *ast.Program {
 	var program *ast.Program
 	imported := make(map[string]bool)
 
@@ -222,9 +222,10 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch st
 	}
 
 	isPar4Arch := strings.EqualFold(arch, "PAR4") || strings.EqualFold(arch, "P4")
+	_, hasManagedHeap := golfDefines["prelude.HEAP_SIZE"]
 	imported["prelude"] = true
 	preludeFile := "prelude.golf"
-	if isPar4Arch {
+	if isPar4Arch && !hasManagedHeap {
 		preludeFile = "prelude.par4"
 	}
 	if _, err := ReadFileFromPath(preludeFile, path); err == nil {
@@ -241,7 +242,7 @@ MORE:
 		if !done {
 			imported[key] = true
 			exts := []string{".golf", ".par4"}
-			if isPar4Arch {
+			if isPar4Arch && !hasManagedHeap {
 				exts = []string{".par4", ".golf"}
 			}
 			found := false
@@ -680,7 +681,7 @@ func main() {
 	// Compilation Pipeline
 	// =========================================================================
 	// 1 & 2. Parse all source files into a single flat namespace AST
-	program := ParseSourceFiles(mainSourceFile, importDirPath, *archFlag, *embiggenFlag)
+	program := ParseSourceFiles(mainSourceFile, importDirPath, *archFlag, *embiggenFlag, golfDefines)
 
 	*archFlag = strings.ToUpper(*archFlag)
 
@@ -716,8 +717,10 @@ func main() {
 	// Tell the analyzer which prelude functions are implicitly called by the IR
 	// builder for certain operators.  This prevents TrimDeadFunctions from
 	// removing them before the IR builder gets a chance to reference them.
-	for _, name := range opt.MagicFuncNames {
-		analyzer.AddMagicFunc(name)
+	if *archFlag != "PAR4" && *archFlag != "P4" {
+		for _, name := range opt.MagicFuncNames {
+			analyzer.AddMagicFunc(name)
+		}
 	}
 	analyzer.Analyze(program)
 	if len(analyzer.Errors()) > 0 {
