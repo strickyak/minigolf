@@ -147,7 +147,7 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 	if backend == "amd64" || backend == "x86_64" {
 		ext = ".s"
 	}
-	if backend == "m6809" || backend == "z80" || backend == "z" || backend == "1802" || backend == "c" || backend == "cdp1802" || backend == "cosmac" || backend == "6502" || backend == "m6502" || backend == "5" {
+	if backend == "m6809" || backend == "z80" || backend == "z" || backend == "1802" || backend == "c" || backend == "cdp1802" || backend == "cosmac" || backend == "6502" || backend == "m6502" || backend == "5" || backend == "8086" || backend == "i8086" || backend == "0" {
 		ext = ".asm"
 	}
 	if backend == "m68k" || backend == "k" {
@@ -241,6 +241,20 @@ func testBackendVariant(t *testing.T, backend, variant string, extraArgs []strin
 
 	case "6502", "m6502", "5":
 		cmd = exec.Command("bash", "run5.sh", midFile)
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		t.Logf("Running: %v", cmd)
+		if err := cmd.Run(); err != nil {
+			if expectRunError {
+				return // Success: execution failed as expected
+			}
+			t.Fatalf("Failed to compile for backend %s: %v\nStderr: %s", backend, err, stderr.String())
+		} else if expectRunError {
+			t.Fatalf("Expected run error for backend %s but execution succeeded", backend)
+		}
+
+	case "8086", "i8086", "0":
+		cmd = exec.Command("bash", "run0.sh", midFile)
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		t.Logf("Running: %v", cmd)

@@ -35,7 +35,7 @@ func TestAllCFiles(t *testing.T) {
 		t.Skip("No *.c files found in c-tests/")
 	}
 
-	backends := []string{"CBE", "amd64", "m6809", "m68k", "z80"}
+	backends := []string{"CBE", "amd64", "m6809", "m68k", "z80", "8086"}
 
 	if err := os.MkdirAll("_tmp", 0777); err != nil {
 		t.Fatalf("Failed to create _tmp directory: %v", err)
@@ -100,7 +100,7 @@ func TestAllCFiles(t *testing.T) {
 		}
 
 		for _, backend := range backends {
-			if strings.HasSuffix(base, "_nomoto.c") && (backend == "m6809" || backend == "z80") {
+			if strings.HasSuffix(base, "_nomoto.c") && (backend == "m6809" || backend == "z80" || backend == "8086") {
 				continue
 			}
 			if strings.HasSuffix(base, "_nocbe.c") && backend == "CBE" {

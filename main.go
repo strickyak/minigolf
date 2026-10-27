@@ -18,6 +18,7 @@ import (
 	"github.com/strickyak/minigolf/cbe"
 	"github.com/strickyak/minigolf/cdp1802"
 	"github.com/strickyak/minigolf/ctranslator"
+	"github.com/strickyak/minigolf/i8086"
 	"github.com/strickyak/minigolf/ir"
 	"github.com/strickyak/minigolf/lexer"
 	"github.com/strickyak/minigolf/m6502"
@@ -534,7 +535,8 @@ func main() {
 		archLower == "m68k" || archLower == "68000" || archLower == "k" ||
 		archLower == "z80" || archLower == "z" ||
 		archLower == "1802" || archLower == "cdp1802" || archLower == "c" || archLower == "cosmac" ||
-		archLower == "6502" || archLower == "m6502" || archLower == "5" {
+		archLower == "6502" || archLower == "m6502" || archLower == "5" ||
+		archLower == "8086" || archLower == "i8086" || archLower == "0" {
 		if _, ok := cDefines["unix"]; !ok {
 			cDefines["unix"] = "0"
 		}
@@ -1248,6 +1250,54 @@ func main() {
 			os.Exit(1)
 		}
 		log.Printf("Successfully compiled via M6502 to: %s", *outFlag)
+		os.Exit(0)
+	}
+
+	// Flag -m=8086 / -m=i8086 / -m=0 : Generate Intel 8086 assembly from IR and exit cleanly
+	if archLower == "8086" || archLower == "i8086" || archLower == "0" {
+		builder := ir.NewBuilder(resolveCallback, 2)
+		builder.CheckBounds = *checkBoundsFlag
+		builder.CheckNil = *checkNilFlag
+		irProg := builder.Build(program)
+		opt.MarkMagicFunctions(irProg)
+
+		optConfig := opt.Config{
+			EnableConstFold:        !*noConstfold,
+			EnableDBE:              !*noDbe,
+			EnableDCE:              !*noDce,
+			EnableCopyProp:         !*noCopyProp,
+			EnableCSE:              !*noCse,
+			EnableStrengthRed:      !*noStrengthRed,
+			EnablePhiSimp:          !*noPhisimp,
+			EnableStackAlloc:       !*noStackAlloc,
+			EnableBranchFold:       !*noBranchFold,
+			EnableStoreLoad:        !*noStoreLoad,
+			EnableLICM:             !*noLicm,
+			EnableDFE:              !*noDfe,
+			EnableInline:           !*noInline,
+			EnableInlineTiny:       !*noInline && !*noInlineTiny,
+			EnableInlineSingleCall: !*noInline && !*noInlineSingleCall,
+			MaxTinyInstructions:    *inlineMaxTiny,
+			MaxInlineRounds:        *inlineMaxRounds,
+			EnableDebugOpt:         *debugOpt,
+			WordSize:               2,
+		}
+		builder.AnnotateLeafLevels(*debugOpt)
+		opt.OptimizeProgram(irProg, optConfig)
+		builder.AnnotateLeafLevels(*debugOpt)
+
+		backend := i8086.New()
+		asmCode := backend.Generate(irProg)
+
+		header := fmt.Sprintf(";\n; Starting whole-program compilation (Intel 8086 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		finalOutput := header + asmCode
+
+		err := writeOutput(*outFlag, finalOutput)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing I8086 output: %v\n", err)
+			os.Exit(1)
+		}
+		log.Printf("Successfully compiled via I8086 to: %s", *outFlag)
 		os.Exit(0)
 	}
 
