@@ -1403,11 +1403,11 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		if s.Condition != nil {
 			cond := b.coerceType(b.buildExpr(s.Condition), TypeBool)
 			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk}, s)
-			b.addEdge(headerBlk, bodyBlk)
-			b.addEdge(headerBlk, endBlk)
+			b.addEdge(b.currentBlock, bodyBlk)
+			b.addEdge(b.currentBlock, endBlk)
 		} else {
 			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: bodyBlk}, s)
-			b.addEdge(headerBlk, bodyBlk)
+			b.addEdge(b.currentBlock, bodyBlk)
 		}
 
 		b.sealBlock(bodyBlk)
@@ -1455,11 +1455,11 @@ func (b *Builder) buildStatement(stmt ast.Statement) {
 		if s.Condition != nil {
 			cond := b.buildExpr(s.Condition)
 			b.addInstr(&Branch{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Condition: cond, TrueBlock: bodyBlk, FalseBlock: endBlk}, s)
-			b.addEdge(headerBlk, bodyBlk)
-			b.addEdge(headerBlk, endBlk)
+			b.addEdge(b.currentBlock, bodyBlk)
+			b.addEdge(b.currentBlock, endBlk)
 		} else {
 			b.addInstr(&Jump{BaseInstruction: BaseInstruction{Typ: TypeVoid}, Target: bodyBlk}, s)
-			b.addEdge(headerBlk, bodyBlk)
+			b.addEdge(b.currentBlock, bodyBlk)
 		}
 
 		b.sealBlock(bodyBlk)
