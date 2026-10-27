@@ -23,7 +23,6 @@ import (
 	"github.com/strickyak/minigolf/m6502"
 	"github.com/strickyak/minigolf/m6809"
 	"github.com/strickyak/minigolf/m68k"
-	"github.com/strickyak/minigolf/np"
 	"github.com/strickyak/minigolf/opt"
 	"github.com/strickyak/minigolf/par4"
 	"github.com/strickyak/minigolf/parser"
@@ -63,10 +62,10 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 		}
 	}
 
-	// Fallback for prelude.golf or prelude.par3 or prelude.par4 in standard locations if not found in path
-	if base == "prelude.golf" || base == "prelude.par3" || base == "prelude.par4" {
-		for _, fallbackDir := range []string{"par4-lib", "../par4-lib", "golflib", "../golflib", "par3-lib", "../par3-lib", "np-lib", "../np-lib"} {
-			for _, name := range []string{"prelude.par4", "prelude.par3", "prelude.golf"} {
+	// Fallback for prelude.golf or prelude.par4 in standard locations if not found in path
+	if base == "prelude.golf" || base == "prelude.par4" {
+		for _, fallbackDir := range []string{"par4-lib", "../par4-lib", "golflib", "../golflib"} {
+			for _, name := range []string{"prelude.par4", "prelude.golf"} {
 				filename := filepath.Join(fallbackDir, name)
 				if c, err2 := os.ReadFile(filename); err2 == nil {
 					return c, nil
@@ -156,9 +155,9 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch st
 	}
 	var defaultLibDirs []string
 	if isEmbiggen {
-		defaultLibDirs = []string{"biggolflib", "../biggolflib", "golflib", "../golflib", "par4-lib", "../par4-lib", "par3-lib", "../par3-lib", "np-lib", "../np-lib"}
+		defaultLibDirs = []string{"biggolflib", "../biggolflib", "golflib", "../golflib", "par4-lib", "../par4-lib"}
 	} else {
-		defaultLibDirs = []string{"par4-lib", "../par4-lib", "par3-lib", "../par3-lib", "golflib", "../golflib", "np-lib", "../np-lib"}
+		defaultLibDirs = []string{"par4-lib", "../par4-lib", "golflib", "../golflib"}
 	}
 	for _, libDir := range defaultLibDirs {
 		if fi, err := os.Stat(libDir); err == nil && fi.IsDir() {
@@ -221,25 +220,16 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch st
 		}
 	}
 
-	isPar3Arch := strings.EqualFold(arch, "PAR3") || strings.EqualFold(arch, "NP")
 	isPar4Arch := strings.EqualFold(arch, "PAR4") || strings.EqualFold(arch, "P4")
 	imported["prelude"] = true
 	preludeFile := "prelude.golf"
 	if isPar4Arch {
 		preludeFile = "prelude.par4"
-	} else if isPar3Arch {
-		preludeFile = "prelude.par3"
 	}
 	if _, err := ReadFileFromPath(preludeFile, path); err == nil {
 		slurp(preludeFile, "prelude", path)
 	} else {
-		altPrelude := "prelude.par3"
-		if isPar4Arch {
-			altPrelude = "prelude.par3"
-		} else if isPar3Arch {
-			altPrelude = "prelude.golf"
-		}
-		slurp(altPrelude, "prelude", path)
+		slurp("prelude.golf", "prelude", path)
 	}
 
 	imported["main"] = true
@@ -249,11 +239,9 @@ MORE:
 	for key, done := range imported {
 		if !done {
 			imported[key] = true
-			exts := []string{".golf", ".par4", ".par3"}
+			exts := []string{".golf", ".par4"}
 			if isPar4Arch {
-				exts = []string{".par4", ".par3", ".golf"}
-			} else if isPar3Arch {
-				exts = []string{".par3", ".golf"}
+				exts = []string{".par4", ".golf"}
 			}
 			found := false
 			for _, ext := range exts {
@@ -338,7 +326,7 @@ MORE:
 
 func main() {
 	// Define command-line flags
-	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, par3, np, par4, p4, 1802, cdp1802, c, cosmac, big6809, bigir)")
+	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, par4, p4, 1802, cdp1802, c, cosmac, big6809, bigir)")
 	embiggenFlag := flag.Bool("membiggen", false, "Enable EMBIGGEN process mode (far functions & far data)")
 	outFlag := flag.String("o", "", "Output object file name")
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
@@ -747,22 +735,6 @@ func main() {
 				log.Printf("TrunkLevel: %s is level %d, Popularity: %d", fs.Name.Value, fs.TrunkLevel, fs.Popularity)
 			}
 		}
-	}
-
-	// Flag -m=par3 or -m=np : Generate Par3 assembly directly from AST and exit cleanly
-	if *archFlag == "PAR3" || *archFlag == "NP" {
-		backend := np.New()
-		asmCode := backend.Generate(program)
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Par3 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
-		finalOutput := header + asmCode
-
-		err := writeOutput(*outFlag, finalOutput)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing Par3 output: %v\n", err)
-			os.Exit(1)
-		}
-		log.Printf("Successfully compiled via Par3 to: %s", *outFlag)
-		os.Exit(0)
 	}
 
 	// Flag -m=par4 or -m=p4 : Generate Par4 assembly directly from AST and exit cleanly

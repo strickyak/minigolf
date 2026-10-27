@@ -77,16 +77,14 @@ func pbuf_append(s string) {
 }
 
 func pbuf_str() string {
-    var res string
+    var base word
     if pbuf_active == 0 {
-        res.Base = word(&pbuf1[0])
+        base = word(&pbuf1[0])
     } else {
-        res.Base = word(&pbuf2[0])
+        base = word(&pbuf2[0])
     }
-    res.Cap = 256
-    res.Len = pbuf_len
     pbuf_active = 1 - pbuf_active
-    return res
+    return mk_str(base, 256, pbuf_len)
 }
 
 func buf_clear() {
@@ -113,11 +111,7 @@ func clone_str(s string) string {
     for i := word(0); i < word(len(s)); i++ {
         pokeb(p + i, s[i])
     }
-    var res string
-    res.Base = p
-    res.Cap = word(len(s))
-    res.Len = word(len(s))
-    return res
+    return mk_str(p, word(len(s)), word(len(s)))
 }
 
 func isspace(c byte) bool {
@@ -168,11 +162,7 @@ func to_upper_buf(s string) string {
     for i := word(0); i < max_len; i++ {
         pokeb(base + i, toupper(s[i]))
     }
-    var res string
-    res.Base = base
-    res.Cap = 64
-    res.Len = max_len
-    return res
+    return mk_str(base, 64, max_len)
 }
 
 func str_eq_ci(s1 string, s2 string) bool {
@@ -218,11 +208,7 @@ func format_local_label(id word, name string) string {
         pokeb(p + 5 + idx, c)
         idx++
     }
-    var res string
-    res.Base = p
-    res.Cap = tot
-    res.Len = tot
-    return res
+    return mk_str(p, tot, tot)
 }
 
 func format_X(id word) string {
@@ -233,11 +219,7 @@ func format_X(id word) string {
     pokeb(p + 3, byte('0' + (id / 100) % 10))
     pokeb(p + 4, byte('0' + (id / 10) % 10))
     pokeb(p + 5, byte('0' + id % 10))
-    var res string
-    res.Base = p
-    res.Cap = 6
-    res.Len = 6
-    return res
+    return mk_str(p, 6, 6)
 }
 
 func path_basename(p string) string {
@@ -456,7 +438,7 @@ func load_defs(defs_path string) {
         if eof != 0 {
             break
         }
-        raw_b := line.Base
+        raw_b := str_base(line)
         line = rstrip(line, "\r\n")
         lbl := extract_col0_label(line)
         if len(lbl) > 0 && !is_local_or_l_label(lbl) {
@@ -555,18 +537,10 @@ func split_asm_line(line string) {
 // -----------------------------------------------------------------------------
 func clear_locals() {
     for i := word(0); i < num_locals; i++ {
-        s_name := local_name[i]
-        if s_name.Base != 0 {
-            free(s_name.Base)
-            s_name.Base = 0
-            local_name[i] = s_name
-        }
-        s_lbl := local_lbl[i]
-        if s_lbl.Base != 0 {
-            free(s_lbl.Base)
-            s_lbl.Base = 0
-            local_lbl[i] = s_lbl
-        }
+        free_str(local_name[i])
+        local_name[i] = ""
+        free_str(local_lbl[i])
+        local_lbl[i] = ""
     }
     num_locals = 0
 }
@@ -601,10 +575,7 @@ func repl_locals(code string) string {
             idx := find_local(name)
             if idx < 0xFFFF && local_def[idx] {
                 global_inst++
-                s_lbl := local_lbl[idx]
-                if s_lbl.Base != 0 {
-                    free(s_lbl.Base)
-                }
+                free_str(local_lbl[idx])
                 local_lbl[idx] = format_local_label(global_inst, name)
                 local_def[idx] = true
             } else if idx < 0xFFFF {
@@ -667,11 +638,7 @@ func get_upper8(s string) string {
     for i := word(0); i < max_len; i++ {
         pokeb(word(&pfx_buf[0]) + i, toupper(s[i]))
     }
-    var res string
-    res.Base = word(&pfx_buf[0])
-    res.Cap = 16
-    res.Len = max_len
-    return res
+    return mk_str(&pfx_buf[0], 16, max_len)
 }
 
 func hash_label(s string) word {
@@ -718,7 +685,7 @@ func pass0_scan_file(path string) {
         if eof != 0 {
             break
         }
-        raw_b := line.Base
+        raw_b := str_base(line)
         line = rstrip(line, "\r\n")
         lbl := extract_col0_label(line)
         if len(lbl) > 0 && !is_local_or_l_label(lbl) {
@@ -756,7 +723,7 @@ func pass1_scan_file(path string) {
         if eof != 0 {
             break
         }
-        raw_b := line.Base
+        raw_b := str_base(line)
         line = rstrip(line, "\r\n")
         lbl := extract_col0_label(line)
         if len(lbl) > 0 && !is_local_or_l_label(lbl) {
@@ -893,7 +860,6 @@ func write_truncated(out_h word, code_part string, comment_part string) {
 }
 
 func transform_line(out_h word, line string) {
-    orig_base := line.Base
     stripped := strip(line, " \t\r\n")
 
     // 1. Blank line
@@ -1188,7 +1154,7 @@ func preprocess_file(in_path string, out_path string) {
             if eof != 0 {
                 break
             }
-            raw_base = l.Base
+            raw_base = str_base(l)
             line = rstrip(l, "\r\n")
         }
 
@@ -1203,7 +1169,7 @@ func preprocess_file(in_path string, out_path string) {
                     transform_line(out_h, line)
                     break
                 }
-                next_base := next_l.Base
+                next_base := str_base(next_l)
                 next_l = rstrip(next_l, "\r\n")
                 next_s := strip(next_l, " \t\r\n")
                 if len(next_s) == 0 {
@@ -1247,22 +1213,13 @@ func preprocess_file(in_path string, out_path string) {
 // -----------------------------------------------------------------------------
 // Main Entry Point
 // -----------------------------------------------------------------------------
-func get_arg(args_base word, idx word) string {
-    addr := args_base + idx * 6
-    var res string
-    res.Base = peek(addr)
-    res.Cap = peek(addr + 2)
-    res.Len = peek(addr + 4)
-    return res
-}
-
 func main() {
     dummy := alloc(1)
     heap_start = dummy
     free(dummy)
 
     args := sys_args()
-    if args.Len == 0 {
+    if len(args) == 0 {
         println("Usage:")
         println("  selfgen_preprocess [--defs <defsfile>] <input.asm> [output.asm]")
         println("  selfgen_preprocess --group <out_dir> [--defs <defsfile>] <file1.asm> <file2.asm> ...")
@@ -1291,29 +1248,29 @@ func main() {
     no_collisions := false
 
     i := word(0)
-    for i < args.Len {
-        arg := get_arg(args.Base, i)
+    for i < word(len(args)) {
+        arg := get_arg(args, i)
         if arg == "--no-collisions" {
             no_collisions = true
             i++
         } else if arg == "--defs" {
-            if i + 1 < args.Len {
-                defs_path = get_arg(args.Base, i + 1)
+            if i + 1 < word(len(args)) {
+                defs_path = get_arg(args, i + 1)
                 i += 2
             } else {
                 i++
             }
         } else if arg == "--group" {
             is_group = true
-            if i + 1 < args.Len {
-                out_dir = get_arg(args.Base, i + 1)
+            if i + 1 < word(len(args)) {
+                out_dir = get_arg(args, i + 1)
                 i += 2
             } else {
                 i++
             }
         } else if arg == "-D" {
-            if i + 1 < args.Len {
-                d_str := get_arg(args.Base, i + 1)
+            if i + 1 < word(len(args)) {
+                d_str := get_arg(args, i + 1)
                 add_define(d_str)
                 i += 2
             } else {

@@ -48,41 +48,28 @@ func path_join(dir string, file string) string {
         pokeb(p + off, file[i])
         off++
     }
-    var res string
-    res.Base = p
-    res.Cap = total
-    res.Len = total
-    return res
-}
-
-func get_arg(args_base word, idx word) string {
-    addr := args_base + idx * 6
-    var res string
-    res.Base = peek(addr)
-    res.Cap = peek(addr + 2)
-    res.Len = peek(addr + 4)
-    return res
+    return mk_str(p, total, total)
 }
 
 func write_str(h word, s string) {
     if len(s) > 0 {
-        file_write(h, s.Base, word(len(s)))
+        file_write(h, str_base(s), word(len(s)))
     }
 }
 
 func main() {
     init_hex()
     args := sys_args()
-    if args.Len < 2 {
+    if len(args) < 2 {
         println("Usage: par3pack <input.p3p> <modname> [out_dir]")
         sys_exit(1)
     }
 
-    in_path := get_arg(args.Base, 0)
-    modname := get_arg(args.Base, 1)
+    in_path := get_arg(args, 0)
+    modname := get_arg(args, 1)
     out_dir := ""
-    if args.Len >= 3 {
-        out_dir = get_arg(args.Base, 2)
+    if len(args) >= 3 {
+        out_dir = get_arg(args, 2)
     }
 
     // 1. Create modname.asm

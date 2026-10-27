@@ -128,15 +128,12 @@ func extract_os9_name(name_off word, n_read word) string {
             break
         }
     }
-    var s string
-    s.Base = alloc(out_len + 1)
-    s.Cap = out_len
-    s.Len = out_len
+    base := alloc(out_len + 1)
     for i := word(0); i < out_len; i++ {
-        pokeb(s.Base + i, peekb(word(&name_raw[0]) + i))
+        pokeb(base + i, peekb(word(&name_raw[0]) + i))
     }
-    pokeb(s.Base + out_len, 0)
-    return s
+    pokeb(base + out_len, 0)
+    return mk_str(base, out_len, out_len)
 }
 
 // inspect_module reads the first 64 bytes to extract size, name, and exec_off
@@ -288,11 +285,7 @@ func path_join(dir string, file string) string {
         pokeb(p + off, file[i])
         off++
     }
-    var res string
-    res.Base = p
-    res.Cap = total
-    res.Len = total
-    return res
+    return mk_str(p, total, total)
 }
 
 func register_deep_modules(dir string) {
@@ -372,22 +365,13 @@ func has_substr(s string, sub string) bool {
     return false
 }
 
-func get_arg(args_base word, idx word) string {
-    addr := args_base + idx * 6
-    var res string
-    res.Base = peek(addr)
-    res.Cap = peek(addr + 2)
-    res.Len = peek(addr + 4)
-    return res
-}
-
 func main() {
     is_flat := false
     mod_dir := ""
     out_path := ""
     args := sys_args()
-    for i := word(0); i < args.Len; i++ {
-        arg := get_arg(args.Base, i)
+    for i := word(0); i < word(len(args)); i++ {
+        arg := get_arg(args, i)
         if arg == "--flat" {
             is_flat = true
         } else if arg == "--deep" {

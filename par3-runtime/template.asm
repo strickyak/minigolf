@@ -382,6 +382,12 @@ init_tbl
         leay    op_file_write_buf,pcr
         sty     $CD*2,x
 
+        leay    op_free_str,pcr
+        sty     $CE*2,x
+
+        leay    op_get_arg,pcr
+        sty     $CF*2,x
+
         leay    op_map_new,pcr
         sty     $D0*2,x
 
@@ -1051,9 +1057,29 @@ zalloc_done
         pshu    x
         lbra    dispatch
 
+op_free_str
+        leau    4,u             ; drop Len and Cap
 op_buf_free
         pulu    d               ; D = buffer pointer to free
         lbsr    heap_free
+        lbra    dispatch
+
+op_get_arg
+        pulu    d               ; D = idx (0,u=Len, 2,u=Cap, 4,u=Base)
+        aslb
+        rola                    ; D = idx * 2
+        pshs    d
+        aslb
+        rola                    ; D = idx * 4
+        addd    ,s++            ; D = idx * 6
+        addd    4,u             ; D = args.Base + idx * 6
+        tfr     d,x
+        ldd     ,x
+        std     4,u
+        ldd     2,x
+        std     2,u
+        ldd     4,x
+        std     ,u
         lbra    dispatch
 
 op_dup

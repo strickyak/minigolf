@@ -9,7 +9,7 @@ const MAX_LABELS      = 1600
 const MAX_STRING_POOL = 4096
 const MAX_NAME_POOL   = 1024
 const MAX_VAR_NAME_POOL = 512
-const NUM_OPCODES     = 144
+const NUM_OPCODES     = 146
 
 // Opcode Table
 var op_bytes     [NUM_OPCODES]byte
@@ -109,11 +109,7 @@ func buf_append(s string) {
 }
 
 func buf_str() string {
-    var res string
-    res.Base = word(&out_buf[0])
-    res.Cap = 256
-    res.Len = out_len
-    return res
+    return mk_str(&out_buf[0], 256, out_len)
 }
 
 func clone_str(s string) string {
@@ -130,11 +126,7 @@ func clone_str(s string) string {
         name_pool[name_pool_len + i] = s[i]
     }
     name_pool_len += slen
-    var res string
-    res.Base = p
-    res.Cap = slen
-    res.Len = slen
-    return res
+    return mk_str(p, slen, slen)
 }
 
 func reset_cur_vars() {
@@ -156,11 +148,7 @@ func clone_var_str(s string) string {
         var_name_pool[var_name_pool_len + i] = s[i]
     }
     var_name_pool_len += slen
-    var res string
-    res.Base = p
-    res.Cap = slen
-    res.Len = slen
-    return res
+    return mk_str(p, slen, slen)
 }
 
 func isspace(c byte) bool {
@@ -438,10 +426,7 @@ func unescape_str(lit string) {
 // -----------------------------------------------------------------------------
 
 func add_to_string_pool() word {
-    var unescaped_str string
-    unescaped_str.Base = word(&unescape_buf[0])
-    unescaped_str.Cap = unescape_len
-    unescaped_str.Len = unescape_len
+    unescaped_str := mk_str(&unescape_buf[0], unescape_len, unescape_len)
 
     off := map_get(str_pool_map, unescaped_str)
     if off != 0xFFFF {
@@ -628,6 +613,8 @@ func init_opcodes() {
     set_op(141, "MAP_PUT", 0xD2, 0, 0)
     set_op(142, "MAP_STR", 0xD3, 0, 0)
     set_op(143, "MAP_COUNT", 0xD4, 0, 0)
+    set_op(144, "FREE_STR", 0xCE, 0, 0)
+    set_op(145, "GET_ARG", 0xCF, 0, 0)
 }
 
 
@@ -790,7 +777,7 @@ func pass1(in_path string) {
         }
         clean_line := strip_comment(line)
         if len(clean_line) == 0 {
-            free(line.Base)
+            free_str(line)
             continue
         }
 
@@ -810,7 +797,7 @@ func pass1(in_path string) {
 
             clean_line = split_rest_res
             if len(clean_line) == 0 {
-                free(line.Base)
+                free_str(line)
                 continue
             }
         }
@@ -915,7 +902,7 @@ func pass1(in_path string) {
                 pending_entry_name = clone_str(str_strip(args))
             }
 
-            free(line.Base)
+            free_str(line)
             continue
         }
 
@@ -946,7 +933,7 @@ func pass1(in_path string) {
             }
         }
 
-        free(line.Base)
+        free_str(line)
     }
 
     file_close(h)
@@ -986,7 +973,7 @@ func pass2(in_path string) {
         }
         clean_line := strip_comment(line)
         if len(clean_line) == 0 {
-            free(line.Base)
+            free_str(line)
             continue
         }
 
@@ -994,7 +981,7 @@ func pass2(in_path string) {
         if has_lbl {
             clean_line = split_rest_res
             if len(clean_line) == 0 {
-                free(line.Base)
+                free_str(line)
                 continue
             }
         }
@@ -1025,7 +1012,7 @@ func pass2(in_path string) {
                 reset_cur_vars()
             }
 
-            free(line.Base)
+            free_str(line)
             continue
         }
 
@@ -1105,7 +1092,7 @@ func pass2(in_path string) {
             }
         }
 
-        free(line.Base)
+        free_str(line)
     }
 
     file_close(h)
@@ -1177,21 +1164,12 @@ func assemble(in_path string, out_path string) {
     println("Assembled", in_path, "->", out_path)
 }
 
-func get_arg(args_base word, idx word) string {
-    addr := args_base + idx * 6
-    var res string
-    res.Base = peek(addr)
-    res.Cap = peek(addr + 2)
-    res.Len = peek(addr + 4)
-    return res
-}
-
 func main() {
     op_map = map_new(128)
     init_opcodes()
 
     args := sys_args()
-    if args.Len == 0 {
+    if len(args) == 0 {
         println("Usage: par3asm <input.p3a> [-o <output.p3p>]")
         sys_exit(1)
     }
@@ -1200,11 +1178,11 @@ func main() {
     out_file := ""
 
     i := word(0)
-    for i < args.Len {
-        arg := get_arg(args.Base, i)
+    for i < word(len(args)) {
+        arg := get_arg(args, i)
         if arg == "-o" {
-            if i + 1 < args.Len {
-                out_file = get_arg(args.Base, i + 1)
+            if i + 1 < word(len(args)) {
+                out_file = get_arg(args, i + 1)
                 i += 2
             } else {
                 i++

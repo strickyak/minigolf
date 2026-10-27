@@ -1048,7 +1048,15 @@ class NPVM:
                 self._push(1)  # eof
             else:
                 stream = getattr(f, "buffer", f)
-                line_bytes = stream.readline()
+                buf = bytearray()
+                while len(buf) < 255:
+                    ch = stream.read(1)
+                    if not ch:
+                        break
+                    buf.extend(ch)
+                    if ch in (b"\n", b"\r"):
+                        break
+                line_bytes = bytes(buf)
                 if not line_bytes:
                     self._push_slice(0, 0, 0)
                     self._push(1)  # eof
@@ -1171,6 +1179,15 @@ class NPVM:
             else:
                 sys.stdout.write(out_text)
                 sys.stdout.flush()
+        elif opcode == 0xCE:  # FREE_STR (str_slice) -> ()
+            s_ptr, s_cap, s_len = self._pop_slice()
+            self.heap.free(s_ptr)
+        elif opcode == 0xCF:  # GET_ARG (args_slice, idx) -> str_slice
+            idx = self._pop()
+            a_ptr, a_cap, a_len = self._pop_slice()
+            addr = (a_ptr + idx * 6) & 0xFFFF
+            p, c, l = struct.unpack_from(">HHH", self.memory, addr)
+            self._push_slice(p, c, l)
         elif opcode == 0xD0:  # MAP_NEW (buckets) -> map_ptr
             buckets = self._pop()
             h = self.next_map_handle

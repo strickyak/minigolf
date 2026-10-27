@@ -106,10 +106,7 @@ var tok_ibuf   [64]byte
 
 func out_flush() {
     if out_buf_len > 0 {
-        var s string
-        s.Base = word(&out_buf[0])
-        s.Cap = 256
-        s.Len = out_buf_len
+        s := mk_str(&out_buf[0], 256, out_buf_len)
         file_write(out_file_h, s)
         out_buf_len = 0
     }
@@ -345,7 +342,7 @@ func find_cur_local(name string) word {
 
 func reset_lexer() {
     if len(cur_line) > 0 {
-        free(cur_line.Base)
+        free_str(cur_line)
     }
     cur_line = ""
     line_pos = 0
@@ -356,7 +353,7 @@ func reset_lexer() {
 func peek_char() byte {
     for !is_eof && line_pos >= word(len(cur_line)) {
         if len(cur_line) > 0 {
-            free(cur_line.Base)
+            free_str(cur_line)
             cur_line = ""
         }
         line, eof := file_readline(in_file_h)
@@ -575,10 +572,7 @@ func next_tok() {
                 slen++
             }
         }
-        var s string
-        s.Base = word(&tok_sbuf[0])
-        s.Cap = 256
-        s.Len = slen
+        s := mk_str(&tok_sbuf[0], 256, slen)
         cur_tok = TOK_STRING
         cur_str = s
         return
@@ -595,10 +589,7 @@ func next_tok() {
                 next_char()
             }
         }
-        var s string
-        s.Base = word(&tok_ibuf[0])
-        s.Cap = 64
-        s.Len = ilen
+        s := mk_str(&tok_ibuf[0], 64, ilen)
         cur_str = pool_str(s)
         if check_keyword(cur_str) {
             cur_tok = TOK_KEYWORD
@@ -734,8 +725,6 @@ func next_tok() {
         cur_str = ";"
     } else if c == ':' {
         cur_str = ":"
-    } else if c == '.' {
-        cur_str = "."
     } else {
         cur_str = ""
     }
@@ -907,7 +896,6 @@ func run_pass1() {
             if has_body {
                 expect("{")
                 depth := word(1)
-                l_count := word(0)
 
                 for depth > 0 && cur_tok != TOK_EOF {
                     if cur_tok == TOK_PUNCT && cur_str == "{" {
@@ -922,7 +910,6 @@ func run_pass1() {
                         next_tok()
                         parse_type_desc()
                         add_local(lname, pt_kind, pt_size, pt_elem_size)
-                        l_count++
                     } else if cur_tok == TOK_IDENT {
                         lname := cur_str
                         next_tok()
@@ -935,20 +922,16 @@ func run_pass1() {
                                 if cur_str == "file_readline" {
                                     if lname != "_" {
                                         add_local(lname, KIND_SLICE, 6, 0)
-                                        l_count++
                                     }
                                     if lname2 != "_" {
                                         add_local(lname2, KIND_SCALAR, 2, 0)
-                                        l_count++
                                     }
                                 } else {
                                     if lname != "_" {
                                         add_local(lname, KIND_SCALAR, 2, 0)
-                                        l_count++
                                     }
                                     if lname2 != "_" {
                                         add_local(lname2, KIND_SCALAR, 2, 0)
-                                        l_count++
                                     }
                                 }
                             }
@@ -991,7 +974,7 @@ func run_pass1() {
                                     next_tok()
                                 }
                             } else {
-                                is_sfn := first_name == "sys_args" || first_name == "file_readline" || first_name == "map_str" || first_name == "lstrip" || first_name == "rstrip" || first_name == "strip" || first_name == "replace_ident" || first_name == "splitlines" || first_name == "strdup" || first_name == "make" || first_name == "makeslice"
+                                is_sfn := first_name == "sys_args" || first_name == "get_arg" || first_name == "mk_str" || first_name == "file_readline" || first_name == "map_str" || first_name == "lstrip" || first_name == "rstrip" || first_name == "strip" || first_name == "replace_ident" || first_name == "splitlines" || first_name == "strdup" || first_name == "make" || first_name == "makeslice"
                                 if first_tok == TOK_STRING || is_sfn {
                                     lkind = KIND_SLICE
                                     lsz = 6
@@ -1001,7 +984,7 @@ func run_pass1() {
                                         lkind = KIND_SLICE
                                         lsz = 6
                                     } else {
-                                        is_binop := cur_str == "==" || cur_str == "!=" || cur_str == "<" || cur_str == "<=" || cur_str == ">" || cur_str == ">=" || cur_str == "." || cur_str == "&&" || cur_str == "||"
+                                        is_binop := cur_str == "==" || cur_str == "!=" || cur_str == "<" || cur_str == "<=" || cur_str == ">" || cur_str == ">=" || cur_str == "&&" || cur_str == "||"
                                         if !is_binop {
                                             li := find_cur_local(first_name)
                                             if li != 0xFFFF && local_kinds[li] == KIND_SLICE {
@@ -1026,7 +1009,6 @@ func run_pass1() {
                             }
                             if lname != "_" {
                                 add_local(lname, lkind, lsz, 0)
-                                l_count++
                             }
                         }
                     } else {
@@ -1399,31 +1381,6 @@ func compile_unary() word {
             }
         }
 
-        // Field access: s.Base, s.Cap, s.Len
-        if cur_str == "." {
-            next_tok()
-            field := cur_str
-            next_tok()
-            gi := find_global(name)
-            if gi != 0xFFFF {
-                emit2("    ADDR_OF_GLOBAL ", name)
-            } else {
-                emit2("    ADDR_OF_LOCAL ", name)
-            }
-            if field == "Base" {
-                emit("    PEEK2")
-            } else if field == "Cap" {
-                emit("    PUSH_I8 2")
-                emit("    ADD")
-                emit("    PEEK2")
-            } else if field == "Len" {
-                emit("    PUSH_I8 4")
-                emit("    ADD")
-                emit("    PEEK2")
-            }
-            return KIND_SCALAR
-        }
-
         // Simple variable load
         li := find_cur_local(name)
         if li != 0xFFFF {
@@ -1435,7 +1392,7 @@ func compile_unary() word {
             emit2("    LOAD_LOCAL ", name)
             return word(param_kinds[pi])
         }
-        gi = find_global(name)
+        gi := find_global(name)
         if gi != 0xFFFF {
             emit2("    LOAD_GLOBAL ", name)
             return word(global_kinds[gi])
@@ -1502,6 +1459,23 @@ func emit_call(name string, nargs word) word {
     if name == "len" {
         emit("    SLICE_LEN")
         return KIND_SCALAR
+    }
+    if name == "mk_str" {
+        emit("    SLICE_NEW")
+        return KIND_SLICE
+    }
+    if name == "str_base" {
+        emit("    POP")
+        emit("    POP")
+        return KIND_SCALAR
+    }
+    if name == "free_str" {
+        emit("    FREE_STR")
+        return KIND_VOID
+    }
+    if name == "get_arg" {
+        emit("    GET_ARG")
+        return KIND_SLICE
     }
     if name == "alloc" {
         emit("    BUF_ALLOC")
@@ -1947,30 +1921,6 @@ func compile_stmt() {
             }
         }
 
-        if cur_str == "." {
-            next_tok()
-            field := cur_str
-            next_tok()
-            expect("=")
-            li := find_cur_local(name)
-            if li != 0xFFFF {
-                emit2("    ADDR_OF_LOCAL ", name)
-            } else {
-                emit2("    ADDR_OF_GLOBAL ", name)
-            }
-            if field == "Cap" {
-                emit("    PUSH_I8 2")
-                emit("    ADD")
-            } else if field == "Len" {
-                emit("    PUSH_I8 4")
-                emit("    ADD")
-            }
-            compile_expr(0)
-            emit("    POKE2")
-            if cur_str == ";" { next_tok() }
-            return
-        }
-
         if cur_str == ":=" {
             next_tok()
             rk := compile_expr(0)
@@ -2243,15 +2193,6 @@ func run_pass2() {
 // Main Entry Point
 // -----------------------------------------------------------------------------
 
-func get_arg(args_base word, idx word) string {
-    addr := args_base + idx * 6
-    var res string
-    res.Base = peek(addr)
-    res.Cap = peek(addr + 2)
-    res.Len = peek(addr + 4)
-    return res
-}
-
 func main() {
     str_pool_map = map_new(128)
     const_map = map_new(64)
@@ -2261,10 +2202,10 @@ func main() {
     src_file = ""
     out_file = ""
 
-    for i := word(0); i < args.Len; i++ {
-        arg := get_arg(args.Base, i)
-        if arg == "-o" && i + 1 < args.Len {
-            out_file = get_arg(args.Base, i + 1)
+    for i := word(0); i < word(len(args)); i++ {
+        arg := get_arg(args, i)
+        if arg == "-o" && i + 1 < word(len(args)) {
+            out_file = get_arg(args, i + 1)
             i++
         } else if len(src_file) == 0 {
             src_file = arg

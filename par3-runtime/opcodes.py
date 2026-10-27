@@ -159,6 +159,8 @@ OPCODE_TABLE = {
     0xCB: ("PRINTLN", 0, "none", "Print Slice[any] arguments with newline"),
     0xCC: ("FILE_READ", 0, "none", "Read up to N bytes into buffer: (handle, buf, count) -> n_read"),
     0xCD: ("FILE_WRITE_BUF", 0, "none", "Write N bytes from buffer: (handle, buf, count) -> n_written"),
+    0xCE: ("FREE_STR", 0, "none", "Free heap buffer of string slice: (str_slice) -> ()"),
+    0xCF: ("GET_ARG", 0, "none", "Extract CLI argument string slice at index: (args_slice, idx) -> str_slice"),
 
     # Group 9: Dynamic Hash Maps & Interning (0xD0 .. 0xDF)
     0xD0: ("MAP_NEW", 0, "none", "Allocate new hash map with N buckets: (buckets) -> map_ptr"),

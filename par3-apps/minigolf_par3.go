@@ -1,0 +1,2256 @@
+package main
+
+// Limits for 64K Process Space
+const MAX_CONSTS      = 48
+const MAX_GLOBALS     = 64
+const MAX_FUNCS       = 64
+const MAX_PARAMS      = 64
+const MAX_LOCALS      = 480
+
+// Token Kinds
+const TOK_EOF     = 0
+const TOK_INT     = 1
+const TOK_STRING  = 2
+const TOK_IDENT   = 3
+const TOK_KEYWORD = 4
+const TOK_PUNCT   = 5
+
+// Type Kinds
+const KIND_VOID   = 0
+const KIND_SCALAR = 1 // word / byte
+const KIND_SLICE  = 2 // string / slice
+
+// Symbol Tables
+// Consts
+var const_names [MAX_CONSTS]string
+var const_vals  [MAX_CONSTS]word
+var num_consts  word
+
+// Globals
+var global_names      [MAX_GLOBALS]string
+var global_sizes      [MAX_GLOBALS]word
+var global_kinds      [MAX_GLOBALS]byte
+var global_elem_sizes [MAX_GLOBALS]byte
+var num_globals       word
+
+// Functions
+var func_names       [MAX_FUNCS]string
+var func_ret_kinds   [MAX_FUNCS]byte
+var func_first_param [MAX_FUNCS]word
+var func_num_params  [MAX_FUNCS]byte
+var func_first_local [MAX_FUNCS]word
+var func_num_locals  [MAX_FUNCS]word
+var num_funcs        word
+
+// Parameters
+var param_names [MAX_PARAMS]string
+var param_kinds [MAX_PARAMS]byte
+var param_sizes [MAX_PARAMS]word
+var num_params  word
+
+// Locals
+var local_names      [MAX_LOCALS]string
+var local_kinds      [MAX_LOCALS]byte
+var local_sizes      [MAX_LOCALS]word
+var local_elem_sizes [MAX_LOCALS]byte
+var num_locals       word
+
+// Maps
+var str_pool_map word
+var const_map    word
+var global_map   word
+var func_map     word
+
+// Current compilation state
+var cur_func_idx word
+var cur_func_name string
+var cur_pass word
+var cur_lineno word
+
+// Loop stack for break and continue
+var loop_cont  [32]word
+var loop_exit  [32]word
+var loop_depth word
+
+// Labels counter
+var label_counter word
+
+// File I/O
+var in_file_h  word
+var out_file_h word
+var src_file   string
+var out_file   string
+
+// Output sector buffer (256 bytes)
+var out_buf     [256]byte
+var out_buf_len word
+
+// Lexer line buffer
+var cur_line string
+var line_pos word
+var is_eof   bool
+
+// Current Token
+var cur_tok byte
+var cur_int word
+var cur_str string
+
+// Scratch buffers
+var dec_digits [6]byte
+var tok_sbuf   [256]byte
+var tok_ibuf   [64]byte
+
+// -----------------------------------------------------------------------------
+// Output Buffering
+// -----------------------------------------------------------------------------
+
+func out_flush() {
+    if out_buf_len > 0 {
+        s := mk_str(&out_buf[0], 256, out_buf_len)
+        file_write(out_file_h, s)
+        out_buf_len = 0
+    }
+}
+
+func out_char(c byte) {
+    if out_buf_len >= 256 {
+        out_flush()
+    }
+    out_buf[out_buf_len] = c
+    out_buf_len++
+}
+
+func out_str(s string) {
+    for i := word(0); i < word(len(s)); i++ {
+        out_char(s[i])
+    }
+}
+
+func out_dec(v word) {
+    if v == 0 {
+        out_char('0')
+        return
+    }
+    dlen := word(0)
+    for v > 0 {
+        dec_digits[dlen] = byte('0' + (v % 10))
+        dlen++
+        v = v / 10
+    }
+    for dlen > 0 {
+        dlen--
+        out_char(dec_digits[dlen])
+    }
+}
+
+func emit_nl() {
+    out_char(13)
+}
+
+func emit(s string) {
+    out_str(s)
+    emit_nl()
+}
+
+func emit2(s1 string, s2 string) {
+    out_str(s1)
+    out_str(s2)
+    emit_nl()
+}
+
+func emit_u8(s string, v word) {
+    out_str(s)
+    out_dec(v)
+    emit_nl()
+}
+
+func emit_u16(s string, v word) {
+    out_str(s)
+    out_dec(v)
+    emit_nl()
+}
+
+func emit_str(s string, str_val string) {
+    out_str(s)
+    out_char('"')
+    for i := word(0); i < word(len(str_val)); i++ {
+        c := str_val[i]
+        if c == '\n' {
+            out_str("\\n")
+        } else if c == '\t' {
+            out_str("\\t")
+        } else if c == '\r' {
+            out_str("\\r")
+        } else if c == '"' {
+            out_str("\\\"")
+        } else if c == '\\' {
+            out_str("\\\\")
+        } else {
+            out_char(c)
+        }
+    }
+    out_char('"')
+    emit_nl()
+}
+
+func next_label() word {
+    label_counter++
+    return label_counter
+}
+
+func emit_label(lbl word) {
+    out_str(".L_")
+    out_dec(lbl)
+    out_char(':')
+    emit_nl()
+}
+
+func emit_jump(op string, lbl word) {
+    out_str("    ")
+    out_str(op)
+    out_str(" .L_")
+    out_dec(lbl)
+    emit_nl()
+}
+
+// -----------------------------------------------------------------------------
+// String Pool
+// -----------------------------------------------------------------------------
+
+func pool_str(s string) string {
+    if len(s) == 0 {
+        return ""
+    }
+    return map_str(str_pool_map, s)
+}
+
+// -----------------------------------------------------------------------------
+// Symbol Table Lookups
+// -----------------------------------------------------------------------------
+
+func find_const(name string) word {
+    return map_get(const_map, name)
+}
+
+func add_const(name string, val word) {
+    if num_consts >= MAX_CONSTS {
+        println("ERROR: Exceeded MAX_CONSTS")
+        sys_exit(1)
+    }
+    const_names[num_consts] = pool_str(name)
+    const_vals[num_consts] = val
+    map_put(const_map, name, num_consts)
+    num_consts++
+}
+
+func find_global(name string) word {
+    return map_get(global_map, name)
+}
+
+func add_global(name string, size word, kind byte, elem_size byte) {
+    if num_globals >= MAX_GLOBALS {
+        println("ERROR: Exceeded MAX_GLOBALS")
+        sys_exit(1)
+    }
+    global_names[num_globals] = pool_str(name)
+    global_sizes[num_globals] = size
+    global_kinds[num_globals] = kind
+    global_elem_sizes[num_globals] = elem_size
+    map_put(global_map, name, num_globals)
+    num_globals++
+}
+
+func find_func(name string) word {
+    return map_get(func_map, name)
+}
+
+func add_func(name string, ret_kind byte) word {
+    if num_funcs >= MAX_FUNCS {
+        println("ERROR: Exceeded MAX_FUNCS")
+        sys_exit(1)
+    }
+    idx := num_funcs
+    func_names[idx] = pool_str(name)
+    func_ret_kinds[idx] = ret_kind
+    func_first_param[idx] = num_params
+    func_num_params[idx] = 0
+    func_first_local[idx] = num_locals
+    func_num_locals[idx] = 0
+    map_put(func_map, name, idx)
+    num_funcs++
+    return idx
+}
+
+func add_param(name string, kind byte, size word) {
+    if num_params >= MAX_PARAMS {
+        println("ERROR: Exceeded MAX_PARAMS")
+        sys_exit(1)
+    }
+    param_names[num_params] = pool_str(name)
+    param_kinds[num_params] = kind
+    param_sizes[num_params] = size
+    num_params++
+}
+
+func add_local(name string, kind byte, size word, elem_size byte) {
+    pname := pool_str(name)
+    if num_funcs > 0 {
+        start := func_first_local[num_funcs - 1]
+        for i := start; i < num_locals; i++ {
+            if local_names[i] == pname {
+                return
+            }
+        }
+    }
+    if num_locals >= MAX_LOCALS {
+        println("ERROR: Exceeded MAX_LOCALS")
+        sys_exit(1)
+    }
+    local_names[num_locals] = pname
+    local_kinds[num_locals] = kind
+    local_sizes[num_locals] = size
+    local_elem_sizes[num_locals] = elem_size
+    num_locals++
+    func_num_locals[cur_func_idx] = num_locals - func_first_local[cur_func_idx]
+}
+
+func find_cur_param(name string) word {
+    start := func_first_param[cur_func_idx]
+    count := word(func_num_params[cur_func_idx])
+    for i := word(0); i < count; i++ {
+        if param_names[start + i] == name {
+            return start + i
+        }
+    }
+    return 0xFFFF
+}
+
+func find_cur_local(name string) word {
+    start := func_first_local[cur_func_idx]
+    count := func_num_locals[cur_func_idx]
+    for i := word(0); i < count; i++ {
+        if local_names[start + i] == name {
+            return start + i
+        }
+    }
+    return 0xFFFF
+}
+
+// -----------------------------------------------------------------------------
+// Lexer
+// -----------------------------------------------------------------------------
+
+func reset_lexer() {
+    if len(cur_line) > 0 {
+        free_str(cur_line)
+    }
+    cur_line = ""
+    line_pos = 0
+    is_eof = false
+    cur_lineno = 0
+}
+
+func peek_char() byte {
+    for !is_eof && line_pos >= word(len(cur_line)) {
+        if len(cur_line) > 0 {
+            free_str(cur_line)
+            cur_line = ""
+        }
+        line, eof := file_readline(in_file_h)
+        line_pos = 0
+        if eof != 0 {
+            is_eof = true
+            return 0
+        }
+        cur_line = line
+        cur_lineno++
+    }
+    if is_eof {
+        return 0
+    }
+    return cur_line[line_pos]
+}
+
+func next_char() byte {
+    c := peek_char()
+    if !is_eof {
+        line_pos++
+    }
+    return c
+}
+
+func is_alpha(c byte) bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+func is_digit(c byte) bool {
+    return c >= '0' && c <= '9'
+}
+
+func is_hex_digit(c byte) bool {
+    return is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func hex_val(c byte) word {
+    if is_digit(c) { return word(c - '0') }
+    if c >= 'a' && c <= 'f' { return word(c - 'a' + 10) }
+    if c >= 'A' && c <= 'F' { return word(c - 'A' + 10) }
+    return 0
+}
+
+func is_space(c byte) bool {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+func check_keyword(s string) bool {
+    if s == "package" || s == "const" || s == "var" || s == "func" {
+        return true
+    }
+    if s == "return" || s == "if" || s == "else" || s == "for" {
+        return true
+    }
+    if s == "break" || s == "continue" || s == "true" || s == "false" {
+        return true
+    }
+    if s == "byte" || s == "word" || s == "bool" || s == "string" {
+        return true
+    }
+    if s == "int" || s == "uint8" || s == "uint16" {
+        return true
+    }
+    return false
+}
+
+func next_tok() {
+    for {
+        c := peek_char()
+        if c == 0 {
+            cur_tok = TOK_EOF
+            cur_str = ""
+            return
+        }
+        if is_space(c) {
+            next_char()
+            continue
+        }
+        // Comments
+        if c == '/' {
+            next_char()
+            c2 := peek_char()
+            if c2 == '/' {
+                // Line comment
+                line_pos = word(len(cur_line))
+                continue
+            } else if c2 == '*' {
+                // Block comment
+                next_char() // skip *
+                for {
+                    bc := next_char()
+                    if bc == 0 { break }
+                    if bc == '*' && peek_char() == '/' {
+                        next_char() // skip /
+                        break
+                    }
+                }
+                continue
+            } else {
+                // Division operator
+                cur_tok = TOK_PUNCT
+                cur_str = "/"
+                return
+            }
+        }
+        break
+    }
+
+    c := peek_char()
+
+    // Numbers: decimal or hex ($ or 0x)
+    if is_digit(c) || c == '$' {
+        if c == '$' {
+            next_char() // skip $
+            val := word(0)
+            for is_hex_digit(peek_char()) {
+                val = (val << 4) | hex_val(next_char())
+            }
+            cur_tok = TOK_INT
+            cur_int = val
+            cur_str = ""
+            return
+        }
+        if c == '0' {
+            next_char()
+            c2 := peek_char()
+            if c2 == 'x' || c2 == 'X' {
+                next_char() // skip x
+                val := word(0)
+                for is_hex_digit(peek_char()) {
+                    val = (val << 4) | hex_val(next_char())
+                }
+                cur_tok = TOK_INT
+                cur_int = val
+                cur_str = ""
+                return
+            }
+            val := word(0)
+            for is_digit(peek_char()) {
+                val = val * 10 + word(next_char() - '0')
+            }
+            cur_tok = TOK_INT
+            cur_int = val
+            cur_str = ""
+            return
+        }
+        val := word(0)
+        for is_digit(peek_char()) {
+            val = val * 10 + word(next_char() - '0')
+        }
+        cur_tok = TOK_INT
+        cur_int = val
+        cur_str = ""
+        return
+    }
+
+    // Character literal 'a'
+    if c == '\'' {
+        next_char() // skip '
+        cc := next_char()
+        if cc == '\\' {
+            nc := next_char()
+            if nc == 'n' {
+                cc = '\n'
+            } else if nc == 't' {
+                cc = '\t'
+            } else if nc == 'r' {
+                cc = '\r'
+            } else if nc == '0' {
+                cc = 0
+            } else if nc == '\'' {
+                cc = '\''
+            } else if nc == '\\' {
+                cc = '\\'
+            } else {
+                cc = nc
+            }
+        }
+        if peek_char() == '\'' {
+            next_char() // skip closing '
+        }
+        cur_tok = TOK_INT
+        cur_int = word(cc)
+        cur_str = ""
+        return
+    }
+
+    // String literal "..."
+    if c == '"' {
+        next_char() // skip "
+        slen := word(0)
+        for {
+            sc := next_char()
+            if sc == 0 || sc == '"' {
+                break
+            }
+            if sc == '\\' {
+                nc := next_char()
+                if nc == 'n' {
+                    sc = '\n'
+                } else if nc == 't' {
+                    sc = '\t'
+                } else if nc == 'r' {
+                    sc = '\r'
+                } else if nc == '"' {
+                    sc = '"'
+                } else if nc == '\\' {
+                    sc = '\\'
+                } else {
+                    sc = nc
+                }
+            }
+            if slen < 255 {
+                tok_sbuf[slen] = sc
+                slen++
+            }
+        }
+        s := mk_str(&tok_sbuf[0], 256, slen)
+        cur_tok = TOK_STRING
+        cur_str = s
+        return
+    }
+
+    // Identifiers or Keywords
+    if is_alpha(c) {
+        ilen := word(0)
+        for is_alpha(peek_char()) || is_digit(peek_char()) {
+            if ilen < 63 {
+                tok_ibuf[ilen] = next_char()
+                ilen++
+            } else {
+                next_char()
+            }
+        }
+        s := mk_str(&tok_ibuf[0], 64, ilen)
+        cur_str = pool_str(s)
+        if check_keyword(cur_str) {
+            cur_tok = TOK_KEYWORD
+        } else {
+            cur_tok = TOK_IDENT
+        }
+        return
+    }
+
+    // Multi-character punctuation
+    next_char()
+    c2 := peek_char()
+    if c == ':' && c2 == '=' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = ":="
+        return
+    }
+    if c == '=' && c2 == '=' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "=="
+        return
+    }
+    if c == '!' && c2 == '=' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "!="
+        return
+    }
+    if c == '<' && c2 == '=' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "<="
+        return
+    }
+    if c == '>' && c2 == '=' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = ">="
+        return
+    }
+    if c == '&' && c2 == '&' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "&&"
+        return
+    }
+    if c == '|' && c2 == '|' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "||"
+        return
+    }
+    if c == '<' && c2 == '<' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "<<"
+        return
+    }
+    if c == '>' && c2 == '>' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = ">>"
+        return
+    }
+    if c == '+' && c2 == '+' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "++"
+        return
+    }
+    if c == '-' && c2 == '-' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "--"
+        return
+    }
+    if c == '+' && c2 == '=' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "+="
+        return
+    }
+    if c == '-' && c2 == '=' {
+        next_char()
+        cur_tok = TOK_PUNCT
+        cur_str = "-="
+        return
+    }
+
+    // Single-character punctuation
+    cur_tok = TOK_PUNCT
+    if c == '+' {
+        cur_str = "+"
+    } else if c == '-' {
+        cur_str = "-"
+    } else if c == '*' {
+        cur_str = "*"
+    } else if c == '%' {
+        cur_str = "%"
+    } else if c == '&' {
+        cur_str = "&"
+    } else if c == '|' {
+        cur_str = "|"
+    } else if c == '^' {
+        cur_str = "^"
+    } else if c == '~' {
+        cur_str = "~"
+    } else if c == '!' {
+        cur_str = "!"
+    } else if c == '<' {
+        cur_str = "<"
+    } else if c == '>' {
+        cur_str = ">"
+    } else if c == '=' {
+        cur_str = "="
+    } else if c == '(' {
+        cur_str = "("
+    } else if c == ')' {
+        cur_str = ")"
+    } else if c == '[' {
+        cur_str = "["
+    } else if c == ']' {
+        cur_str = "]"
+    } else if c == '{' {
+        cur_str = "{"
+    } else if c == '}' {
+        cur_str = "}"
+    } else if c == ',' {
+        cur_str = ","
+    } else if c == ';' {
+        cur_str = ";"
+    } else if c == ':' {
+        cur_str = ":"
+    } else {
+        cur_str = ""
+    }
+}
+
+func match(s string) bool {
+    if cur_str == s {
+        next_tok()
+        return true
+    }
+    return false
+}
+
+func expect(s string) {
+    if cur_str != s {
+        print(src_file, ":", cur_lineno, ": Syntax error: expected '", s)
+        print("', got '", cur_str, "' (pass ", cur_pass)
+        println(", func ", cur_func_name, ")")
+        println("  line: ", cur_line)
+        sys_exit(1)
+    }
+    next_tok()
+}
+
+// -----------------------------------------------------------------------------
+// Type Descriptor Parsing
+// -----------------------------------------------------------------------------
+
+// Result of parse_type_desc
+var pt_size      word
+var pt_kind      byte
+var pt_elem_size byte
+
+func parse_type_desc() {
+    if cur_str == "[" {
+        next_tok() // skip [
+        count := word(0)
+        if cur_tok == TOK_INT {
+            count = cur_int
+            next_tok()
+        } else if cur_tok == TOK_IDENT {
+            ci := find_const(cur_str)
+            if ci != 0xFFFF {
+                count = const_vals[ci]
+            } else {
+                count = 1
+            }
+            next_tok()
+        }
+        expect("]")
+        tname := cur_str
+        next_tok()
+        if tname == "byte" || tname == "bool" || tname == "uint8" {
+            pt_size = count
+            pt_kind = KIND_SCALAR
+            pt_elem_size = 1
+        } else if tname == "string" || tname == "slice" {
+            pt_size = count * 6
+            pt_kind = KIND_SCALAR
+            pt_elem_size = 6
+        } else {
+            pt_size = count * 2
+            pt_kind = KIND_SCALAR
+            pt_elem_size = 2
+        }
+    } else {
+        tname := cur_str
+        next_tok()
+        if tname == "byte" || tname == "bool" || tname == "uint8" {
+            pt_size = 1
+            pt_kind = KIND_SCALAR
+            pt_elem_size = 1
+        } else if tname == "string" || tname == "slice" {
+            pt_size = 6
+            pt_kind = KIND_SLICE
+            pt_elem_size = 1
+        } else {
+            pt_size = 2
+            pt_kind = KIND_SCALAR
+            pt_elem_size = 2
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Pass 1: Declarations and Local Variable Collection
+// -----------------------------------------------------------------------------
+
+func run_pass1() {
+    cur_pass = 1
+    cur_func_name = ""
+    reset_lexer()
+    next_tok()
+
+    for cur_tok != TOK_EOF {
+        if cur_tok == TOK_KEYWORD && cur_str == "package" {
+            next_tok()
+            next_tok() // skip pkg name
+        } else if cur_tok == TOK_KEYWORD && cur_str == "const" {
+            next_tok()
+            cname := cur_str
+            next_tok()
+            expect("=")
+            is_neg := false
+            if cur_str == "-" {
+                is_neg = true
+                next_tok()
+            }
+            cval := cur_int
+            next_tok()
+            if is_neg {
+                cval = word(-cval)
+            }
+            add_const(cname, cval)
+            if cur_str == ";" { next_tok() }
+        } else if cur_tok == TOK_KEYWORD && cur_str == "var" {
+            next_tok()
+            vname := cur_str
+            next_tok()
+            parse_type_desc()
+            add_global(vname, pt_size, pt_kind, pt_elem_size)
+            if cur_str == ";" { next_tok() }
+        } else if cur_tok == TOK_KEYWORD && cur_str == "func" {
+            next_tok()
+            fname := cur_str
+            cur_func_name = fname
+            next_tok()
+            expect("(")
+
+            fidx := add_func(fname, KIND_VOID)
+            cur_func_idx = fidx
+            p_count := byte(0)
+
+            for (cur_tok != TOK_PUNCT || cur_str != ")") && cur_tok != TOK_EOF {
+                pname := cur_str
+                next_tok()
+                parse_type_desc()
+                add_param(pname, pt_kind, pt_size)
+                p_count++
+                if cur_str == "," { next_tok() }
+            }
+            expect(")")
+            func_num_params[fidx] = p_count
+
+            // Return type & body detection
+            has_body := false
+            if cur_tok == TOK_PUNCT && cur_str == "{" {
+                has_body = true
+            } else if cur_tok != TOK_EOF && cur_str != ";" {
+                is_top := false
+                if cur_str == "func" || cur_str == "var" || cur_str == "const" {
+                    is_top = true
+                }
+                if !is_top {
+                    rname := cur_str
+                    next_tok()
+                    if rname == "string" || rname == "slice" {
+                        func_ret_kinds[fidx] = KIND_SLICE
+                    } else if rname != "void" {
+                        func_ret_kinds[fidx] = KIND_SCALAR
+                    }
+                    if cur_tok == TOK_PUNCT && cur_str == "{" {
+                        has_body = true
+                    }
+                }
+            }
+            if cur_str == ";" { next_tok() }
+
+            if has_body {
+                expect("{")
+                depth := word(1)
+
+                for depth > 0 && cur_tok != TOK_EOF {
+                    if cur_tok == TOK_PUNCT && cur_str == "{" {
+                        depth++
+                        next_tok()
+                    } else if cur_tok == TOK_PUNCT && cur_str == "}" {
+                        depth--
+                        next_tok()
+                    } else if cur_tok == TOK_KEYWORD && cur_str == "var" {
+                        next_tok()
+                        lname := cur_str
+                        next_tok()
+                        parse_type_desc()
+                        add_local(lname, pt_kind, pt_size, pt_elem_size)
+                    } else if cur_tok == TOK_IDENT {
+                        lname := cur_str
+                        next_tok()
+                        if cur_str == "," {
+                            next_tok()
+                            lname2 := cur_str
+                            next_tok()
+                            if cur_str == ":=" {
+                                next_tok()
+                                if cur_str == "file_readline" {
+                                    if lname != "_" {
+                                        add_local(lname, KIND_SLICE, 6, 0)
+                                    }
+                                    if lname2 != "_" {
+                                        add_local(lname2, KIND_SCALAR, 2, 0)
+                                    }
+                                } else {
+                                    if lname != "_" {
+                                        add_local(lname, KIND_SCALAR, 2, 0)
+                                    }
+                                    if lname2 != "_" {
+                                        add_local(lname2, KIND_SCALAR, 2, 0)
+                                    }
+                                }
+                            }
+                        } else if cur_str == ":=" {
+                            next_tok() // skip :=
+                            lkind := byte(KIND_SCALAR)
+                            lsz := word(2)
+                            first_name := cur_str
+                            first_tok := cur_tok
+                            next_tok()
+                            if cur_str == "[" {
+                                is_subslice := false
+                                for cur_tok != TOK_EOF && cur_str != "]" && cur_str != "{" && cur_str != "}" && cur_str != ";" {
+                                    if cur_str == ":" {
+                                        is_subslice = true
+                                    }
+                                    next_tok()
+                                }
+                                if is_subslice {
+                                    lkind = KIND_SLICE
+                                    lsz = 6
+                                } else {
+                                    gi := find_global(first_name)
+                                    li := find_cur_local(first_name)
+                                    elem_sz := byte(1)
+                                    if gi != 0xFFFF {
+                                        elem_sz = global_elem_sizes[gi]
+                                    } else if li != 0xFFFF {
+                                        elem_sz = local_elem_sizes[li]
+                                    }
+                                    if elem_sz == 6 {
+                                        lkind = KIND_SLICE
+                                        lsz = 6
+                                    } else {
+                                        lkind = KIND_SCALAR
+                                        lsz = 2
+                                    }
+                                }
+                                if cur_str == "]" {
+                                    next_tok()
+                                }
+                            } else {
+                                is_sfn := first_name == "sys_args" || first_name == "get_arg" || first_name == "mk_str" || first_name == "file_readline" || first_name == "map_str" || first_name == "lstrip" || first_name == "rstrip" || first_name == "strip" || first_name == "replace_ident" || first_name == "splitlines" || first_name == "strdup" || first_name == "make" || first_name == "makeslice"
+                                if first_tok == TOK_STRING || is_sfn {
+                                    lkind = KIND_SLICE
+                                    lsz = 6
+                                } else {
+                                    fi := find_func(first_name)
+                                    if fi != 0xFFFF && func_ret_kinds[fi] == KIND_SLICE {
+                                        lkind = KIND_SLICE
+                                        lsz = 6
+                                    } else {
+                                        is_binop := cur_str == "==" || cur_str == "!=" || cur_str == "<" || cur_str == "<=" || cur_str == ">" || cur_str == ">=" || cur_str == "&&" || cur_str == "||"
+                                        if !is_binop {
+                                            li := find_cur_local(first_name)
+                                            if li != 0xFFFF && local_kinds[li] == KIND_SLICE {
+                                                lkind = KIND_SLICE
+                                                lsz = 6
+                                            } else {
+                                                pi := find_cur_param(first_name)
+                                                if pi != 0xFFFF && param_kinds[pi] == KIND_SLICE {
+                                                    lkind = KIND_SLICE
+                                                    lsz = 6
+                                                } else {
+                                                    gi := find_global(first_name)
+                                                    if gi != 0xFFFF && global_kinds[gi] == KIND_SLICE {
+                                                        lkind = KIND_SLICE
+                                                        lsz = 6
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if lname != "_" {
+                                add_local(lname, lkind, lsz, 0)
+                            }
+                        }
+                    } else {
+                        next_tok()
+                    }
+                }
+
+                // Standard scratch locals for every function
+                add_local("_pbuf", KIND_SCALAR, 2, 2)
+                add_local("_tmp_base", KIND_SCALAR, 2, 2)
+                add_local("_tmp_cap", KIND_SCALAR, 2, 2)
+                add_local("_tmp_len", KIND_SCALAR, 2, 2)
+                add_local("_tmp_addr", KIND_SCALAR, 2, 2)
+                add_local("_tmp_dest_addr", KIND_SCALAR, 2, 2)
+                func_num_locals[fidx] = num_locals - func_first_local[fidx]
+            } else {
+                func_num_locals[fidx] = 0
+            }
+        } else {
+            next_tok()
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Pass 2: Code Generation
+// -----------------------------------------------------------------------------
+
+func get_bin_prec(op string) word {
+    if op == "||" { return 1 }
+    if op == "&&" { return 2 }
+    if op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=" { return 3 }
+    if op == "+" || op == "-" || op == "|" || op == "^" { return 4 }
+    if op == "*" || op == "/" || op == "%" || op == "<<" || op == ">>" || op == "&" { return 5 }
+    return 0
+}
+
+func emit_bin_op(op string, lhs_kind word, rhs_kind word) word {
+    if lhs_kind == KIND_SLICE || rhs_kind == KIND_SLICE {
+        emit("    STR_CMP")
+        if op == "==" {
+            emit("    NOT")
+        } else if op == "<" {
+            emit("    PUSH_NEG1")
+            emit("    CMP_EQ")
+        } else if op == "<=" {
+            emit("    PUSH_1")
+            emit("    CMP_NE")
+        } else if op == ">" {
+            emit("    PUSH_1")
+            emit("    CMP_EQ")
+        } else if op == ">=" {
+            emit("    PUSH_NEG1")
+            emit("    CMP_NE")
+        }
+        return KIND_SCALAR
+    }
+
+    if op == "+" {
+        emit("    ADD")
+    } else if op == "-" {
+        emit("    SUB")
+    } else if op == "*" {
+        emit("    MUL")
+    } else if op == "/" {
+        emit("    DIV")
+    } else if op == "%" {
+        emit("    MOD")
+    } else if op == "&" {
+        emit("    BIT_AND")
+    } else if op == "|" {
+        emit("    BIT_OR")
+    } else if op == "^" {
+        emit("    BIT_XOR")
+    } else if op == "<<" {
+        emit("    SHL")
+    } else if op == ">>" {
+        emit("    SHR")
+    } else if op == "==" {
+        emit("    CMP_EQ")
+    } else if op == "!=" {
+        emit("    CMP_NE")
+    } else if op == "<" {
+        emit("    CMP_LT")
+    } else if op == "<=" {
+        emit("    CMP_LE")
+    } else if op == ">" {
+        emit("    CMP_GT")
+    } else if op == ">=" {
+        emit("    CMP_GE")
+    }
+    return KIND_SCALAR
+}
+
+func compile_unary() word {
+    if cur_tok == TOK_INT {
+        v := cur_int
+        next_tok()
+        if v == 0 {
+            emit("    PUSH_0")
+        } else if v == 1 {
+            emit("    PUSH_1")
+        } else if v == 0xFFFF {
+            emit("    PUSH_NEG1")
+        } else if v <= 127 {
+            emit_u8("    PUSH_I8 ", v)
+        } else {
+            emit_u16("    PUSH_I16 ", v)
+        }
+        return KIND_SCALAR
+    }
+
+    if cur_tok == TOK_STRING {
+        emit_str("    PUSH_STR ", cur_str)
+        next_tok()
+        return KIND_SLICE
+    }
+
+    if cur_tok == TOK_KEYWORD {
+        if cur_str == "true" {
+            next_tok()
+            emit("    PUSH_TRUE")
+            return KIND_SCALAR
+        }
+        if cur_str == "false" {
+            next_tok()
+            emit("    PUSH_FALSE")
+            return KIND_SCALAR
+        }
+        if cur_str == "word" || cur_str == "byte" || cur_str == "int" || cur_str == "uint8" || cur_str == "uint16" {
+            next_tok()
+            expect("(")
+            compile_expr(0)
+            expect(")")
+            return KIND_SCALAR
+        }
+    }
+
+    if cur_str == "!" {
+        next_tok()
+        compile_unary()
+        emit("    NOT")
+        return KIND_SCALAR
+    }
+
+    if cur_str == "-" {
+        next_tok()
+        if cur_tok == TOK_INT {
+            v := word(-cur_int)
+            next_tok()
+            if v == 0xFFFF {
+                emit("    PUSH_NEG1")
+            } else if v <= 127 {
+                emit_u8("    PUSH_I8 ", v)
+            } else {
+                emit_u16("    PUSH_I16 ", v)
+            }
+            return KIND_SCALAR
+        }
+        compile_unary()
+        emit("    NEG")
+        return KIND_SCALAR
+    }
+
+    if cur_str == "^" || cur_str == "~" {
+        next_tok()
+        compile_unary()
+        emit("    BIT_NOT")
+        return KIND_SCALAR
+    }
+
+    if cur_str == "(" {
+        next_tok()
+        k := compile_expr(0)
+        expect(")")
+        return k
+    }
+
+    if cur_str == "&" {
+        next_tok()
+        name := cur_str
+        next_tok()
+        if cur_str == "[" {
+            next_tok()
+            elem_sz := byte(1)
+            gi := find_global(name)
+            li := find_cur_local(name)
+            if gi != 0xFFFF {
+                emit2("    ADDR_OF_GLOBAL ", name)
+                elem_sz = global_elem_sizes[gi]
+            } else if li != 0xFFFF {
+                emit2("    ADDR_OF_LOCAL ", name)
+                elem_sz = local_elem_sizes[li]
+            }
+            compile_expr(0) // index
+            expect("]")
+            if elem_sz == 2 {
+                emit("    SHL1_ADD")
+            } else if elem_sz == 1 {
+                emit("    ADD")
+            } else {
+                emit_u8("    PUSH_I8 ", word(elem_sz))
+                emit("    MUL")
+                emit("    ADD")
+            }
+            return KIND_SCALAR
+        } else {
+            li := find_cur_local(name)
+            pi := find_cur_param(name)
+            if li != 0xFFFF || pi != 0xFFFF {
+                emit2("    ADDR_OF_LOCAL ", name)
+            } else {
+                emit2("    ADDR_OF_GLOBAL ", name)
+            }
+            return KIND_SCALAR
+        }
+    }
+
+    if cur_str == "*" {
+        next_tok()
+        compile_unary()
+        emit("    PEEK2")
+        return KIND_SCALAR
+    }
+
+    if cur_tok == TOK_IDENT {
+        name := cur_str
+        next_tok()
+
+        // Constant substitution
+        ci := find_const(name)
+        if ci != 0xFFFF {
+            v := const_vals[ci]
+            if v == 0 {
+                emit("    PUSH_0")
+            } else if v == 1 {
+                emit("    PUSH_1")
+            } else if v == 0xFFFF {
+                emit("    PUSH_NEG1")
+            } else if v <= 127 {
+                emit_u8("    PUSH_I8 ", v)
+            } else {
+                emit_u16("    PUSH_I16 ", v)
+            }
+            return KIND_SCALAR
+        }
+
+        // Function call
+        if cur_str == "(" {
+            next_tok()
+            nargs := compile_arg_list()
+            return emit_call(name, nargs)
+        }
+
+        // Array indexing or Slicing
+        if cur_str == "[" {
+            next_tok()
+            gi := find_global(name)
+            li := find_cur_local(name)
+            pi := find_cur_param(name)
+
+            var_kind := byte(KIND_SCALAR)
+            elem_sz := byte(1)
+
+            if gi != 0xFFFF {
+                var_kind = global_kinds[gi]
+                elem_sz = global_elem_sizes[gi]
+            } else if li != 0xFFFF {
+                var_kind = local_kinds[li]
+                elem_sz = local_elem_sizes[li]
+            } else if pi != 0xFFFF {
+                var_kind = param_kinds[pi]
+                elem_sz = 2
+            }
+
+            compile_expr(0) // evaluates index or slice start
+
+            if cur_str == ":" {
+                // Sub-slice s[start:end]
+                next_tok()
+                compile_expr(0) // evaluates end
+                expect("]")
+                emit("    STORE_LOCAL _tmp_cap")
+                emit("    STORE_LOCAL _tmp_base")
+                if gi != 0xFFFF {
+                    if var_kind == KIND_SLICE {
+                        emit2("    LOAD_GLOBAL ", name)
+                    } else {
+                        emit2("    ADDR_OF_GLOBAL ", name)
+                        emit_u16("    PUSH_I16 ", global_sizes[gi])
+                        emit_u16("    PUSH_I16 ", global_sizes[gi])
+                        emit("    SLICE_NEW")
+                    }
+                } else if li != 0xFFFF {
+                    if var_kind == KIND_SLICE {
+                        emit2("    LOAD_LOCAL ", name)
+                    } else {
+                        emit2("    ADDR_OF_LOCAL ", name)
+                        emit_u16("    PUSH_I16 ", local_sizes[li])
+                        emit_u16("    PUSH_I16 ", local_sizes[li])
+                        emit("    SLICE_NEW")
+                    }
+                } else {
+                    emit2("    LOAD_LOCAL ", name)
+                }
+                emit("    LOAD_LOCAL _tmp_base")
+                emit("    LOAD_LOCAL _tmp_cap")
+                emit("    SLICE_SUB")
+                return KIND_SLICE
+            } else {
+                expect("]")
+                if elem_sz == 6 {
+                    // Array of slices: arr[i] -> returns slice
+                    if gi != 0xFFFF {
+                        emit2("    ADDR_OF_GLOBAL ", name)
+                    } else {
+                        emit2("    ADDR_OF_LOCAL ", name)
+                    }
+                    emit("    SWAP")
+                    emit_u8("    PUSH_I8 ", 6)
+                    emit("    MUL")
+                    emit("    ADD")
+                    // Stack has elem addr. Load slice [Base, Cap, Len] without scratch vars:
+                    emit("    DUP")
+                    emit("    PEEK2")
+                    emit("    SWAP")
+                    emit("    DUP")
+                    emit("    PUSH_I8 2")
+                    emit("    ADD")
+                    emit("    PEEK2")
+                    emit("    SWAP")
+                    emit("    PUSH_I8 4")
+                    emit("    ADD")
+                    emit("    PEEK2")
+                    return KIND_SLICE
+                } else if var_kind == KIND_SLICE {
+                    // String indexing s[i]
+                    if gi != 0xFFFF {
+                        emit2("    ADDR_OF_GLOBAL ", name)
+                    } else {
+                        emit2("    ADDR_OF_LOCAL ", name)
+                    }
+                    emit("    PEEK2")
+                    emit("    SWAP")
+                    emit("    ADD")
+                    emit("    PEEK1")
+                    return KIND_SCALAR
+                } else {
+                    // Array indexing arr[i]
+                    if gi != 0xFFFF {
+                        emit2("    ADDR_OF_GLOBAL ", name)
+                    } else {
+                        emit2("    ADDR_OF_LOCAL ", name)
+                    }
+                    emit("    SWAP")
+                    if elem_sz == 2 {
+                        emit("    SHL1_ADD")
+                        emit("    PEEK2")
+                    } else if elem_sz == 1 {
+                        emit("    ADD")
+                        emit("    PEEK1")
+                    } else {
+                        emit_u8("    PUSH_I8 ", word(elem_sz))
+                        emit("    MUL")
+                        emit("    ADD")
+                        emit("    PEEK2")
+                    }
+                    return KIND_SCALAR
+                }
+            }
+        }
+
+        // Simple variable load
+        li := find_cur_local(name)
+        if li != 0xFFFF {
+            emit2("    LOAD_LOCAL ", name)
+            return word(local_kinds[li])
+        }
+        pi := find_cur_param(name)
+        if pi != 0xFFFF {
+            emit2("    LOAD_LOCAL ", name)
+            return word(param_kinds[pi])
+        }
+        gi := find_global(name)
+        if gi != 0xFFFF {
+            emit2("    LOAD_GLOBAL ", name)
+            return word(global_kinds[gi])
+        }
+    }
+
+    next_tok()
+    return KIND_SCALAR
+}
+
+func compile_expr(min_prec word) word {
+    lhs_kind := compile_unary()
+
+    for {
+        op := cur_str
+        prec := get_bin_prec(op)
+        if prec <= min_prec {
+            break
+        }
+        next_tok()
+
+        if op == "&&" {
+            lbl_false := next_label()
+            lbl_end := next_label()
+            emit("    DUP")
+            emit_jump("JUMP_IF_FALSE", lbl_false)
+            emit("    POP")
+            compile_expr(prec)
+            emit_jump("JUMP", lbl_end)
+            emit_label(lbl_false)
+            emit_label(lbl_end)
+            lhs_kind = KIND_SCALAR
+        } else if op == "||" {
+            lbl_true := next_label()
+            lbl_end := next_label()
+            emit("    DUP")
+            emit_jump("JUMP_IF_TRUE", lbl_true)
+            emit("    POP")
+            compile_expr(prec)
+            emit_jump("JUMP", lbl_end)
+            emit_label(lbl_true)
+            emit_label(lbl_end)
+            lhs_kind = KIND_SCALAR
+        } else {
+            rhs_kind := compile_expr(prec)
+            lhs_kind = emit_bin_op(op, lhs_kind, rhs_kind)
+        }
+    }
+    return lhs_kind
+}
+
+func compile_arg_list() word {
+    count := word(0)
+    for (cur_tok != TOK_PUNCT || cur_str != ")") && cur_tok != TOK_EOF {
+        compile_expr(0)
+        count++
+        if cur_str == "," { next_tok() }
+    }
+    expect(")")
+    return count
+}
+
+func emit_call(name string, nargs word) word {
+    if name == "len" {
+        emit("    SLICE_LEN")
+        return KIND_SCALAR
+    }
+    if name == "mk_str" {
+        emit("    SLICE_NEW")
+        return KIND_SLICE
+    }
+    if name == "str_base" {
+        emit("    POP")
+        emit("    POP")
+        return KIND_SCALAR
+    }
+    if name == "free_str" {
+        emit("    FREE_STR")
+        return KIND_VOID
+    }
+    if name == "get_arg" {
+        emit("    GET_ARG")
+        return KIND_SLICE
+    }
+    if name == "alloc" {
+        emit("    BUF_ALLOC")
+        return KIND_SCALAR
+    }
+    if name == "free" {
+        emit("    BUF_FREE")
+        return KIND_VOID
+    }
+    if name == "peek" || name == "peek2" {
+        emit("    PEEK2")
+        return KIND_SCALAR
+    }
+    if name == "poke" || name == "poke2" {
+        emit("    POKE2")
+        return KIND_VOID
+    }
+    if name == "peekb" || name == "peek1" {
+        emit("    PEEK1")
+        return KIND_SCALAR
+    }
+    if name == "pokeb" || name == "poke1" {
+        emit("    POKE1")
+        return KIND_VOID
+    }
+    if name == "file_open_read" || name == "file_open" {
+        emit("    FILE_OPEN_READ")
+        return KIND_SCALAR
+    }
+    if name == "file_open_write" || name == "file_create" {
+        emit("    FILE_OPEN_WRITE")
+        return KIND_SCALAR
+    }
+    if name == "file_readline" {
+        emit("    FILE_READLINE")
+        return KIND_SLICE
+    }
+    if name == "file_read" {
+        emit("    FILE_READ")
+        return KIND_SCALAR
+    }
+    if name == "file_write" {
+        if nargs == 3 {
+            emit("    FILE_WRITE_BUF")
+        } else {
+            emit("    FILE_WRITE")
+        }
+        return KIND_SCALAR
+    }
+    if name == "file_close" {
+        emit("    FILE_CLOSE")
+        return KIND_VOID
+    }
+    if name == "os_isfile" {
+        emit("    OS_ISFILE")
+        return KIND_SCALAR
+    }
+    if name == "os_makedirs" {
+        emit("    OS_MAKEDIRS")
+        return KIND_SCALAR
+    }
+    if name == "sys_args" {
+        emit("    SYS_ARGS")
+        return KIND_SLICE
+    }
+    if name == "sys_exit" {
+        emit("    SYS_EXIT")
+        return KIND_VOID
+    }
+    if name == "map_new" {
+        emit("    MAP_NEW")
+        return KIND_SCALAR
+    }
+    if name == "map_get" {
+        emit("    MAP_GET")
+        return KIND_SCALAR
+    }
+    if name == "map_put" {
+        emit("    MAP_PUT")
+        return KIND_SCALAR
+    }
+    if name == "map_str" {
+        emit("    MAP_STR")
+        return KIND_SLICE
+    }
+    if name == "map_count" {
+        emit("    MAP_COUNT")
+        return KIND_SCALAR
+    }
+    if name == "strcmp" {
+        emit("    STR_CMP")
+        return KIND_SCALAR
+    }
+    if name == "startswith" {
+        emit("    STR_STARTSWITH")
+        return KIND_SCALAR
+    }
+    if name == "endswith" {
+        emit("    STR_ENDSWITH")
+        return KIND_SCALAR
+    }
+    if name == "find" {
+        emit("    STR_FIND")
+        return KIND_SCALAR
+    }
+    if name == "lstrip" {
+        emit("    STR_LSTRIP")
+        return KIND_SLICE
+    }
+    if name == "rstrip" {
+        emit("    STR_RSTRIP")
+        return KIND_SLICE
+    }
+    if name == "strip" {
+        emit("    STR_STRIP")
+        return KIND_SLICE
+    }
+    if name == "replace_ident" {
+        emit("    STR_REPLACE_IDENT")
+        return KIND_SLICE
+    }
+
+    emit2("    CALL ", name)
+    fi := find_func(name)
+    if fi != 0xFFFF {
+        return word(func_ret_kinds[fi])
+    }
+    return KIND_SCALAR
+}
+
+func compile_print(is_println bool) {
+    expect("(")
+    if cur_str == ")" {
+        next_tok()
+        emit("    PUSH_NIL_SLICE")
+        if is_println { emit("    PRINTLN") } else { emit("    PRINT") }
+        return
+    }
+
+    emit("    PUSH_I8 64")
+    emit("    BUF_ALLOC")
+    emit("    STORE_LOCAL _pbuf")
+
+    nargs := word(0)
+    for (cur_tok != TOK_PUNCT || cur_str != ")") && cur_tok != TOK_EOF {
+        val_off := 24 + nargs * 6
+        entry_off := nargs * 4
+
+        kind := compile_expr(0)
+
+        if kind == KIND_SLICE {
+            // String slice
+            emit("    STORE_LOCAL _tmp_len")
+            emit("    STORE_LOCAL _tmp_cap")
+            emit("    STORE_LOCAL _tmp_base")
+
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", val_off)
+            emit("    ADD")
+            emit("    LOAD_LOCAL _tmp_base")
+            emit("    POKE2")
+
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", val_off + 2)
+            emit("    ADD")
+            emit("    LOAD_LOCAL _tmp_cap")
+            emit("    POKE2")
+
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", val_off + 4)
+            emit("    ADD")
+            emit("    LOAD_LOCAL _tmp_len")
+            emit("    POKE2")
+
+            emit("    LOAD_LOCAL _pbuf")
+            if entry_off != 0 {
+                emit_u8("    PUSH_I8 ", entry_off)
+                emit("    ADD")
+            }
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", val_off)
+            emit("    ADD")
+            emit("    POKE2")
+
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", entry_off + 2)
+            emit("    ADD")
+            emit_str("    PUSH_STR ", "string")
+            emit("    POP")
+            emit("    POP")
+            emit("    POKE2")
+        } else {
+            // Scalar word
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", val_off)
+            emit("    ADD")
+            emit("    SWAP")
+            emit("    POKE2")
+
+            emit("    LOAD_LOCAL _pbuf")
+            if entry_off != 0 {
+                emit_u8("    PUSH_I8 ", entry_off)
+                emit("    ADD")
+            }
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", val_off)
+            emit("    ADD")
+            emit("    POKE2")
+
+            emit("    LOAD_LOCAL _pbuf")
+            emit_u8("    PUSH_I8 ", entry_off + 2)
+            emit("    ADD")
+            emit_str("    PUSH_STR ", "word")
+            emit("    POP")
+            emit("    POP")
+            emit("    POKE2")
+        }
+
+        nargs++
+        if cur_str == "," { next_tok() }
+    }
+    expect(")")
+
+    emit("    LOAD_LOCAL _pbuf")
+    if nargs == 1 {
+        emit("    PUSH_1")
+        emit("    PUSH_1")
+    } else {
+        emit_u8("    PUSH_I8 ", nargs)
+        emit_u8("    PUSH_I8 ", nargs)
+    }
+    if is_println { emit("    PRINTLN") } else { emit("    PRINT") }
+    emit("    LOAD_LOCAL _pbuf")
+    emit("    BUF_FREE")
+}
+
+func compile_block() {
+    expect("{")
+    for (cur_tok != TOK_PUNCT || cur_str != "}") && cur_tok != TOK_EOF {
+        compile_stmt()
+    }
+    expect("}")
+}
+
+func compile_if() {
+    expect("if")
+    lbl_else := next_label()
+    lbl_endif := next_label()
+
+    compile_expr(0) // condition
+    emit_jump("JUMP_IF_FALSE", lbl_else)
+
+    compile_block()
+
+    if cur_tok == TOK_KEYWORD && cur_str == "else" {
+        next_tok() // skip else
+        emit_jump("JUMP", lbl_endif)
+        emit_label(lbl_else)
+
+        if cur_tok == TOK_KEYWORD && cur_str == "if" {
+            compile_if()
+        } else {
+            compile_block()
+        }
+        emit_label(lbl_endif)
+    } else {
+        emit_label(lbl_else)
+    }
+}
+
+func compile_for() {
+    expect("for")
+    lbl_top := next_label()
+    lbl_cont := next_label()
+    lbl_exit := next_label()
+
+    // Peek ahead to detect 3-clause for (contains semicolon)
+    is_3clause := false
+    scan_pos := line_pos
+    for scan_pos < word(len(cur_line)) {
+        ch := cur_line[scan_pos]
+        if ch == '{' { break }
+        if ch == ';' { is_3clause = true; break }
+        scan_pos++
+    }
+
+    if !is_3clause {
+        // while loop: for <cond> { ... } or for { ... }
+        loop_cont[loop_depth] = lbl_top
+        loop_exit[loop_depth] = lbl_exit
+        loop_depth++
+
+        emit_label(lbl_top)
+        if cur_str != "{" {
+            compile_expr(0)
+            emit_jump("JUMP_IF_FALSE", lbl_exit)
+        }
+        compile_block()
+        emit_jump("JUMP", lbl_top)
+        emit_label(lbl_exit)
+
+        loop_depth--
+    } else {
+        // 3-clause: for init; cond; post { body }
+        loop_cont[loop_depth] = lbl_cont
+        loop_exit[loop_depth] = lbl_exit
+        loop_depth++
+
+        lbl_body := next_label()
+
+        if cur_str != ";" {
+            compile_stmt()
+        } else {
+            next_tok() // skip ;
+        }
+
+        emit_label(lbl_top)
+        if cur_str != ";" {
+            compile_expr(0)
+            emit_jump("JUMP_IF_FALSE", lbl_exit)
+        }
+        expect(";")
+        emit_jump("JUMP", lbl_body)
+
+        emit_label(lbl_cont)
+        if cur_str != "{" {
+            compile_stmt()
+        }
+        emit_jump("JUMP", lbl_top)
+
+        emit_label(lbl_body)
+        compile_block()
+        emit_jump("JUMP", lbl_cont)
+        emit_label(lbl_exit)
+
+        loop_depth--
+    }
+}
+
+func compile_stmt() {
+    if cur_tok == TOK_KEYWORD {
+        if cur_str == "return" {
+            next_tok()
+            if cur_str == ";" || cur_str == "}" {
+                emit("    RET_VOID")
+            } else {
+                k := compile_expr(0)
+                if k == KIND_SLICE {
+                    emit("    RET_SLICE")
+                } else {
+                    emit("    RET")
+                }
+            }
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "if" {
+            compile_if()
+            return
+        }
+
+        if cur_str == "for" {
+            compile_for()
+            return
+        }
+
+        if cur_str == "break" {
+            next_tok()
+            emit_jump("JUMP", loop_exit[loop_depth - 1])
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "continue" {
+            next_tok()
+            emit_jump("JUMP", loop_cont[loop_depth - 1])
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "var" {
+            next_tok()
+            vname := cur_str
+            next_tok()
+            parse_type_desc()
+            if cur_str == "=" {
+                next_tok()
+                compile_expr(0)
+                emit2("    STORE_LOCAL ", vname)
+            }
+            if cur_str == ";" { next_tok() }
+            return
+        }
+    }
+
+    if cur_tok == TOK_IDENT {
+        name := cur_str
+        next_tok()
+
+        if name == "print" || name == "println" {
+            compile_print(name == "println")
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "(" {
+            next_tok()
+            nargs := compile_arg_list()
+            rk := emit_call(name, nargs)
+            if rk == KIND_SCALAR {
+                emit("    POP")
+            } else if rk == KIND_SLICE {
+                emit("    POP_SLICE")
+            }
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "," {
+            next_tok()
+            name2 := cur_str
+            next_tok()
+            if cur_str == ":=" || cur_str == "=" {
+                next_tok()
+                fn_name := cur_str
+                next_tok()
+                expect("(")
+                nargs := compile_arg_list()
+                emit_call(fn_name, nargs)
+                if name2 == "_" {
+                    emit("    POP")
+                } else {
+                    emit2("    STORE_LOCAL ", name2)
+                }
+                if name == "_" {
+                    emit("    POP")
+                } else {
+                    emit2("    STORE_LOCAL ", name)
+                }
+                if cur_str == ";" { next_tok() }
+                return
+            }
+        }
+
+        if cur_str == ":=" {
+            next_tok()
+            rk := compile_expr(0)
+            if name == "_" {
+                if rk == KIND_SLICE {
+                    emit("    POP_SLICE")
+                } else {
+                    emit("    POP")
+                }
+            } else {
+                emit2("    STORE_LOCAL ", name)
+            }
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "[" {
+            next_tok()
+            elem_sz := byte(1)
+            gi := find_global(name)
+            li := find_cur_local(name)
+            if gi != 0xFFFF {
+                emit2("    ADDR_OF_GLOBAL ", name)
+                elem_sz = global_elem_sizes[gi]
+            } else if li != 0xFFFF {
+                emit2("    ADDR_OF_LOCAL ", name)
+                elem_sz = local_elem_sizes[li]
+            }
+            compile_expr(0) // index
+            expect("]")
+            if elem_sz == 6 {
+                emit_u8("    PUSH_I8 ", 6)
+                emit("    MUL")
+                emit("    ADD")
+                emit("    STORE_LOCAL _tmp_dest_addr")
+                expect("=")
+                compile_expr(0) // RHS slice value
+                emit("    STORE_LOCAL _tmp_len")
+                emit("    STORE_LOCAL _tmp_cap")
+                emit("    STORE_LOCAL _tmp_base")
+                emit("    LOAD_LOCAL _tmp_dest_addr")
+                emit("    LOAD_LOCAL _tmp_base")
+                emit("    POKE2")
+                emit("    LOAD_LOCAL _tmp_dest_addr")
+                emit("    PUSH_I8 2")
+                emit("    ADD")
+                emit("    LOAD_LOCAL _tmp_cap")
+                emit("    POKE2")
+                emit("    LOAD_LOCAL _tmp_dest_addr")
+                emit("    PUSH_I8 4")
+                emit("    ADD")
+                emit("    LOAD_LOCAL _tmp_len")
+                emit("    POKE2")
+                if cur_str == ";" { next_tok() }
+                return
+            } else if elem_sz == 2 {
+                emit("    SHL1_ADD")
+            } else if elem_sz == 1 {
+                emit("    ADD")
+            } else {
+                emit_u8("    PUSH_I8 ", word(elem_sz))
+                emit("    MUL")
+                emit("    ADD")
+            }
+
+            if cur_str == "++" || cur_str == "--" {
+                is_inc := (cur_str == "++")
+                next_tok()
+                emit("    DUP")
+                if elem_sz == 1 {
+                    emit("    PEEK1")
+                } else {
+                    emit("    PEEK2")
+                }
+                emit("    PUSH_1")
+                if is_inc { emit("    ADD") } else { emit("    SUB") }
+                if elem_sz == 1 {
+                    emit("    POKE1")
+                } else {
+                    emit("    POKE2")
+                }
+                if cur_str == ";" { next_tok() }
+                return
+            }
+
+            if cur_str == "+=" || cur_str == "-=" {
+                is_add := (cur_str == "+=")
+                next_tok()
+                emit("    DUP")
+                if elem_sz == 1 {
+                    emit("    PEEK1")
+                } else {
+                    emit("    PEEK2")
+                }
+                compile_expr(0) // RHS
+                if is_add { emit("    ADD") } else { emit("    SUB") }
+                if elem_sz == 1 {
+                    emit("    POKE1")
+                } else {
+                    emit("    POKE2")
+                }
+                if cur_str == ";" { next_tok() }
+                return
+            }
+
+            expect("=")
+            compile_expr(0) // RHS value
+            if elem_sz == 1 {
+                emit("    POKE1")
+            } else {
+                emit("    POKE2")
+            }
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "++" || cur_str == "--" {
+            is_inc := (cur_str == "++")
+            next_tok()
+            li := find_cur_local(name)
+            pi := find_cur_param(name)
+            if li != 0xFFFF || pi != 0xFFFF {
+                emit2("    LOAD_LOCAL ", name)
+                emit("    PUSH_1")
+                if is_inc { emit("    ADD") } else { emit("    SUB") }
+                emit2("    STORE_LOCAL ", name)
+            } else {
+                emit2("    LOAD_GLOBAL ", name)
+                emit("    PUSH_1")
+                if is_inc { emit("    ADD") } else { emit("    SUB") }
+                emit2("    STORE_GLOBAL ", name)
+            }
+            if cur_str == ";" { next_tok() }
+            return
+        }
+
+        if cur_str == "=" || cur_str == "+=" || cur_str == "-=" {
+            op := cur_str
+            next_tok()
+            li := find_cur_local(name)
+            pi := find_cur_param(name)
+            if op == "+=" || op == "-=" {
+                if li != 0xFFFF || pi != 0xFFFF {
+                    emit2("    LOAD_LOCAL ", name)
+                } else {
+                    emit2("    LOAD_GLOBAL ", name)
+                }
+            }
+            rk := compile_expr(0)
+            if op == "+=" { emit("    ADD") } else if op == "-=" { emit("    SUB") }
+
+            if name == "_" {
+                if rk == KIND_SLICE {
+                    emit("    POP_SLICE")
+                } else {
+                    emit("    POP")
+                }
+            } else if li != 0xFFFF || pi != 0xFFFF {
+                emit2("    STORE_LOCAL ", name)
+            } else {
+                emit2("    STORE_GLOBAL ", name)
+            }
+            if cur_str == ";" { next_tok() }
+            return
+        }
+    }
+
+    next_tok()
+}
+
+func run_pass2() {
+    cur_pass = 2
+    cur_func_name = ""
+    reset_lexer()
+    next_tok()
+
+    // Emit global variable table
+    if num_globals > 0 {
+        emit("; Global Variable Table")
+        for i := word(0); i < num_globals; i++ {
+            out_str(".global ")
+            out_str(global_names[i])
+            out_str(": ")
+            out_dec(global_sizes[i])
+            emit_nl()
+        }
+        emit("")
+    }
+
+    for cur_tok != TOK_EOF {
+        if cur_tok == TOK_KEYWORD && cur_str == "func" {
+            next_tok()
+            fname := cur_str
+            cur_func_name = fname
+            cur_func_idx = find_func(fname)
+
+            // Skip signature to {
+            has_body := false
+            for cur_tok != TOK_EOF {
+                if cur_tok == TOK_PUNCT && cur_str == "{" {
+                    has_body = true
+                    break
+                }
+                if cur_tok == TOK_KEYWORD {
+                    if cur_str == "func" || cur_str == "var" || cur_str == "const" {
+                        break
+                    }
+                }
+                next_tok()
+            }
+
+            if !has_body {
+                continue
+            }
+            expect("{")
+
+            emit("; ----------------------------------------------------")
+            emit2("; Function: ", fname)
+            emit("; ----------------------------------------------------")
+
+            if fname == "main" {
+                emit(".function main entry")
+            } else {
+                emit2(".function ", fname)
+            }
+
+            p_start := func_first_param[cur_func_idx]
+            p_num := word(func_num_params[cur_func_idx])
+            for i := word(0); i < p_num; i++ {
+                out_str("    .param ")
+                out_str(param_names[p_start + i])
+                out_str(": ")
+                if param_kinds[p_start + i] == KIND_SLICE {
+                    out_str("slice")
+                } else {
+                    out_str("word")
+                }
+                emit_nl()
+            }
+
+            l_start := func_first_local[cur_func_idx]
+            l_num := func_num_locals[cur_func_idx]
+            for i := word(0); i < l_num; i++ {
+                out_str("    .local ")
+                out_str(local_names[l_start + i])
+                out_str(": ")
+                if local_kinds[l_start + i] == KIND_SLICE {
+                    out_str("slice")
+                } else {
+                    out_str("word")
+                }
+                emit_nl()
+            }
+            emit("")
+
+            for (cur_tok != TOK_PUNCT || cur_str != "}") && cur_tok != TOK_EOF {
+                compile_stmt()
+            }
+            expect("}")
+
+            emit("    RET_VOID")
+            emit(".endfunction")
+        } else {
+            next_tok()
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Main Entry Point
+// -----------------------------------------------------------------------------
+
+func main() {
+    str_pool_map = map_new(128)
+    const_map = map_new(64)
+    global_map = map_new(64)
+    func_map = map_new(64)
+    args := sys_args()
+    src_file = ""
+    out_file = ""
+
+    for i := word(0); i < word(len(args)); i++ {
+        arg := get_arg(args, i)
+        if arg == "-o" && i + 1 < word(len(args)) {
+            out_file = get_arg(args, i + 1)
+            i++
+        } else if len(src_file) == 0 {
+            src_file = arg
+        } else if len(out_file) == 0 {
+            out_file = arg
+        }
+    }
+
+    if len(src_file) == 0 {
+        println("Usage: minigolf_par3 [-o out.p3a] source.par3")
+        sys_exit(1)
+    }
+
+    if len(out_file) == 0 {
+        out_file = "a.p3a"
+    }
+
+    // Pass 1: Parse signatures and declarations
+    in_h, in_ok := file_open_read(src_file)
+    if in_ok == 0 {
+        println("ERROR: Could not open source file: ", src_file)
+        sys_exit(1)
+    }
+    in_file_h = in_h
+    run_pass1()
+    file_close(in_file_h)
+
+    // Pass 2: Code Generation
+    in_h2, in_ok2 := file_open_read(src_file)
+    if in_ok2 == 0 {
+        println("ERROR: Could not reopen source file: ", src_file)
+        sys_exit(1)
+    }
+    in_file_h = in_h2
+
+    out_h, out_ok := file_open_write(out_file)
+    if out_ok == 0 {
+        println("ERROR: Could not open output file: ", out_file)
+        sys_exit(1)
+    }
+    out_file_h = out_h
+
+    run_pass2()
+
+    out_flush()
+    file_close(in_file_h)
+    file_close(out_file_h)
+}
