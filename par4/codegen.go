@@ -2255,18 +2255,6 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    HATVAN_TRAP 0x%02X", trapNum)
 		return
 
-	case "sys_poll_flag":
-		flagNum := g.evalIntConst(call.Arguments[0])
-		g.emit("    SYS_POLL_FLAG %d", flagNum)
-		return
-
-	case "sys_dma_copy":
-		for _, arg := range call.Arguments {
-			g.compileExpression(arg)
-		}
-		g.emit("    SYS_DMA_COPY")
-		return
-
 	case "peekb", "peek_byte", "vpeekb":
 		g.compileExpression(call.Arguments[0])
 		g.emit("    PEEK1")
@@ -3095,7 +3083,7 @@ func (g *Generator) inferCallReturnType(expr ast.Expression, retIdx int) TypeKin
 		switch fnName {
 		case "rstrip", "lstrip", "strip", "replace_ident", "splitlines", "sys_args", "make", "makeslice", "strdup", "map_str":
 			return KindSlice
-		case "len", "cap", "find", "startswith", "endswith", "strcmp", "streq", "file_open", "file_create", "file_open_read", "file_open_write", "file_read", "file_write", "file_close", "os_isfile", "os_makedirs", "alloc", "malloc", "zalloc", "free", "BytesFree", "peek", "peekw", "peekb", "peek_word", "peek_byte", "vpeekb", "vpeekw", "poke", "pokew", "pokeb", "vpokeb", "vpokew", "poke_word", "poke_byte", "byte", "word", "int", "uint", "bool", "map_new", "map_get", "map_put", "map_count", "memcpy", "mem_copy", "memset", "mem_set", "hatvan_trap", "sys_poll_flag", "sys_dma_copy":
+		case "len", "cap", "strcmp", "streq", "file_open", "file_create", "file_open_read", "file_open_write", "file_close", "alloc", "malloc", "zalloc", "free", "BytesFree", "peek", "peekw", "peekb", "peek_word", "peek_byte", "vpeekb", "vpeekw", "poke", "pokew", "pokeb", "vpokeb", "vpokew", "poke_word", "poke_byte", "byte", "word", "int", "uint", "bool", "memcpy", "mem_copy", "memset", "mem_set", "hatvan_trap":
 			return KindScalar
 		}
 

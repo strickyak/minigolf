@@ -215,7 +215,7 @@ However, Par4 unlocks many MiniGolf source constructs that are restricted in Par
 | **`goto` and labels** | **No** | **Yes** | **Yes** |
 | **Compound assignments** | `+=` and `-=` only | All except `&^=` | All including `&^` and `&^=` |
 | **Tuple assignment (`a, b = b, a`)** | Only `a, b := fn()` for 2-return calls | **Yes** | **Yes** |
-| **OS / Hardware Builtins** | `file_open_read`, `file_open_write`, `file_readline`, `file_write`, `file_close`, `sys_args`, `sys_exit` | Same as self-hosted | Adds `hatvan_trap(a,b,x,y,u,call)`, `sys_poll_flag(n)`, `sys_dma_copy(...)`, `memcpy`, `memset`, `vpeek*`/`vpoke*` |
+| **OS / Hardware Builtins** | `file_open_read`, `file_open_write`, `file_readline`, `file_write`, `file_close`, `sys_args`, `sys_exit` | Same as self-hosted | Adds `hatvan_trap(a,b,x,y,u,call)`, `memcpy`, `memset`, `vpeek*`/`vpoke*` |
 
 ---
 
@@ -225,10 +225,9 @@ Comparing [`par3-runtime/opcodes.py`](../par3-runtime/opcodes.py) with [`par4/op
 
 1. **System Call Architecture (`0xC0..0xCF`)**:
    * **Par3** hardcodes high-level NitrOS-9 / POSIX file and OS opcodes in Group 8: `FILE_OPEN_READ` (`0xC0`), `FILE_OPEN_WRITE` (`0xC1`), `FILE_READLINE` (`0xC2`), `FILE_WRITE` (`0xC3`), `FILE_CLOSE` (`0xC4`), `OS_ISFILE` (`0xC5`), `OS_MAKEDIRS` (`0xC6`), `SYS_ARGS` (`0xC7`), `FILE_READ` (`0xCC`), `FILE_WRITE_BUF` (`0xCD`).
-   * **Par4** replaces those file opcodes with low-level **Hatvan Kernel Trap & Hardware Primitives**:
+   * **Par4** replaces those file opcodes with low-level **Hatvan Kernel Trap Primitives**:
      * `HATVAN_TRAP` (`0xC0`): Unified OS-9 / Hatvan register-based kernel syscall (`A, B, X, Y, U, TrapNum` $\rightarrow$ `A, B, Y, Err`).
-     * `SYS_POLL_FLAG` (`0xC1`): Hardware event flag polling (e.g. 1802 `EF1..EF4`).
-     * `SYS_DMA_COPY` (`0xC2`): Cross-task curtain / DMA memory transfer.
+     * `HATVAN_UNTRAP` (`0xC1`): Internal return-from-trap trampoline opcode executed at `_un_trap_stub` (`$0030`) in `par4vmc.asm` when `syscall_HandleSyscall` returns from `Task 0` to the calling user task.
 2. **Elimination of CISC Opcodes in Par4**:
    * **Par3** includes high-level CISC opcodes for VM-managed heap buffers (`BUF_ALLOC`, `BUF_FREE`), dictionaries/lists (`DICT_*`, `LIST_*`, `STR_APPEND`, `SLICE_APPEND_STR`), string helpers (`STR_STARTSWITH`, `STR_ENDSWITH`, `STR_FIND`, `STR_LSTRIP`, `STR_RSTRIP`, `STR_STRIP`, `STR_SPLITLINES`, `STR_REPLACE_IDENT`), and boxed printing (`PRINT`, `PRINTLN`).
    * **Par4** removes all of those CISC opcodes from the VM, implementing heap management (`malloc`/`free`) and data structures (`smap`, `btree`, `rbtree`, `regexp`, `fmt`) in pure Par4 libraries (`par4-lib/`).

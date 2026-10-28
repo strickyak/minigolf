@@ -111,6 +111,4 @@ func strlen(s *byte) word {
 func memcpy(dst word, src word, count word) {}
 func memset(dst word, val byte, count word) {}
 func hatvan_trap(a word, b word, x word, y word, u word, trapNum byte) (word, word, word, word) { return 0, 0, 0, 0 }
-func sys_poll_flag(flagNum byte) bool { return true }
-func sys_dma_copy(src_task word, src_addr word, dst_task word, dst_addr word, count word) bool { return true }
 

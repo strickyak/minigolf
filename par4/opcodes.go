@@ -99,8 +99,7 @@ const (
 
 	// Group 8: Hatvan OS & Hardware Primitives (0xC0 .. 0xCF)
 	OpHATVAN_TRAP   = byte(0xC0)
-	OpSYS_POLL_FLAG = byte(0xC1)
-	OpSYS_DMA_COPY  = byte(0xC2)
+	OpHATVAN_UNTRAP = byte(0xC1)
 	OpSYS_EXIT      = byte(0xC8)
 	OpIO_PRINT      = byte(0xC9)
 )
@@ -234,8 +233,7 @@ var OpcodeTable = map[byte]OpcodeInfo{
 	OpSTR_CMP:   {"STR_CMP", 0, ArgNone, "String slice comparison"},
 
 	OpHATVAN_TRAP:   {"HATVAN_TRAP", 1, ArgImm8U, "Hatvan OS / OS-9 syscall trap"},
-	OpSYS_POLL_FLAG: {"SYS_POLL_FLAG", 1, ArgImm8U, "Poll hardware status line"},
-	OpSYS_DMA_COPY:  {"SYS_DMA_COPY", 0, ArgNone, "Cross-task DMA copy"},
+	OpHATVAN_UNTRAP: {"HATVAN_UNTRAP", 0, ArgNone, "Return from Hatvan kernel syscall trap (1802 internal)"},
 	OpSYS_EXIT:      {"SYS_EXIT", 0, ArgNone, "Exit process with status code"},
 	OpIO_PRINT:      {"IO_PRINT", 0, ArgNone, "Print string slice with newline"},
 }

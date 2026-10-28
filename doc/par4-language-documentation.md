@@ -313,8 +313,7 @@ Operand Stack Top:  [ U ]  (16-bit: Parameter block pointer)
 | Opcode | Mnemonic | Arg Bytes | Operand | Stack Effect | Description |
 | :---: | :--- | :---: | :---: | :--- | :--- |
 | **`0xC0`** | **`HATVAN_TRAP`** | **1** | **`<imm8>`** | **`[A, B, X, Y, U] -> [res_A, res_B, res_Y, err]`** | **Direct Hatvan OS System Call (`OUT 6` trap).** |
-| `0xC1` | `SYS_POLL_FLAG` | 1 | `<imm8>` | `[] -> [bool]` | Poll 1802 hardware flag $\overline{\text{EF1}}$–$\overline{\text{EF4}}$ (`1`=rx, `2`=disk, `3`=timer). |
-| `0xC2` | `SYS_DMA_COPY` | 0 | None | `[src_task, src_addr, dst_task, dst_addr, count] -> [ok]` | Trigger Hatvan hardware DMA cross-task copy. |
+| `0xC1` | `HATVAN_UNTRAP` | 0 | None | `[res_A, res_B, res_Y, err] -> []` | Synthetic return-from-trap trampoline at `$0030` in `par4vmc.asm` (DMA-copies syscall return words to caller task's stack and restores user task context). |
 | `0xC8` | `SYS_EXIT` | 0 | None | `[code] -> []` | Exit task with status code (`F$Exit`). |
 | `0xC9` | `IO_PRINT` | 0 | None | `[str_slice] -> []` | Print string followed by newline (`I$WritLn`). |
 

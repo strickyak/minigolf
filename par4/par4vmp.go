@@ -751,20 +751,6 @@ func (vm *VM) executeOpcode(op byte, arg uint16, instPC int) {
 		callNum := byte(arg)
 		vm.handleHatvanTrap(callNum, instPC)
 
-	case OpSYS_POLL_FLAG:
-		// Flag polling: EF1 (term rx ready), EF2 (disk), EF3 (timer), EF4 (DMA)
-		// On POSIX host, always ready (return true)
-		vm.Push(0x0001)
-
-	case OpSYS_DMA_COPY:
-		count := int(vm.Pop())
-		dstAddr := int(vm.Pop())
-		_ = vm.Pop() // dstTask
-		srcAddr := int(vm.Pop())
-		_ = vm.Pop() // srcTask
-		copy(vm.Memory[dstAddr:dstAddr+count], vm.Memory[srcAddr:srcAddr+count])
-		vm.Push(0x0001)
-
 	case OpSYS_EXIT:
 		code := vm.Pop()
 		vm.ExitCode = int(code)
