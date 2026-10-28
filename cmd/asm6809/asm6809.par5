@@ -1,0 +1,2925 @@
+package main
+
+import "os"
+import "shashmap"
+
+// Addressing mode categories
+const ModeInherent = 0
+const ModeImm8 = 1
+const ModeBranchShort = 2
+const ModeBranchLong = 3
+const ModeRegReg = 4
+const ModeStack = 5
+const ModeGeneral = 6
+
+const NO_OP = 0xFFFF
+
+type OpInfo struct {
+	Mode      byte
+	Imm       word
+	Dir       word
+	Idx       word
+	Ext       word
+	Inh       word
+	Imm16     byte
+	RelOpcode word
+	LongRelOp word
+}
+
+type Statement struct {
+	LineNum        word
+	RawLine        string
+	Label          string
+	Op             string
+	Operand        string
+	PCHi           word
+	PC             word
+	Size           word
+	B0             byte
+	B1             byte
+	B2             byte
+	B3             byte
+	B4             byte
+	ExtraBytes     slice[byte]
+	IsShortBranch  byte
+	ForceMode      byte // 0=none, 1='<', 2='>'
+	IsDirective    byte
+	IsCommentOnly  byte
+	HasOrg         byte
+	OrgHi          word
+	OrgAddr        word
+	HasEndAddr     byte
+	EndAddr        word
+}
+
+// Hash tables for fast lookup and large capacity in Far Data
+var opMap shashmap.SHashMap[OpInfo]
+var symMap shashmap.SHashMap[word]
+var equMap shashmap.SHashMap[string]
+var equBusyMap shashmap.SHashMap[byte]
+
+// Paged statement storage in Far Data (64 statements per page, up to 64 pages = 4096 statements)
+var stmtPages [64]slice[Statement]
+var numStmtPages word
+var numStmts word
+
+// Assembler state
+var dpReg byte
+var cEscapes bool
+var enableRelax bool
+var hasExecAddr bool
+var execAddr word
+var lastGlobalLabel string
+var keepRawLines bool
+var asmErr string
+
+func setError(msg string) {
+	if asmErr.Len == 0 {
+		asmErr = msg
+	}
+}
+
+func addOp(name string, mode byte, imm word, dir word, idx word, ext word, inh word, imm16 byte, relOp word, longRelOp word) {
+	var info OpInfo
+	info.Mode = mode
+	info.Imm = imm
+	info.Dir = dir
+	info.Idx = idx
+	info.Ext = ext
+	info.Inh = inh
+	info.Imm16 = imm16
+	info.RelOpcode = relOp
+	info.LongRelOp = longRelOp
+	opMap.Insert(name, info)
+}
+
+func lookupOp(name string) (OpInfo, bool) {
+	return opMap.Lookup(name)
+}
+
+func symSet(name string, val word) {
+	symMap.Insert(name, val)
+}
+
+func symGet(name string) (word, bool) {
+	return symMap.Lookup(name)
+}
+
+func equSet(name string, expr string) {
+	equMap.Insert(name, expr)
+}
+
+func equGet(name string) (string, bool) {
+	return equMap.Lookup(name)
+}
+
+func addStmt(s Statement) {
+	pageIdx := numStmts >> 6
+	offIdx := numStmts & 63
+	if pageIdx >= numStmtPages {
+		page := FarMakeSlice[Statement](64)
+		page.Len = 64
+		stmtPages[numStmtPages] = page
+		numStmtPages++
+	}
+	p := stmtPages[pageIdx]
+	p.Put(offIdx, s)
+	numStmts++
+}
+
+func getStmt(i word) Statement {
+	p := stmtPages[i>>6]
+	return p.Get(i & 63)
+}
+
+func setStmt(i word, s Statement) {
+	p := stmtPages[i>>6]
+	p.Put(i&63, s)
+}
+
+func stmtClearBytes(s *Statement) {
+	s.Size = 0
+	s.ExtraBytes.Len = 0
+}
+
+func stmtAddByte(s *Statement, b byte) {
+	idx := s.Size
+	if idx == 0 {
+		s.B0 = b
+	} else if idx == 1 {
+		s.B1 = b
+	} else if idx == 2 {
+		s.B2 = b
+	} else if idx == 3 {
+		s.B3 = b
+	} else if idx == 4 {
+		s.B4 = b
+	} else {
+		if idx == 5 {
+			s.ExtraBytes.Len = 0
+			s.ExtraBytes.Append(s.B0)
+			s.ExtraBytes.Append(s.B1)
+			s.ExtraBytes.Append(s.B2)
+			s.ExtraBytes.Append(s.B3)
+			s.ExtraBytes.Append(s.B4)
+		}
+		s.ExtraBytes.Append(b)
+	}
+	s.Size = idx + 1
+}
+
+func stmtAddWord(s *Statement, w word) {
+	stmtAddByte(s, byte(w>>8))
+	stmtAddByte(s, byte(w))
+}
+
+func stmtAddOpcode(s *Statement, op word) {
+	if op > 0xFF {
+		stmtAddByte(s, byte(op>>8))
+		stmtAddByte(s, byte(op))
+	} else {
+		stmtAddByte(s, byte(op))
+	}
+}
+
+func stmtGetByte(s *Statement, idx word) byte {
+	if s.Size > 5 {
+		return s.ExtraBytes.Get(idx)
+	}
+	if idx == 0 {
+		return s.B0
+	}
+	if idx == 1 {
+		return s.B1
+	}
+	if idx == 2 {
+		return s.B2
+	}
+	if idx == 3 {
+		return s.B3
+	}
+	return s.B4
+}
+
+func opcodeSize(op word) word {
+	if op > 0xFF {
+		return 2
+	}
+	return 1
+}
+
+func addInhOp(name string, inh word) {
+	addOp(name, ModeInherent, NO_OP, NO_OP, NO_OP, NO_OP, inh, 0, NO_OP, NO_OP)
+}
+
+func addBranchOp(name string, mode byte, relOp word, longRelOp word) {
+	addOp(name, mode, NO_OP, NO_OP, NO_OP, NO_OP, NO_OP, 0, relOp, longRelOp)
+}
+
+func addMemOp(name string, dir word, idx word, ext word) {
+	addOp(name, ModeGeneral, NO_OP, dir, idx, ext, NO_OP, 0, NO_OP, NO_OP)
+}
+
+func addAlu8Op(name string, imm word, dir word, idx word, ext word) {
+	addOp(name, ModeGeneral, imm, dir, idx, ext, NO_OP, 0, NO_OP, NO_OP)
+}
+
+func addAlu16Op(name string, imm word, dir word, idx word, ext word, imm16 byte) {
+	addOp(name, ModeGeneral, imm, dir, idx, ext, NO_OP, imm16, NO_OP, NO_OP)
+}
+
+func initOpcodesInh() {
+	addInhOp("abx", 0x3A)
+	addInhOp("asla", 0x48)
+	addInhOp("aslb", 0x58)
+	addInhOp("asra", 0x47)
+	addInhOp("asrb", 0x57)
+	addInhOp("clra", 0x4F)
+	addInhOp("clrb", 0x5F)
+	addInhOp("coma", 0x43)
+	addInhOp("comb", 0x53)
+	addInhOp("daa", 0x19)
+	addInhOp("deca", 0x4A)
+	addInhOp("decb", 0x5A)
+	addInhOp("inca", 0x4C)
+	addInhOp("incb", 0x5C)
+	addInhOp("lsla", 0x48)
+	addInhOp("lslb", 0x58)
+	addInhOp("lsra", 0x44)
+	addInhOp("lsrb", 0x54)
+	addInhOp("mul", 0x3D)
+	addInhOp("nega", 0x40)
+	addInhOp("negb", 0x50)
+	addInhOp("nop", 0x12)
+	addInhOp("rola", 0x49)
+	addInhOp("rolb", 0x59)
+	addInhOp("rora", 0x46)
+	addInhOp("rorb", 0x56)
+	addInhOp("rti", 0x3B)
+	addInhOp("rts", 0x39)
+	addInhOp("sex", 0x1D)
+	addInhOp("swi", 0x3F)
+	addInhOp("swi2", 0x103F)
+	addInhOp("swi3", 0x113F)
+	addInhOp("sync", 0x13)
+	addInhOp("tsta", 0x4D)
+	addInhOp("tstb", 0x5D)
+
+	addOp("andcc", ModeImm8, 0x1C, NO_OP, NO_OP, NO_OP, NO_OP, 0, NO_OP, NO_OP)
+	addOp("orcc", ModeImm8, 0x1A, NO_OP, NO_OP, NO_OP, NO_OP, 0, NO_OP, NO_OP)
+	addOp("cwai", ModeImm8, 0x3C, NO_OP, NO_OP, NO_OP, NO_OP, 0, NO_OP, NO_OP)
+
+	addOp("tfr", ModeRegReg, NO_OP, NO_OP, NO_OP, NO_OP, 0x1F, 0, NO_OP, NO_OP)
+	addOp("exg", ModeRegReg, NO_OP, NO_OP, NO_OP, NO_OP, 0x1E, 0, NO_OP, NO_OP)
+
+	addOp("pshs", ModeStack, NO_OP, NO_OP, NO_OP, NO_OP, 0x34, 0, NO_OP, NO_OP)
+	addOp("puls", ModeStack, NO_OP, NO_OP, NO_OP, NO_OP, 0x35, 0, NO_OP, NO_OP)
+	addOp("pshu", ModeStack, NO_OP, NO_OP, NO_OP, NO_OP, 0x36, 0, NO_OP, NO_OP)
+	addOp("pulu", ModeStack, NO_OP, NO_OP, NO_OP, NO_OP, 0x37, 0, NO_OP, NO_OP)
+}
+
+func initOpcodesBranches() {
+	addBranchOp("bra", ModeBranchShort, 0x20, 0x16)
+	addBranchOp("brn", ModeBranchShort, 0x21, 0x1021)
+	addBranchOp("bhi", ModeBranchShort, 0x22, 0x1022)
+	addBranchOp("bls", ModeBranchShort, 0x23, 0x1023)
+	addBranchOp("bcc", ModeBranchShort, 0x24, 0x1024)
+	addBranchOp("bhs", ModeBranchShort, 0x24, 0x1024)
+	addBranchOp("bcs", ModeBranchShort, 0x25, 0x1025)
+	addBranchOp("blo", ModeBranchShort, 0x25, 0x1025)
+	addBranchOp("bne", ModeBranchShort, 0x26, 0x1026)
+	addBranchOp("beq", ModeBranchShort, 0x27, 0x1027)
+	addBranchOp("bvc", ModeBranchShort, 0x28, 0x1028)
+	addBranchOp("bvs", ModeBranchShort, 0x29, 0x1029)
+	addBranchOp("bpl", ModeBranchShort, 0x2A, 0x102A)
+	addBranchOp("bmi", ModeBranchShort, 0x2B, 0x102B)
+	addBranchOp("bge", ModeBranchShort, 0x2C, 0x102C)
+	addBranchOp("blt", ModeBranchShort, 0x2D, 0x102D)
+	addBranchOp("bgt", ModeBranchShort, 0x2E, 0x102E)
+	addBranchOp("ble", ModeBranchShort, 0x2F, 0x102F)
+	addBranchOp("bsr", ModeBranchShort, 0x8D, 0x17)
+
+	addBranchOp("lbra", ModeBranchLong, 0x20, 0x16)
+	addBranchOp("lbrn", ModeBranchLong, 0x21, 0x1021)
+	addBranchOp("lbhi", ModeBranchLong, 0x22, 0x1022)
+	addBranchOp("lbls", ModeBranchLong, 0x23, 0x1023)
+	addBranchOp("lbcc", ModeBranchLong, 0x24, 0x1024)
+	addBranchOp("lbhs", ModeBranchLong, 0x24, 0x1024)
+	addBranchOp("lbcs", ModeBranchLong, 0x25, 0x1025)
+	addBranchOp("lblo", ModeBranchLong, 0x25, 0x1025)
+	addBranchOp("lbne", ModeBranchLong, 0x26, 0x1026)
+	addBranchOp("lbeq", ModeBranchLong, 0x27, 0x1027)
+	addBranchOp("lbvc", ModeBranchLong, 0x28, 0x1028)
+	addBranchOp("lbvs", ModeBranchLong, 0x29, 0x1029)
+	addBranchOp("lbpl", ModeBranchLong, 0x2A, 0x102A)
+	addBranchOp("lbmi", ModeBranchLong, 0x2B, 0x102B)
+	addBranchOp("lbge", ModeBranchLong, 0x2C, 0x102C)
+	addBranchOp("lblt", ModeBranchLong, 0x2D, 0x102D)
+	addBranchOp("lbgt", ModeBranchLong, 0x2E, 0x102E)
+	addBranchOp("lble", ModeBranchLong, 0x2F, 0x102F)
+	addBranchOp("lbsr", ModeBranchLong, 0x8D, 0x17)
+}
+
+func initOpcodesAlu() {
+	addMemOp("neg", 0x00, 0x60, 0x70)
+	addMemOp("com", 0x03, 0x63, 0x73)
+	addMemOp("lsr", 0x04, 0x64, 0x74)
+	addMemOp("ror", 0x06, 0x66, 0x76)
+	addMemOp("asr", 0x07, 0x67, 0x77)
+	addMemOp("asl", 0x08, 0x68, 0x78)
+	addMemOp("lsl", 0x08, 0x68, 0x78)
+	addMemOp("rol", 0x09, 0x69, 0x79)
+	addMemOp("dec", 0x0A, 0x6A, 0x7A)
+	addMemOp("inc", 0x0C, 0x6C, 0x7C)
+	addMemOp("tst", 0x0D, 0x6D, 0x7D)
+	addMemOp("jmp", 0x0E, 0x6E, 0x7E)
+	addMemOp("clr", 0x0F, 0x6F, 0x7F)
+
+	addAlu8Op("suba", 0x80, 0x90, 0xA0, 0xB0)
+	addAlu8Op("cmpa", 0x81, 0x91, 0xA1, 0xB1)
+	addAlu8Op("sbca", 0x82, 0x92, 0xA2, 0xB2)
+	addAlu8Op("anda", 0x84, 0x94, 0xA4, 0xB4)
+	addAlu8Op("bita", 0x85, 0x95, 0xA5, 0xB5)
+	addAlu8Op("lda", 0x86, 0x96, 0xA6, 0xB6)
+	addAlu8Op("sta", NO_OP, 0x97, 0xA7, 0xB7)
+	addAlu8Op("eora", 0x88, 0x98, 0xA8, 0xB8)
+	addAlu8Op("adca", 0x89, 0x99, 0xA9, 0xB9)
+	addAlu8Op("ora", 0x8A, 0x9A, 0xAA, 0xBA)
+	addAlu8Op("adda", 0x8B, 0x9B, 0xAB, 0xBB)
+
+	addAlu8Op("subb", 0xC0, 0xD0, 0xE0, 0xF0)
+	addAlu8Op("cmpb", 0xC1, 0xD1, 0xE1, 0xF1)
+	addAlu8Op("sbcb", 0xC2, 0xD2, 0xE2, 0xF2)
+	addAlu8Op("andb", 0xC4, 0xD4, 0xE4, 0xF4)
+	addAlu8Op("bitb", 0xC5, 0xD5, 0xE5, 0xF5)
+	addAlu8Op("ldb", 0xC6, 0xD6, 0xE6, 0xF6)
+	addAlu8Op("stb", NO_OP, 0xD7, 0xE7, 0xF7)
+	addAlu8Op("eorb", 0xC8, 0xD8, 0xE8, 0xF8)
+	addAlu8Op("adcb", 0xC9, 0xD9, 0xE9, 0xF9)
+	addAlu8Op("orb", 0xCA, 0xDA, 0xEA, 0xFA)
+	addAlu8Op("addb", 0xCB, 0xDB, 0xEB, 0xFB)
+
+	addAlu16Op("subd", 0x83, 0x93, 0xA3, 0xB3, 1)
+	addAlu16Op("addd", 0xC3, 0xD3, 0xE3, 0xF3, 1)
+	addAlu16Op("cmpd", 0x1083, 0x1093, 0x10A3, 0x10B3, 1)
+	addAlu16Op("cmpx", 0x8C, 0x9C, 0xAC, 0xBC, 1)
+	addAlu16Op("cmpy", 0x108C, 0x109C, 0x10AC, 0x10BC, 1)
+	addAlu16Op("cmpu", 0x1183, 0x1193, 0x11A3, 0x11B3, 1)
+	addAlu16Op("cmps", 0x118C, 0x119C, 0x11AC, 0x11BC, 1)
+	addAlu16Op("ldd", 0xCC, 0xDC, 0xEC, 0xFC, 1)
+	addAlu16Op("std", NO_OP, 0xDD, 0xED, 0xFD, 0)
+	addAlu16Op("ldx", 0x8E, 0x9E, 0xAE, 0xBE, 1)
+	addAlu16Op("stx", NO_OP, 0x9F, 0xAF, 0xBF, 0)
+	addAlu16Op("ldy", 0x108E, 0x109E, 0x10AE, 0x10BE, 1)
+	addAlu16Op("sty", NO_OP, 0x109F, 0x10AF, 0x10BF, 0)
+	addAlu16Op("ldu", 0xCE, 0xDE, 0xEE, 0xFE, 1)
+	addAlu16Op("stu", NO_OP, 0xDF, 0xEF, 0xFF, 0)
+	addAlu16Op("lds", 0x10CE, 0x10DE, 0x10EE, 0x10FE, 1)
+	addAlu16Op("sts", NO_OP, 0x10DF, 0x10EF, 0x10FF, 0)
+	addAlu16Op("jsr", NO_OP, 0x9D, 0xAD, 0xBD, 0)
+
+	addAlu16Op("leax", NO_OP, NO_OP, 0x30, NO_OP, 0)
+	addAlu16Op("leay", NO_OP, NO_OP, 0x31, NO_OP, 0)
+	addAlu16Op("leas", NO_OP, NO_OP, 0x32, NO_OP, 0)
+	addAlu16Op("leau", NO_OP, NO_OP, 0x33, NO_OP, 0)
+}
+
+func initOpcodes() {
+	initOpcodesInh()
+	initOpcodesBranches()
+	initOpcodesAlu()
+}
+
+// --- String Helpers ---
+
+func isSpace(c byte) bool {
+	return c == ' ' || c == 9 || c == 13 || c == 10
+}
+
+func toLowerByte(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + 32
+	}
+	return c
+}
+
+func toLowerStr(s string) string {
+	n := s.Len
+	hasUpper := false
+	for i := word(0); i < n; i++ {
+		c := s.Get(i)
+		if c >= 'A' && c <= 'Z' {
+			hasUpper = true
+			break
+		}
+	}
+	if !hasUpper {
+		return s
+	}
+	dest := FarMakeSlice[byte](n + 1)
+	for i := word(0); i < n; i++ {
+		dest.Put(i, toLowerByte(s.Get(i)))
+	}
+	dest.Put(n, 0)
+	var res string
+	res.FarRef = dest.FarRef
+	res.Base = dest.Base
+	res.Len = n
+	res.Cap = n + 1
+	return res
+}
+
+func substr(s string, start word, limit word) string {
+	if start > limit {
+		start = limit
+	}
+	if limit > s.Len {
+		limit = s.Len
+	}
+	var z string
+	z.FarRef = s.FarRef
+	z.Base = s.Base + start
+	z.Len = limit - start
+	z.Cap = z.Len
+	return z
+}
+
+func trimSpace(s string) string {
+	start := word(0)
+	limit := s.Len
+	for start < limit && isSpace(s.Get(start)) {
+		start++
+	}
+	for limit > start && isSpace(s.Get(limit-1)) {
+		limit--
+	}
+	return substr(s, start, limit)
+}
+
+func trimLeftSpace(s string) string {
+	start := word(0)
+	limit := s.Len
+	for start < limit && isSpace(s.Get(start)) {
+		start++
+	}
+	return substr(s, start, limit)
+}
+
+func hasPrefix(s string, prefix string) bool {
+	if s.Len < prefix.Len {
+		return false
+	}
+	return substr(s, 0, prefix.Len) == prefix
+}
+
+func hasSuffix(s string, suffix string) bool {
+	if s.Len < suffix.Len {
+		return false
+	}
+	return substr(s, s.Len-suffix.Len, s.Len) == suffix
+}
+
+func concatStr(a string, b string) string {
+	n := a.Len + b.Len
+	dest := FarMakeSlice[byte](n + 1)
+	for i := word(0); i < a.Len; i++ {
+		dest.Put(i, a.Get(i))
+	}
+	for i := word(0); i < b.Len; i++ {
+		dest.Put(a.Len+i, b.Get(i))
+	}
+	dest.Put(n, 0)
+	var res string
+	res.FarRef = dest.FarRef
+	res.Base = dest.Base
+	res.Len = n
+	res.Cap = n + 1
+	return res
+}
+
+func indexByte(s string, target byte) int {
+	for i := word(0); i < s.Len; i++ {
+		if s.Get(i) == target {
+			return int(i)
+		}
+	}
+	return -1
+}
+
+func lastIndexCommaOutsideQuotes(s string) int {
+	inQuote := byte(0)
+	lastComma := -1
+	for i := word(0); i < s.Len; i++ {
+		ch := s.Get(i)
+		if inQuote != 0 {
+			if ch == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			if ch == '\'' && i+1 < s.Len && (i+2 >= s.Len || s.Get(i+2) != '\'') {
+				i++
+				continue
+			}
+			inQuote = ch
+			continue
+		}
+		if ch == ',' {
+			lastComma = int(i)
+		}
+	}
+	return lastComma
+}
+
+func splitFirstField(s string) (string, string) {
+	s = trimSpace(s)
+	if s.Len == 0 {
+		var empty string
+		return empty, empty
+	}
+	i := word(0)
+	for i < s.Len && !isSpace(s.Get(i)) {
+		i++
+	}
+	first := substr(s, 0, i)
+	rest := trimSpace(substr(s, i, s.Len))
+	return first, rest
+}
+
+func isDirectiveOp(op string) bool {
+	if op == "org" || op == "equ" || op == "=" || op == "set" {
+		return true
+	}
+	if op == "fcb" || op == ".byte" || op == "db" {
+		return true
+	}
+	if op == "fdb" || op == ".word" || op == "dw" {
+		return true
+	}
+	if op == "fqb" || op == ".quad" || op == ".4byte" {
+		return true
+	}
+	if op == "rmb" || op == ".blkb" || op == ".ds" || op == ".space" || op == "zmb" || op == "bsz" {
+		return true
+	}
+	if op == "fill" || op == "fcc" || op == ".ascii" || op == "fcs" || op == ".asciz" || op == "fcn" {
+		return true
+	}
+	if op == "pragma" || op == ".pragma" || op == "opt" || op == "end" {
+		return true
+	}
+	if op == "section" || op == "sect" || op == "ends" || op == ".area" || op == ".globl" || op == ".module" {
+		return true
+	}
+	if op == "nam" || op == "ttl" || op == "page" || op == "spc" || op == "export" || op == "import" || op == "extern" {
+		return true
+	}
+	return false
+}
+
+func isKnownMnemonicOrDirective(tok string) bool {
+	low := toLowerStr(tok)
+	_, ok := lookupOp(low)
+	if ok {
+		return true
+	}
+	return isDirectiveOp(low)
+}
+
+func scopeLocalLabel(name string) string {
+	return name
+}
+
+func stripComment(line string) string {
+	inQuote := byte(0)
+	trimmed := trimLeftSpace(line)
+	if trimmed.Len >= 3 {
+		opLow := toLowerStr(substr(trimmed, 0, 3))
+		if opLow == "fcc" || opLow == "fcs" || opLow == "fcn" {
+			if trimmed.Len == 3 || isSpace(trimmed.Get(3)) {
+				rest := trimLeftSpace(substr(trimmed, 3, trimmed.Len))
+				if rest.Len > 0 {
+					delim := rest.Get(0)
+					restOff := line.Len - rest.Len
+					endIdx := -1
+					for j := word(1); j < rest.Len; j++ {
+						if rest.Get(j) == '\\' && cEscapes {
+							j++
+							continue
+						}
+						if rest.Get(j) == delim {
+							endIdx = int(j)
+							break
+						}
+					}
+					if endIdx != -1 {
+						afterPos := restOff + word(endIdx) + 1
+						for k := afterPos; k < line.Len; k++ {
+							if line.Get(k) == ';' {
+								return substr(line, 0, k)
+							}
+						}
+					}
+					return line
+				}
+			}
+		}
+	}
+
+	for i := word(0); i < line.Len; i++ {
+		ch := line.Get(i)
+		if inQuote != 0 {
+			if ch == '\\' && cEscapes {
+				i++
+				continue
+			}
+			if ch == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		if ch == '\'' {
+			if i+1 < line.Len && (i+2 >= line.Len || line.Get(i+2) != '\'') {
+				i++
+				continue
+			}
+			inQuote = ch
+			continue
+		}
+		if ch == '"' {
+			inQuote = ch
+			continue
+		}
+		if ch == ';' {
+			return substr(line, 0, i)
+		}
+		if ch == '*' && i == 0 {
+			return ""
+		}
+	}
+	return line
+}
+
+func parseLine(lineNum word, rawLine string) Statement {
+	var stmt Statement
+	stmt.LineNum = lineNum
+	if keepRawLines {
+		stmt.RawLine = rawLine
+	}
+
+	clean := stripComment(rawLine)
+	if trimSpace(clean).Len == 0 {
+		stmt.IsCommentOnly = 1
+		return stmt
+	}
+
+	startsWithSpace := isSpace(clean.Get(0))
+	rest := trimSpace(clean)
+
+	if !startsWithSpace {
+		lbl, afterLbl := splitFirstField(rest)
+		if hasSuffix(lbl, ":") {
+			lbl = substr(lbl, 0, lbl.Len-1)
+			stmt.Label = lbl
+			rest = afterLbl
+		} else {
+			opCand, _ := splitFirstField(afterLbl)
+			opLow := toLowerStr(opCand)
+			if opLow == "equ" || opLow == "=" || opLow == "set" {
+				stmt.Label = lbl
+				rest = afterLbl
+			} else if isKnownMnemonicOrDirective(lbl) {
+				// Treat as mnemonic at column 0
+			} else {
+				stmt.Label = lbl
+				rest = afterLbl
+			}
+		}
+	} else {
+		first, afterFirst := splitFirstField(rest)
+		if hasSuffix(first, ":") {
+			stmt.Label = substr(first, 0, first.Len-1)
+			rest = afterFirst
+		} else if afterFirst.Len > 0 {
+			opCand, _ := splitFirstField(afterFirst)
+			opLow := toLowerStr(opCand)
+			if opLow == "equ" || opLow == "=" || opLow == "set" {
+				stmt.Label = first
+				rest = afterFirst
+			}
+		}
+	}
+
+	if rest.Len == 0 {
+		return stmt
+	}
+
+	opField, operandField := splitFirstField(rest)
+	stmt.Op = toLowerStr(opField)
+	stmt.Operand = operandField
+
+	if isDirectiveOp(stmt.Op) {
+		stmt.IsDirective = 1
+		if stmt.Op == "pragma" || stmt.Op == ".pragma" || stmt.Op == "opt" {
+			lowOp := toLowerStr(stmt.Operand)
+			if lowOp == "cescapes" {
+				cEscapes = true
+			}
+		}
+	}
+
+	return stmt
+}
+
+// --- Expression Evaluator ---
+
+const TokEOF = 0
+const TokNum = 1
+const TokSym = 2
+const TokOp = 3
+const TokLParen = 4
+const TokRParen = 5
+
+type ExprToken struct {
+	Kind   byte
+	Text   string
+	NumHi  word
+	NumVal word
+}
+
+func isIdentStart(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '.' || c == '$'
+}
+
+func isIdentChar(c byte) bool {
+	return isIdentStart(c) || (c >= '0' && c <= '9') || c == '@' || c == '?'
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func hexVal(c byte) word {
+	if c >= '0' && c <= '9' {
+		return word(c - '0')
+	}
+	if c >= 'a' && c <= 'f' {
+		return word(c - 'a' + 10)
+	}
+	if c >= 'A' && c <= 'F' {
+		return word(c - 'A' + 10)
+	}
+	return 0
+}
+
+func parseNumber32(tok string) (word, word, bool) {
+	if tok.Len == 0 {
+		return 0, 0, false
+	}
+	base := word(10)
+	start := word(0)
+	limit := tok.Len
+
+	c0 := tok.Get(0)
+	if c0 == '$' {
+		base = 16
+		start = 1
+	} else if c0 == '%' {
+		base = 2
+		start = 1
+	} else if c0 == '@' {
+		base = 8
+		start = 1
+	} else if tok.Len > 2 && c0 == '0' && (tok.Get(1) == 'x' || tok.Get(1) == 'X') {
+		base = 16
+		start = 2
+	} else if tok.Len > 2 && c0 == '0' && (tok.Get(1) == 'b' || tok.Get(1) == 'B') {
+		base = 2
+		start = 2
+	} else if tok.Len > 2 && c0 == '0' && (tok.Get(1) == 'o' || tok.Get(1) == 'O') {
+		base = 8
+		start = 2
+	} else if tok.Len > 1 && (tok.Get(limit-1) == 'h' || tok.Get(limit-1) == 'H') && c0 >= '0' && c0 <= '9' {
+		base = 16
+		limit--
+	}
+
+	if start >= limit {
+		return 0, 0, false
+	}
+
+	hi := word(0)
+	lo := word(0)
+	for i := start; i < limit; i++ {
+		ch := tok.Get(i)
+		var d word
+		if base == 16 {
+			if !isHexDigit(ch) {
+				return 0, 0, false
+			}
+			d = hexVal(ch)
+			hi = (hi << 4) | (lo >> 12)
+			lo = (lo << 4) | d
+		} else if base == 2 {
+			if ch != '0' && ch != '1' {
+				return 0, 0, false
+			}
+			d = word(ch - '0')
+			hi = (hi << 1) | (lo >> 15)
+			lo = (lo << 1) | d
+		} else if base == 8 {
+			if ch < '0' || ch > '7' {
+				return 0, 0, false
+			}
+			d = word(ch - '0')
+			hi = (hi << 3) | (lo >> 13)
+			lo = (lo << 3) | d
+		} else {
+			if ch < '0' || ch > '9' {
+				return 0, 0, false
+			}
+			d = word(ch - '0')
+			// 32-bit multiply by 10: (hi, lo) * 10 = (hi, lo)*8 + (hi, lo)*2
+			hi8 := (hi << 3) | (lo >> 13)
+			lo8 := lo << 3
+			hi2 := (hi << 1) | (lo >> 15)
+			lo2 := lo << 1
+			loSum := lo8 + lo2
+			carry := word(0)
+			if loSum < lo8 {
+				carry = 1
+			}
+			loNew := loSum + d
+			if loNew < loSum {
+				carry++
+			}
+			hi = hi8 + hi2 + carry
+			lo = loNew
+		}
+	}
+	return hi, lo, true
+}
+
+func matchTwoCharOp(ch byte, c2 byte) string {
+	if ch == '<' && c2 == '<' {
+		return "<<"
+	}
+	if ch == '>' && c2 == '>' {
+		return ">>"
+	}
+	if ch == '=' && c2 == '=' {
+		return "=="
+	}
+	if ch == '!' && c2 == '=' {
+		return "!="
+	}
+	if ch == '<' && c2 == '=' {
+		return "<="
+	}
+	if ch == '>' && c2 == '=' {
+		return ">="
+	}
+	if ch == '<' && c2 == '>' {
+		return "<>"
+	}
+	if ch == '&' && c2 == '&' {
+		return "&&"
+	}
+	if ch == '|' && c2 == '|' {
+		return "||"
+	}
+	return ""
+}
+
+func isSingleCharOp(ch byte) bool {
+	return ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' ||
+		ch == '&' || ch == '|' || ch == '^' || ch == '~' || ch == '!' ||
+		ch == '<' || ch == '>' || ch == '='
+}
+
+func addExprTok(tokens *slice[ExprToken], kind byte, text string, hi word, lo word) {
+	var t ExprToken
+	t.Kind = kind
+	t.Text = text
+	t.NumHi = hi
+	t.NumVal = lo
+	tokens.Append(t)
+}
+
+func tokenizeNumOrSym(expr string, i word, tokens *slice[ExprToken]) (word, bool) {
+	n := expr.Len
+	ch := expr.Get(i)
+
+	// Hex literal $...
+	if ch == '$' {
+		j := i + 1
+		for j < n && isHexDigit(expr.Get(j)) {
+			j++
+		}
+		if j == i+1 {
+			addExprTok(tokens, TokSym, "$", 0, 0)
+			return i + 1, true
+		}
+		hi, lo, ok := parseNumber32(substr(expr, i, j))
+		if !ok {
+			return 0, false
+		}
+		addExprTok(tokens, TokNum, "", hi, lo)
+		return j, true
+	}
+
+	// Octal literal @...
+	if ch == '@' && i+1 < n && expr.Get(i+1) >= '0' && expr.Get(i+1) <= '7' {
+		j := i + 1
+		for j < n && expr.Get(j) >= '0' && expr.Get(j) <= '7' {
+			j++
+		}
+		hi, lo, ok := parseNumber32(substr(expr, i, j))
+		if !ok {
+			return 0, false
+		}
+		addExprTok(tokens, TokNum, "", hi, lo)
+		return j, true
+	}
+
+	// Decimal / 0x / 0b / 0o / H suffix
+	if ch >= '0' && ch <= '9' {
+		j := i
+		for j < n && (isIdentChar(expr.Get(j)) && expr.Get(j) != '.') {
+			j++
+		}
+		hi, lo, ok := parseNumber32(substr(expr, i, j))
+		if !ok {
+			return 0, false
+		}
+		addExprTok(tokens, TokNum, "", hi, lo)
+		return j, true
+	}
+
+	// Identifier or '.'
+	if isIdentStart(ch) {
+		j := i + 1
+		for j < n && isIdentChar(expr.Get(j)) {
+			j++
+		}
+		addExprTok(tokens, TokSym, substr(expr, i, j), 0, 0)
+		return j, true
+	}
+
+	return 0, false
+}
+
+func tokenizeExpr(expr string) (slice[ExprToken], bool) {
+	var tokens slice[ExprToken]
+	i := word(0)
+	n := expr.Len
+
+	for i < n {
+		ch := expr.Get(i)
+		if isSpace(ch) {
+			i++
+			continue
+		}
+
+		if ch == '(' {
+			addExprTok(&tokens, TokLParen, "(", 0, 0)
+			i++
+			continue
+		}
+		if ch == ')' {
+			addExprTok(&tokens, TokRParen, ")", 0, 0)
+			i++
+			continue
+		}
+
+		// Two-char operators
+		if i+1 < n {
+			two := matchTwoCharOp(ch, expr.Get(i+1))
+			if two.Len > 0 {
+				addExprTok(&tokens, TokOp, two, 0, 0)
+				i += 2
+				continue
+			}
+		}
+
+		// Character literal: 'c' or 'c
+		if ch == '\'' {
+			if i+1 >= n {
+				return tokens, false
+			}
+			val := word(expr.Get(i + 1))
+			if i+2 < n && expr.Get(i+2) == '\'' {
+				i += 3
+			} else {
+				i += 2
+			}
+			addExprTok(&tokens, TokNum, "", 0, val)
+			continue
+		}
+
+		// Single-char operators
+		if isSingleCharOp(ch) {
+			if ch == '%' && i+1 < n && (expr.Get(i+1) == '0' || expr.Get(i+1) == '1') {
+				j := i + 1
+				for j < n && (expr.Get(j) == '0' || expr.Get(j) == '1') {
+					j++
+				}
+				hi, lo, ok := parseNumber32(substr(expr, i, j))
+				if !ok {
+					return tokens, false
+				}
+				addExprTok(&tokens, TokNum, "", hi, lo)
+				i = j
+				continue
+			}
+			addExprTok(&tokens, TokOp, substr(expr, i, i+1), 0, 0)
+			i++
+			continue
+		}
+
+		nextI, ok := tokenizeNumOrSym(expr, i, &tokens)
+		if !ok {
+			return tokens, false
+		}
+		i = nextI
+	}
+
+	addExprTok(&tokens, TokEOF, "", 0, 0)
+	return tokens, true
+}
+
+var curTokens slice[ExprToken]
+var curTokPos word
+var curEvalPC word
+var curStrict bool
+var curEvalOk bool
+var curEvalHi word
+
+func peekTok() ExprToken {
+	return curTokens.Get(curTokPos)
+}
+
+func nextTok() ExprToken {
+	t := curTokens.Get(curTokPos)
+	if t.Kind != TokEOF {
+		curTokPos++
+	}
+	return t
+}
+
+func parsePrimary() int {
+	tok := peekTok()
+	if tok.Kind == TokOp {
+		if tok.Text == "+" {
+			nextTok()
+			return parsePrimary()
+		}
+		if tok.Text == "-" {
+			nextTok()
+			v := parsePrimary()
+			if v != 0 {
+				curEvalHi = 0xFFFF ^ curEvalHi
+			}
+			return -v
+		}
+		if tok.Text == "~" {
+			nextTok()
+			v := parsePrimary()
+			curEvalHi = 0xFFFF ^ curEvalHi
+			return -1 ^ v
+		}
+		if tok.Text == "!" {
+			nextTok()
+			v := parsePrimary()
+			curEvalHi = 0
+			if v == 0 {
+				return 1
+			}
+			return 0
+		}
+		if tok.Text == "*" {
+			nextTok()
+			curEvalHi = 0
+			return int(curEvalPC)
+		}
+		curEvalOk = false
+		return 0
+	}
+
+	if tok.Kind == TokLParen {
+		nextTok()
+		val := parseLogicalOr()
+		if peekTok().Kind != TokRParen {
+			curEvalOk = false
+			return 0
+		}
+		nextTok()
+		return val
+	}
+
+	if tok.Kind == TokNum {
+		nextTok()
+		curEvalHi = tok.NumHi
+		return int(tok.NumVal)
+	}
+
+	if tok.Kind == TokSym {
+		nextTok()
+		curEvalHi = 0
+		if tok.Text == "." || tok.Text == "$" {
+			return int(curEvalPC)
+		}
+		symName := scopeLocalLabel(tok.Text)
+		val, ok := symGet(symName)
+		if ok {
+			return int(val)
+		}
+		val2, ok2 := symGet(tok.Text)
+		if ok2 {
+			return int(val2)
+		}
+		rawExpr, hasEqu := equGet(symName)
+		if !hasEqu {
+			rawExpr, hasEqu = equGet(tok.Text)
+			if hasEqu {
+				symName = tok.Text
+			}
+		}
+		if hasEqu {
+			busy, _ := equBusyMap.Lookup(symName)
+			if busy != 0 {
+				curEvalOk = false
+				return 0
+			}
+			equBusyMap.Insert(symName, 1)
+			// Save current parser state
+			savedTokens := curTokens
+			savedPos := curTokPos
+			savedPC := curEvalPC
+			savedOk := curEvalOk
+			evVal, evOk := evalExpr(rawExpr, curEvalPC, curStrict)
+			curTokens = savedTokens
+			curTokPos = savedPos
+			curEvalPC = savedPC
+			equBusyMap.Insert(symName, 0)
+			if evOk {
+				curEvalOk = savedOk
+				symSet(symName, word(evVal))
+				return evVal
+			}
+			curEvalOk = false
+			return 0
+		}
+		if curStrict {
+			curEvalOk = false
+		}
+		return 0
+	}
+
+	curEvalOk = false
+	return 0
+}
+
+func parseMul() int {
+	left := parsePrimary()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && (tok.Text == "*" || tok.Text == "/" || tok.Text == "%") {
+			nextTok()
+			right := parsePrimary()
+			if !curEvalOk {
+				return 0
+			}
+			if tok.Text == "*" {
+				left = left * right
+			} else if tok.Text == "/" {
+				if right == 0 {
+					curEvalOk = false
+					return 0
+				}
+				left = left / right
+			} else {
+				if right == 0 {
+					curEvalOk = false
+					return 0
+				}
+				left = left % right
+			}
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseAdd() int {
+	left := parseMul()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && (tok.Text == "+" || tok.Text == "-") {
+			nextTok()
+			right := parseMul()
+			if !curEvalOk {
+				return 0
+			}
+			if tok.Text == "+" {
+				left = left + right
+			} else {
+				left = left - right
+			}
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseShift() int {
+	left := parseAdd()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && (tok.Text == "<<" || tok.Text == ">>") {
+			nextTok()
+			right := parseAdd()
+			if !curEvalOk {
+				return 0
+			}
+			if tok.Text == "<<" {
+				left = int(word(left) << word(right&15))
+			} else {
+				left = int(word(left) >> word(right&15))
+			}
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseRel() int {
+	left := parseShift()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && (tok.Text == "==" || tok.Text == "=" || tok.Text == "!=" || tok.Text == "<>" ||
+			tok.Text == "<" || tok.Text == "<=" || tok.Text == ">" || tok.Text == ">=") {
+			nextTok()
+			right := parseShift()
+			if !curEvalOk {
+				return 0
+			}
+			cond := false
+			if tok.Text == "==" || tok.Text == "=" {
+				cond = left == right
+			} else if tok.Text == "!=" || tok.Text == "<>" {
+				cond = left != right
+			} else if tok.Text == "<" {
+				cond = left < right
+			} else if tok.Text == "<=" {
+				cond = left <= right
+			} else if tok.Text == ">" {
+				cond = left > right
+			} else if tok.Text == ">=" {
+				cond = left >= right
+			}
+			if cond {
+				left = 1
+			} else {
+				left = 0
+			}
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseBitAnd() int {
+	left := parseRel()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && tok.Text == "&" {
+			nextTok()
+			right := parseRel()
+			if !curEvalOk {
+				return 0
+			}
+			left = left & right
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseBitXor() int {
+	left := parseBitAnd()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && tok.Text == "^" {
+			nextTok()
+			right := parseBitAnd()
+			if !curEvalOk {
+				return 0
+			}
+			left = left ^ right
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseBitOr() int {
+	left := parseBitXor()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && tok.Text == "|" {
+			nextTok()
+			right := parseBitXor()
+			if !curEvalOk {
+				return 0
+			}
+			left = left | right
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseLogicalAnd() int {
+	left := parseBitOr()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && tok.Text == "&&" {
+			nextTok()
+			right := parseBitOr()
+			if !curEvalOk {
+				return 0
+			}
+			if left != 0 && right != 0 {
+				left = 1
+			} else {
+				left = 0
+			}
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func parseLogicalOr() int {
+	left := parseLogicalAnd()
+	for curEvalOk {
+		tok := peekTok()
+		if tok.Kind == TokOp && tok.Text == "||" {
+			nextTok()
+			right := parseLogicalAnd()
+			if !curEvalOk {
+				return 0
+			}
+			if left != 0 || right != 0 {
+				left = 1
+			} else {
+				left = 0
+			}
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func isSimpleAtom(s string) bool {
+	n := s.Len
+	if n == 0 {
+		return false
+	}
+	for i := word(0); i < n; i++ {
+		c := s.Get(i)
+		if i == 0 && (c == '-' || c == '%') {
+			continue
+		}
+		if !isIdentChar(c) {
+			return false
+		}
+	}
+	return true
+}
+
+func evalExpr32(expr string, pc word, strict bool) (word, word, bool) {
+	expr = trimSpace(expr)
+	if expr.Len == 0 {
+		return 0, 0, false
+	}
+
+	// Fast path for single numbers, negative decimal numbers, and plain symbols
+	if isSimpleAtom(expr) {
+		c0 := expr.Get(0)
+		if c0 == '-' {
+			if expr.Len == 1 {
+				return 0, 0, false
+			}
+			c1 := expr.Get(1)
+			if c1 >= '0' && c1 <= '9' {
+				hi, lo, ok := parseNumber32(substr(expr, 1, expr.Len))
+				if ok {
+					negLo := word(-int(lo))
+					negHi := 0xFFFF ^ hi
+					if negLo == 0 {
+						negHi++
+					}
+					return negHi, negLo, true
+				}
+			}
+		} else if (c0 >= '0' && c0 <= '9') || c0 == '$' || c0 == '%' || c0 == '@' {
+			if expr == "$" {
+				return 0, pc, true
+			}
+			return parseNumber32(expr)
+		} else if expr == "." {
+			return 0, pc, true
+		} else {
+			val, ok := symGet(expr)
+			if ok {
+				return 0, val, true
+			}
+			_, hasEqu := equGet(expr)
+			if !hasEqu {
+				if strict {
+					return 0, 0, false
+				}
+				return 0, 0, true
+			}
+		}
+	}
+
+	tokens, ok := tokenizeExpr(expr)
+	if !ok {
+		return 0, 0, false
+	}
+	curTokens = tokens
+	curTokPos = 0
+	curEvalPC = pc
+	curStrict = strict
+	curEvalOk = true
+	curEvalHi = 0
+
+	val := parseLogicalOr()
+	if !curEvalOk {
+		return 0, 0, false
+	}
+	if peekTok().Kind != TokEOF {
+		return 0, 0, false
+	}
+	return curEvalHi, word(val), true
+}
+
+func evalExpr(expr string, pc word, strict bool) (int, bool) {
+	_, lo, ok := evalExpr32(expr, pc, strict)
+	return int(lo), ok
+}
+
+// --- Directive Helpers ---
+
+func splitCommaRespectingQuotes(s string) slice[string] {
+	var parts slice[string]
+	start := word(0)
+	inQuote := byte(0)
+	parenDepth := int(0)
+
+	for i := word(0); i < s.Len; i++ {
+		ch := s.Get(i)
+		if inQuote != 0 {
+			if ch == '\\' && cEscapes {
+				i++
+				continue
+			}
+			if ch == inQuote {
+				inQuote = 0
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			if ch == '\'' && i+1 < s.Len && (i+2 >= s.Len || s.Get(i+2) != '\'') {
+				i++
+				continue
+			}
+			inQuote = ch
+			continue
+		}
+		if ch == '(' {
+			parenDepth++
+		} else if ch == ')' && parenDepth > 0 {
+			parenDepth--
+		} else if ch == ',' && parenDepth == 0 {
+			parts.Append(substr(s, start, i))
+			start = i + 1
+		}
+	}
+	parts.Append(substr(s, start, s.Len))
+	return parts
+}
+
+func parseEscapeString(content string) slice[byte] {
+	var out slice[byte]
+	for i := word(0); i < content.Len; i++ {
+		if cEscapes && content.Get(i) == '\\' && i+1 < content.Len {
+			i++
+			esc := content.Get(i)
+			if esc == 'n' {
+				out.Append(10)
+			} else if esc == 'r' {
+				out.Append(13)
+			} else if esc == 't' {
+				out.Append(9)
+			} else if esc == '0' {
+				out.Append(0)
+			} else if esc == '\\' {
+				out.Append('\\')
+			} else if esc == '"' {
+				out.Append('"')
+			} else if esc == '\'' {
+				out.Append('\'')
+			} else if esc == 'x' && i+2 < content.Len {
+				_, lo, ok := parseNumber32(concatStr("$", substr(content, i+1, i+3)))
+				if ok {
+					out.Append(byte(lo))
+					i += 2
+				} else {
+					out.Append(esc)
+				}
+			} else {
+				out.Append(esc)
+			}
+		} else {
+			out.Append(content.Get(i))
+		}
+	}
+	return out
+}
+
+func parseFCCBytes(operand string) slice[byte] {
+	s := trimLeftSpace(operand)
+	var empty slice[byte]
+	if s.Len == 0 {
+		return empty
+	}
+	delim := s.Get(0)
+	endIdx := -1
+	for i := word(1); i < s.Len; i++ {
+		if s.Get(i) == '\\' && cEscapes {
+			i++
+			continue
+		}
+		if s.Get(i) == delim {
+			endIdx = int(i)
+			break
+		}
+	}
+	if endIdx == -1 {
+		return parseEscapeString(substr(s, 1, s.Len))
+	}
+	return parseEscapeString(substr(s, 1, word(endIdx)))
+}
+
+func countFCBSize(operand string) word {
+	items := splitCommaRespectingQuotes(operand)
+	count := word(0)
+	for i := word(0); i < items.Len; i++ {
+		it := trimSpace(items.Get(i))
+		if it.Len >= 2 && it.Get(0) == '"' && it.Get(it.Len-1) == '"' {
+			b := parseEscapeString(substr(it, 1, it.Len-1))
+			count += b.Len
+		} else if it.Len > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func countCommaItems(operand string) word {
+	if trimSpace(operand).Len == 0 {
+		return 0
+	}
+	items := splitCommaRespectingQuotes(operand)
+	return items.Len
+}
+
+// --- 6809 Register & Addressing Helpers ---
+
+func parseRegCode(name string) byte {
+	low := toLowerStr(trimSpace(name))
+	if low == "d" {
+		return 0x00
+	}
+	if low == "x" {
+		return 0x01
+	}
+	if low == "y" {
+		return 0x02
+	}
+	if low == "u" {
+		return 0x03
+	}
+	if low == "s" {
+		return 0x04
+	}
+	if low == "pc" {
+		return 0x05
+	}
+	if low == "a" {
+		return 0x08
+	}
+	if low == "b" {
+		return 0x09
+	}
+	if low == "cc" {
+		return 0x0A
+	}
+	if low == "dp" {
+		return 0x0B
+	}
+	return 0xFF
+}
+
+func parseStackMask(operand string, isU bool) (byte, bool) {
+	mask := byte(0)
+	parts := splitCommaRespectingQuotes(operand)
+	for i := word(0); i < parts.Len; i++ {
+		reg := toLowerStr(trimSpace(parts.Get(i)))
+		if reg.Len == 0 {
+			continue
+		}
+		if reg == "cc" {
+			mask = mask | 0x01
+		} else if reg == "a" {
+			mask = mask | 0x02
+		} else if reg == "b" {
+			mask = mask | 0x04
+		} else if reg == "d" {
+			mask = mask | 0x06
+		} else if reg == "dp" {
+			mask = mask | 0x08
+		} else if reg == "x" {
+			mask = mask | 0x10
+		} else if reg == "y" {
+			mask = mask | 0x20
+		} else if reg == "u" {
+			if isU {
+				return 0, false
+			}
+			mask = mask | 0x40
+		} else if reg == "s" {
+			if !isU {
+				return 0, false
+			}
+			mask = mask | 0x40
+		} else if reg == "pc" {
+			mask = mask | 0x80
+		} else {
+			return 0, false
+		}
+	}
+	return mask, true
+}
+
+func parseIndexRegBits(reg string) (byte, bool) {
+	if reg == "x" {
+		return 0x00, true
+	}
+	if reg == "y" {
+		return 0x20, true
+	}
+	if reg == "u" {
+		return 0x40, true
+	}
+	if reg == "s" {
+		return 0x60, true
+	}
+	return 0, false
+}
+
+func isIndexedOperand(op string) bool {
+	s := trimSpace(op)
+	if hasPrefix(s, "[") && hasSuffix(s, "]") {
+		return true
+	}
+	return lastIndexCommaOutsideQuotes(s) != -1
+}
+
+func assembleIndexedAutoInc(rhs string, indirect bool, indBit byte) (byte, bool) {
+	if hasSuffix(rhs, "++") {
+		reg := substr(rhs, 0, rhs.Len-2)
+		rr, ok := parseIndexRegBits(reg)
+		if !ok {
+			return 0, false
+		}
+		return 0x81 | rr | indBit, true
+	}
+	if hasSuffix(rhs, "+") {
+		if indirect {
+			return 0, false
+		}
+		reg := substr(rhs, 0, rhs.Len-1)
+		rr, ok := parseIndexRegBits(reg)
+		if !ok {
+			return 0, false
+		}
+		return 0x80 | rr, true
+	}
+	if hasPrefix(rhs, "--") {
+		reg := substr(rhs, 2, rhs.Len)
+		rr, ok := parseIndexRegBits(reg)
+		if !ok {
+			return 0, false
+		}
+		return 0x83 | rr | indBit, true
+	}
+	if hasPrefix(rhs, "-") {
+		if indirect {
+			return 0, false
+		}
+		reg := substr(rhs, 1, rhs.Len)
+		rr, ok := parseIndexRegBits(reg)
+		if !ok {
+			return 0, false
+		}
+		return 0x82 | rr, true
+	}
+	return 0, false
+}
+
+func assembleIndexedPCR(lhs string, instrPC word, opLen word, indBit byte, strict bool) (byte, word, word, bool) {
+	forceBits := byte(0)
+	if hasPrefix(lhs, "<") {
+		forceBits = 8
+		lhs = trimSpace(substr(lhs, 1, lhs.Len))
+	} else if hasPrefix(lhs, ">") {
+		forceBits = 16
+		lhs = trimSpace(substr(lhs, 1, lhs.Len))
+	}
+
+	target, ok := evalExpr(lhs, instrPC, strict)
+	if !ok {
+		if strict {
+			return 0, 0, 0, false
+		}
+		if forceBits == 8 {
+			return 0x8C | indBit, 1, 0, true
+		}
+		return 0x8D | indBit, 2, 0, true
+	}
+
+	delta8 := target - int(instrPC+opLen+2)
+	if forceBits == 8 || (forceBits == 0 && enableRelax && delta8 >= -128 && delta8 <= 127) {
+		return 0x8C | indBit, 1, word(delta8) & 0xFF, true
+	}
+	delta16 := target - int(instrPC+opLen+3)
+	return 0x8D | indBit, 2, word(delta16), true
+}
+
+// Assemble indexed operand and return (postbyte, extraSize, extraWord, ok)
+// extraSize is 0, 1, or 2 bytes following the postbyte.
+func assembleIndexed(opStr string, instrPC word, opLen word, strict bool) (byte, word, word, bool) {
+	s := trimSpace(opStr)
+	indirect := false
+	if hasPrefix(s, "[") && hasSuffix(s, "]") {
+		indirect = true
+		s = trimSpace(substr(s, 1, s.Len-1))
+	}
+
+	indBit := byte(0)
+	if indirect {
+		indBit = 0x10
+	}
+
+	commaIdx := lastIndexCommaOutsideQuotes(s)
+	if commaIdx == -1 {
+		if !indirect {
+			return 0, 0, 0, false
+		}
+		val, ok := evalExpr(s, instrPC, strict)
+		if !ok && strict {
+			return 0, 0, 0, false
+		}
+		return 0x9F, 2, word(val), true
+	}
+
+	lhs := trimSpace(substr(s, 0, word(commaIdx)))
+	rhs := toLowerStr(trimSpace(substr(s, word(commaIdx)+1, s.Len)))
+
+	// Accumulator offset: A,R / B,R / D,R
+	lhsLow := toLowerStr(lhs)
+	if lhsLow == "a" || lhsLow == "b" || lhsLow == "d" {
+		rr, ok := parseIndexRegBits(rhs)
+		if ok {
+			var code byte
+			if lhsLow == "a" {
+				code = 0x86
+			} else if lhsLow == "b" {
+				code = 0x85
+			} else {
+				code = 0x8B
+			}
+			return code | rr | indBit, 0, 0, true
+		}
+	}
+
+	// Auto-increment / auto-decrement
+	if lhs.Len == 0 {
+		pb, ok := assembleIndexedAutoInc(rhs, indirect, indBit)
+		if ok {
+			return pb, 0, 0, true
+		}
+	}
+
+	// PC-relative: offset,pcr or offset,pc
+	if rhs == "pcr" || rhs == "pc" {
+		return assembleIndexedPCR(lhs, instrPC, opLen, indBit, strict)
+	}
+
+	// Constant offset from X, Y, U, S
+	rr, ok := parseIndexRegBits(rhs)
+	if !ok {
+		return 0, 0, 0, false
+	}
+
+	if lhs.Len == 0 {
+		return 0x84 | rr | indBit, 0, 0, true
+	}
+
+	forceBits := byte(0)
+	if hasPrefix(lhs, "<") {
+		forceBits = 8
+		lhs = trimSpace(substr(lhs, 1, lhs.Len))
+	} else if hasPrefix(lhs, ">") {
+		forceBits = 16
+		lhs = trimSpace(substr(lhs, 1, lhs.Len))
+	}
+
+	off, evalOk := evalExpr(lhs, instrPC, strict)
+	if !evalOk {
+		if strict {
+			return 0, 0, 0, false
+		}
+		if forceBits == 8 {
+			return 0x88 | rr | indBit, 1, 0, true
+		}
+		return 0x89 | rr | indBit, 2, 0, true
+	}
+
+	if forceBits == 8 {
+		return 0x88 | rr | indBit, 1, word(off) & 0xFF, true
+	}
+	if forceBits == 16 {
+		return 0x89 | rr | indBit, 2, word(off), true
+	}
+
+	if off == 0 {
+		return 0x84 | rr | indBit, 0, 0, true
+	}
+	if !indirect && off >= -16 && off <= 15 {
+		pb := rr | (byte(off) & 0x1F)
+		return pb, 0, 0, true
+	}
+	if off >= -128 && off <= 127 {
+		return 0x88 | rr | indBit, 1, word(off) & 0xFF, true
+	}
+	return 0x89 | rr | indBit, 2, word(off), true
+}
+
+func computeInstructionSize(stmt *Statement, info OpInfo, pc word) word {
+	mode := info.Mode
+	if mode == ModeInherent {
+		return opcodeSize(info.Inh)
+	}
+	if mode == ModeImm8 {
+		return opcodeSize(info.Imm) + 1
+	}
+	if mode == ModeRegReg || mode == ModeStack {
+		return opcodeSize(info.Inh) + 1
+	}
+	if mode == ModeBranchShort {
+		if stmt.IsShortBranch != 0 {
+			return 2
+		}
+		return opcodeSize(info.LongRelOp) + 2
+	}
+	if mode == ModeBranchLong {
+		if stmt.IsShortBranch != 0 {
+			return 2
+		}
+		return opcodeSize(info.LongRelOp) + 2
+	}
+	if mode == ModeGeneral {
+		op := trimSpace(stmt.Operand)
+		if hasPrefix(op, "#") {
+			sz := opcodeSize(info.Imm) + 1
+			if info.Imm16 != 0 {
+				sz++
+			}
+			return sz
+		}
+		if isIndexedOperand(op) {
+			opSz := opcodeSize(info.Idx)
+			_, extraSz, _, ok := assembleIndexed(op, pc, opSz, false)
+			if !ok {
+				return opSz + 3
+			}
+			return opSz + 1 + extraSz
+		}
+
+		exprStr := op
+		force := byte(0)
+		if hasPrefix(exprStr, "<") {
+			force = 1
+			exprStr = trimSpace(substr(exprStr, 1, exprStr.Len))
+		} else if hasPrefix(exprStr, ">") {
+			force = 2
+			exprStr = trimSpace(substr(exprStr, 1, exprStr.Len))
+		}
+		stmt.ForceMode = force
+
+		if force == 1 && info.Dir != NO_OP {
+			return opcodeSize(info.Dir) + 1
+		}
+		if force == 2 && info.Ext != NO_OP {
+			return opcodeSize(info.Ext) + 2
+		}
+		if info.Dir != NO_OP && info.Ext == NO_OP {
+			return opcodeSize(info.Dir) + 1
+		}
+		if info.Ext != NO_OP && info.Dir == NO_OP {
+			return opcodeSize(info.Ext) + 2
+		}
+
+		if enableRelax && info.Dir != NO_OP {
+			val, ok := evalExpr(exprStr, pc, true)
+			if ok {
+				uval := word(val)
+				if byte(uval>>8) == dpReg {
+					return opcodeSize(info.Dir) + 1
+				}
+			}
+		}
+		return opcodeSize(info.Ext) + 2
+	}
+	return 0
+}
+
+func computeDirectiveSize(stmt *Statement, currPC word) {
+	op := stmt.Op
+	if op == "fcb" || op == ".byte" || op == "db" {
+		stmt.Size = countFCBSize(stmt.Operand)
+	} else if op == "fdb" || op == ".word" || op == "dw" {
+		stmt.Size = countCommaItems(stmt.Operand) * 2
+	} else if op == "fqb" || op == ".quad" || op == ".4byte" {
+		stmt.Size = countCommaItems(stmt.Operand) * 4
+	} else if op == "rmb" || op == ".blkb" || op == ".ds" || op == ".space" || op == "zmb" || op == "bsz" {
+		val, ok := evalExpr(stmt.Operand, currPC, false)
+		if !ok || val < 0 {
+			setError("invalid rmb/zmb size")
+			return
+		}
+		stmt.Size = word(val)
+	} else if op == "fill" {
+		parts := splitCommaRespectingQuotes(stmt.Operand)
+		if parts.Len != 2 {
+			setError("fill requires value,count")
+			return
+		}
+		cnt, ok := evalExpr(parts.Get(1), currPC, false)
+		if !ok || cnt < 0 {
+			setError("invalid fill count")
+			return
+		}
+		stmt.Size = word(cnt)
+	} else if op == "fcc" || op == ".ascii" || op == "fcs" {
+		b := parseFCCBytes(stmt.Operand)
+		stmt.Size = b.Len
+	} else if op == ".asciz" || op == "fcn" {
+		b := parseFCCBytes(stmt.Operand)
+		stmt.Size = b.Len + 1
+	} else if op == "end" {
+		stmt.Size = 0
+		if stmt.Operand.Len > 0 {
+			val, ok := evalExpr(stmt.Operand, currPC, false)
+			if ok {
+				stmt.EndAddr = word(val)
+				stmt.HasEndAddr = 1
+				execAddr = stmt.EndAddr
+				hasExecAddr = true
+			}
+		}
+	} else {
+		stmt.Size = 0
+	}
+}
+
+func computeLayoutAndSymbols() {
+	currPCHi := word(0)
+	currPC := word(0)
+
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		stmt.PCHi = currPCHi
+		stmt.PC = currPC
+
+		if stmt.IsCommentOnly != 0 {
+			setStmt(i, stmt)
+			continue
+		}
+
+		if stmt.IsDirective != 0 {
+			op := stmt.Op
+			if op == "org" {
+				hi, lo, ok := evalExpr32(stmt.Operand, currPC, false)
+				if !ok {
+					setError("invalid org expression")
+					return
+				}
+				currPCHi = hi
+				currPC = lo
+				stmt.PCHi = currPCHi
+				stmt.PC = currPC
+				stmt.HasOrg = 1
+				stmt.OrgHi = currPCHi
+				stmt.OrgAddr = currPC
+				stmt.Size = 0
+				if stmt.Label.Len > 0 {
+					symSet(stmt.Label, currPC)
+				}
+				setStmt(i, stmt)
+				continue
+			}
+
+			if op == "equ" || op == "=" || op == "set" {
+				if stmt.Label.Len == 0 {
+					setError("equ without label")
+					return
+				}
+				equSet(stmt.Label, stmt.Operand)
+				val, ok := evalExpr(stmt.Operand, currPC, false)
+				if ok {
+					symSet(stmt.Label, word(val))
+				}
+				stmt.Size = 0
+				setStmt(i, stmt)
+				continue
+			}
+
+			if stmt.Label.Len > 0 {
+				symSet(stmt.Label, currPC)
+			}
+
+			computeDirectiveSize(&stmt, currPC)
+			if asmErr.Len > 0 {
+				return
+			}
+
+			currPC += stmt.Size
+			setStmt(i, stmt)
+			continue
+		}
+
+		if stmt.Label.Len > 0 {
+			symSet(stmt.Label, currPC)
+			if !hasExecAddr && (stmt.Label == "cstart" || stmt.Label == "_main") {
+				execAddr = currPC
+				hasExecAddr = true
+			}
+		}
+
+		if stmt.Op.Len == 0 {
+			stmt.Size = 0
+			setStmt(i, stmt)
+			continue
+		}
+
+		info, ok := lookupOp(stmt.Op)
+		if !ok {
+			setError(concatStr("unknown instruction: ", stmt.Op))
+			return
+		}
+
+		stmt.Size = computeInstructionSize(&stmt, info, currPC)
+		currPC += stmt.Size
+		setStmt(i, stmt)
+	}
+}
+
+func recomputePCs() {
+	currPCHi := word(0)
+	currPC := word(0)
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.HasOrg != 0 {
+			currPCHi = stmt.OrgHi
+			currPC = stmt.OrgAddr
+		}
+		stmt.PCHi = currPCHi
+		stmt.PC = currPC
+		if stmt.Label.Len > 0 && (stmt.IsDirective == 0 || (stmt.Op != "equ" && stmt.Op != "=" && stmt.Op != "set")) {
+			symSet(stmt.Label, currPC)
+			if !hasExecAddr && (stmt.Label == "cstart" || stmt.Label == "_main") {
+				execAddr = currPC
+				hasExecAddr = true
+			}
+		}
+		currPC += stmt.Size
+		setStmt(i, stmt)
+	}
+}
+
+func relax() {
+	// Initialize short/long branch states
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.Op.Len > 0 && stmt.IsDirective == 0 {
+			info, ok := lookupOp(stmt.Op)
+			if ok {
+				if info.Mode == ModeBranchShort {
+					stmt.IsShortBranch = 1
+					setStmt(i, stmt)
+				} else if info.Mode == ModeBranchLong {
+					stmt.IsShortBranch = 0
+					setStmt(i, stmt)
+				}
+			}
+		}
+	}
+
+	computeLayoutAndSymbols()
+	if asmErr.Len > 0 {
+		return
+	}
+
+	for iter := word(0); iter < 10; iter++ {
+		changed := false
+
+		for i := word(0); i < numStmts; i++ {
+			stmt := getStmt(i)
+			if stmt.IsCommentOnly != 0 || stmt.IsDirective != 0 || stmt.Op.Len == 0 {
+				continue
+			}
+			info, ok := lookupOp(stmt.Op)
+			if !ok {
+				continue
+			}
+
+			if info.Mode == ModeBranchShort || info.Mode == ModeBranchLong {
+				target, evalOk := evalExpr(stmt.Operand, stmt.PC, true)
+				if !evalOk {
+					continue
+				}
+				shortDelta := target - int(stmt.PC+2)
+				fitsShort := shortDelta >= -128 && shortDelta <= 127
+
+				if info.Mode == ModeBranchShort {
+					if stmt.IsShortBranch != 0 && !fitsShort {
+						stmt.IsShortBranch = 0
+						stmt.Size = opcodeSize(info.LongRelOp) + 2
+						setStmt(i, stmt)
+						changed = true
+					}
+				} else if info.Mode == ModeBranchLong && enableRelax {
+					if stmt.IsShortBranch == 0 && fitsShort {
+						stmt.IsShortBranch = 1
+						stmt.Size = 2
+						setStmt(i, stmt)
+						changed = true
+					} else if stmt.IsShortBranch != 0 && !fitsShort {
+						stmt.IsShortBranch = 0
+						stmt.Size = opcodeSize(info.LongRelOp) + 2
+						setStmt(i, stmt)
+						changed = true
+					}
+				}
+			}
+		}
+
+		if !changed {
+			break
+		}
+
+		recomputePCs()
+	}
+}
+
+func emitDirectiveBytes(stmt *Statement) {
+	op := stmt.Op
+	if op == "fcb" || op == ".byte" || op == "db" {
+		items := splitCommaRespectingQuotes(stmt.Operand)
+		for i := word(0); i < items.Len; i++ {
+			it := trimSpace(items.Get(i))
+			if it.Len >= 2 && it.Get(0) == '"' && it.Get(it.Len-1) == '"' {
+				b := parseEscapeString(substr(it, 1, it.Len-1))
+				for k := word(0); k < b.Len; k++ {
+					stmtAddByte(stmt, b.Get(k))
+				}
+			} else if it.Len > 0 {
+				val, ok := evalExpr(it, stmt.PC, true)
+				if !ok {
+					setError(concatStr("fcb expr error: ", it))
+					return
+				}
+				stmtAddByte(stmt, byte(val))
+			}
+		}
+		return
+	}
+
+	if op == "fdb" || op == ".word" || op == "dw" {
+		items := splitCommaRespectingQuotes(stmt.Operand)
+		for i := word(0); i < items.Len; i++ {
+			it := trimSpace(items.Get(i))
+			if it.Len == 0 {
+				continue
+			}
+			val, ok := evalExpr(it, stmt.PC, true)
+			if !ok {
+				setError(concatStr("fdb expr error: ", it))
+				return
+			}
+			stmtAddWord(stmt, word(val))
+		}
+		return
+	}
+
+	if op == "fqb" || op == ".quad" || op == ".4byte" {
+		items := splitCommaRespectingQuotes(stmt.Operand)
+		for i := word(0); i < items.Len; i++ {
+			it := trimSpace(items.Get(i))
+			if it.Len == 0 {
+				continue
+			}
+			hi, lo, ok := evalExpr32(it, stmt.PC, true)
+			if !ok {
+				setError(concatStr("fqb expr error: ", it))
+				return
+			}
+			stmtAddWord(stmt, hi)
+			stmtAddWord(stmt, lo)
+		}
+		return
+	}
+
+	if op == "zmb" || op == "bsz" {
+		val, ok := evalExpr(stmt.Operand, stmt.PC, true)
+		if !ok {
+			setError("zmb expr error")
+			return
+		}
+		for k := 0; k < val; k++ {
+			stmtAddByte(stmt, 0)
+		}
+		return
+	}
+
+	if op == "fill" {
+		parts := splitCommaRespectingQuotes(stmt.Operand)
+		val, ok1 := evalExpr(parts.Get(0), stmt.PC, true)
+		cnt, ok2 := evalExpr(parts.Get(1), stmt.PC, true)
+		if !ok1 || !ok2 {
+			setError("fill expr error")
+			return
+		}
+		for k := 0; k < cnt; k++ {
+			stmtAddByte(stmt, byte(val))
+		}
+		return
+	}
+
+	if op == "fcc" || op == ".ascii" {
+		b := parseFCCBytes(stmt.Operand)
+		for k := word(0); k < b.Len; k++ {
+			stmtAddByte(stmt, b.Get(k))
+		}
+		return
+	}
+
+	if op == "fcs" {
+		b := parseFCCBytes(stmt.Operand)
+		for k := word(0); k < b.Len; k++ {
+			ch := b.Get(k)
+			if k+1 == b.Len {
+				ch = ch | 0x80
+			}
+			stmtAddByte(stmt, ch)
+		}
+		return
+	}
+
+	if op == ".asciz" || op == "fcn" {
+		b := parseFCCBytes(stmt.Operand)
+		for k := word(0); k < b.Len; k++ {
+			stmtAddByte(stmt, b.Get(k))
+		}
+		stmtAddByte(stmt, 0)
+		return
+	}
+
+	if op == "end" {
+		if stmt.Operand.Len > 0 {
+			val, ok := evalExpr(stmt.Operand, stmt.PC, true)
+			if !ok {
+				setError("end expr error")
+				return
+			}
+			stmt.EndAddr = word(val)
+			stmt.HasEndAddr = 1
+			execAddr = stmt.EndAddr
+			hasExecAddr = true
+		}
+		return
+	}
+}
+
+func emitInstructionBytes(stmt *Statement, info OpInfo) {
+	mode := info.Mode
+	if mode == ModeInherent {
+		stmtAddOpcode(stmt, info.Inh)
+		return
+	}
+
+	if mode == ModeImm8 {
+		op := trimSpace(stmt.Operand)
+		if hasPrefix(op, "#") {
+			op = trimSpace(substr(op, 1, op.Len))
+		}
+		val, ok := evalExpr(op, stmt.PC, true)
+		if !ok {
+			setError(concatStr("imm8 expr error: ", op))
+			return
+		}
+		stmtAddOpcode(stmt, info.Imm)
+		stmtAddByte(stmt, byte(val))
+		return
+	}
+
+	if mode == ModeRegReg {
+		parts := splitCommaRespectingQuotes(stmt.Operand)
+		if parts.Len != 2 {
+			setError("tfr/exg requires two registers")
+			return
+		}
+		r1 := parseRegCode(parts.Get(0))
+		r2 := parseRegCode(parts.Get(1))
+		if r1 == 0xFF || r2 == 0xFF {
+			setError("invalid register in tfr/exg")
+			return
+		}
+		stmtAddOpcode(stmt, info.Inh)
+		stmtAddByte(stmt, (r1<<4)|r2)
+		return
+	}
+
+	if mode == ModeStack {
+		isU := stmt.Op == "pshu" || stmt.Op == "pulu"
+		mask, ok := parseStackMask(stmt.Operand, isU)
+		if !ok {
+			setError("invalid register list in psh/pul")
+			return
+		}
+		stmtAddOpcode(stmt, info.Inh)
+		stmtAddByte(stmt, mask)
+		return
+	}
+
+	if mode == ModeBranchShort || mode == ModeBranchLong {
+		target, ok := evalExpr(stmt.Operand, stmt.PC, true)
+		if !ok {
+			setError(concatStr("branch target error: ", stmt.Operand))
+			return
+		}
+		if stmt.IsShortBranch != 0 {
+			delta := target - int(stmt.PC+2)
+			if delta < -128 || delta > 127 {
+				setError("short branch out of range")
+				return
+			}
+			stmtAddByte(stmt, byte(info.RelOpcode))
+			stmtAddByte(stmt, byte(delta))
+			return
+		}
+		opSz := opcodeSize(info.LongRelOp)
+		delta := target - int(stmt.PC+opSz+2)
+		stmtAddOpcode(stmt, info.LongRelOp)
+		stmtAddWord(stmt, word(delta))
+		return
+	}
+
+	if mode == ModeGeneral {
+		op := trimSpace(stmt.Operand)
+		if hasPrefix(op, "#") {
+			if info.Imm == NO_OP {
+				setError(concatStr(stmt.Op, " does not support immediate mode"))
+				return
+			}
+			expr := trimSpace(substr(op, 1, op.Len))
+			val, ok := evalExpr(expr, stmt.PC, true)
+			if !ok {
+				setError(concatStr("immediate expr error: ", expr))
+				return
+			}
+			stmtAddOpcode(stmt, info.Imm)
+			if info.Imm16 != 0 {
+				stmtAddWord(stmt, word(val))
+			} else {
+				stmtAddByte(stmt, byte(val))
+			}
+			return
+		}
+
+		if isIndexedOperand(op) {
+			if info.Idx == NO_OP {
+				setError(concatStr(stmt.Op, " does not support indexed mode"))
+				return
+			}
+			opSz := opcodeSize(info.Idx)
+			pb, extraSz, extraWord, ok := assembleIndexed(op, stmt.PC, opSz, true)
+			if !ok {
+				setError(concatStr("indexed operand error: ", op))
+				return
+			}
+			stmtAddOpcode(stmt, info.Idx)
+			stmtAddByte(stmt, pb)
+			if extraSz == 1 {
+				stmtAddByte(stmt, byte(extraWord))
+			} else if extraSz == 2 {
+				stmtAddWord(stmt, extraWord)
+			}
+			return
+		}
+
+		// Direct or Extended
+		exprStr := op
+		if hasPrefix(exprStr, "<") || hasPrefix(exprStr, ">") {
+			exprStr = trimSpace(substr(exprStr, 1, exprStr.Len))
+		}
+		val, ok := evalExpr(exprStr, stmt.PC, true)
+		if !ok {
+			setError(concatStr("operand expr error: ", exprStr))
+			return
+		}
+
+		if stmt.Size == opcodeSize(info.Dir)+1 && info.Dir != NO_OP {
+			stmtAddOpcode(stmt, info.Dir)
+			stmtAddByte(stmt, byte(val))
+			return
+		}
+		if info.Ext == NO_OP {
+			setError(concatStr(stmt.Op, " does not support extended mode"))
+			return
+		}
+		stmtAddOpcode(stmt, info.Ext)
+		stmtAddWord(stmt, word(val))
+		return
+	}
+}
+
+func assemble() bool {
+	relax()
+	if asmErr.Len > 0 {
+		return false
+	}
+
+	// Pass 3: Emit final instruction and directive bytes
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.IsCommentOnly != 0 {
+			continue
+		}
+		expectedSize := stmt.Size
+		stmtClearBytes(&stmt)
+
+		if stmt.IsDirective != 0 {
+			emitDirectiveBytes(&stmt)
+			if asmErr.Len > 0 {
+				return false
+			}
+			// Restore size for rmb/.space/etc. where no bytes are emitted
+			if stmt.Size == 0 && expectedSize > 0 {
+				stmt.Size = expectedSize
+			}
+			setStmt(i, stmt)
+			continue
+		}
+
+		if stmt.Op.Len == 0 {
+			continue
+		}
+
+		info, ok := lookupOp(stmt.Op)
+		if !ok {
+			setError(concatStr("unknown instruction: ", stmt.Op))
+			return false
+		}
+		emitInstructionBytes(&stmt, info)
+		if asmErr.Len > 0 {
+			return false
+		}
+		setStmt(i, stmt)
+	}
+	return true
+}
+
+// --- Output Emission ---
+
+var outBuf [256]byte
+var outBufLen word
+
+func flushOut(fd int) {
+	if outBufLen > 0 {
+		os.SysWrite(fd, &outBuf[0], int(outBufLen))
+		outBufLen = 0
+	}
+}
+
+func writeOutByte(fd int, b byte) {
+	outBuf[outBufLen] = b
+	outBufLen++
+	if outBufLen == 256 {
+		flushOut(fd)
+	}
+}
+
+func writeOutWord(fd int, w word) {
+	writeOutByte(fd, byte(w>>8))
+	writeOutByte(fd, byte(w))
+}
+
+var decbLastHigh16 word
+var decbChunkBytes [255]byte
+var decbChunkLen word
+var decbChunkHi word
+var decbChunkAddr word
+var decbInChunk bool
+
+func flushDECBChunk(fd int) {
+	if !decbInChunk || decbChunkLen == 0 {
+		decbInChunk = false
+		decbChunkLen = 0
+		return
+	}
+	if decbChunkHi != decbLastHigh16 {
+		writeOutByte(fd, 0xFE)
+		writeOutWord(fd, 0x0000)
+		writeOutWord(fd, decbChunkHi)
+		decbLastHigh16 = decbChunkHi
+	}
+	writeOutByte(fd, 0x00)
+	writeOutWord(fd, decbChunkLen)
+	writeOutWord(fd, decbChunkAddr)
+	for k := word(0); k < decbChunkLen; k++ {
+		writeOutByte(fd, decbChunkBytes[k])
+	}
+	decbInChunk = false
+	decbChunkLen = 0
+}
+
+func emitDECB(fd int) {
+	outBufLen = 0
+	decbLastHigh16 = 0
+	decbChunkLen = 0
+	decbChunkHi = 0
+	decbChunkAddr = 0
+	decbInChunk = false
+
+	// Hatvan Executable Magic header (Tag 253 = 0xFD): 0xFD, 0x00, 0x00, 'x', '9'
+	writeOutByte(fd, 0xFD)
+	writeOutWord(fd, 0x0000)
+	writeOutByte(fd, 'x')
+	writeOutByte(fd, '9')
+
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.IsCommentOnly != 0 {
+			continue
+		}
+		isRmb := stmt.IsDirective != 0 && (stmt.Op == "rmb" || stmt.Op == ".blkb" || stmt.Op == ".ds" || stmt.Op == ".space")
+		if isRmb || stmt.Size == 0 {
+			if isRmb || stmt.HasOrg != 0 {
+				flushDECBChunk(fd)
+			}
+			continue
+		}
+
+		for bIdx := word(0); bIdx < stmt.Size; bIdx++ {
+			bVal := stmtGetByte(&stmt, bIdx)
+			bAddr := stmt.PC + bIdx
+			bHi := stmt.PCHi
+			if decbInChunk && (decbChunkHi != bHi || decbChunkAddr+decbChunkLen != bAddr || decbChunkLen >= 255) {
+				flushDECBChunk(fd)
+			}
+			if !decbInChunk {
+				decbInChunk = true
+				decbChunkHi = bHi
+				decbChunkAddr = bAddr
+				decbChunkLen = 0
+			}
+			decbChunkBytes[decbChunkLen] = bVal
+			decbChunkLen++
+		}
+	}
+	flushDECBChunk(fd)
+
+	if decbLastHigh16 != 0 {
+		writeOutByte(fd, 0xFE)
+		writeOutWord(fd, 0x0000)
+		writeOutWord(fd, 0x0000)
+	}
+
+	// Trailer: 0xFF, 0x00, 0x00, execHi, execLo
+	writeOutByte(fd, 0xFF)
+	writeOutWord(fd, 0x0000)
+	if hasExecAddr {
+		writeOutWord(fd, execAddr)
+	} else {
+		writeOutWord(fd, 0x0000)
+	}
+	flushOut(fd)
+}
+
+func emitRaw(fd int) {
+	outBufLen = 0
+	started := false
+	expectedPC := word(0)
+
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.IsCommentOnly != 0 {
+			continue
+		}
+		isRmb := stmt.IsDirective != 0 && (stmt.Op == "rmb" || stmt.Op == ".blkb" || stmt.Op == ".ds" || stmt.Op == ".space")
+		if isRmb || stmt.Size == 0 {
+			continue
+		}
+		if started && stmt.PC > expectedPC {
+			gap := stmt.PC - expectedPC
+			for g := word(0); g < gap; g++ {
+				writeOutByte(fd, 0)
+			}
+		}
+		for bIdx := word(0); bIdx < stmt.Size; bIdx++ {
+			writeOutByte(fd, stmtGetByte(&stmt, bIdx))
+		}
+		expectedPC = stmt.PC + stmt.Size
+		started = true
+	}
+	flushOut(fd)
+}
+
+func hexDigitChar(v byte) byte {
+	v = v & 0x0F
+	if v < 10 {
+		return '0' + v
+	}
+	return 'A' + (v - 10)
+}
+
+func writeHexByte(fd int, b byte) {
+	writeOutByte(fd, hexDigitChar(b>>4))
+	writeOutByte(fd, hexDigitChar(b))
+}
+
+func writeHexWord(fd int, w word) {
+	writeHexByte(fd, byte(w>>8))
+	writeHexByte(fd, byte(w))
+}
+
+var srecBytes [16]byte
+var srecLen word
+var srecAddr word
+var srecInRec bool
+
+func flushSRec(fd int) {
+	if !srecInRec || srecLen == 0 {
+		srecInRec = false
+		srecLen = 0
+		return
+	}
+	count := byte(srecLen + 3)
+	sum := count + byte(srecAddr>>8) + byte(srecAddr)
+	writeOutByte(fd, 'S')
+	writeOutByte(fd, '1')
+	writeHexByte(fd, count)
+	writeHexWord(fd, srecAddr)
+	for k := word(0); k < srecLen; k++ {
+		b := srecBytes[k]
+		sum += b
+		writeHexByte(fd, b)
+	}
+	writeHexByte(fd, 0xFF^sum)
+	writeOutByte(fd, 10)
+	srecInRec = false
+	srecLen = 0
+}
+
+func emitSRecords(fd int) {
+	outBufLen = 0
+	srecLen = 0
+	srecAddr = 0
+	srecInRec = false
+
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.IsCommentOnly != 0 {
+			continue
+		}
+		isRmb := stmt.IsDirective != 0 && (stmt.Op == "rmb" || stmt.Op == ".blkb" || stmt.Op == ".ds" || stmt.Op == ".space")
+		if isRmb || stmt.Size == 0 {
+			if isRmb || stmt.HasOrg != 0 {
+				flushSRec(fd)
+			}
+			continue
+		}
+		for bIdx := word(0); bIdx < stmt.Size; bIdx++ {
+			bVal := stmtGetByte(&stmt, bIdx)
+			bAddr := stmt.PC + bIdx
+			if srecInRec && (srecAddr+srecLen != bAddr || srecLen >= 16) {
+				flushSRec(fd)
+			}
+			if !srecInRec {
+				srecInRec = true
+				srecAddr = bAddr
+				srecLen = 0
+			}
+			srecBytes[srecLen] = bVal
+			srecLen++
+		}
+	}
+	flushSRec(fd)
+
+	// S9 termination record
+	exec := word(0)
+	if hasExecAddr {
+		exec = execAddr
+	}
+	sum := byte(3) + byte(exec>>8) + byte(exec)
+	writeOutByte(fd, 'S')
+	writeOutByte(fd, '9')
+	writeHexByte(fd, 3)
+	writeHexWord(fd, exec)
+	writeHexByte(fd, 0xFF^sum)
+	writeOutByte(fd, 10)
+	flushOut(fd)
+}
+
+func emitListing(fd int) {
+	outBufLen = 0
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		writeHexWord(fd, stmt.PC)
+		writeOutByte(fd, ' ')
+		writeOutByte(fd, ' ')
+		isRmb := stmt.IsDirective != 0 && (stmt.Op == "rmb" || stmt.Op == ".blkb" || stmt.Op == ".ds" || stmt.Op == ".space")
+		nBytes := stmt.Size
+		if isRmb {
+			nBytes = 0
+		}
+		shown := nBytes
+		if shown > 4 {
+			shown = 4
+		}
+		for k := word(0); k < shown; k++ {
+			writeHexByte(fd, stmtGetByte(&stmt, k))
+		}
+		for k := shown * 2; k < 10; k++ {
+			writeOutByte(fd, ' ')
+		}
+		for k := word(0); k < stmt.RawLine.Len; k++ {
+			writeOutByte(fd, stmt.RawLine.Get(k))
+		}
+		writeOutByte(fd, 10)
+	}
+	flushOut(fd)
+}
+
+var outPath string
+var listPath string
+var inputFile string
+var outFormat string
+
+func main() {
+	initOpcodes()
+	enableRelax = true
+	dpReg = 0
+	cEscapes = false
+	hasExecAddr = false
+	keepRawLines = false
+
+	outFormat = "decb"
+
+	args := os.GetArgs()
+	i := word(0)
+	for i < args.Len {
+		arg := args.Get(i)
+		if arg == "-o" {
+			i++
+			if i < args.Len {
+				outPath = args.Get(i)
+			}
+		} else if hasPrefix(arg, "-o=") {
+			outPath = substr(arg, 3, arg.Len)
+		} else if arg == "-f" {
+			i++
+			if i < args.Len {
+				outFormat = toLowerStr(args.Get(i))
+			}
+		} else if hasPrefix(arg, "-f=") {
+			outFormat = toLowerStr(substr(arg, 3, arg.Len))
+		} else if arg == "-l" || arg == "--list" {
+			i++
+			if i < args.Len {
+				listPath = args.Get(i)
+				keepRawLines = true
+			}
+		} else if arg == "-b" || arg == "--decb" {
+			outFormat = "decb"
+		} else if arg == "-r" || arg == "--raw" {
+			outFormat = "raw"
+		} else if arg == "--srec" {
+			outFormat = "srec"
+		} else if arg == "--no-relax" || arg == "-no-relax" {
+			enableRelax = false
+		} else if arg == "--relax" || arg == "-relax" {
+			enableRelax = true
+		} else if arg == "-9" || arg == "--9" {
+			// 6809 mode (ignored)
+		} else if arg == "-p" || arg == "--pragma" || arg == "--map" {
+			i++
+		} else if hasPrefix(arg, "-") {
+			// ignore unknown flag
+		} else {
+			inputFile = arg
+		}
+		i++
+	}
+
+	inFd := os.STDIN
+	if inputFile.Len > 0 {
+		inFd = os.Open(inputFile, os.MODE_READ)
+		if inFd < 0 {
+			println("Error opening", inputFile)
+			os.Exit(1)
+		}
+	}
+
+	lineNum := word(0)
+	for {
+		line, ok := os.ReadLineFrom(inFd)
+		if !ok {
+			break
+		}
+		lineNum++
+		stmt := parseLine(lineNum, line)
+		if stmt.IsCommentOnly != 0 && !keepRawLines {
+			freeslice[byte](line)
+			continue
+		}
+		addStmt(stmt)
+	}
+
+	if inputFile.Len > 0 {
+		os.Close(inFd)
+	}
+
+	if !assemble() {
+		println("Assembly error:", asmErr)
+		os.Exit(1)
+	}
+
+	if outPath.Len > 0 {
+		outFd := os.Create(outPath, os.MODE_WRITE, 0x3F)
+		if outFd < 0 {
+			println("Error creating", outPath)
+			os.Exit(1)
+		}
+		if outFormat == "decb" {
+			emitDECB(outFd)
+		} else if outFormat == "raw" {
+			emitRaw(outFd)
+		} else if outFormat == "srec" {
+			emitSRecords(outFd)
+		} else {
+			println("Unknown format:", outFormat)
+			os.Close(outFd)
+			os.Exit(1)
+		}
+		os.Close(outFd)
+	}
+
+	if listPath.Len > 0 {
+		lFd := os.Create(listPath, os.MODE_WRITE, 0x3F)
+		if lFd < 0 {
+			println("Error creating", listPath)
+			os.Exit(1)
+		}
+		emitListing(lFd)
+		os.Close(lFd)
+	}
+}

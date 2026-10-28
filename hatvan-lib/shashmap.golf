@@ -1,0 +1,79 @@
+package shashmap
+
+const NUM_BUCKETS = 256
+const BUCKET_MASK = 255
+const NIL_IDX = 0xFFFF
+
+func HashString(s string) word {
+	h := word(5381)
+	n := s.Len
+	for i := word(0); i < n; i++ {
+		h = (h * 33) ^ word(s.Get(i))
+	}
+	return h
+}
+
+// SHashMap is a 256-bucket chained hash map backed by Far Data slices.
+// Keys and values are stored densely in insertion order in keys and values,
+// while heads and next form per-bucket singly-linked index chains.
+type SHashMap[T any] struct {
+	heads  slice[word]
+	keys   slice[string]
+	values slice[T]
+	next   slice[word]
+}
+
+func (o *SHashMap[T]) initHeads() {
+	o.heads = makeslice[word](NUM_BUCKETS)
+	for i := word(0); i < NUM_BUCKETS; i++ {
+		o.heads.Put(i, NIL_IDX)
+	}
+}
+
+func (o *SHashMap[T]) Lookup(key string) (T, bool) {
+	if o.heads.Len == 0 {
+		var zeroT T
+		return zeroT, false
+	}
+	b := HashString(key) & BUCKET_MASK
+	idx := o.heads.Get(b)
+	for idx != NIL_IDX {
+		if o.keys.Get(idx) == key {
+			return o.values.Get(idx), true
+		}
+		idx = o.next.Get(idx)
+	}
+	var zeroT T
+	return zeroT, false
+}
+
+// Insert returns true if the key is fresh, false if value is replaced at old key slot.
+func (o *SHashMap[T]) Insert(key string, value T) bool {
+	if o.heads.Len == 0 {
+		o.initHeads()
+	}
+	b := HashString(key) & BUCKET_MASK
+	head := o.heads.Get(b)
+	idx := head
+	for idx != NIL_IDX {
+		if o.keys.Get(idx) == key {
+			o.values.Put(idx, value)
+			return false
+		}
+		idx = o.next.Get(idx)
+	}
+	newIdx := o.keys.Len
+	o.keys.Append(key)
+	o.values.Append(value)
+	o.next.Append(head)
+	o.heads.Put(b, newIdx)
+	return true
+}
+
+func (o *SHashMap[T]) Keys() slice[string] {
+	return o.keys
+}
+
+func (o *SHashMap[T]) Len() word {
+	return o.keys.Len
+}

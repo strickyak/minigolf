@@ -260,6 +260,9 @@ func (a *Analyzer) exprToRawString(expr ast.Expression) string {
 	case *ast.Identifier:
 		return e.FullName()
 	case *ast.ArrayType:
+		if e.Length != nil {
+			return "[" + a.exprToRawString(e.Length) + "]" + a.exprToRawString(e.Elt)
+		}
 		return "slice_" + a.exprToRawString(e.Elt)
 	case *ast.PointerType:
 		return "*" + a.exprToRawString(e.Elt)
@@ -287,6 +290,9 @@ func (a *Analyzer) exprToString(expr ast.Expression) string {
 	case *ast.Identifier:
 		return e.FullName()
 	case *ast.ArrayType:
+		if e.Length != nil {
+			return "[" + a.exprToString(e.Length) + "]" + a.exprToString(e.Elt)
+		}
 		return "slice_" + a.exprToString(e.Elt)
 	case *ast.PointerType:
 		return "*" + a.exprToString(e.Elt)
@@ -977,7 +983,9 @@ func (a *Analyzer) analyzeBlock(b *ast.BlockStatement, createsScope bool) {
 			if s.Value != nil {
 				var eltTyp ast.Expression
 				if arrayTyp, ok := rangeTyp.(*ast.ArrayType); ok {
-					eltTyp = arrayTyp.Elt
+					if arrayTyp.Length == nil {
+						eltTyp = arrayTyp.Elt
+					}
 				} else if idxExpr, ok := rangeTyp.(*ast.IndexExpression); ok {
 					if baseIdent, ok := idxExpr.Left.(*ast.Identifier); ok && (baseIdent.Value == "slice" || baseIdent.Value == "prelude.slice") {
 						eltTyp = idxExpr.Indices[0]

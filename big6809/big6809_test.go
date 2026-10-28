@@ -95,6 +95,10 @@ func TestEMBIGGEN_TestAPLNomoto(t *testing.T) {
 	runEmbiggenTest(t, filepath.Join("tests", "test_apl_nomoto.golf"), filepath.Join("tests", "test_apl_nomoto.want"))
 }
 
+func TestEMBIGGEN_TestSHashMap(t *testing.T) {
+	runEmbiggenTest(t, filepath.Join("tests", "test_shashmap.golf"), filepath.Join("tests", "test_shashmap.want"))
+}
+
 func TestEMBIGGEN_TestAPLTriangleNomoto(t *testing.T) {
 	t.Skip("skipping known edge case: stack-heap collision in Slot 1 (see doc/embiggen-process-mode.md #14.1)")
 	runEmbiggenTest(t, filepath.Join("tests", "test_apl_triangle_nomoto.golf"), filepath.Join("tests", "test_apl_triangle_nomoto.want"))

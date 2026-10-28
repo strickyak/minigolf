@@ -171,6 +171,14 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 		}
 
 		if rawGenericName != "" {
+			if _, ok := tm.genericTemplates[rawGenericName]; !ok {
+				if ident, ok := e.Left.(*ast.Identifier); ok {
+					builtinRawGenericName := "prelude." + ident.Value
+					if _, ok := tm.genericTemplates[builtinRawGenericName]; ok {
+						rawGenericName = builtinRawGenericName
+					}
+				}
+			}
 			var instTypStr string
 			for _, idx := range e.Indices {
 				instTypStr += "_" + tm.astToIRType(idx).Name
@@ -180,17 +188,6 @@ func (tm *TypeManager) astToIRType(expr ast.Expression) Type {
 			if _, ok := tm.typeDefsAST[instName]; !ok {
 				if tmpl, ok := tm.genericTemplates[rawGenericName]; ok {
 					tm.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl, e.GetToken())
-				} else if ident, ok := e.Left.(*ast.Identifier); ok {
-					builtinRawGenericName := "prelude." + ident.Value
-					if tmpl, ok := tm.genericTemplates[builtinRawGenericName]; ok {
-						rawGenericName = builtinRawGenericName
-						instName = fmt.Sprintf("%s%s", rawGenericName, instTypStr)
-						if _, ok := tm.typeDefsAST[instName]; !ok {
-							tm.instantiateGeneric(instName, rawGenericName, e.Indices, tmpl, e.GetToken())
-						}
-					} else {
-						panic("unresolved:" + rawGenericName)
-					}
 				} else {
 					panic("unresolved:" + rawGenericName)
 				}

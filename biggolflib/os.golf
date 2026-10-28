@@ -1,0 +1,247 @@
+package os
+
+const STDIN = 0
+const STDOUT = 1
+const STDERR = 2
+
+const MODE_READ = 1
+const MODE_WRITE = 2
+const MODE_RDWR = 3
+const MODE_EXEC = 4
+const MODE_DIR = 0x80
+
+// Low-level assembly subroutines provided by cstart.asm:
+func SysArgsPtr() *byte
+func SysOpen(path *byte, mode int) int
+func SysCreate(path *byte, mode int, attrs int) int
+func SysRead(path int, buf *byte, maxLen int) int
+func SysReadLn(path int, buf *byte, maxLen int) int
+func SysWrite(path int, buf *byte, count int) int
+func SysWritLn(path int, buf *byte, count int) int
+func SysClose(path int) int
+func SysExit(status int)
+
+var LineBuffer [256]byte
+var ReadBuf [256]byte
+var readBufPos word
+var readBufLen word
+var readBufFd int
+
+func copyStrToLineBuf(s string) {
+	n := s.Len
+	if n > 255 {
+		n = 255
+	}
+	for i := word(0); i < n; i++ {
+		LineBuffer[i] = s.Get(i)
+	}
+	LineBuffer[n] = 0
+}
+
+func Open(path string, mode int) int {
+	readBufPos = 0
+	readBufLen = 0
+	readBufFd = -1
+	copyStrToLineBuf(path)
+	return SysOpen(&LineBuffer[0], mode)
+}
+
+func Create(path string, mode int, attrs int) int {
+	copyStrToLineBuf(path)
+	return SysCreate(&LineBuffer[0], mode, attrs)
+}
+
+func Close(fd int) int {
+	if readBufFd == fd {
+		readBufPos = 0
+		readBufLen = 0
+		readBufFd = -1
+	}
+	return SysClose(fd)
+}
+
+func makeFarStringFromLineBuf(length word) string {
+	dest := FarMakeSlice[byte](length + 1)
+	for i := word(0); i < length; i++ {
+		dest.Put(i, LineBuffer[i])
+	}
+	dest.Put(length, 0)
+	var res string
+	res.FarRef = dest.FarRef
+	res.Base = dest.Base
+	res.Len = length
+	res.Cap = length + 1
+	return res
+}
+
+// ReadLineFrom reads a line from fd into a FarRef string.
+// Returns (line, true) on success, or ("", false) on EOF.
+func ReadLineFrom(fd int) (string, bool) {
+	if fd == STDIN {
+		n := SysReadLn(fd, &LineBuffer[0], 255)
+		if n <= 0 {
+			var empty string
+			return empty, false
+		}
+		length := word(n)
+		if length > 0 {
+			c := LineBuffer[length-1]
+			if c == 10 || c == 13 {
+				length--
+			}
+		}
+		if length > 0 {
+			c := LineBuffer[length-1]
+			if c == 10 || c == 13 {
+				length--
+			}
+		}
+		return makeFarStringFromLineBuf(length), true
+	}
+
+	if readBufFd != fd {
+		readBufFd = fd
+		readBufPos = 0
+		readBufLen = 0
+	}
+	length := word(0)
+	gotAny := false
+	for length < 255 {
+		if readBufPos >= readBufLen {
+			n := SysRead(fd, &ReadBuf[0], 256)
+			if n <= 0 {
+				break
+			}
+			readBufPos = 0
+			readBufLen = word(n)
+		}
+		c := ReadBuf[readBufPos]
+		readBufPos++
+		gotAny = true
+		if c == 10 {
+			break
+		}
+		if c == 13 {
+			if readBufPos < readBufLen && ReadBuf[readBufPos] == 10 {
+				readBufPos++
+			}
+			break
+		}
+		LineBuffer[length] = c
+		length++
+	}
+	if !gotAny {
+		var empty string
+		return empty, false
+	}
+	return makeFarStringFromLineBuf(length), true
+}
+
+// ReadLine reads a line from standard input into a FarRef string.
+// Returns (line, true) on success, or ("", false) on EOF.
+func ReadLine() (string, bool) {
+	return ReadLineFrom(STDIN)
+}
+
+// ReadLn reads up to maxLen bytes into buf from path. Returns number of bytes read.
+func ReadLn(path int, buf *byte, maxLen int) int {
+	return SysReadLn(path, buf, maxLen)
+}
+
+// WritLn writes count bytes from buf to path with a newline.
+func WritLn(path int, buf *byte, count int) int {
+	return SysWritLn(path, buf, count)
+}
+
+// WriteByte writes a single byte to fd.
+func WriteByte(fd int, b byte) int {
+	LineBuffer[0] = b
+	return SysWrite(fd, &LineBuffer[0], 1)
+}
+
+// WriteBytes writes a slice[byte] to fd through LineBuffer.
+func WriteBytes(fd int, data slice[byte]) int {
+	total := word(0)
+	n := data.Len
+	for total < n {
+		chunk := n - total
+		if chunk > 256 {
+			chunk = 256
+		}
+		for i := word(0); i < chunk; i++ {
+			LineBuffer[i] = data.Get(total + i)
+		}
+		w := SysWrite(fd, &LineBuffer[0], int(chunk))
+		if w <= 0 {
+			return int(total)
+		}
+		total += word(w)
+	}
+	return int(total)
+}
+
+// WriteStr writes a string to fd through LineBuffer.
+func WriteStr(fd int, s string) int {
+	total := word(0)
+	n := s.Len
+	for total < n {
+		chunk := n - total
+		if chunk > 256 {
+			chunk = 256
+		}
+		for i := word(0); i < chunk; i++ {
+			LineBuffer[i] = s.Get(total + i)
+		}
+		w := SysWrite(fd, &LineBuffer[0], int(chunk))
+		if w <= 0 {
+			return int(total)
+		}
+		total += word(w)
+	}
+	return int(total)
+}
+
+// GetArgs parses the Hatvan OS command line parameter string into a slice of strings.
+func GetArgs() slice[string] {
+	var args slice[string]
+	addr := word(SysArgsPtr())
+	if addr == 0 {
+		return args
+	}
+	for {
+		for peekb(addr) == ' ' || peekb(addr) == 9 {
+			addr++
+		}
+		c := peekb(addr)
+		if c == 0 || c == 13 || c == 10 {
+			break
+		}
+		start := addr
+		length := word(0)
+		for {
+			c = peekb(addr)
+			if c == 0 || c == 13 || c == 10 || c == ' ' || c == 9 {
+				break
+			}
+			length++
+			addr++
+		}
+		dest := FarMakeSlice[byte](length + 1)
+		for i := word(0); i < length; i++ {
+			dest.Put(i, peekb(start+i))
+		}
+		dest.Put(length, 0)
+		var arg string
+		arg.FarRef = dest.FarRef
+		arg.Base = dest.Base
+		arg.Len = length
+		arg.Cap = length + 1
+		args.Append(arg)
+	}
+	return args
+}
+
+// Exit terminates the program with the given exit status.
+func Exit(status int) {
+	SysExit(status)
+}

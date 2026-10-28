@@ -14,18 +14,27 @@ const CStartTemplate = `
 active_code_blk equ $0006   ; Current block mapped in Slot 5 ($FF45)
 far_ret_sp      equ $0008   ; 16-bit pointer to Far Return Stack frame
 far_ret_tmp     equ $000A   ; 16-bit scratch in Direct Page for far return PC
+hatvan_args_ptr equ $000C   ; 16-bit pointer to command line args (X at entry)
+hatvan_mode     equ $000E   ; 1 = running under Hatvan OS (Y==$FE00 at entry), 0 = bare-metal
 far_ret_stack   equ $0100   ; 512-byte Far Return Stack in Slot 0 ($0100..$02FF)
 
 ; --- Slot 6 Fixed Runtime Entry Point ($C000) ---
 	org $C000
 
 cstart_embiggen:
-    ; 1. Initialize Process Stack in Slot 1 ($3FFE growing down to $2000)
+    ; 0. Ensure Slot 0 is Block 0, setup stack in Slot 1 ($3FFE) and Direct Page = 0
+    clr   $FF40
     lds   #$3FFE
-
-    ; 2. Initialize Direct Page register to Slot 0 ($0000)
     clra
     tfr   a,dp
+
+    ; Save initial X (Hatvan OS args pointer) and detect Hatvan OS mode (Y == $FE00)
+    stx   <hatvan_args_ptr
+    clr   <hatvan_mode
+    cmpy  #$FE00
+    bne   .not_hatvan
+    inc   <hatvan_mode
+.not_hatvan:
 
     ; Initialize Far Return Stack in Slot 0
     ldx   #far_ret_stack
@@ -82,8 +91,15 @@ __exit0:
 
 __exit:
     tfr   x,d
-    stb   $FF05        ; Hatvan Exit Port ($FF05)
+__exit_b:
+    tst   <hatvan_mode
+    bne   .hv_exit
+    stb   $FF05        ; Bare-metal Exit Port ($FF05)
 .stuck:
+    bra   .stuck
+.hv_exit:
+    swi2
+    fcb   $06          ; Hatvan OS F$Exit
     bra   .stuck
 
 ; --- Far Call Dispatcher (Slot 6) ---
@@ -185,23 +201,122 @@ f_putchar:
     ldb   3,s          ; character parameter from stack
 putchar:
 _putchar:
-    stb   $FF00        ; Hatvan console output port
+    tst   <hatvan_mode
+    bne   .hv_putchar
+    stb   $FF00        ; Bare-metal console output port
     rts
+.hv_putchar:
+    pshs  d,x,y,u
+    stb   ,-s          ; push character on stack
+    leax  ,s           ; X points to character
+    ldy   #1           ; 1 byte
+    lda   #1           ; path 1 (stdout)
+    swi2
+    fcb   $8A          ; I$Write
+    leas  1,s          ; pop character
+    puls  d,x,y,u,pc
 
 getchar:
 _getchar:
 f_getchar:
 f_prelude__getchar:
-    ldb   $FF01        ; Hatvan console input port
+    tst   <hatvan_mode
+    bne   .hv_getchar
+    ldb   $FF01        ; Bare-metal console input port
     clra
     rts
+.hv_getchar:
+    pshs  x,y,u
+    leas  -1,s         ; buffer for 1 byte
+    leax  ,s
+    ldy   #1
+    clra               ; path 0 (stdin)
+    swi2
+    fcb   $89          ; I$Read
+    bcs   .hv_getchar_eof
+    ldb   ,s
+    clra
+    leas  1,s
+    puls  x,y,u,pc
+.hv_getchar_eof:
+    ldd   #-1          ; EOF
+    leas  1,s
+    puls  x,y,u,pc
 
-; --- Low-Level Subroutines for os.golf (Fallback Bare Metal) ---
+; --- Low-Level Subroutines for os.golf (Hatvan OS + Bare Metal Fallback) ---
+
+; os.SysArgsPtr() *byte
+f_os__SysArgsPtr:
+    ldd   <hatvan_args_ptr
+    rts
+
+; os.SysOpen(path *byte, mode int) int
+f_os__SysOpen:
+    pshs  u
+    tfr   s,u
+    ldx   4,u          ; path pointer
+    lda   7,u          ; mode (low byte of 6,u)
+    swi2
+    fcb   $84          ; I$Open
+    bcs   .hv_open_err
+    tfr   a,b
+    clra
+    puls  u,pc
+.hv_open_err:
+    ldd   #-1
+    puls  u,pc
+
+; os.SysCreate(path *byte, mode int, attrs int) int
+f_os__SysCreate:
+    pshs  u
+    tfr   s,u
+    ldx   4,u          ; path pointer
+    lda   7,u          ; mode (low byte of 6,u)
+    ldb   9,u          ; attrs (low byte of 8,u)
+    swi2
+    fcb   $83          ; I$Create
+    bcs   .hv_create_err
+    tfr   a,b
+    clra
+    puls  u,pc
+.hv_create_err:
+    ldd   #-1
+    puls  u,pc
+
+; os.SysRead(path int, buf *byte, maxLen int) int
+f_os__SysRead:
+    pshs  u
+    tfr   s,u
+    lda   5,u          ; path (low byte of 4,u)
+    ldx   6,u          ; buf pointer
+    ldy   8,u          ; maxLen
+    swi2
+    fcb   $89          ; I$Read
+    bcs   .hv_read_err
+    tfr   y,d
+    puls  u,pc
+.hv_read_err:
+    ldd   #-1
+    puls  u,pc
 
 ; os.SysReadLn(path int, buf *byte, maxLen int) int
 f_os__SysReadLn:
     pshs  u
     tfr   s,u
+    tst   <hatvan_mode
+    beq   .bm_rln_entry
+    lda   5,u          ; path (low byte of 4,u)
+    ldx   6,u          ; buf pointer
+    ldy   8,u          ; maxLen
+    swi2
+    fcb   $8B          ; I$ReadLn
+    bcs   .hv_rln_err
+    tfr   y,d
+    puls  u,pc
+.hv_rln_err:
+    ldd   #-1
+    puls  u,pc
+.bm_rln_entry:
     ldx   6,u          ; X = buf
     ldy   8,u          ; Y = maxLen
     cmpy  #0
@@ -259,10 +374,55 @@ f_os__SysReadLn:
     ldd   #-1
     puls  u,pc
 
+; os.SysWrite(path int, buf *byte, count int) int
+f_os__SysWrite:
+    pshs  u
+    tfr   s,u
+    tst   <hatvan_mode
+    beq   .bm_write_entry
+    lda   5,u          ; path (low byte of 4,u)
+    ldx   6,u          ; buf pointer
+    ldy   8,u          ; count
+    swi2
+    fcb   $8A          ; I$Write
+    bcs   .hv_write_err
+    tfr   y,d
+    puls  u,pc
+.hv_write_err:
+    ldd   #-1
+    puls  u,pc
+.bm_write_entry:
+    ldx   6,u          ; X = buf
+    ldy   8,u          ; Y = count
+    cmpy  #0
+    ble   .bm_write_done
+.bm_write_loop:
+    ldb   ,x+
+    stb   $FF00        ; write to console port
+    leay  -1,y
+    bne   .bm_write_loop
+.bm_write_done:
+    ldd   8,u          ; return count
+    puls  u,pc
+
 ; os.SysWritLn(path int, buf *byte, count int) int
 f_os__SysWritLn:
     pshs  u
     tfr   s,u
+    tst   <hatvan_mode
+    beq   .bm_wln_entry
+    lda   5,u          ; path (low byte of 4,u)
+    ldx   6,u          ; buf pointer
+    ldy   8,u          ; count
+    swi2
+    fcb   $8C          ; I$WritLn
+    bcs   .hv_wln_err
+    tfr   y,d
+    puls  u,pc
+.hv_wln_err:
+    ldd   #-1
+    puls  u,pc
+.bm_wln_entry:
     ldx   6,u          ; X = buf
     ldy   8,u          ; Y = count
     cmpy  #0
@@ -276,14 +436,27 @@ f_os__SysWritLn:
     ldd   8,u          ; return count
     puls  u,pc
 
+; os.SysClose(path int) int
+f_os__SysClose:
+    pshs  u
+    tfr   s,u
+    lda   5,u          ; path (low byte of 4,u)
+    swi2
+    fcb   $8F          ; I$Close
+    bcs   .hv_close_err
+    clra
+    clrb
+    puls  u,pc
+.hv_close_err:
+    ldd   #-1
+    puls  u,pc
+
 ; os.SysExit(status int)
 f_os__SysExit:
     pshs  u
     tfr   s,u
     ldb   5,u          ; status byte
-    stb   $FF05        ; bare metal exit port
-.bm_fallback_exit_stuck:
-    bra   .bm_fallback_exit_stuck
+    jmp   __exit_b
 
 _printf:
     pshs  d,x,y,u

@@ -1,0 +1,47 @@
+package main
+
+import "shashmap"
+
+var m shashmap.SHashMap[word]
+
+func must(cond bool) {
+	if !cond {
+		panic("must failed")
+	}
+}
+
+func main() {
+	must(m.Len() == 0)
+
+	fresh1 := m.Insert("alpha", 100)
+	must(fresh1)
+	fresh2 := m.Insert("beta", 200)
+	must(fresh2)
+	fresh3 := m.Insert("gamma", 300)
+	must(fresh3)
+	must(m.Len() == 3)
+
+	v1, ok1 := m.Lookup("alpha")
+	must(ok1 && v1 == 100)
+	v2, ok2 := m.Lookup("beta")
+	must(ok2 && v2 == 200)
+	v3, ok3 := m.Lookup("gamma")
+	must(ok3 && v3 == 300)
+	_, ok4 := m.Lookup("delta")
+	must(!ok4)
+
+	// Replace existing key
+	freshReplace := m.Insert("beta", 250)
+	must(!freshReplace)
+	must(m.Len() == 3)
+	v2b, ok2b := m.Lookup("beta")
+	must(ok2b && v2b == 250)
+
+	keys := m.Keys()
+	must(keys.Len == 3)
+	must(keys.Get(0) == "alpha")
+	must(keys.Get(1) == "beta")
+	must(keys.Get(2) == "gamma")
+
+	println("OK")
+}

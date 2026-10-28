@@ -27,15 +27,15 @@ func PackProgram(prog *Program) error {
 			continue
 		}
 
-		// Estimate code size (at least 64 bytes for frame + 28 bytes per instruction)
-		estimatedSize := 64
+		// Estimate code size (at least 64 bytes for frame + 32 bytes per block + 36 bytes per instruction)
+		estimatedSize := 64 + len(fn.Blocks)*32
 		for _, bb := range fn.Blocks {
-			estimatedSize += len(bb.Instructions) * 28
+			estimatedSize += len(bb.Instructions) * 36
 		}
 		fn.AllocSize = estimatedSize
 
-		// Check if function fits in current 8KB block (keep safely below 8192 bytes, e.g. 6000)
-		if currentBlockOffset > 0 && int(currentBlockOffset)+estimatedSize > 6000 {
+		// Check if function fits in current 8KB block (keep safely below 8192 bytes)
+		if currentBlockOffset > 0 && int(currentBlockOffset)+estimatedSize > 5000 {
 			currentBlockID++
 			if currentBlockID > MaxFarBlockID {
 				return fmt.Errorf("EMBIGGEN code pool overflow: exceeded maximum Far Code block %d (960 KB)", MaxFarBlockID)

@@ -166,9 +166,7 @@ type slice[T any] struct {
 
 func (o *slice[T]) Append(x T) {
 	if o.Cap == 0 {
-		var z slice[T]
-		z.Base = word(zalloc(8 * sizeof[T]()))
-		z.Cap = 8
+		z := FarMakeSlice[T](8)
 		z.Len = 1
 		z.Put(0, x)
 		*o = z
@@ -186,13 +184,11 @@ func (o *slice[T]) Append(x T) {
 	if newCap < 8 {
 		newCap = 8
 	}
-	var z slice[T]
-	if o.FarRef != 0 {
-		z = FarMakeSlice[T](newCap)
-	} else {
-		z.Base = word(zalloc(newCap * sizeof[T]()))
-		z.Cap = newCap
+	maxCap := word(8096) / sizeof[T]()
+	if newCap > maxCap && n < maxCap {
+		newCap = maxCap
 	}
+	z := FarMakeSlice[T](newCap)
 	z.Len = n + 1
 
 	for i := range n {

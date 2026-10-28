@@ -8,18 +8,24 @@
 active_code_blk equ $0006   ; Current block mapped in Slot 5 ($FF45)
 far_ret_sp      equ $0008   ; 16-bit pointer to Far Return Stack frame
 far_ret_tmp     equ $000A   ; 16-bit scratch in Direct Page for far return PC
+hatvan_args_ptr equ $000C   ; 16-bit pointer to command line args (X at entry)
+hatvan_mode     equ $000E   ; 1 = running under Hatvan OS, 0 = bare-metal
 far_ret_stack   equ $0100   ; 512-byte Far Return Stack in Slot 0 ($0100..$02FF)
 
 ; --- Slot 6 Fixed Runtime Entry Point ($C000) ---
 	org $C000
 
 cstart_embiggen:
-    ; 1. Initialize Process Stack in Slot 1 ($3FFE growing down to $2000)
+    ; 0. Ensure Slot 0 is Block 0, setup stack in Slot 1 ($3FFE) and Direct Page = 0
+    clr   $FF40
     lds   #$3FFE
-
-    ; 2. Initialize Direct Page register to Slot 0 ($0000)
     clra
     tfr   a,dp
+
+    ; Save initial X (Hatvan OS args pointer) and set hatvan_mode = 1
+    stx   <hatvan_args_ptr
+    lda   #1
+    sta   <hatvan_mode
 
     ; Initialize Far Return Stack in Slot 0
     ldx   #far_ret_stack
@@ -211,6 +217,60 @@ f_prelude__getchar:
 
 ; --- Low-Level Subroutines for os.golf (Hatvan OS) ---
 
+; os.SysArgsPtr() *byte
+f_os__SysArgsPtr:
+    ldd   <hatvan_args_ptr
+    rts
+
+; os.SysOpen(path *byte, mode int) int
+f_os__SysOpen:
+    pshs  u
+    tfr   s,u
+    ldx   4,u          ; path pointer
+    lda   7,u          ; mode (low byte of 6,u)
+    swi2
+    fcb   $84          ; I$Open
+    bcs   .hv_open_err
+    tfr   a,b
+    clra
+    puls  u,pc
+.hv_open_err:
+    ldd   #-1
+    puls  u,pc
+
+; os.SysCreate(path *byte, mode int, attrs int) int
+f_os__SysCreate:
+    pshs  u
+    tfr   s,u
+    ldx   4,u          ; path pointer
+    lda   7,u          ; mode (low byte of 6,u)
+    ldb   9,u          ; attrs (low byte of 8,u)
+    swi2
+    fcb   $83          ; I$Create
+    bcs   .hv_create_err
+    tfr   a,b
+    clra
+    puls  u,pc
+.hv_create_err:
+    ldd   #-1
+    puls  u,pc
+
+; os.SysRead(path int, buf *byte, maxLen int) int
+f_os__SysRead:
+    pshs  u
+    tfr   s,u
+    lda   5,u          ; path (low byte of 4,u)
+    ldx   6,u          ; buf pointer
+    ldy   8,u          ; maxLen
+    swi2
+    fcb   $89          ; I$Read
+    bcs   .hv_read_err
+    tfr   y,d          ; return bytes read in D
+    puls  u,pc
+.hv_read_err:
+    ldd   #-1
+    puls  u,pc
+
 ; os.SysReadLn(path int, buf *byte, maxLen int) int
 f_os__SysReadLn:
     pshs  u
@@ -227,6 +287,22 @@ f_os__SysReadLn:
     ldd   #-1          ; return -1 on error/EOF
     puls  u,pc
 
+; os.SysWrite(path int, buf *byte, count int) int
+f_os__SysWrite:
+    pshs  u
+    tfr   s,u
+    lda   5,u          ; path (low byte of 4,u)
+    ldx   6,u          ; buf pointer
+    ldy   8,u          ; count
+    swi2
+    fcb   $8A          ; I$Write
+    bcs   .hv_write_err
+    tfr   y,d
+    puls  u,pc
+.hv_write_err:
+    ldd   #-1
+    puls  u,pc
+
 ; os.SysWritLn(path int, buf *byte, count int) int
 f_os__SysWritLn:
     pshs  u
@@ -240,6 +316,21 @@ f_os__SysWritLn:
     tfr   y,d          ; bytes written
     puls  u,pc
 .hv_wln_err:
+    ldd   #-1
+    puls  u,pc
+
+; os.SysClose(path int) int
+f_os__SysClose:
+    pshs  u
+    tfr   s,u
+    lda   5,u          ; path (low byte of 4,u)
+    swi2
+    fcb   $8F          ; I$Close
+    bcs   .hv_close_err
+    clra
+    clrb
+    puls  u,pc
+.hv_close_err:
     ldd   #-1
     puls  u,pc
 

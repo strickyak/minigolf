@@ -241,9 +241,9 @@ MORE:
 	for key, done := range imported {
 		if !done {
 			imported[key] = true
-			exts := []string{".golf", ".par4"}
+			exts := []string{".golf", ".par4", ".par5"}
 			if isPar4Arch && !hasManagedHeap {
-				exts = []string{".par4", ".golf"}
+				exts = []string{".par4", ".golf", ".par5"}
 			}
 			found := false
 			for _, ext := range exts {
@@ -518,6 +518,15 @@ func main() {
 		}
 	}
 
+	// Remaining arguments are source files.
+	sourceFiles := flag.Args()
+	if len(sourceFiles) != 1 {
+		fmt.Fprintln(os.Stderr, "Error: Exactly one source file must be provided.")
+		flag.Usage()
+		os.Exit(1)
+	}
+	mainSourceFile := sourceFiles[0]
+
 	archLower := strings.ToLower(*archFlag)
 	if strings.HasSuffix(archLower, "+") {
 		*embiggenFlag = true
@@ -528,7 +537,15 @@ func main() {
 		archLower = "6809"
 		*archFlag = "6809"
 	}
+	if archLower == "par5" || archLower == "p5" {
+		archLower = "big6809"
+		*archFlag = "big6809"
+		*embiggenFlag = true
+	}
 	if archLower == "big6809" {
+		*embiggenFlag = true
+	}
+	if strings.HasSuffix(mainSourceFile, ".par5") && (archLower == "6809" || archLower == "m6809" || archLower == "m") {
 		*embiggenFlag = true
 	}
 
@@ -552,15 +569,6 @@ func main() {
 			golfDefines["prelude.HEAP_SIZE"] = "2500"
 		}
 	}
-
-	// Remaining arguments are source files.
-	sourceFiles := flag.Args()
-	if len(sourceFiles) != 1 {
-		fmt.Fprintln(os.Stderr, "Error: Exactly one source file must be provided.")
-		flag.Usage()
-		os.Exit(1)
-	}
-	mainSourceFile := sourceFiles[0]
 
 	// =========================================================================
 	// -m=NEWCONFIG: spawn the host C compiler to harvest its predefined macros
