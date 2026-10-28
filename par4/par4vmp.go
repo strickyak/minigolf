@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -52,98 +49,6 @@ type CallFrame struct {
 	FrameAddr int
 }
 
-// HeapManager implements a first-fit dynamic fixed-size buffer allocator.
-type HeapManager struct {
-	memory      []byte
-	heapStart   int
-	heapEnd     int
-	allocations map[int]int // addr -> size
-}
-
-func NewHeapManager(memory []byte, start, end int) *HeapManager {
-	start = (start + 3) &^ 3 // align 4 bytes
-	h := &HeapManager{
-		memory:      memory,
-		heapStart:   start,
-		heapEnd:     end,
-		allocations: make(map[int]int),
-	}
-	h.initHeap()
-	return h
-}
-
-func (h *HeapManager) initHeap() {
-	totalSize := h.heapEnd - h.heapStart
-	if totalSize >= 4 {
-		binary.BigEndian.PutUint16(h.memory[h.heapStart:], uint16(totalSize))
-		binary.BigEndian.PutUint16(h.memory[h.heapStart+2:], 1) // is_free = 1
-	}
-}
-
-func (h *HeapManager) Alloc(size int) int {
-	if size <= 0 {
-		size = 2
-	}
-	reqSize := ((size + 1) &^ 1) + 4
-	curr := h.heapStart
-
-	for curr+4 <= h.heapEnd {
-		blkSize := int(binary.BigEndian.Uint16(h.memory[curr:]))
-		isFree := binary.BigEndian.Uint16(h.memory[curr+2:])
-		if blkSize == 0 || blkSize > (h.heapEnd-curr) {
-			break
-		}
-		if isFree == 1 && blkSize >= reqSize {
-			rem := blkSize - reqSize
-			if rem >= 8 {
-				binary.BigEndian.PutUint16(h.memory[curr:], uint16(reqSize))
-				binary.BigEndian.PutUint16(h.memory[curr+2:], 0) // used
-				binary.BigEndian.PutUint16(h.memory[curr+reqSize:], uint16(rem))
-				binary.BigEndian.PutUint16(h.memory[curr+reqSize+2:], 1) // free
-			} else {
-				binary.BigEndian.PutUint16(h.memory[curr+2:], 0) // used
-			}
-			dataAddr := curr + 4
-			for b := 0; b < size; b++ {
-				h.memory[dataAddr+b] = 0
-			}
-			h.allocations[dataAddr] = blkSize - 4
-			return dataAddr
-		}
-		curr += blkSize
-	}
-	return 0 // OOM
-}
-
-func (h *HeapManager) Free(dataAddr int) {
-	if _, ok := h.allocations[dataAddr]; !ok {
-		return
-	}
-	delete(h.allocations, dataAddr)
-	blkAddr := dataAddr - 4
-	binary.BigEndian.PutUint16(h.memory[blkAddr+2:], 1) // is_free = 1
-
-	// Coalesce forward
-	curr := h.heapStart
-	for curr+4 <= h.heapEnd {
-		blkSize := int(binary.BigEndian.Uint16(h.memory[curr:]))
-		isFree := binary.BigEndian.Uint16(h.memory[curr+2:])
-		if blkSize == 0 || blkSize > (h.heapEnd-curr) {
-			break
-		}
-		next := curr + blkSize
-		if isFree == 1 && next+4 <= h.heapEnd {
-			nextFree := binary.BigEndian.Uint16(h.memory[next+2:])
-			if nextFree == 1 {
-				nextSize := int(binary.BigEndian.Uint16(h.memory[next:]))
-				binary.BigEndian.PutUint16(h.memory[curr:], uint16(blkSize+nextSize))
-				continue
-			}
-		}
-		curr += blkSize
-	}
-}
-
 // VM is the Par4 virtual machine interpreter (par4vmp).
 type VM struct {
 	Memory           []byte
@@ -171,19 +76,11 @@ type VM struct {
 	CodeBase       int
 	CodeSize       int
 
-	Heap    *HeapManager
 	FrameSP int
 
 	// OS / File Table
 	Files      map[byte]*os.File
 	NextFileID byte
-
-	// Dynamic maps / regexes
-	RegexPatterns []*regexp.Regexp
-	RegexMatches  map[int][]string
-	NextMatchID   int
-	Maps          map[int]map[string]int
-	NextMapID     int
 
 	// I/O streams
 	Stdin  io.Reader
@@ -194,18 +91,14 @@ type VM struct {
 // NewVM creates a new VM initialized with the given bytecode binary data.
 func NewVM(bytecode []byte) (*VM, error) {
 	vm := &VM{
-		Memory:       make([]byte, 65536),
-		Stack:        make([]uint16, 0, 1024),
-		CallStack:    make([]*CallFrame, 0, 128),
-		Files:        make(map[byte]*os.File),
-		NextFileID:   3,
-		RegexMatches: make(map[int][]string),
-		NextMatchID:  1,
-		Maps:         make(map[int]map[string]int),
-		NextMapID:    1,
-		Stdin:        os.Stdin,
-		Stdout:       os.Stdout,
-		Stderr:       os.Stderr,
+		Memory:     make([]byte, 65536),
+		Stack:      make([]uint16, 0, 1024),
+		CallStack:  make([]*CallFrame, 0, 128),
+		Files:      make(map[byte]*os.File),
+		NextFileID: 3,
+		Stdin:      os.Stdin,
+		Stdout:     os.Stdout,
+		Stderr:     os.Stderr,
 	}
 
 	// Initialize standard file paths
@@ -325,15 +218,6 @@ func (vm *VM) loadBinary(data []byte) error {
 
 	// Allocate space for Globals in VM memory
 	vm.GlobalsBase = (vm.CodeBase + vm.CodeSize + 0x00FF) &^ 0x00FF
-	totalGlobalsSize := 0
-	for _, sz := range vm.GlobalSizes {
-		totalGlobalsSize += sz
-	}
-
-	// Initialize Heap above Globals, up to $DC00
-	heapStart := (vm.GlobalsBase + totalGlobalsSize + 0x00FF) &^ 0x00FF
-	heapEnd := 0xDC00
-	vm.Heap = NewHeapManager(vm.Memory, heapStart, heapEnd)
 
 	return nil
 }
@@ -546,27 +430,6 @@ func (vm *VM) executeOpcode(op byte, arg uint16, instPC int) {
 	case OpSTORE_GLOBAL:
 		vm.storeGlobal(int(arg))
 
-	case OpBUF_ALLOC:
-		sz := int(vm.Pop())
-		addr := vm.Heap.Alloc(sz)
-		vm.Push(uint16(addr))
-
-	case OpBUF_FREE:
-		addr := int(vm.Pop())
-		vm.Heap.Free(addr)
-
-	case OpLOAD_FIELD:
-		objPtr := int(vm.Pop())
-		offset := int(arg)
-		val := binary.BigEndian.Uint16(vm.Memory[objPtr+offset:])
-		vm.Push(val)
-
-	case OpSTORE_FIELD:
-		objPtr := int(vm.Pop())
-		val := vm.Pop()
-		offset := int(arg)
-		binary.BigEndian.PutUint16(vm.Memory[objPtr+offset:], val)
-
 	case OpADDR_OF_GLOBAL:
 		offset := 0
 		for i := 0; i < int(arg); i++ {
@@ -751,39 +614,8 @@ func (vm *VM) executeOpcode(op byte, arg uint16, instPC int) {
 			vm.Push(0x0000)
 		}
 
-	case OpMIN:
-		b := int16(vm.Pop())
-		a := int16(vm.Pop())
-		if a < b {
-			vm.Push(uint16(a))
-		} else {
-			vm.Push(uint16(b))
-		}
-
-	case OpMAX:
-		b := int16(vm.Pop())
-		a := int16(vm.Pop())
-		if a > b {
-			vm.Push(uint16(a))
-		} else {
-			vm.Push(uint16(b))
-		}
-
-	case OpPARSE_INT:
-		radix := int(vm.Pop())
-		sPtr, _, sLen := vm.PopSlice()
-		s := string(vm.Memory[sPtr : sPtr+sLen])
-		val, err := strconv.ParseInt(strings.TrimSpace(s), radix, 16)
-		if err == nil {
-			vm.Push(uint16(val))
-			vm.Push(0x0001) // true
-		} else {
-			vm.Push(0x0000)
-			vm.Push(0x0000) // false
-		}
-
 	// =========================================================================
-	// Group 4: Control Flow, Calls & Switches (0x60 .. 0x6F)
+	// Group 4: Control Flow & Calls (0x60 .. 0x6F)
 	// =========================================================================
 	case OpJUMP:
 		rel := int16(arg)
@@ -898,29 +730,6 @@ func (vm *VM) executeOpcode(op byte, arg uint16, instPC int) {
 		newLen := end - start
 		vm.PushSlice(newPtr, newCap, newLen)
 
-	case OpSLICE_GET_BYTE:
-		idx := int(vm.Pop())
-		ptr, _, length := vm.PopSlice()
-		if idx < 0 || idx >= int(length) {
-			vm.Push(0xFFFF) // -1
-		} else {
-			vm.Push(uint16(vm.Memory[int(ptr)+idx]))
-		}
-
-	case OpSLICE_GET_WORD:
-		idx := int(vm.Pop())
-		ptr, _, _ := vm.PopSlice()
-		addr := int(ptr) + idx*2
-		val := binary.BigEndian.Uint16(vm.Memory[addr:])
-		vm.Push(val)
-
-	case OpSLICE_SET_WORD:
-		val := vm.Pop()
-		idx := int(vm.Pop())
-		ptr, _, _ := vm.PopSlice()
-		addr := int(ptr) + idx*2
-		binary.BigEndian.PutUint16(vm.Memory[addr:], val)
-
 	case OpSTR_CMP:
 		bPtr, _, bLen := vm.PopSlice()
 		aPtr, _, aLen := vm.PopSlice()
@@ -935,206 +744,6 @@ func (vm *VM) executeOpcode(op byte, arg uint16, instPC int) {
 			vm.Push(0x0000) // 0
 		}
 
-	case OpSTR_STARTSWITH:
-		pPtr, _, pLen := vm.PopSlice()
-		sPtr, _, sLen := vm.PopSlice()
-		s := vm.Memory[sPtr : sPtr+sLen]
-		p := vm.Memory[pPtr : pPtr+pLen]
-		if bytes.HasPrefix(s, p) {
-			vm.Push(0x0001)
-		} else {
-			vm.Push(0x0000)
-		}
-
-	case OpSTR_ENDSWITH:
-		pPtr, _, pLen := vm.PopSlice()
-		sPtr, _, sLen := vm.PopSlice()
-		s := vm.Memory[sPtr : sPtr+sLen]
-		p := vm.Memory[pPtr : pPtr+pLen]
-		if bytes.HasSuffix(s, p) {
-			vm.Push(0x0001)
-		} else {
-			vm.Push(0x0000)
-		}
-
-	case OpSTR_FIND:
-		start := int(vm.Pop())
-		subPtr, _, subLen := vm.PopSlice()
-		sPtr, _, sLen := vm.PopSlice()
-		if start < int(sLen) {
-			s := vm.Memory[int(sPtr)+start : sPtr+sLen]
-			sub := vm.Memory[subPtr : subPtr+subLen]
-			idx := bytes.Index(s, sub)
-			if idx >= 0 {
-				vm.Push(uint16(start + idx))
-			} else {
-				vm.Push(0xFFFF)
-			}
-		} else {
-			vm.Push(0xFFFF)
-		}
-
-	// =========================================================================
-	// Group 6: Collections (Dicts & Lists) (0x90 .. 0xAF)
-	// =========================================================================
-	case OpDICT_NEW:
-		entries := int(arg)
-		byteSize := entries * 4
-		addr := vm.Heap.Alloc(byteSize)
-		vm.PushSlice(uint16(addr), uint16(entries*2), 0)
-
-	case OpDICT_GET:
-		kPtr, _, kLen := vm.PopSlice()
-		dPtr, _, dLen := vm.PopSlice()
-		keyBytes := vm.Memory[kPtr : kPtr+kLen]
-
-		found := false
-		var foundVal uint16
-		for i := 0; i < int(dLen); i += 2 {
-			entryKeyPtr := binary.BigEndian.Uint16(vm.Memory[int(dPtr)+i*2:])
-			candLen := int(binary.BigEndian.Uint16(vm.Memory[entryKeyPtr-2:]))
-			candKey := vm.Memory[entryKeyPtr : int(entryKeyPtr)+candLen]
-			if bytes.Equal(keyBytes, candKey) {
-				foundVal = binary.BigEndian.Uint16(vm.Memory[int(dPtr)+(i+1)*2:])
-				found = true
-				break
-			}
-		}
-
-		if found {
-			vm.Push(foundVal)
-			vm.Push(0x0001) // true
-		} else {
-			vm.Push(0x0000)
-			vm.Push(0x0000) // false
-		}
-
-	case OpDICT_SET:
-		val := vm.Pop()
-		kPtr, _, kLen := vm.PopSlice()
-		dPtr, dCap, dLen := vm.PopSlice()
-		keyBytes := vm.Memory[kPtr : kPtr+kLen]
-
-		foundIdx := -1
-		for i := 0; i < int(dLen); i += 2 {
-			entryKeyPtr := binary.BigEndian.Uint16(vm.Memory[int(dPtr)+i*2:])
-			candLen := int(binary.BigEndian.Uint16(vm.Memory[entryKeyPtr-2:]))
-			candKey := vm.Memory[entryKeyPtr : int(entryKeyPtr)+candLen]
-			if bytes.Equal(keyBytes, candKey) {
-				foundIdx = i
-				break
-			}
-		}
-
-		if foundIdx >= 0 {
-			binary.BigEndian.PutUint16(vm.Memory[int(dPtr)+(foundIdx+1)*2:], val)
-			vm.PushSlice(dPtr, dCap, dLen)
-		} else {
-			if dLen >= dCap {
-				// Grow dict buffer
-				newCap := dCap * 2
-				if newCap < 8 {
-					newCap = 8
-				}
-				newAddr := uint16(vm.Heap.Alloc(int(newCap) * 2))
-				copy(vm.Memory[newAddr:int(newAddr)+int(dLen)*2], vm.Memory[dPtr:int(dPtr)+int(dLen)*2])
-				vm.Heap.Free(int(dPtr))
-				dPtr = newAddr
-				dCap = newCap
-			}
-			binary.BigEndian.PutUint16(vm.Memory[int(dPtr)+int(dLen)*2:], kPtr)
-			binary.BigEndian.PutUint16(vm.Memory[int(dPtr)+(int(dLen)+1)*2:], val)
-			vm.PushSlice(dPtr, dCap, dLen+2)
-		}
-
-	case OpLIST_NEW:
-		capacity := int(arg)
-		addr := vm.Heap.Alloc(capacity * 2)
-		vm.PushSlice(uint16(addr), uint16(capacity), 0)
-
-	case OpLIST_APPEND:
-		val := vm.Pop()
-		lPtr, lCap, lLen := vm.PopSlice()
-		if lLen >= lCap {
-			newCap := lCap * 2
-			if newCap < 4 {
-				newCap = 4
-			}
-			newAddr := uint16(vm.Heap.Alloc(int(newCap) * 2))
-			copy(vm.Memory[newAddr:int(newAddr)+int(lLen)*2], vm.Memory[lPtr:int(lPtr)+int(lLen)*2])
-			vm.Heap.Free(int(lPtr))
-			lPtr = newAddr
-			lCap = newCap
-		}
-		binary.BigEndian.PutUint16(vm.Memory[int(lPtr)+int(lLen)*2:], val)
-		vm.PushSlice(lPtr, lCap, lLen+1)
-
-	case OpLIST_POP:
-		lPtr, lCap, lLen := vm.PopSlice()
-		if lLen == 0 {
-			panic(&VMError{Message: "pop from empty list", PC: instPC})
-		}
-		val := binary.BigEndian.Uint16(vm.Memory[int(lPtr)+int(lLen-1)*2:])
-		vm.PushSlice(lPtr, lCap, lLen-1)
-		vm.Push(val)
-
-	case OpSTR_APPEND:
-		val := byte(vm.Pop())
-		sPtr, sCap, sLen := vm.PopSlice()
-		if sLen >= sCap {
-			newCap := sCap * 2
-			if newCap < 8 {
-				newCap = 8
-			}
-			newAddr := uint16(vm.Heap.Alloc(int(newCap)))
-			copy(vm.Memory[newAddr:int(newAddr)+int(sLen)], vm.Memory[sPtr:int(sPtr)+int(sLen)])
-			vm.Heap.Free(int(sPtr))
-			sPtr = newAddr
-			sCap = newCap
-		}
-		vm.Memory[int(sPtr)+int(sLen)] = val
-		vm.PushSlice(sPtr, sCap, sLen+1)
-
-	case OpSLICE_APPEND_STR:
-		strPtr, strCap, strLen := vm.PopSlice()
-		lPtr, lCap, lLen := vm.PopSlice()
-		if lLen >= lCap {
-			newCap := lCap * 2
-			if newCap < 4 {
-				newCap = 4
-			}
-			newAddr := uint16(vm.Heap.Alloc(int(newCap) * 6))
-			copy(vm.Memory[newAddr:int(newAddr)+int(lLen)*6], vm.Memory[lPtr:int(lPtr)+int(lLen)*6])
-			vm.Heap.Free(int(lPtr))
-			lPtr = newAddr
-			lCap = newCap
-		}
-		binary.BigEndian.PutUint16(vm.Memory[int(lPtr)+int(lLen)*6:], strPtr)
-		binary.BigEndian.PutUint16(vm.Memory[int(lPtr)+int(lLen)*6+2:], strCap)
-		binary.BigEndian.PutUint16(vm.Memory[int(lPtr)+int(lLen)*6+4:], strLen)
-		vm.PushSlice(lPtr, lCap, lLen+1)
-
-	case OpLIST_SORT_BY_LEN:
-		lPtr, lCap, lLen := vm.PopSlice()
-		type strItem struct {
-			ptr, cap, length uint16
-		}
-		items := make([]strItem, lLen)
-		for i := 0; i < int(lLen); i++ {
-			items[i].ptr = binary.BigEndian.Uint16(vm.Memory[int(lPtr)+i*6:])
-			items[i].cap = binary.BigEndian.Uint16(vm.Memory[int(lPtr)+i*6+2:])
-			items[i].length = binary.BigEndian.Uint16(vm.Memory[int(lPtr)+i*6+4:])
-		}
-		sort.SliceStable(items, func(i, j int) bool {
-			return items[i].length > items[j].length
-		})
-		for i := 0; i < int(lLen); i++ {
-			binary.BigEndian.PutUint16(vm.Memory[int(lPtr)+i*6:], items[i].ptr)
-			binary.BigEndian.PutUint16(vm.Memory[int(lPtr)+i*6+2:], items[i].cap)
-			binary.BigEndian.PutUint16(vm.Memory[int(lPtr)+i*6+4:], items[i].length)
-		}
-		vm.PushSlice(lPtr, lCap, lLen)
-
 	// =========================================================================
 	// Group 8: Hatvan OS & Builtins (0xC0 .. 0xCF)
 	// =========================================================================
@@ -1147,6 +756,15 @@ func (vm *VM) executeOpcode(op byte, arg uint16, instPC int) {
 		// On POSIX host, always ready (return true)
 		vm.Push(0x0001)
 
+	case OpSYS_DMA_COPY:
+		count := int(vm.Pop())
+		dstAddr := int(vm.Pop())
+		_ = vm.Pop() // dstTask
+		srcAddr := int(vm.Pop())
+		_ = vm.Pop() // srcTask
+		copy(vm.Memory[dstAddr:dstAddr+count], vm.Memory[srcAddr:srcAddr+count])
+		vm.Push(0x0001)
+
 	case OpSYS_EXIT:
 		code := vm.Pop()
 		vm.ExitCode = int(code)
@@ -1156,53 +774,6 @@ func (vm *VM) executeOpcode(op byte, arg uint16, instPC int) {
 		sPtr, _, sLen := vm.PopSlice()
 		text := string(vm.Memory[sPtr : sPtr+sLen])
 		fmt.Fprintln(vm.Stdout, text)
-
-	case OpPRINT, OpPRINTLN:
-		isPrintln := (op == OpPRINTLN)
-		sPtr, _, sLen := vm.PopSlice()
-		var parts []string
-		for i := 0; i < int(sLen); i++ {
-			entryAddr := int(sPtr) + i*4
-			valAddr := int(binary.BigEndian.Uint16(vm.Memory[entryAddr:]))
-			typeAddr := int(binary.BigEndian.Uint16(vm.Memory[entryAddr+2:]))
-			typeName := vm.readCString(typeAddr)
-
-			switch typeName {
-			case "word", "uint", "uint16", "int", "int16":
-				v := binary.BigEndian.Uint16(vm.Memory[valAddr:])
-				parts = append(parts, strconv.Itoa(int(v)))
-			case "byte", "uint8":
-				v := vm.Memory[valAddr]
-				parts = append(parts, strconv.Itoa(int(v)))
-			case "bool":
-				v := binary.BigEndian.Uint16(vm.Memory[valAddr:])
-				if v != 0 {
-					parts = append(parts, "true")
-				} else {
-					parts = append(parts, "false")
-				}
-			case "string", "slice_byte", "slice[byte]", "prelude.slice_byte":
-				sBase := int(binary.BigEndian.Uint16(vm.Memory[valAddr:]))
-				sLength := int(binary.BigEndian.Uint16(vm.Memory[valAddr+4:]))
-				parts = append(parts, string(vm.Memory[sBase:sBase+sLength]))
-			case "*byte", "cstring":
-				cptr := int(binary.BigEndian.Uint16(vm.Memory[valAddr:]))
-				parts = append(parts, vm.readCString(cptr))
-			default:
-				if valAddr != 0 {
-					v := binary.BigEndian.Uint16(vm.Memory[valAddr:])
-					parts = append(parts, strconv.Itoa(int(v)))
-				} else {
-					parts = append(parts, "<nil>")
-				}
-			}
-		}
-		outText := strings.Join(parts, " ")
-		if isPrintln {
-			fmt.Fprintln(vm.Stdout, outText)
-		} else {
-			fmt.Fprint(vm.Stdout, outText)
-		}
 
 	default:
 		panic(&VMError{Message: fmt.Sprintf("unimplemented opcode: %s (0x%02X)", OpcodeTable[op].Mnemonic, op), PC: instPC})
@@ -1286,13 +857,20 @@ func (vm *VM) handleHatvanTrap(callNum byte, instPC int) {
 
 	case SysWrite: // 0x8A: I$Write
 		pathID := byte(a)
-		f, ok := vm.Files[pathID]
-		if !ok {
+		var w io.Writer
+		if pathID == 1 {
+			w = vm.Stdout
+		} else if pathID == 2 {
+			w = vm.Stderr
+		} else if f, ok := vm.Files[pathID]; ok {
+			w = f
+		}
+		if w == nil {
 			retA = 216
 			errBool = 1
 		} else {
 			data := vm.Memory[int(x) : int(x)+int(y)]
-			n, err := f.Write(data)
+			n, err := w.Write(data)
 			retY = uint16(n)
 			if err != nil {
 				retA = 211
@@ -1352,16 +930,23 @@ func (vm *VM) handleHatvanTrap(callNum byte, instPC int) {
 	case SysWritLn: // 0x8C: I$WritLn
 		// WritLn produces unix \n characters
 		pathID := byte(a)
-		f, ok := vm.Files[pathID]
-		if !ok {
+		var w io.Writer
+		if pathID == 1 {
+			w = vm.Stdout
+		} else if pathID == 2 {
+			w = vm.Stderr
+		} else if f, ok := vm.Files[pathID]; ok {
+			w = f
+		}
+		if w == nil {
 			retA = 216
 			errBool = 1
 		} else {
 			data := vm.Memory[int(x) : int(x)+int(y)]
 			// Trim any trailing \r or \n
 			trimmed := bytes.TrimRight(data, "\r\n")
-			_, _ = f.Write(trimmed)
-			_, _ = f.Write([]byte("\n"))
+			_, _ = w.Write(trimmed)
+			_, _ = w.Write([]byte("\n"))
 			retA = 0
 			retY = y
 			errBool = 0

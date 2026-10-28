@@ -78,7 +78,6 @@ type Generator struct {
 	localTypes  map[string]string
 	localSizes  map[string]int
 	localOrder  []string
-	dicts       map[string]bool
 
 	// Control flow stack for break/continue
 	loopStack []loopContext
@@ -397,7 +396,6 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	g.localTypes = make(map[string]string)
 	g.localSizes = make(map[string]int)
 	g.localOrder = nil
-	g.dicts = make(map[string]bool)
 	g.loopStack = nil
 
 	// Register parameters
@@ -427,7 +425,8 @@ func (g *Generator) generateFunc(fs *ast.FuncStatement, pkg string) {
 	if fs.Body != nil {
 		g.collectLocals(fs.Body)
 	}
-	g.addLocal("_pbuf", KindScalar)
+	g.addLocal("_pbuf", KindBuffer)
+	g.localSizes["_pbuf"] = 8
 	g.addLocal("_tmp_base", KindScalar)
 	g.addLocal("_tmp_cap", KindScalar)
 	g.addLocal("_tmp_len", KindScalar)
@@ -622,11 +621,7 @@ func (g *Generator) scanLocalsFromStatement(stmt ast.Statement) {
 								tStr = g.exprToString(arr)
 							}
 						}
-						if g.isDictExpr(s.Values[i]) {
-							g.dicts[id.Value] = true
-							kind = KindSlice
-							tStr = "dict"
-						} else {
+						if kind != KindBuffer {
 							kind = g.inferType(s.Values[i])
 							tStr = g.getArgTypeString(s.Values[i])
 						}
@@ -1949,16 +1944,8 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		method := sel.Right.Value
 		recv := sel.Left
 
-		// Check if sel.Left is an imported package name (e.g. btree.New, smap.New)
+		// Check if sel.Left is an imported package name (e.g. btree.New)
 		if pkgIdent, isPkg := recv.(*ast.Identifier); isPkg {
-			if pkgIdent.Value == "smap" && method == "New" {
-				n := 8
-				if len(call.Arguments) > 0 {
-					n = g.evalIntConst(call.Arguments[0])
-				}
-				g.emit("    DICT_NEW %d", n)
-				return
-			}
 			qname := pkgIdent.Value + "_" + method
 			if _, exists := g.funcs[qname]; exists {
 				for _, arg := range call.Arguments {
@@ -1999,42 +1986,11 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 			return
 		}
 
-		// Builtin slice and map methods on receiver
+		// Builtin slice methods on receiver
 		switch method {
-		case "Lookup":
-			g.compileExpression(recv)
-			g.compileExpression(call.Arguments[0])
-			g.emit("    DICT_GET")
-			return
-
-		case "Insert":
-			g.compileExpression(recv)
-			g.compileExpression(call.Arguments[0])
-			g.compileExpression(call.Arguments[1])
-			g.emit("    DICT_SET")
-			if id, isId := recv.(*ast.Identifier); isId {
-				g.storeTarget(id, nil)
-			}
-			return
-
-		case "Has":
-			g.compileExpression(recv)
-			g.compileExpression(call.Arguments[0])
-			g.emit("    DICT_HAS")
-			return
-
-		case "Keys":
-			g.compileExpression(recv)
-			g.emit("    DICT_KEYS")
-			return
-
 		case "Len":
 			g.compileExpression(recv)
-			if g.isDictExpr(recv) {
-				g.emit("    DICT_LEN")
-			} else {
-				g.emit("    SLICE_LEN")
-			}
+			g.emit("    SLICE_LEN")
 			return
 
 		case "Cap":
@@ -2074,27 +2030,6 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 					g.emit("    PEEK2")
 				}
 			}
-			return
-
-		case "Append":
-			g.compileExpression(recv)
-			g.compileExpression(call.Arguments[0])
-			elemTypeStr, elemSize := g.getElemTypeInfo(recv)
-			if elemSize == 1 || elemTypeStr == "byte" {
-				g.emit("    STR_APPEND")
-			} else if elemSize == 6 || elemTypeStr == "string" {
-				g.emit("    SLICE_APPEND_STR")
-			} else {
-				g.emit("    LIST_APPEND")
-			}
-			if id, isId := recv.(*ast.Identifier); isId {
-				g.storeTarget(id, nil)
-			}
-			return
-
-		case "Pop":
-			g.compileExpression(recv)
-			g.emit("    LIST_POP")
 			return
 
 		case "Chop":
@@ -2235,14 +2170,6 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 			g.emit("    PUSH_I16 %d", sz)
 			g.emit("    MEM_SET")
 			return
-
-		case "New":
-			n := 8
-			if len(call.Arguments) > 0 {
-				n = g.evalIntConst(call.Arguments[0])
-			}
-			g.emit("    DICT_NEW %d", n)
-			return
 		}
 	}
 
@@ -2302,16 +2229,6 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 
 	case "println":
 		g.compilePrint(call, true)
-		return
-
-	case "alloc", "malloc", "zalloc":
-		g.compileExpression(call.Arguments[0])
-		g.emit("    BUF_ALLOC")
-		return
-
-	case "free":
-		g.compileExpression(call.Arguments[0])
-		g.emit("    BUF_FREE")
 		return
 
 	case "memcpy", "mem_copy":
@@ -2390,55 +2307,6 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    SYS_EXIT")
 		return
 
-	case "rstrip":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.emit("    STR_RSTRIP")
-		return
-
-	case "lstrip":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.emit("    STR_LSTRIP")
-		return
-
-	case "strip":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.emit("    STR_STRIP")
-		return
-
-	case "find":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.compileExpression(call.Arguments[2])
-		g.emit("    STR_FIND")
-		return
-
-	case "startswith":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.emit("    STR_STARTSWITH")
-		return
-
-	case "endswith":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.emit("    STR_ENDSWITH")
-		return
-
-	case "replace_ident":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.compileExpression(call.Arguments[2])
-		g.emit("    STR_REPLACE_IDENT")
-		return
-
-	case "splitlines":
-		g.compileExpression(call.Arguments[0])
-		g.emit("    STR_SPLITLINES")
-		return
-
 	case "strcmp":
 		g.compileExpression(call.Arguments[0])
 		g.compileExpression(call.Arguments[1])
@@ -2495,46 +2363,6 @@ func (g *Generator) compileCall(call *ast.CallExpression) {
 		g.emit("    POP")
 		g.emit("    POP")
 		g.emit("    POP")
-		return
-
-	case "map_new":
-		n := 8
-		if len(call.Arguments) > 0 {
-			n = g.evalIntConst(call.Arguments[0])
-		}
-		g.emit("    DICT_NEW %d", n)
-		return
-
-	case "map_get":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.emit("    DICT_GET")
-		return
-
-	case "map_put":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.compileExpression(call.Arguments[2])
-		g.emit("    DICT_SET")
-		return
-
-	case "map_count":
-		g.compileExpression(call.Arguments[0])
-		g.emit("    DICT_LEN")
-		return
-
-	case "make", "makeslice", "makelist":
-		n := 8
-		if len(call.Arguments) > 1 {
-			n = g.evalIntConst(call.Arguments[1])
-		}
-		g.emit("    LIST_NEW %d", n)
-		return
-
-	case "append":
-		g.compileExpression(call.Arguments[0])
-		g.compileExpression(call.Arguments[1])
-		g.emit("    LIST_APPEND")
 		return
 
 	case "byte":
@@ -3333,31 +3161,6 @@ func (g *Generator) inferCallReturnType(expr ast.Expression, retIdx int) TypeKin
 	return KindScalar
 }
 
-func (g *Generator) isDictExpr(expr ast.Expression) bool {
-	if expr == nil || g.managedHeap {
-		return false
-	}
-	if call, ok := expr.(*ast.CallExpression); ok {
-		if sel, ok := call.Function.(*ast.SelectorExpression); ok {
-			if pkgId, ok := sel.Left.(*ast.Identifier); ok && pkgId.Value == "smap" && sel.Right.Value == "New" {
-				return true
-			}
-		}
-		if idxExpr, ok := call.Function.(*ast.IndexExpression); ok {
-			if sel, ok := idxExpr.Left.(*ast.SelectorExpression); ok && sel.Right.Value == "New" {
-				return true
-			}
-			if id, ok := idxExpr.Left.(*ast.Identifier); ok && id.Value == "New" {
-				return true
-			}
-		}
-	}
-	if id, ok := expr.(*ast.Identifier); ok {
-		return g.dicts[id.Value]
-	}
-	return false
-}
-
 func (g *Generator) inferTypeName(expr ast.Expression) string {
 	if expr == nil {
 		return "object"
@@ -3500,35 +3303,12 @@ func (g *Generator) nodeToString(node ast.Node) string {
 func (g *Generator) compilePrint(call *ast.CallExpression, isPrintln bool) {
 	nArgs := len(call.Arguments)
 	if nArgs == 0 {
-		g.emit("    PUSH_NIL_SLICE")
 		if isPrintln {
-			g.emit("    PRINTLN")
-		} else {
-			g.emit("    PRINT")
+			g.emit("    PUSH_STR \"\"")
+			g.emit("    IO_PRINT")
 		}
 		return
 	}
-
-	typeStrings := make([]string, nArgs)
-	valSizes := make([]int, nArgs)
-	totalValBytes := 0
-
-	for i, arg := range call.Arguments {
-		tStr := g.getArgTypeString(arg)
-		if g.inferType(arg) == KindSlice && tStr != "string" {
-			tStr = "string"
-		}
-		typeStrings[i] = tStr
-		if tStr == "string" || g.inferType(arg) == KindSlice {
-			valSizes[i] = 6
-		} else {
-			valSizes[i] = 2
-		}
-		totalValBytes += valSizes[i]
-	}
-
-	totalBufSize := nArgs*4 + totalValBytes
-	pbufVar := "_pbuf"
 
 	cmdName := "print"
 	if isPrintln {
@@ -3536,108 +3316,128 @@ func (g *Generator) compilePrint(call *ast.CallExpression, isPrintln bool) {
 	}
 	g.emitComment("%s(%s)", cmdName, g.argsToString(call.Arguments))
 
-	g.emit("    PUSH_I16 %d", totalBufSize)
-	g.emit("    BUF_ALLOC")
-	g.emit("    STORE_LOCAL %s", pbufVar)
-
-	valOffset := nArgs * 4
-	for i, arg := range call.Arguments {
-		tStr := typeStrings[i]
-		curValOff := valOffset
-		curValSize := valSizes[i]
-		valOffset += curValSize
-
-		// 1. Evaluate argument and store value at curValOff
-		if curValSize == 6 {
-			// Slice value (3 words)
-			tmpBase := "_tmp_base"
-			tmpCap := "_tmp_cap"
-			tmpLen := "_tmp_len"
-
+	if isPrintln && nArgs == 1 {
+		arg := call.Arguments[0]
+		tStr := g.getArgTypeString(arg)
+		if tStr == "string" || g.inferType(arg) == KindSlice {
 			g.compileExpression(arg)
-			g.emit("    STORE_LOCAL %s", tmpLen)
-			g.emit("    STORE_LOCAL %s", tmpCap)
-			g.emit("    STORE_LOCAL %s", tmpBase)
-
-			g.emit("    LOAD_LOCAL %s", pbufVar)
-			if curValOff != 0 {
-				g.emit("    PUSH_I16 %d", curValOff)
-				g.emit("    ADD")
-			}
-			g.emit("    LOAD_LOCAL %s", tmpBase)
-			g.emit("    POKE2")
-
-			g.emit("    LOAD_LOCAL %s", pbufVar)
-			g.emit("    PUSH_I16 %d", curValOff+2)
-			g.emit("    ADD")
-			g.emit("    LOAD_LOCAL %s", tmpCap)
-			g.emit("    POKE2")
-
-			g.emit("    LOAD_LOCAL %s", pbufVar)
-			g.emit("    PUSH_I16 %d", curValOff+4)
-			g.emit("    ADD")
-			g.emit("    LOAD_LOCAL %s", tmpLen)
-			g.emit("    POKE2")
-		} else {
-			// Scalar value (1 word)
-			tmpVal := "_tmp_base"
-			g.compileExpression(arg)
-			g.emit("    STORE_LOCAL %s", tmpVal)
-			g.emit("    LOAD_LOCAL %s", pbufVar)
-			if curValOff != 0 {
-				g.emit("    PUSH_I16 %d", curValOff)
-				g.emit("    ADD")
-			}
-			g.emit("    LOAD_LOCAL %s", tmpVal)
-			g.emit("    POKE2")
+			g.emit("    IO_PRINT")
+			return
 		}
-
-		// 2. Set any[i].BaseAddr (offset i * 4) = pbuf + curValOff (+ 1 if byte)
-		g.emit("    LOAD_LOCAL %s", pbufVar)
-		if i*4 != 0 {
-			g.emit("    PUSH_I16 %d", i*4)
-			g.emit("    ADD")
-		}
-		g.emit("    LOAD_LOCAL %s", pbufVar)
-		baseOff := curValOff
-		if tStr == "byte" || tStr == "uint8" {
-			baseOff = curValOff + 1
-		}
-		if baseOff != 0 {
-			g.emit("    PUSH_I16 %d", baseOff)
-			g.emit("    ADD")
-		}
-		g.emit("    POKE2")
-
-		// 3. Set any[i].TypeStr (offset i * 4 + 2) = pointer to type name string
-		g.emit("    LOAD_LOCAL %s", pbufVar)
-		g.emit("    PUSH_I16 %d", i*4+2)
-		g.emit("    ADD")
-		g.emit("    PUSH_STR %s", strconv.Quote(tStr))
-		g.emit("    POP")
-		g.emit("    POP")
-		g.emit("    POKE2")
 	}
 
-	// Push Slice[any] { pbuf, nArgs, nArgs }
-	g.emit("    LOAD_LOCAL %s", pbufVar)
-	if nArgs == 1 {
-		g.emit("    PUSH_1")
-		g.emit("    PUSH_1")
-	} else {
-		g.emit("    PUSH_I16 %d", nArgs)
-		g.emit("    PUSH_I16 %d", nArgs)
+	for i, arg := range call.Arguments {
+		if i > 0 {
+			g.emit("    PUSH_STR \" \"")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    STORE_LOCAL _tmp_base")
+			g.emit("    PUSH_1")
+			g.emit("    PUSH_0")
+			g.emit("    LOAD_LOCAL _tmp_base")
+			g.emit("    PUSH_1")
+			g.emit("    PUSH_0")
+			g.emit("    HATVAN_TRAP I$Write")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+		}
+
+		tStr := g.getArgTypeString(arg)
+		if g.inferType(arg) == KindSlice && tStr != "string" {
+			tStr = "string"
+		}
+
+		if tStr == "string" {
+			g.compileExpression(arg)
+			g.emit("    STORE_LOCAL _tmp_len")
+			g.emit("    POP")
+			g.emit("    STORE_LOCAL _tmp_base")
+			g.emit("    PUSH_1")
+			g.emit("    PUSH_0")
+			g.emit("    LOAD_LOCAL _tmp_base")
+			g.emit("    LOAD_LOCAL _tmp_len")
+			g.emit("    PUSH_0")
+			g.emit("    HATVAN_TRAP I$Write")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+		} else if tStr == "bool" {
+			lblFalse := g.nextLabel("L_pbool_false")
+			lblDone := g.nextLabel("L_pbool_done")
+			g.compileExpression(arg)
+			g.emit("    JUMP_IF_FALSE %s", lblFalse)
+			g.emit("    PUSH_STR \"true\"")
+			g.emit("    JUMP %s", lblDone)
+			g.emit("%s:", lblFalse)
+			g.emit("    PUSH_STR \"false\"")
+			g.emit("%s:", lblDone)
+			g.emit("    STORE_LOCAL _tmp_len")
+			g.emit("    POP")
+			g.emit("    STORE_LOCAL _tmp_base")
+			g.emit("    PUSH_1")
+			g.emit("    PUSH_0")
+			g.emit("    LOAD_LOCAL _tmp_base")
+			g.emit("    LOAD_LOCAL _tmp_len")
+			g.emit("    PUSH_0")
+			g.emit("    HATVAN_TRAP I$Write")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+		} else {
+			lblLoop := g.nextLabel("L_pnum_loop")
+			g.compileExpression(arg)
+			if tStr == "byte" || tStr == "uint8" {
+				g.emit("    PUSH_U8 255")
+				g.emit("    BIT_AND")
+			}
+			g.emit("    STORE_LOCAL _tmp_base")
+			g.emit("    ADDR_OF_LOCAL _pbuf")
+			g.emit("    PUSH_U8 6")
+			g.emit("    ADD")
+			g.emit("    STORE_LOCAL _tmp_addr")
+			g.emit("%s:", lblLoop)
+			g.emit("    LOAD_LOCAL _tmp_addr")
+			g.emit("    PUSH_1")
+			g.emit("    SUB")
+			g.emit("    STORE_LOCAL _tmp_addr")
+			g.emit("    LOAD_LOCAL _tmp_addr")
+			g.emit("    LOAD_LOCAL _tmp_base")
+			g.emit("    PUSH_U8 10")
+			g.emit("    MOD")
+			g.emit("    PUSH_U8 48")
+			g.emit("    ADD")
+			g.emit("    POKE1")
+			g.emit("    LOAD_LOCAL _tmp_base")
+			g.emit("    PUSH_U8 10")
+			g.emit("    DIV")
+			g.emit("    STORE_LOCAL _tmp_base")
+			g.emit("    LOAD_LOCAL _tmp_base")
+			g.emit("    JUMP_IF_TRUE %s", lblLoop)
+			g.emit("    PUSH_1")
+			g.emit("    PUSH_0")
+			g.emit("    LOAD_LOCAL _tmp_addr")
+			g.emit("    ADDR_OF_LOCAL _pbuf")
+			g.emit("    PUSH_U8 6")
+			g.emit("    ADD")
+			g.emit("    LOAD_LOCAL _tmp_addr")
+			g.emit("    SUB")
+			g.emit("    PUSH_0")
+			g.emit("    HATVAN_TRAP I$Write")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+			g.emit("    POP")
+		}
 	}
 
 	if isPrintln {
-		g.emit("    PRINTLN")
-	} else {
-		g.emit("    PRINT")
+		g.emit("    PUSH_STR \"\"")
+		g.emit("    IO_PRINT")
 	}
-
-	// Free temporary buffer
-	g.emit("    LOAD_LOCAL %s", pbufVar)
-	g.emit("    BUF_FREE")
 }
 
 func (g *Generator) getArgTypeString(expr ast.Expression) string {

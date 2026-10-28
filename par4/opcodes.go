@@ -48,10 +48,6 @@ const (
 	OpSTORE_LOCAL    = byte(0x29)
 	OpLOAD_GLOBAL    = byte(0x2A)
 	OpSTORE_GLOBAL   = byte(0x2B)
-	OpBUF_ALLOC      = byte(0x2C)
-	OpBUF_FREE       = byte(0x2D)
-	OpLOAD_FIELD     = byte(0x2E)
-	OpSTORE_FIELD    = byte(0x2F)
 	OpADDR_OF_GLOBAL = byte(0x30)
 	OpPEEK2          = byte(0x31)
 	OpPOKE2          = byte(0x32)
@@ -63,30 +59,27 @@ const (
 	OpMEM_SET        = byte(0x38)
 
 	// Group 3: Arithmetic, Logic & Comparisons (0x40 .. 0x5F)
-	OpADD       = byte(0x40)
-	OpSUB       = byte(0x41)
-	OpMUL       = byte(0x42)
-	OpDIV       = byte(0x43)
-	OpMOD       = byte(0x44)
-	OpNEG       = byte(0x45)
-	OpBIT_AND   = byte(0x46)
-	OpBIT_OR    = byte(0x47)
-	OpBIT_XOR   = byte(0x48)
-	OpBIT_NOT   = byte(0x49)
-	OpSHL       = byte(0x4A)
-	OpSHR       = byte(0x4B)
-	OpCMP_EQ    = byte(0x4C)
-	OpCMP_NE    = byte(0x4D)
-	OpCMP_LT    = byte(0x4E)
-	OpCMP_LE    = byte(0x4F)
-	OpCMP_GT    = byte(0x50)
-	OpCMP_GE    = byte(0x51)
-	OpNOT       = byte(0x52)
-	OpMIN       = byte(0x53)
-	OpMAX       = byte(0x54)
-	OpPARSE_INT = byte(0x55)
+	OpADD     = byte(0x40)
+	OpSUB     = byte(0x41)
+	OpMUL     = byte(0x42)
+	OpDIV     = byte(0x43)
+	OpMOD     = byte(0x44)
+	OpNEG     = byte(0x45)
+	OpBIT_AND = byte(0x46)
+	OpBIT_OR  = byte(0x47)
+	OpBIT_XOR = byte(0x48)
+	OpBIT_NOT = byte(0x49)
+	OpSHL     = byte(0x4A)
+	OpSHR     = byte(0x4B)
+	OpCMP_EQ  = byte(0x4C)
+	OpCMP_NE  = byte(0x4D)
+	OpCMP_LT  = byte(0x4E)
+	OpCMP_LE  = byte(0x4F)
+	OpCMP_GT  = byte(0x50)
+	OpCMP_GE  = byte(0x51)
+	OpNOT     = byte(0x52)
 
-	// Group 4: Control Flow, Calls & Switches (0x60 .. 0x6F)
+	// Group 4: Control Flow & Calls (0x60 .. 0x6F)
 	OpJUMP          = byte(0x60)
 	OpJUMP_IF_TRUE  = byte(0x61)
 	OpJUMP_IF_FALSE = byte(0x62)
@@ -96,39 +89,13 @@ const (
 	OpRET_VOID      = byte(0x66)
 	OpHALT          = byte(0x67)
 	OpPANIC         = byte(0x68)
-	OpSWITCH_LOOKUP = byte(0x69)
 
-	// Group 5: Slices & Strings (0x70 .. 0x8F)
-	OpSLICE_NEW         = byte(0x70)
-	OpSLICE_LEN         = byte(0x71)
-	OpSLICE_CAP         = byte(0x72)
-	OpSLICE_SUB         = byte(0x73)
-	OpSLICE_GET_BYTE    = byte(0x74)
-	OpSLICE_GET_WORD    = byte(0x75)
-	OpSLICE_SET_WORD    = byte(0x76)
-	OpSTR_CMP           = byte(0x77)
-	OpSTR_STARTSWITH    = byte(0x78)
-	OpSTR_ENDSWITH      = byte(0x79)
-	OpSTR_FIND          = byte(0x7A)
-	OpSTR_LSTRIP        = byte(0x7B)
-	OpSTR_RSTRIP        = byte(0x7C)
-	OpSTR_STRIP         = byte(0x7D)
-	OpSTR_SPLITLINES    = byte(0x7E)
-	OpSTR_REPLACE_IDENT = byte(0x7F)
-
-	// Group 6: Collections (Dicts & Lists) (0x90 .. 0xAF)
-	OpDICT_NEW         = byte(0x90)
-	OpDICT_GET         = byte(0x91)
-	OpDICT_SET         = byte(0x92)
-	OpDICT_HAS         = byte(0x93)
-	OpDICT_KEYS        = byte(0x94)
-	OpDICT_LEN         = byte(0x95)
-	OpLIST_NEW         = byte(0x96)
-	OpLIST_APPEND      = byte(0x97)
-	OpLIST_POP         = byte(0x98)
-	OpLIST_SORT_BY_LEN = byte(0x99)
-	OpSTR_APPEND       = byte(0x9A)
-	OpSLICE_APPEND_STR = byte(0x9B)
+	// Group 5: Slices & Strings (0x70 .. 0x77)
+	OpSLICE_NEW = byte(0x70)
+	OpSLICE_LEN = byte(0x71)
+	OpSLICE_CAP = byte(0x72)
+	OpSLICE_SUB = byte(0x73)
+	OpSTR_CMP   = byte(0x77)
 
 	// Group 8: Hatvan OS & Hardware Primitives (0xC0 .. 0xCF)
 	OpHATVAN_TRAP   = byte(0xC0)
@@ -136,8 +103,6 @@ const (
 	OpSYS_DMA_COPY  = byte(0xC2)
 	OpSYS_EXIT      = byte(0xC8)
 	OpIO_PRINT      = byte(0xC9)
-	OpPRINT         = byte(0xCA)
-	OpPRINTLN       = byte(0xCB)
 )
 
 // Hatvan / OS-9 System Call Numbers
@@ -181,7 +146,6 @@ const (
 	ArgFunc16   ArgType = "func16"
 	ArgLocal8   ArgType = "local8"
 	ArgGlobal16 ArgType = "global16"
-	ArgField8   ArgType = "field8"
 )
 
 type OpcodeInfo struct {
@@ -223,10 +187,6 @@ var OpcodeTable = map[byte]OpcodeInfo{
 	OpSTORE_LOCAL:    {"STORE_LOCAL", 1, ArgLocal8, "Store local variable"},
 	OpLOAD_GLOBAL:    {"LOAD_GLOBAL", 2, ArgGlobal16, "Load global variable"},
 	OpSTORE_GLOBAL:   {"STORE_GLOBAL", 2, ArgGlobal16, "Store global variable"},
-	OpBUF_ALLOC:      {"BUF_ALLOC", 0, ArgNone, "Allocate fixed buffer from heap"},
-	OpBUF_FREE:       {"BUF_FREE", 0, ArgNone, "Free buffer back to heap"},
-	OpLOAD_FIELD:     {"LOAD_FIELD", 1, ArgField8, "Load field from struct"},
-	OpSTORE_FIELD:    {"STORE_FIELD", 1, ArgField8, "Store field to struct"},
 	OpADDR_OF_GLOBAL: {"ADDR_OF_GLOBAL", 2, ArgGlobal16, "Address of global variable"},
 	OpPEEK2:          {"PEEK2", 0, ArgNone, "Read 16-bit word from memory"},
 	OpPOKE2:          {"POKE2", 0, ArgNone, "Write 16-bit word to memory"},
@@ -237,28 +197,25 @@ var OpcodeTable = map[byte]OpcodeInfo{
 	OpMEM_COPY:       {"MEM_COPY", 0, ArgNone, "Copy count bytes from src to dst"},
 	OpMEM_SET:        {"MEM_SET", 0, ArgNone, "Set count bytes at dst to val"},
 
-	OpADD:       {"ADD", 0, ArgNone, "16-bit addition"},
-	OpSUB:       {"SUB", 0, ArgNone, "16-bit subtraction"},
-	OpMUL:       {"MUL", 0, ArgNone, "16-bit unsigned multiplication"},
-	OpDIV:       {"DIV", 0, ArgNone, "16-bit unsigned division"},
-	OpMOD:       {"MOD", 0, ArgNone, "16-bit unsigned modulo"},
-	OpNEG:       {"NEG", 0, ArgNone, "16-bit negation"},
-	OpBIT_AND:   {"BIT_AND", 0, ArgNone, "16-bit bitwise AND"},
-	OpBIT_OR:    {"BIT_OR", 0, ArgNone, "16-bit bitwise OR"},
-	OpBIT_XOR:   {"BIT_XOR", 0, ArgNone, "16-bit bitwise XOR"},
-	OpBIT_NOT:   {"BIT_NOT", 0, ArgNone, "16-bit bitwise NOT"},
-	OpSHL:       {"SHL", 0, ArgNone, "16-bit shift left"},
-	OpSHR:       {"SHR", 0, ArgNone, "16-bit arithmetic shift right"},
-	OpCMP_EQ:    {"CMP_EQ", 0, ArgNone, "16-bit equal (==)"},
-	OpCMP_NE:    {"CMP_NE", 0, ArgNone, "16-bit not equal (!=)"},
-	OpCMP_LT:    {"CMP_LT", 0, ArgNone, "16-bit unsigned less than (<)"},
-	OpCMP_LE:    {"CMP_LE", 0, ArgNone, "16-bit unsigned less than or equal (<=)"},
-	OpCMP_GT:    {"CMP_GT", 0, ArgNone, "16-bit unsigned greater than (>)"},
-	OpCMP_GE:    {"CMP_GE", 0, ArgNone, "16-bit unsigned greater than or equal (>=)"},
-	OpNOT:       {"NOT", 0, ArgNone, "Logical NOT"},
-	OpMIN:       {"MIN", 0, ArgNone, "Signed minimum"},
-	OpMAX:       {"MAX", 0, ArgNone, "Signed maximum"},
-	OpPARSE_INT: {"PARSE_INT", 0, ArgNone, "Parse string to integer"},
+	OpADD:     {"ADD", 0, ArgNone, "16-bit addition"},
+	OpSUB:     {"SUB", 0, ArgNone, "16-bit subtraction"},
+	OpMUL:     {"MUL", 0, ArgNone, "16-bit unsigned multiplication"},
+	OpDIV:     {"DIV", 0, ArgNone, "16-bit unsigned division"},
+	OpMOD:     {"MOD", 0, ArgNone, "16-bit unsigned modulo"},
+	OpNEG:     {"NEG", 0, ArgNone, "16-bit negation"},
+	OpBIT_AND: {"BIT_AND", 0, ArgNone, "16-bit bitwise AND"},
+	OpBIT_OR:  {"BIT_OR", 0, ArgNone, "16-bit bitwise OR"},
+	OpBIT_XOR: {"BIT_XOR", 0, ArgNone, "16-bit bitwise XOR"},
+	OpBIT_NOT: {"BIT_NOT", 0, ArgNone, "16-bit bitwise NOT"},
+	OpSHL:     {"SHL", 0, ArgNone, "16-bit shift left"},
+	OpSHR:     {"SHR", 0, ArgNone, "16-bit arithmetic shift right"},
+	OpCMP_EQ:  {"CMP_EQ", 0, ArgNone, "16-bit equal (==)"},
+	OpCMP_NE:  {"CMP_NE", 0, ArgNone, "16-bit not equal (!=)"},
+	OpCMP_LT:  {"CMP_LT", 0, ArgNone, "16-bit unsigned less than (<)"},
+	OpCMP_LE:  {"CMP_LE", 0, ArgNone, "16-bit unsigned less than or equal (<=)"},
+	OpCMP_GT:  {"CMP_GT", 0, ArgNone, "16-bit unsigned greater than (>)"},
+	OpCMP_GE:  {"CMP_GE", 0, ArgNone, "16-bit unsigned greater than or equal (>=)"},
+	OpNOT:     {"NOT", 0, ArgNone, "Logical NOT"},
 
 	OpJUMP:          {"JUMP", 2, ArgRel16, "Unconditional relative branch"},
 	OpJUMP_IF_TRUE:  {"JUMP_IF_TRUE", 2, ArgRel16, "Branch if condition is true"},
@@ -269,45 +226,18 @@ var OpcodeTable = map[byte]OpcodeInfo{
 	OpRET_VOID:      {"RET_VOID", 0, ArgNone, "Return void/nil to caller"},
 	OpHALT:          {"HALT", 0, ArgNone, "Halt VM cleanly"},
 	OpPANIC:         {"PANIC", 0, ArgNone, "Print panic message and exit"},
-	OpSWITCH_LOOKUP: {"SWITCH_LOOKUP", 2, ArgImm16, "Table-driven switch jump"},
 
-	OpSLICE_NEW:         {"SLICE_NEW", 0, ArgNone, "Create 3-word slice"},
-	OpSLICE_LEN:         {"SLICE_LEN", 0, ArgNone, "Extract length from slice"},
-	OpSLICE_CAP:         {"SLICE_CAP", 0, ArgNone, "Extract capacity from slice"},
-	OpSLICE_SUB:         {"SLICE_SUB", 0, ArgNone, "Sub-slice view"},
-	OpSLICE_GET_BYTE:    {"SLICE_GET_BYTE", 0, ArgNone, "Get byte from string slice"},
-	OpSLICE_GET_WORD:    {"SLICE_GET_WORD", 0, ArgNone, "Get word from word slice"},
-	OpSLICE_SET_WORD:    {"SLICE_SET_WORD", 0, ArgNone, "Set word in word slice"},
-	OpSTR_CMP:           {"STR_CMP", 0, ArgNone, "String slice comparison"},
-	OpSTR_STARTSWITH:    {"STR_STARTSWITH", 0, ArgNone, "String prefix check"},
-	OpSTR_ENDSWITH:      {"STR_ENDSWITH", 0, ArgNone, "String suffix check"},
-	OpSTR_FIND:          {"STR_FIND", 0, ArgNone, "String linear search"},
-	OpSTR_LSTRIP:        {"STR_LSTRIP", 0, ArgNone, "Strip leading characters"},
-	OpSTR_RSTRIP:        {"STR_RSTRIP", 0, ArgNone, "Strip trailing characters"},
-	OpSTR_STRIP:         {"STR_STRIP", 0, ArgNone, "Strip leading and trailing characters"},
-	OpSTR_SPLITLINES:    {"STR_SPLITLINES", 0, ArgNone, "Split text by newline"},
-	OpSTR_REPLACE_IDENT: {"STR_REPLACE_IDENT", 0, ArgNone, "Word-boundary replace"},
-
-	OpDICT_NEW:         {"DICT_NEW", 2, ArgImm16, "Allocate dict buffer"},
-	OpDICT_GET:         {"DICT_GET", 0, ArgNone, "Dict key lookup"},
-	OpDICT_SET:         {"DICT_SET", 0, ArgNone, "Dict key insert/update"},
-	OpDICT_HAS:         {"DICT_HAS", 0, ArgNone, "Dict key membership test"},
-	OpDICT_KEYS:        {"DICT_KEYS", 0, ArgNone, "List of dict string keys"},
-	OpDICT_LEN:         {"DICT_LEN", 0, ArgNone, "Dict entry count"},
-	OpLIST_NEW:         {"LIST_NEW", 2, ArgImm16, "Allocate list buffer"},
-	OpLIST_APPEND:      {"LIST_APPEND", 0, ArgNone, "Append word to list"},
-	OpLIST_POP:         {"LIST_POP", 0, ArgNone, "Pop word from list"},
-	OpLIST_SORT_BY_LEN: {"LIST_SORT_BY_LEN", 0, ArgNone, "Sort string list by length"},
-	OpSTR_APPEND:       {"STR_APPEND", 0, ArgNone, "Append byte to string slice"},
-	OpSLICE_APPEND_STR: {"SLICE_APPEND_STR", 0, ArgNone, "Append string slice to list"},
+	OpSLICE_NEW: {"SLICE_NEW", 0, ArgNone, "Create 3-word slice"},
+	OpSLICE_LEN: {"SLICE_LEN", 0, ArgNone, "Extract length from slice"},
+	OpSLICE_CAP: {"SLICE_CAP", 0, ArgNone, "Extract capacity from slice"},
+	OpSLICE_SUB: {"SLICE_SUB", 0, ArgNone, "Sub-slice view"},
+	OpSTR_CMP:   {"STR_CMP", 0, ArgNone, "String slice comparison"},
 
 	OpHATVAN_TRAP:   {"HATVAN_TRAP", 1, ArgImm8U, "Hatvan OS / OS-9 syscall trap"},
 	OpSYS_POLL_FLAG: {"SYS_POLL_FLAG", 1, ArgImm8U, "Poll hardware status line"},
 	OpSYS_DMA_COPY:  {"SYS_DMA_COPY", 0, ArgNone, "Cross-task DMA copy"},
 	OpSYS_EXIT:      {"SYS_EXIT", 0, ArgNone, "Exit process with status code"},
 	OpIO_PRINT:      {"IO_PRINT", 0, ArgNone, "Print string slice with newline"},
-	OpPRINT:         {"PRINT", 0, ArgNone, "Formatted print without newline"},
-	OpPRINTLN:       {"PRINTLN", 0, ArgNone, "Formatted print with newline"},
 }
 
 var MnemonicToOpcode = map[string]byte{}

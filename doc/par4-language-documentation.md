@@ -242,10 +242,6 @@ Operand Stack Top:  [ U ]  (16-bit: Parameter block pointer)
 | `0x29` | `STORE_LOCAL` | 1 | `<local8>` | `[val...] -> []` | Store variable into local slot `imm8`. |
 | `0x2A` | `LOAD_GLOBAL` | 2 | `<global16>` | `[] -> [val...]` | Load variable from global slot `imm16`. |
 | `0x2B` | `STORE_GLOBAL` | 2 | `<global16>` | `[val...] -> []` | Store variable into global slot `imm16`. |
-| `0x2C` | `BUF_ALLOC` | 0 | None | `[size] -> [buf_addr]` | Allocate fixed-size buffer from heap. |
-| `0x2D` | `BUF_FREE` | 0 | None | `[buf_addr] -> []` | Free fixed-size buffer. |
-| `0x2E` | `LOAD_FIELD` | 1 | `<field8>` | `[obj_ptr] -> [val]` | Load word from struct field at offset `imm8`. |
-| `0x2F` | `STORE_FIELD` | 1 | `<field8>` | `[val, obj_ptr] -> []` | Store word into struct field at offset `imm8`. |
 | `0x30` | `ADDR_OF_GLOBAL` | 2 | `<global16>`| `[] -> [addr]` | Push absolute address of global slot `imm16`. |
 | `0x31` | `PEEK2` | 0 | None | `[addr] -> [word]` | Load 16-bit word from memory at `addr`. |
 | `0x32` | `POKE2` | 0 | None | `[word, addr] -> []` | Store 16-bit word to memory at `addr`. |
@@ -281,13 +277,10 @@ Operand Stack Top:  [ U ]  (16-bit: Parameter block pointer)
 | `0x50` | `CMP_GT` | 0 | None | `[a, b] -> [bool]` | Unsigned greater than (`>`). |
 | `0x51` | `CMP_GE` | 0 | None | `[a, b] -> [bool]` | Unsigned greater than or equal (`>=`). |
 | `0x52` | `NOT` | 0 | None | `[a] -> [bool]` | Logical NOT: `$0001` if `a == 0`, else `$0000`. |
-| `0x53` | `MIN` | 0 | None | `[a, b] -> [min]` | Signed integer minimum. |
-| `0x54` | `MAX` | 0 | None | `[a, b] -> [max]` | Signed integer maximum. |
-| `0x55` | `PARSE_INT` | 0 | None | `[str, radix] -> [val, ok]`| Parse string to integer. |
 
 ---
 
-### 4.4 Group 4: Control Flow, Calls & Switches (`0x60 .. 0x6F`)
+### 4.4 Group 4: Control Flow & Calls (`0x60 .. 0x6F`)
 
 | Opcode | Mnemonic | Arg Bytes | Operand | Stack Effect | Description |
 | :---: | :--- | :---: | :---: | :--- | :--- |
@@ -300,11 +293,10 @@ Operand Stack Top:  [ U ]  (16-bit: Parameter block pointer)
 | `0x66` | `RET_VOID` | 0 | None | `[] -> [...]` | Return void (`$0000`) to caller. |
 | `0x67` | `HALT` | 0 | None | `[] -> []` | Halt VM execution cleanly. |
 | `0x68` | `PANIC` | 0 | None | `[str_slice] -> []` | Print panic error message and exit task. |
-| `0x69` | `SWITCH_LOOKUP`| 2 | `<table16>`| `[val] -> []` | Dispatch table jump (fast dense switch statement). |
 
 ---
 
-### 4.5 Group 5: Slices & Strings (`0x70 .. 0x8F`)
+### 4.5 Group 5: Slices & Strings (`0x70 .. 0x77`)
 
 | Opcode | Mnemonic | Arg Bytes | Operand | Stack Effect | Description |
 | :---: | :--- | :---: | :---: | :--- | :--- |
@@ -312,37 +304,7 @@ Operand Stack Top:  [ U ]  (16-bit: Parameter block pointer)
 | `0x71` | `SLICE_LEN` | 0 | None | `[slice] -> [len]` | Extract length from slice. |
 | `0x72` | `SLICE_CAP` | 0 | None | `[slice] -> [cap]` | Extract capacity from slice. |
 | `0x73` | `SLICE_SUB` | 0 | None | `[slice, start, end] -> [view]`| Zero-allocation sub-slice view. |
-| `0x74` | `SLICE_GET_BYTE`| 0 | None | `[slice, idx] -> [char]` | Fetch byte at `idx` in string slice. |
-| `0x75` | `SLICE_GET_WORD`| 0 | None | `[slice, idx] -> [val]` | Fetch 16-bit word at `idx` in word slice. |
-| `0x76` | `SLICE_SET_WORD`| 0 | None | `[slice, idx, val] -> []`| Store 16-bit word at `idx` in word slice. |
 | `0x77` | `STR_CMP` | 0 | None | `[slice_a, slice_b] -> [res]`| Lexicographical comparison (-1, 0, +1). |
-| `0x78` | `STR_STARTSWITH`| 0 | None | `[str, pfx] -> [bool]` | Prefix match check. |
-| `0x79` | `STR_ENDSWITH` | 0 | None | `[str, sfx] -> [bool]` | Suffix match check. |
-| `0x7A` | `STR_FIND` | 0 | None | `[str, sub, start] -> [idx]`| Substring search index. |
-| `0x7B` | `STR_LSTRIP` | 0 | None | `[str, chars] -> [view]` | Strip leading characters. |
-| `0x7C` | `STR_RSTRIP` | 0 | None | `[str, chars] -> [view]` | Strip trailing characters. |
-| `0x7D` | `STR_STRIP` | 0 | None | `[str, chars] -> [view]` | Strip leading and trailing characters. |
-| `0x7E` | `STR_SPLITLINES`| 0 | None | `[str] -> [list_slice]` | Split text by newline into list of views. |
-| `0x7F` | `STR_REPLACE_IDENT`| 0 | None | `[str, old, new] -> [res]`| Word-boundary identifier replacer. |
-
----
-
-### 4.6 Group 6: Collections (Dicts & Lists) (`0x90 .. 0xAF`)
-
-| Opcode | Mnemonic | Arg Bytes | Operand | Stack Effect | Description |
-| :---: | :--- | :---: | :---: | :--- | :--- |
-| `0x90` | `DICT_NEW` | 2 | `<imm16>` | `[] -> [dict_slice]` | Allocate dict buffer for `imm16` entries. |
-| `0x91` | `DICT_GET` | 0 | None | `[dict_slice, key_str] -> [val, ok]`| Linear scan dict lookup. |
-| `0x92` | `DICT_SET` | 0 | None | `[dict_slice, key_str, val] -> [new_dict]`| Linear scan dict update / append. |
-| `0x93` | `DICT_HAS` | 0 | None | `[dict_slice, key_str] -> [bool]`| Key existence test. |
-| `0x94` | `DICT_KEYS` | 0 | None | `[dict_slice] -> [list_slice]`| Return list of all string key pointers. |
-| `0x95` | `DICT_LEN` | 0 | None | `[dict_slice] -> [count]` | Return dict entry count (`len / 2`). |
-| `0x96` | `LIST_NEW` | 2 | `<imm16>` | `[] -> [list_slice]` | Allocate list buffer for `imm16` words. |
-| `0x97` | `LIST_APPEND` | 0 | None | `[list_slice, val] -> [new_list]`| Append 16-bit word to list. |
-| `0x98` | `LIST_POP` | 0 | None | `[list_slice] -> [new_list, val]`| Pop last element from list. |
-| `0x99` | `LIST_SORT_BY_LEN`| 0 | None | `[list_slice, rev] -> []` | Sort list of string slices by length. |
-| `0x9A` | `STR_APPEND` | 0 | None | `[str_slice, char] -> [new_str]`| Append byte to string slice. |
-| `0x9B` | `SLICE_APPEND_STR`| 0 | None | `[slice_list, str] -> [new_list]`| Append 6-byte slice to slice list. |
 
 ---
 
@@ -355,8 +317,6 @@ Operand Stack Top:  [ U ]  (16-bit: Parameter block pointer)
 | `0xC2` | `SYS_DMA_COPY` | 0 | None | `[src_task, src_addr, dst_task, dst_addr, count] -> [ok]` | Trigger Hatvan hardware DMA cross-task copy. |
 | `0xC8` | `SYS_EXIT` | 0 | None | `[code] -> []` | Exit task with status code (`F$Exit`). |
 | `0xC9` | `IO_PRINT` | 0 | None | `[str_slice] -> []` | Print string followed by newline (`I$WritLn`). |
-| `0xCA` | `PRINT` | 0 | None | `[slice_any] -> []` | Formatted print without newline. |
-| `0xCB` | `PRINTLN` | 0 | None | `[slice_any] -> []` | Formatted print with newline. |
 
 ---
 
@@ -525,9 +485,8 @@ Par4 backend emits:
 
 ### 6.3 Switch Statement Lowering
 Par4 supports both tagged and boolean switch statements:
-* **Small / Discontinuous Cases**: Lowered to `LOAD_TAG; PUSH_VAL; CMP_EQ; JUMP_IF_TRUE lbl_case`.
+* **Integer / Boolean Cases**: Lowered to `LOAD_TAG; PUSH_VAL; CMP_EQ; JUMP_IF_TRUE lbl_case`.
 * **String Switches**: Lowered to `LOAD_TAG; PUSH_STR "text"; STR_CMP; NOT; JUMP_IF_TRUE lbl_case`.
-* **Dense Integer Switches**: Lowered to `LOAD_TAG; SWITCH_LOOKUP table_label`.
 
 ### 6.4 Supported & Unsupported MiniGolf Features
 

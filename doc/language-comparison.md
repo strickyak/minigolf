@@ -60,7 +60,7 @@ $$\textbf{Par3} \subset \textbf{Par4} \subset \textbf{Par5} \subset \textbf{Mini
 | Allocating a slice | `makeslice[T](cap)` / `make` | `makeslice[T](cap)` / `make` | `makeslice[T](n)` / `FarMakeSlice[T](n)` | `makeslice[T](len, cap)` | `make([]T, len, cap)` |
 | Freeing a slice (`freeslice(s)` / `strfree(s)`) | `free(s.Base)` | `free(s.Base)` | `freeslice(s)` / `strfree(s)` (`FarFree`) | `freeslice(s)` / `strfree(s)` | **No** (Garbage Collected) |
 | String concatenation `s1 + s2` and comparisons `==`, `<` | **Yes** *(Self: comparisons only, no `+`)* | **Yes** | **Yes** | **Yes** | **Yes** |
-| **Maps / Dictionaries** | VM intrinsics (`map_new`/`map_get`/`map_put` or `Smap[T]`) | VM intrinsics (`Smap[T]` / `DICT_*` / `MAP_*`) | Generic `smap.Smap[T]` & `smap.Imap[T]` in Far Data | Generic `smap.Smap[T]` & `smap.Imap[T]` in `golflib` | Built-in `map[K]V` |
+| **Maps / Dictionaries** | VM intrinsics (`map_new`/`map_get`/`map_put` or `Smap[T]`) | Library (`smap` / `btree` / `rbtree` in `par4-lib/`) | Generic `smap.Smap[T]` & `smap.Imap[T]` in Far Data | Generic `smap.Smap[T]` & `smap.Imap[T]` in `golflib` | Built-in `map[K]V` |
 | Interned String Map (`Imap[T]`) fast equality | N/A | N/A | Compares `FarRef` **and** `Base` (32-bit) | Compares `Base` (16-bit) | N/A |
 
 ---
@@ -211,7 +211,7 @@ However, Par4 unlocks many MiniGolf source constructs that are restricted in Par
 | **Global `var` initializers (`var x = 5`)** | **No** (uninitialized `var x word` only) | **Yes** | **Yes** |
 | **`const` expressions (`const B = A + 1`)** | **No** (integer literals only, max 48) | **Yes** | **Yes** |
 | **`for i := range N` & `for i, v := range s`** | **No** (only `for cond` and 3-clause `for`) | **Yes** | **Yes** |
-| **`switch` / `case` / `default`** | **No** (`if` / `else if` only) | **Yes** | **Yes** (int, bool, string, and `SWITCH_LOOKUP` tables) |
+| **`switch` / `case` / `default`** | **No** (`if` / `else if` only) | **Yes** | **Yes** (int, bool, string) |
 | **`goto` and labels** | **No** | **Yes** | **Yes** |
 | **Compound assignments** | `+=` and `-=` only | All except `&^=` | All including `&^` and `&^=` |
 | **Tuple assignment (`a, b = b, a`)** | Only `a, b := fn()` for 2-return calls | **Yes** | **Yes** |
@@ -226,23 +226,26 @@ Comparing [`par3-runtime/opcodes.py`](../par3-runtime/opcodes.py) with [`par4/op
 1. **System Call Architecture (`0xC0..0xCF`)**:
    * **Par3** hardcodes high-level NitrOS-9 / POSIX file and OS opcodes in Group 8: `FILE_OPEN_READ` (`0xC0`), `FILE_OPEN_WRITE` (`0xC1`), `FILE_READLINE` (`0xC2`), `FILE_WRITE` (`0xC3`), `FILE_CLOSE` (`0xC4`), `OS_ISFILE` (`0xC5`), `OS_MAKEDIRS` (`0xC6`), `SYS_ARGS` (`0xC7`), `FILE_READ` (`0xCC`), `FILE_WRITE_BUF` (`0xCD`).
    * **Par4** replaces those file opcodes with low-level **Hatvan Kernel Trap & Hardware Primitives**:
-     * `HATVAN_TRAP` (`0xC0`): Unified OS-9 / Hatvan register-based kernel syscall (`A, B, X, Y, U, TrapNum` $\rightarrow$ `A, B, X, Y`).
+     * `HATVAN_TRAP` (`0xC0`): Unified OS-9 / Hatvan register-based kernel syscall (`A, B, X, Y, U, TrapNum` $\rightarrow$ `A, B, Y, Err`).
      * `SYS_POLL_FLAG` (`0xC1`): Hardware event flag polling (e.g. 1802 `EF1..EF4`).
      * `SYS_DMA_COPY` (`0xC2`): Cross-task curtain / DMA memory transfer.
-2. **New Stack, Memory, and Control Opcodes in Par4**:
+2. **Elimination of CISC Opcodes in Par4**:
+   * **Par3** includes high-level CISC opcodes for VM-managed heap buffers (`BUF_ALLOC`, `BUF_FREE`), dictionaries/lists (`DICT_*`, `LIST_*`, `STR_APPEND`, `SLICE_APPEND_STR`), string helpers (`STR_STARTSWITH`, `STR_ENDSWITH`, `STR_FIND`, `STR_LSTRIP`, `STR_RSTRIP`, `STR_STRIP`, `STR_SPLITLINES`, `STR_REPLACE_IDENT`), and boxed printing (`PRINT`, `PRINTLN`).
+   * **Par4** removes all of those CISC opcodes from the VM, implementing heap management (`malloc`/`free`) and data structures (`smap`, `btree`, `rbtree`, `regexp`, `fmt`) in pure Par4 libraries (`par4-lib/`).
+3. **New Stack, Memory, and Control Opcodes in Par4**:
    * **Stack**: Par4 adds `DUP2` (`0x10`) and `ROT` (`0x11`).
    * **Memory**: Par4 replaces `ZALLOC` (`0x37`) with `MEM_COPY` (`0x37`) and `MEM_SET` (`0x38`) for fast struct/array copying and zeroing.
-   * **Control Flow**: Par4 adds `PANIC` (`0x68`) and `SWITCH_LOOKUP` (`0x69`, compact jump-table switch dispatch).
-3. **Binary Header, Global Table, and Synthetic Locals**:
+   * **Control Flow**: Par4 adds `PANIC` (`0x68`).
+4. **Binary Header, Global Table, and Synthetic Locals**:
    * **Par3 (`.p3p`)**: Magic `"P3P\x01"`. Always emits synthetic scratch locals (`_pbuf`, `_tmp_base`, `_tmp_cap`, `_tmp_len`, `_tmp_addr`) in every function frame.
-   * **Par4 (`.p4p`)**: Magic `"P4P\x01"`. Uses 2-byte (`uint16`) sizes in the Global Variable Table so global structs and arrays up to 64 KB work across `par4vmp`, `par4vm9`, and `par4vmc`, supports 1-byte (`byte`), 2-byte (`word`), 6-byte (`slice`), and $N$-byte (buffer/struct) local frame slots, and omits unused synthetic scratch locals (`_pbuf`, `_tmp_*`, `_swap_*`).
+   * **Par4 (`.p4p`)**: Magic `"P4P\x01"`. Uses 2-byte (`uint16`) sizes in the Global Variable Table so global structs and arrays up to 64 KB work across `par4vmp`, `par4vm9`, `par4vmc`, and `par4vmz`, supports 1-byte (`byte`), 2-byte (`word`), 6-byte (`slice`), and $N$-byte (buffer/struct) local frame slots, and omits unused synthetic scratch locals (`_pbuf`, `_tmp_*`, `_swap_*`).
 
 ---
 
 ### A.4 Regular Expressions in Par3 and Par4
 
-* **Whole-Word Identifier Replacement (`STR_REPLACE_IDENT`, `0x7F`)**: Neither Par3 nor Par4 has regex opcodes in the VM. For whole-word assembly identifier replacement in `selfgen_preprocess.par3`, Par3 and Par4 use the dedicated `STR_REPLACE_IDENT` (`0x7F`, `replace_ident(s, old, new)`) opcode.
-* **Library Thompson NFA VM ([`par4-lib/regexp.par4`](../par4-lib/regexp.par4))**: General regular expressions (`c`, `.`, `|`, `*`, `?`, `(...)`) are implemented in pure Par4 via `import "regexp"`. Calling `re.Compile(pat)` compiles the pattern into a 5-opcode **Thompson NFA bytecode** (`INST_CHAR`, `INST_ANY`, `INST_JMP`, `INST_SPLIT`, `INST_MATCH`) packed as `(op << 8) | arg` words inside `re.Code [32]word`, which `re.MatchFull(s)` and `re.Match(s)` execute in strict $O(N)$ linear time.
+* **Whole-Word Identifier Replacement in Par3 (`STR_REPLACE_IDENT`, `0x7F`)**: Neither Par3 nor Par4 has regex opcodes in the VM. For whole-word assembly identifier replacement in `selfgen_preprocess.par3`, Par3 uses the `STR_REPLACE_IDENT` (`0x7F`, `replace_ident(s, old, new)`) opcode.
+* **Library Thompson NFA VM in Par4 ([`par4-lib/regexp.par4`](../par4-lib/regexp.par4))**: General regular expressions (`c`, `.`, `|`, `*`, `?`, `(...)`) are implemented in pure Par4 via `import "regexp"`. Calling `re.Compile(pat)` compiles the pattern into a 5-opcode **Thompson NFA bytecode** (`INST_CHAR`, `INST_ANY`, `INST_JMP`, `INST_SPLIT`, `INST_MATCH`) packed as `(op << 8) | arg` words inside `re.Code [32]word`, which `re.MatchFull(s)` and `re.Match(s)` execute in strict $O(N)$ linear time.
 
 ---
 
