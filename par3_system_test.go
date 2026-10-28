@@ -33,7 +33,7 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 
 	// 1. Bootstrap minigolf_par3 with Go
 	goCompilerBin := filepath.Join(tmpDir, "minigolf_par3_go")
-	cmd := exec.Command("go", "build", "-o", goCompilerBin, "par3-apps/minigolf_par3.go", "par3-apps/minigolf_gosupport.go")
+	cmd := exec.Command("go", "build", "-o", goCompilerBin, "par3-apps/par3comp.par3.and.go", "par3-apps/par3comp_gosupport.go")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to bootstrap minigolf_par3 with Go: %v\nOutput: %s", err, string(out))
 	}
@@ -43,7 +43,7 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"minigolf_par3", "par3-apps/minigolf_par3.go"},
+		{"minigolf_par3", "par3-apps/par3comp.par3.and.go"},
 		{"par3asm", "par3-apps/par3asm.par3"},
 		{"par3pack", "par3-apps/par3pack.par3"},
 		{"selfgen_preprocess", "par3-apps/selfgen_preprocess.par3"},
@@ -76,13 +76,13 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 		}
 	}
 
-	// 3. Run minigolf_par3.p3p under par3vm.py to self-compile minigolf_par3.go
+	// 3. Run minigolf_par3.p3p under par3vm.py to self-compile par3comp.par3.and.go
 	par3vmPy := filepath.Join("par3-runtime", "par3vm.py")
 	compilerP3p := filepath.Join(tmpDir, "minigolf_par3.p3p")
 	selfP3a := filepath.Join(tmpDir, "self_minigolf_par3.p3a")
-	vmCmd := exec.Command("python3", par3vmPy, compilerP3p, "--", "par3-apps/minigolf_par3.go", "-o", selfP3a)
+	vmCmd := exec.Command("python3", par3vmPy, compilerP3p, "--", "par3-apps/par3comp.par3.and.go", "-o", selfP3a)
 	if out, err := vmCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to self-compile minigolf_par3.go on par3vm.py: %v\nOutput: %s", err, string(out))
+		t.Fatalf("Failed to self-compile par3comp.par3.and.go on par3vm.py: %v\nOutput: %s", err, string(out))
 	}
 
 	// 4. Verify byte-for-byte identity between Go-bootstrapped .p3a and VM self-compiled .p3a
@@ -123,6 +123,7 @@ func TestPar3AsMiniGolf(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("No *.par3 files found in par3-apps")
 	}
+	files = append(files, filepath.Join("par3-apps", "par3comp.par3.and.go"))
 
 	if err := os.MkdirAll("_tmp", 0777); err != nil {
 		t.Fatalf("Failed to create _tmp: %v", err)
@@ -134,7 +135,7 @@ func TestPar3AsMiniGolf(t *testing.T) {
 	}
 
 	for _, file := range files {
-		testName := strings.TrimSuffix(filepath.Base(file), ".par3")
+		testName := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(file), ".par3"), ".par3.and.go")
 		t.Run(testName, func(t *testing.T) {
 			tmpOut := filepath.Join("_tmp", "mg_"+testName+".ast")
 			cmd := exec.Command(compiler, "-m=ast", "-o", tmpOut, file)

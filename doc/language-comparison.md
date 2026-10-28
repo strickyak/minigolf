@@ -10,7 +10,7 @@ $$\textbf{Par3} \subset \textbf{Par4} \subset \textbf{Par5} \subset \textbf{Mini
 
 | Language | File Ext / Flag | Primary Role & Target Environment |
 | :--- | :--- | :--- |
-| **Par3** | `*.par3` / `*.go`<br/>`minigolf_par3` | Frozen self-hosting P-code subset designed so the 2-pass compiler ([`par3-apps/minigolf_par3.go`](../par3-apps/minigolf_par3.go)) is valid standard Go (bootstrapped directly via `go build par3-apps/minigolf_par3.go par3-apps/minigolf_gosupport.go`) and can compile itself inside a single 64 KB process under NitrOS-9 on M6809. |
+| **Par3** | `*.par3` / `*.go`<br/>`minigolf_par3` | Frozen self-hosting P-code subset designed so the 2-pass compiler ([`par3-apps/par3comp.par3.and.go`](../par3-apps/par3comp.par3.and.go)) is valid standard Go (bootstrapped directly via `go build par3-apps/par3comp.par3.and.go par3-apps/par3comp_gosupport.go`) and can compile itself inside a single 64 KB process under NitrOS-9 on M6809. |
 | **Par4** | `*.par4`<br/>`minigolf -m=par4` | Evolution of Par3 P-code (originally called `NP`) targeting the `par4vm*` bytecode engines (`par4vmp` on POSIX, `par4vm9` on 6809, `par4vmc` on RCA 1802) for Hatvan OS. Adds user structs, methods, local buffers, multi-package imports, and Hatvan kernel traps, while keeping Par3's unsigned-only (`word`/`byte`) and non-generic rules. |
 | **Par5** | `*.golf`<br/>`minigolf -m=big6809`<br/>`minigolf -m=6809 -membiggen` | **Embiggened** MiniGolf targeting the 2 MB paged virtual memory model (8 KB MMU windows). Supports almost all of MiniGolf (including `int`, generics, `defer`, `panic`/`recover`), but uses **far function pointers/trampolines** and **far data** for the backing contents of `string`, `slice[T]`, and `Smap[T]`/`Imap[T]` (8-byte slice headers `{FarRef, Base, Len, Cap}`). |
 | **MiniGolf** | `*.golf`<br/>`-m=6809`, `-m=6502`, `-m=z80`, `-m=1802`, `-m=m68k`, `-m=amd64`, `-m=cbe` | Full flat-memory MiniGolf language. Every valid MiniGolf file is valid Go syntax (`gofmt`-compatible), but with C99-like value/memory semantics, manual memory management, optional RAII struct destructors, and 6-byte (3-word) unified slices/strings `{Base, Cap, Len}`. |
@@ -23,7 +23,7 @@ $$\textbf{Par3} \subset \textbf{Par4} \subset \textbf{Par5} \subset \textbf{Mini
 **Legend:**
 * **Yes** — Fully supported in source code.
 * **No** — Forbidden / rejected at compile time (or not part of the language).
-* **Host only** — Supported when compiled with the Go host compiler (`minigolf -m=par3`), but **not** by the self-hosted 6809 compiler (`minigolf_par3.par3`).
+* **Host only** — Supported when compiled with the Go host compiler (`minigolf -m=par3`), but **not** by the self-hosted 6809 compiler (`par3comp.par3.and.go`).
 * **Special / Lib** — Supported with distinct semantics or via a standard library package rather than a language built-in.
 
 ### 2.1 Primitive & Scalar Types
@@ -157,7 +157,7 @@ $$\textbf{Par3} \subset \textbf{Par4} \subset \textbf{Par5} \subset \textbf{Mini
    * **Both forbid signed `int`**: Any variable, parameter, or cast using `int` or `int16` will panic at compile time. Always use `word` or `byte`, and use `0xFFFF` instead of `-1` for error/not-found sentinels.
    * **Both forbid user-defined generics, `defer`, and named return values**: Functions with return types must end with an explicit `return <expr>`.
    * **Stack buffers (`var buf [N]byte`)**: Forbidden in Par3 (`-m=par3`), but **allowed in Par4** as long as the function's total local variables fit within 255 bytes.
-   * **Self-hosted Par3 (`par3-apps/minigolf_par3.par3`)**: If a `.par3` file must be compiled on the 6809 by `minigolf_par3` itself, stick to a single file (`package main`), no user `struct` declarations, no `switch`, no `for ... range`, and only `+=` / `-=` op-assignments.
+   * **Self-hosted Par3 (`par3-apps/par3comp.par3.and.go`)**: If a `.par3` file must be compiled on the 6809 by `minigolf_par3` itself, stick to a single file (`package main`), no user `struct` declarations, no `switch`, no `for ... range`, and only `+=` / `-=` op-assignments.
 
 2. **Par4 vs. Par5 (Embiggen)**:
    * **Par5 unlocks the full MiniGolf language**: Signed `int`, user-defined generics (`[T any]`), `defer`, `panic`/`recover`, struct `destructor()`, named return values, and function pointers all work in Par5.
@@ -178,9 +178,9 @@ $$\textbf{Par3} \subset \textbf{Par4} \subset \textbf{Par5} \subset \textbf{Mini
 
 ### A.1 Mission, Naming History (`NP` $\rightarrow$ `Par3`), and Compilation Pipelines
 
-* **Par3 (`*.par3` / `minigolf_par3.go`, formerly called `NP` / `MiniGolf-NP`)**:
+* **Par3 (`*.par3` / `par3comp.par3.and.go`, formerly called `NP` / `MiniGolf-NP`)**:
   * **Mission**: Frozen and preserved specifically to **self-host** the NitrOS-9 build toolchain (`minigolf_par3`, `par3asm`, `par3pack`, `selfgen_preprocess`, `build_img`) inside a single 64 KB Motorola 6809 process ([`par3-apps/selfgen-on-gep9.sh`](../par3-apps/selfgen-on-gep9.sh)).
-  * **Direct Go Bootstrap (No `np/` Needed)**: [`par3-apps/minigolf_par3.go`](../par3-apps/minigolf_par3.go) is valid standard Go when compiled alongside [`par3-apps/minigolf_gosupport.go`](../par3-apps/minigolf_gosupport.go) (`go build par3-apps/minigolf_par3.go par3-apps/minigolf_gosupport.go`). When `minigolf_par3` compiles itself (or other `.par3` tools), `minigolf_gosupport.go` is omitted and those runtime helpers (`mk_str`, `str_base`, `free_str`, `get_arg`, `file_*`, `map_*`, `sys_*`) are emitted directly as VM bytecode primitives executed by [`par3-runtime/par3runtime.asm`](../par3-runtime/par3runtime.asm). Because `minigolf_par3.go` bootstraps directly with Go, the legacy `np/` host backend has been retired.
+  * **Direct Go Bootstrap (No `np/` Needed)**: [`par3-apps/par3comp.par3.and.go`](../par3-apps/par3comp.par3.and.go) is valid standard Go when compiled alongside [`par3-apps/par3comp_gosupport.go`](../par3-apps/par3comp_gosupport.go) (`go build par3-apps/par3comp.par3.and.go par3-apps/par3comp_gosupport.go`). When `minigolf_par3` compiles itself (or other `.par3` tools), `par3comp_gosupport.go` is omitted and those runtime helpers (`mk_str`, `str_base`, `free_str`, `get_arg`, `file_*`, `map_*`, `sys_*`) are emitted directly as VM bytecode primitives executed by [`par3-runtime/par3runtime.asm`](../par3-runtime/par3runtime.asm). Because `par3comp.par3.and.go` bootstraps directly with Go, the legacy `np/` host backend has been retired.
   * **4-Step NitrOS-9 Build Pipeline**:
     1. `minigolf_par3 foo.par3 foo.p3a` — compiles `.par3` / `.go` source into `.p3a` stack-VM assembly text.
     2. `par3asm foo.p3a -o foo.p3p` — assembles `.p3a` into `.p3p` binary P-code bytecodes.
@@ -246,10 +246,10 @@ Comparing [`par3-runtime/opcodes.py`](../par3-runtime/opcodes.py) with [`par4/op
 
 ---
 
-### A.5 Dual-Valid Go / Par3 Design of `minigolf_par3.go`
+### A.5 Dual-Valid Go / Par3 Design of `par3comp.par3.and.go`
 
 By treating strings/slices as an opaque abstraction manipulated through function primitives (`mk_str(base, cap, len)`, `str_base(s)`, `free_str(s)`, `get_arg(args, idx)`, `len(s)`) rather than special `.Base` / `.Cap` / `.Len` field-selector syntax:
-1. [`par3-apps/minigolf_par3.go`](../par3-apps/minigolf_par3.go) is **100% valid standard Go** when built with [`par3-apps/minigolf_gosupport.go`](../par3-apps/minigolf_gosupport.go).
+1. [`par3-apps/par3comp.par3.and.go`](../par3-apps/par3comp.par3.and.go) is **100% valid standard Go** when built with [`par3-apps/par3comp_gosupport.go`](../par3-apps/par3comp_gosupport.go).
 2. The Par3 language and compiler no longer require `.` struct field access or field assignment syntax at all.
-3. The VM runtime ([`par3-runtime/par3runtime.asm`](../par3-runtime/par3runtime.asm)) implements `FREE_STR` (`0xCE`) and `GET_ARG` (`0xCF`) alongside `SLICE_NEW` (`0x70`) and `SLICE_LEN` (`0x71`), allowing `minigolf_par3.go` to compile itself in 64 KB under NitrOS-9 Level 2 (`deep65280`).
+3. The VM runtime ([`par3-runtime/par3runtime.asm`](../par3-runtime/par3runtime.asm)) implements `FREE_STR` (`0xCE`) and `GET_ARG` (`0xCF`) alongside `SLICE_NEW` (`0x70`) and `SLICE_LEN` (`0x71`), allowing `par3comp.par3.and.go` to compile itself in 64 KB under NitrOS-9 Level 2 (`deep65280`).
 

@@ -5,7 +5,7 @@ par3build.py - MiniGolf-Par3 Compiler & OS-9 Module Builder for NitrOS-9
 Automates the complete pipeline:
   1. Compile Par3 source (.par3) -> Par3 assembly (.p3a)
   2. Assemble Par3 assembly (.p3a) -> Par3 bytecode (.p3p) via par3asm.py
-  3. Combine bytecode payload with M6809 OS-9 interpreter engine (template.asm)
+  3. Combine bytecode payload with M6809 OS-9 interpreter engine (par3runtime.asm)
   4. Assemble into standalone OS-9 binary module via lwasm
   5. Optionally copy into NitrOS-9 disk image (deep0.dsk), run on gep9 emulator,
      and verify output against par3vm.py reference interpreter.
@@ -44,7 +44,7 @@ RECIPES_DIR = os.path.join(NITROS9_DIR, "recipes", "deep65280")
 DEFAULT_DISK = os.path.join(RECIPES_DIR, "deep0.dsk")
 DEFAULT_IMG = os.path.join(RECIPES_DIR, "deep65280.img")
 DEFAULT_GEP9 = "/home/strick/github.com/strickyak/hatvan-os/build/gep9"
-TEMPLATE_ASM = os.path.join(SCRIPT_DIR, "template.asm")
+PAR3RUNTIME_ASM = os.path.join(SCRIPT_DIR, "par3runtime.asm")
 
 
 def log(msg: str, verbose: bool = False, is_verbose_msg: bool = False):
@@ -212,7 +212,7 @@ def main():
             f"--includedir={SCRIPT_DIR}",
             f"--includedir={NITROS9_DEFS}",
             "--list=/tmp/test_for3.list", "-o", output_path,
-            TEMPLATE_ASM
+            PAR3RUNTIME_ASM
         ]
         run_cmd(lwasm_cmd, verbose=args.verbose)
         module_sz = os.path.getsize(output_path)
