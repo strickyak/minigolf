@@ -130,12 +130,6 @@ const (
 	OpSTR_APPEND       = byte(0x9A)
 	OpSLICE_APPEND_STR = byte(0x9B)
 
-	// Group 7: Regular Expressions (0xB0 .. 0xBF)
-	OpREG_MATCH     = byte(0xB0)
-	OpREG_SEARCH    = byte(0xB1)
-	OpREG_GROUP     = byte(0xB2)
-	OpREG_GROUP_END = byte(0xB3)
-
 	// Group 8: Hatvan OS & Hardware Primitives (0xC0 .. 0xCF)
 	OpHATVAN_TRAP   = byte(0xC0)
 	OpSYS_POLL_FLAG = byte(0xC1)
@@ -306,11 +300,6 @@ var OpcodeTable = map[byte]OpcodeInfo{
 	OpLIST_SORT_BY_LEN: {"LIST_SORT_BY_LEN", 0, ArgNone, "Sort string list by length"},
 	OpSTR_APPEND:       {"STR_APPEND", 0, ArgNone, "Append byte to string slice"},
 	OpSLICE_APPEND_STR: {"SLICE_APPEND_STR", 0, ArgNone, "Append string slice to list"},
-
-	OpREG_MATCH:     {"REG_MATCH", 2, ArgImm16, "Anchored regex match"},
-	OpREG_SEARCH:    {"REG_SEARCH", 2, ArgImm16, "Unanchored regex search"},
-	OpREG_GROUP:     {"REG_GROUP", 0, ArgNone, "Extract capture group"},
-	OpREG_GROUP_END: {"REG_GROUP_END", 0, ArgNone, "End position of capture"},
 
 	OpHATVAN_TRAP:   {"HATVAN_TRAP", 1, ArgImm8U, "Hatvan OS / OS-9 syscall trap"},
 	OpSYS_POLL_FLAG: {"SYS_POLL_FLAG", 1, ArgImm8U, "Poll hardware status line"},

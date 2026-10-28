@@ -241,7 +241,7 @@ Comparing [`par3-runtime/opcodes.py`](../par3-runtime/opcodes.py) with [`par4/op
 
 ### A.4 Regular Expressions in Par3 and Par4
 
-* **Reserved P-Code Opcodes (`0xB0..0xB3`)**: Both opcode tables reserve `0xB0..0xB3` (`REG_MATCH`, `REG_SEARCH`, `REG_GROUP`, `REG_GROUP_END`), but these are unimplemented no-op stubs in the VM and are never emitted by the compiler. For whole-word assembly identifier replacement in `selfgen_preprocess.par3`, Par3 and Par4 instead use the dedicated `STR_REPLACE_IDENT` (`0x7F`, `replace_ident(s, old, new)`) opcode.
+* **Whole-Word Identifier Replacement (`STR_REPLACE_IDENT`, `0x7F`)**: Neither Par3 nor Par4 has regex opcodes in the VM. For whole-word assembly identifier replacement in `selfgen_preprocess.par3`, Par3 and Par4 use the dedicated `STR_REPLACE_IDENT` (`0x7F`, `replace_ident(s, old, new)`) opcode.
 * **Library Thompson NFA VM ([`par4-lib/regexp.par4`](../par4-lib/regexp.par4))**: General regular expressions (`c`, `.`, `|`, `*`, `?`, `(...)`) are implemented in pure Par4 via `import "regexp"`. Calling `re.Compile(pat)` compiles the pattern into a 5-opcode **Thompson NFA bytecode** (`INST_CHAR`, `INST_ANY`, `INST_JMP`, `INST_SPLIT`, `INST_MATCH`) packed as `(op << 8) | arg` words inside `re.Code [32]word`, which `re.MatchFull(s)` and `re.Match(s)` execute in strict $O(N)$ linear time.
 
 ---

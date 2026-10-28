@@ -138,12 +138,6 @@ OPCODE_TABLE = {
     0x9A: ("STR_APPEND", 0, "none", "Append 1-byte char to string slice"),
     0x9B: ("SLICE_APPEND_STR", 0, "none", "Append 6-byte string slice to slice[string]"),
 
-    # Group 7: Regular Expressions (0xB0 .. 0xBF)
-    0xB0: ("REG_MATCH", 2, "imm16", "Anchored regex match"),
-    0xB1: ("REG_SEARCH", 2, "imm16", "Unanchored regex search"),
-    0xB2: ("REG_GROUP", 0, "none", "Extract captured group string slice view"),
-    0xB3: ("REG_GROUP_END", 0, "none", "Return ending character index of capture"),
-
     # Group 8: File System & OS System Calls (0xC0 .. 0xCF)
     0xC0: ("FILE_OPEN_READ", 0, "none", "Open file for reading"),
     0xC1: ("FILE_OPEN_WRITE", 0, "none", "Create/truncate file for writing"),

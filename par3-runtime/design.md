@@ -396,15 +396,6 @@ Every instruction starts with a **1-byte opcode**. The opcode explicitly defines
 | `0x98` | `LIST_POP` | **0** | None | `[list_slice] -> [new_list, val]`| Pop and return last 16-bit element. |
 | `0x99` | `LIST_SORT_BY_LEN`| **0**| None | `[list_slice, reverse] -> []`| Sorts list of string slices in-place by length. |
 
-#### Group 7: Regular Expressions (`0xB0 .. 0xBF`)
-
-| Opcode | Mnemonic | Arg Bytes | Operand Format | Stack Effect | Description |
-| :--- | :--- | :---: | :--- | :--- | :--- |
-| `0xB0` | `REG_MATCH` | **2** | `<imm16>` | `[str_slice] -> [match_ptr, ok]`| Anchored match against regex index `imm16`. |
-| `0xB1` | `REG_SEARCH`| **2** | `<imm16>` | `[str_slice] -> [match_ptr, ok]`| Unanchored search against regex index `imm16`. |
-| `0xB2` | `REG_GROUP` | **0** | None | `[match_ptr, grp_idx] -> [slice]`| Extract captured group string slice view. |
-| `0xB3` | `REG_GROUP_END`| **0**| None | `[match_ptr, grp_idx] -> [pos]`| Return ending character index of capture. |
-
 #### Group 8: File System & OS System Calls (`0xC0 .. 0xCF`)
 
 | Opcode | Mnemonic | Arg Bytes | Operand Format | Stack Effect | Description |

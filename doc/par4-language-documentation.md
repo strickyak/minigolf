@@ -346,17 +346,6 @@ Operand Stack Top:  [ U ]  (16-bit: Parameter block pointer)
 
 ---
 
-### 4.7 Group 7: Regular Expressions (`0xB0 .. 0xBF`)
-
-| Opcode | Mnemonic | Arg Bytes | Operand | Stack Effect | Description |
-| :---: | :--- | :---: | :---: | :--- | :--- |
-| `0xB0` | `REG_MATCH` | 2 | `<imm16>` | `[str_slice] -> [match_ptr, ok]`| Anchored regex match against pattern `imm16`. |
-| `0xB1` | `REG_SEARCH` | 2 | `<imm16>` | `[str_slice] -> [match_ptr, ok]`| Unanchored regex search against pattern `imm16`. |
-| `0xB2` | `REG_GROUP` | 0 | None | `[match_ptr, idx] -> [slice]` | Extract capture group slice view. |
-| `0xB3` | `REG_GROUP_END` | 0 | None | `[match_ptr, idx] -> [pos]` | Return ending character index of capture. |
-
----
-
 ### 4.8 Group 8: Hatvan OS & Hardware Primitives (`0xC0 .. 0xCF`)
 
 | Opcode | Mnemonic | Arg Bytes | Operand | Stack Effect | Description |

@@ -995,23 +995,6 @@ class NPVM:
             self._push_slice(l_ptr, l_cap, l_len)
 
         # -------------------------------------------------------------
-        # Group 7: Regular Expressions (0xB0 .. 0xBF)
-        # -------------------------------------------------------------
-        elif opcode in (0xB0, 0xB1):  # REG_MATCH, REG_SEARCH
-            s_ptr, s_cap, s_len = self._pop_slice()
-            # Stub/placeholder for basic pattern support
-            self._push(0x0000)  # match_ptr
-            self._push(0x0000)  # ok = false
-        elif opcode == 0xB2:  # REG_GROUP
-            grp_idx = self._pop()
-            match_ptr = self._pop()
-            self._push_slice(0, 0, 0)
-        elif opcode == 0xB3:  # REG_GROUP_END
-            grp_idx = self._pop()
-            match_ptr = self._pop()
-            self._push(0)
-
-        # -------------------------------------------------------------
         # Group 8: File System & OS System Calls (0xC0 .. 0xCF)
         # -------------------------------------------------------------
         elif opcode == 0xC0:  # FILE_OPEN_READ
