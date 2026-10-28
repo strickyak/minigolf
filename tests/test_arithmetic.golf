@@ -1,5 +1,7 @@
 package main
 
+const C_MASK = ^0x0F
+
 func main() {
 	println("=== mul_byte ===")
 	println(prelude.mul_byte(10, 20))
@@ -44,4 +46,9 @@ func main() {
 	println(prelude.mul_int(6, 7), prelude.mul_int(-6, 7), prelude.mul_int(6, -7), prelude.mul_int(-6, -7))
 	println(prelude.div_int(42, 5), prelude.div_int(-42, 5), prelude.div_int(42, -5), prelude.div_int(-42, -5))
 	println(prelude.mod_int(42, 5), prelude.mod_int(-42, 5), prelude.mod_int(42, -5), prelude.mod_int(-42, -5))
+
+	println("=== bitwise complement ===")
+	var bx byte = 0x5A
+	var wx word = 0xFF0F
+	println(^bx, (^wx)&0xFFFF, bx&C_MASK, bx&^0x50)
 }

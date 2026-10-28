@@ -1086,8 +1086,8 @@ func parsePrimary() int {
 		if tok.Text == "~" {
 			nextTok()
 			v := parsePrimary()
-			curEvalHi = 0xFFFF ^ curEvalHi
-			return -1 ^ v
+			curEvalHi = ^curEvalHi
+			return ^v
 		}
 		if tok.Text == "!" {
 			nextTok()
@@ -2713,7 +2713,7 @@ func flushSRec(fd int) {
 		sum += b
 		writeHexByte(fd, b)
 	}
-	writeHexByte(fd, 0xFF^sum)
+	writeHexByte(fd, ^sum)
 	writeOutByte(fd, 10)
 	srecInRec = false
 	srecLen = 0
@@ -2764,7 +2764,7 @@ func emitSRecords(fd int) {
 	writeOutByte(fd, '9')
 	writeHexByte(fd, 3)
 	writeHexWord(fd, exec)
-	writeHexByte(fd, 0xFF^sum)
+	writeHexByte(fd, ^sum)
 	writeOutByte(fd, 10)
 	flushOut(fd)
 }

@@ -2511,6 +2511,8 @@ func (g *Generator) evalIntConst(expr ast.Expression) int {
 			return left | right
 		case "&":
 			return left & right
+		case "^":
+			return left ^ right
 		}
 	case *ast.PrefixExpression:
 		if e.Operator == "-" {
@@ -2518,6 +2520,9 @@ func (g *Generator) evalIntConst(expr ast.Expression) int {
 		}
 		if e.Operator == "+" {
 			return g.evalIntConst(e.Right)
+		}
+		if e.Operator == "^" || e.Operator == "~" {
+			return ^g.evalIntConst(e.Right)
 		}
 	}
 	return 0

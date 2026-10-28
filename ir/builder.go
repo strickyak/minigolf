@@ -3000,6 +3000,22 @@ func (b *Builder) eval(expr ast.Expression) ExprResult {
 			val := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "sub", Left: zero, Right: right}, expr)
 			return ExprResult{IsLValue: false, Value: val, Typ: typ}
 		}
+		if e.Operator == "^" {
+			right := b.buildExpr(e.Right)
+			typ := right.Type()
+			if cw, ok := right.(*ConstWord); ok {
+				val := b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: typ}, Val: ^cw.Val}, expr)
+				return ExprResult{IsLValue: false, Value: val, Typ: typ}
+			}
+			var allOnes Value
+			if typ.Equals(TypeByte) {
+				allOnes = b.addInstr(&ConstByte{BaseInstruction: BaseInstruction{Typ: TypeByte}, Val: 0xFF}, expr)
+			} else {
+				allOnes = b.addInstr(&ConstWord{BaseInstruction: BaseInstruction{Typ: TypeWord}, Val: ^uint64(0)}, expr)
+			}
+			val := b.addInstr(&BinaryOp{BaseInstruction: BaseInstruction{Typ: typ}, Op: "xor", Left: allOnes, Right: right}, expr)
+			return ExprResult{IsLValue: false, Value: val, Typ: typ}
+		}
 		if e.Operator == "&" {
 			ptr, typ := b.buildAddressOf(e.Right)
 			return ExprResult{IsLValue: false, Value: ptr, Typ: typ.PointerTo()}
@@ -3217,6 +3233,16 @@ func (b *Builder) EvalConst(expr ast.Expression) int64 {
 			return left >> right
 		case "&^":
 			return left &^ right
+		}
+	case *ast.PrefixExpression:
+		right := b.EvalConst(e.Right)
+		switch e.Operator {
+		case "-":
+			return -right
+		case "+":
+			return right
+		case "^":
+			return ^right
 		}
 	case *ast.CallExpression:
 		if idxExpr, ok := e.Function.(*ast.IndexExpression); ok {
@@ -3503,7 +3529,7 @@ func (b *Builder) isConstantExpr(expr ast.Expression) bool {
 	case *ast.StringLiteral:
 		return true
 	case *ast.PrefixExpression:
-		if e.Operator == "-" || e.Operator == "+" {
+		if e.Operator == "-" || e.Operator == "+" || e.Operator == "^" {
 			return b.isConstantExpr(e.Right)
 		}
 		return false
@@ -3627,6 +3653,14 @@ func (b *Builder) evalConstantExpr(expr ast.Expression, targetTyp Type) Value {
 			}
 		} else if e.Operator == "+" {
 			return b.evalConstantExpr(e.Right, targetTyp)
+		} else if e.Operator == "^" {
+			val := b.evalConstantExpr(e.Right, targetTyp)
+			if cw, ok := val.(*ConstWord); ok {
+				return &ConstWord{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: ^cw.Val}
+			}
+			if cb, ok := val.(*ConstByte); ok {
+				return &ConstByte{BaseInstruction: BaseInstruction{Typ: targetTyp}, Val: ^cb.Val}
+			}
 		}
 	case *ast.Identifier:
 		fullName := e.FullName()
