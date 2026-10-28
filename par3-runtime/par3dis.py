@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-npdis.py - Disassembler for the NPCode Virtual Machine.
+par3dis.py - Disassembler for the Par3 Virtual Machine.
 
-Disassembles compiled NPCode bytecode (.npc) into human-readable assembly
-or generates round-trippable assembly source code (.npasm).
+Disassembles compiled Par3 bytecode (.p3p / .npc) into human-readable assembly
+or generates round-trippable assembly source code (.p3a / .npasm).
 Features:
   - Validates NPC header, magic, version, and section boundaries.
   - Decodes Global Variable Table and Local Variable Tables with type sizes.
@@ -366,7 +366,7 @@ class Disassembler:
         """Generates pure, re-assemblable .npasm source code."""
         lines = []
         lines.append("; ====================================================================")
-        lines.append("; Disassembled by npdis.py")
+        lines.append("; Disassembled by par3dis.py")
         lines.append("; ====================================================================")
         lines.append("")
 
@@ -425,7 +425,7 @@ class Disassembler:
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("Usage: npdis.py <input.npc> [-o <output.npasm>] [--asm] [--details]")
+        print("Usage: par3dis.py <input.p3p> [-o <output.p3a>] [--asm] [--details]")
         sys.exit(0)
 
     input_file = sys.argv[1]

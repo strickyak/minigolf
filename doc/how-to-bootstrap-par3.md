@@ -2,7 +2,7 @@
 
 The Par3 compiler ([`par3-apps/minigolf_par3.go`](../par3-apps/minigolf_par3.go)) is written in the **Par3** subset of Go so that it is simultaneously:
 1. **Valid standard Go** when compiled alongside [`par3-apps/minigolf_gosupport.go`](../par3-apps/minigolf_gosupport.go) on a host machine.
-2. **Self-hosting Par3** when compiled by itself (without `minigolf_gosupport.go`), where the support primitives (`mk_str`, `str_base`, `free_str`, `get_arg`, `file_*`, `map_*`, `sys_*`) are emitted directly as VM bytecode instructions executed by [`par3-runtime/par3runtime.asm`](../par3-runtime/par3runtime.asm) (or [`par3-runtime/npvm.py`](../par3-runtime/npvm.py)).
+2. **Self-hosting Par3** when compiled by itself (without `minigolf_gosupport.go`), where the support primitives (`mk_str`, `str_base`, `free_str`, `get_arg`, `file_*`, `map_*`, `sys_*`) are emitted directly as VM bytecode instructions executed by [`par3-runtime/par3runtime.asm`](../par3-runtime/par3runtime.asm) (or [`par3-runtime/par3vm.py`](../par3-runtime/par3vm.py)).
 
 Below are step-by-step shell commands you can run from the repository root to watch the bootstrap and self-compilation converge byte-for-byte.
 
@@ -34,26 +34,26 @@ Use the Go-built `_tmp/minigolf_par3_stage0` binary to compile [`par3-apps/minig
 tr '\r' '\n' < _tmp/minigolf_par3.stage1.p3a > _tmp/minigolf_par3.stage1.lf.p3a
 tr '\r' '\n' < _tmp/par3asm.stage1.p3a       > _tmp/par3asm.stage1.lf.p3a
 
-python3 par3-runtime/npasm.py _tmp/minigolf_par3.stage1.lf.p3a -o _tmp/minigolf_par3.stage1.p3p
-python3 par3-runtime/npasm.py _tmp/par3asm.stage1.lf.p3a       -o _tmp/par3asm.stage1.p3p
+python3 par3-runtime/par3asm.py _tmp/minigolf_par3.stage1.lf.p3a -o _tmp/minigolf_par3.stage1.p3p
+python3 par3-runtime/par3asm.py _tmp/par3asm.stage1.lf.p3a       -o _tmp/par3asm.stage1.p3p
 ```
 
 ---
 
 ## 3. Stage 2: Self-Compile and Assemble on the Par3 VM
 
-Now run the Stage 1 `.p3p` compiler and assembler bytecodes inside the Par3 VM ([`par3-runtime/npvm.py`](../par3-runtime/npvm.py), which simulates the 64 KB process memory space) to compile and assemble `minigolf_par3.go` a second time, and verify with `cmp` that Stage 1 and Stage 2 are identical:
+Now run the Stage 1 `.p3p` compiler and assembler bytecodes inside the Par3 VM ([`par3-runtime/par3vm.py`](../par3-runtime/par3vm.py), which simulates the 64 KB process memory space) to compile and assemble `minigolf_par3.go` a second time, and verify with `cmp` that Stage 1 and Stage 2 are identical:
 
 ```bash
 # Self-compile minigolf_par3.go using the Stage 1 Par3 bytecode compiler
-python3 par3-runtime/npvm.py _tmp/minigolf_par3.stage1.p3p -- \
+python3 par3-runtime/par3vm.py _tmp/minigolf_par3.stage1.p3p -- \
     par3-apps/minigolf_par3.go -o _tmp/minigolf_par3.stage2.p3a
 
 # Verify Stage 1 and Stage 2 .p3a assembly outputs are byte-for-byte identical
 cmp _tmp/minigolf_par3.stage1.p3a _tmp/minigolf_par3.stage2.p3a && echo "Stage 1 == Stage 2 (.p3a)"
 
 # Assemble the Stage 2 .p3a using the Stage 1 par3asm.p3p bytecode assembler
-python3 par3-runtime/npvm.py _tmp/par3asm.stage1.p3p -- \
+python3 par3-runtime/par3vm.py _tmp/par3asm.stage1.p3p -- \
     _tmp/minigolf_par3.stage2.p3a -o _tmp/minigolf_par3.stage2.p3p
 
 # Verify Stage 1 and Stage 2 .p3p bytecode binaries are byte-for-byte identical

@@ -10,10 +10,7 @@ elif test -f "$HATVAN_DIR/gep9" -a -x "$HATVAN_DIR/gep9"; then
     HATVAN_VM="$HATVAN_DIR/gep9"
 fi
 MINIGOLF="$SCRIPT_DIR/minigolf"
-NPBUILD="$SCRIPT_DIR/par3-runtime/npbuild.py"
-if [ ! -f "$NPBUILD" ]; then
-    NPBUILD="$SCRIPT_DIR/np-runtime/npbuild.py"
-fi
+PAR3BUILD="$SCRIPT_DIR/par3-runtime/par3build.py"
 
 mkdir -p _tmp
 
@@ -25,7 +22,7 @@ fi
 shift
 
 # Build minigolf compiler binary if missing or stale
-if [ ! -x "$MINIGOLF" ] || [ "$SCRIPT_DIR/np/codegen.go" -nt "$MINIGOLF" ] || [ "$SCRIPT_DIR/main.go" -nt "$MINIGOLF" ]; then
+if [ ! -x "$MINIGOLF" ] || [ "$SCRIPT_DIR/main.go" -nt "$MINIGOLF" ]; then
     ( cd "$SCRIPT_DIR" && go build -o minigolf main.go )
 fi
 
@@ -42,7 +39,7 @@ fi
 
 case "$P" in 
     *.par3 | *.p3a | *.p3p | *.golf | *.npasm | *.npc )
-        python3 "$NPBUILD" "$P" \
+        python3 "$PAR3BUILD" "$P" \
             "$RUN_MODE" \
             "${EXTRA_FLAGS[@]}" \
             -I "$SCRIPT_DIR/par3-lib" \

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-npvm.py - Virtual Machine Emulator for NPCode Bytecode (.npc).
+par3vm.py - Virtual Machine Emulator for Par3 Bytecode (.p3p / .npc).
 
 Faithfully executes NPCode binaries with:
   - 16-bit untagged word operand stack.
@@ -1350,7 +1350,7 @@ class NPVM:
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("Usage: npvm.py <program.npc> [-v] [--max-cycles N] [-- ARGS...]")
+        print("Usage: par3vm.py <program.p3p> [-v] [--max-cycles N] [-- ARGS...]")
         sys.exit(0)
 
     input_file = None

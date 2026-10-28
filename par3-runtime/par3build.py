@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-npbuild.py - MiniGolf-NP Compiler & OS-9 Module Builder for NitrOS-9
+par3build.py - MiniGolf-Par3 Compiler & OS-9 Module Builder for NitrOS-9
 
 Automates the complete pipeline:
-  1. Compile MiniGolf source (.golf) -> NPCode assembly (.npasm) via minigolf -m=np
-  2. Assemble NPCode assembly (.npasm) -> NPCode bytecode (.npc) via npasm.py
+  1. Compile Par3 source (.par3) -> Par3 assembly (.p3a)
+  2. Assemble Par3 assembly (.p3a) -> Par3 bytecode (.p3p) via par3asm.py
   3. Combine bytecode payload with M6809 OS-9 interpreter engine (template.asm)
   4. Assemble into standalone OS-9 binary module via lwasm
   5. Optionally copy into NitrOS-9 disk image (deep0.dsk), run on gep9 emulator,
-     and verify output against npvm.py reference interpreter.
+     and verify output against par3vm.py reference interpreter.
 
 Usage:
-  npbuild.py <input.golf|input.npasm|input.npc> [options]
+  par3build.py <input.par3|input.p3a|input.p3p> [options]
 
 Options:
   -o, --output <file>       Output OS-9 module path (default: ./<name>)
   -m, --module-name <name>  OS-9 module name (default: derived from input filename)
   --run                     Install to disk image and run on gep9 emulator
-  --verify                  Run on both npvm.py and gep9, comparing output
+  --verify                  Run on both par3vm.py and gep9, comparing output
   --disk <path>             NitrOS-9 disk image path
   --system-img <path>       NitrOS-9 boot system image path
   --engine <name>           gep9 engine: deep65280v2, flat65280v2, or hatvan
@@ -155,10 +155,10 @@ def main():
             out_ext = ".p3p" if ext == ".p3a" else ".npc"
             log(f"Assembling assembly '{cur_file}' -> bytecode ({out_ext})...", args.verbose)
             byte_path = os.path.join(build_dir, f"{base_name}{out_ext}")
-            npasm_py = os.path.join(NPCODE_DIR, "npasm.py")
-            if not os.path.exists(npasm_py):
-                error(f"npasm.py not found at: {npasm_py}")
-            cmd = [sys.executable, npasm_py, cur_file, "-o", byte_path]
+            par3asm_py = os.path.join(NPCODE_DIR, "par3asm.py")
+            if not os.path.exists(par3asm_py):
+                error(f"par3asm.py not found at: {par3asm_py}")
+            cmd = [sys.executable, par3asm_py, cur_file, "-o", byte_path]
             run_cmd(cmd, verbose=args.verbose)
             cur_file = byte_path
             ext = out_ext
@@ -171,16 +171,16 @@ def main():
             npc_bytes = f.read()
         log(f"Loaded NPC bytecode ({len(npc_bytes)} bytes).", args.verbose)
 
-        # Run reference execution on npvm.py if needed
+        # Run reference execution on par3vm.py if needed
         ref_output = None
         if args.verify or args.run:
-            npvm_py = os.path.join(NPCODE_DIR, "npvm.py")
-            if os.path.exists(npvm_py):
-                log("Running reference execution on npvm.py...", args.verbose)
-                res = run_cmd([sys.executable, npvm_py, npc_file], verbose=args.verbose)
+            par3vm_py = os.path.join(NPCODE_DIR, "par3vm.py")
+            if os.path.exists(par3vm_py):
+                log("Running reference execution on par3vm.py...", args.verbose)
+                res = run_cmd([sys.executable, par3vm_py, npc_file], verbose=args.verbose)
                 ref_output = res.stdout.strip()
                 if args.verbose:
-                    log(f"npvm.py output:\n{ref_output}", args.verbose, is_verbose_msg=True)
+                    log(f"par3vm.py output:\n{ref_output}", args.verbose, is_verbose_msg=True)
 
         # Step 3: Generate payload.asm and modname.asm in build_dir
         payload_asm = os.path.join(build_dir, "payload.asm")

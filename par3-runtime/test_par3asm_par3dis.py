@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_npasm_npdis.py - Verification test suite for npasm.py and npdis.py.
+test_par3asm_par3dis.py - Verification test suite for par3asm.py and par3dis.py.
 Tests assembly, disassembly, expression parsing, and byte-for-byte round-tripping.
 """
 
@@ -9,8 +9,8 @@ import sys
 import subprocess
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-NPASM = os.path.join(SCRIPT_DIR, "npasm.py")
-NPDIS = os.path.join(SCRIPT_DIR, "npdis.py")
+NPASM = os.path.join(SCRIPT_DIR, "par3asm.py")
+NPDIS = os.path.join(SCRIPT_DIR, "par3dis.py")
 
 TEST_ASM_SOURCE = """; ====================================================================
 ; NPCode Comprehensive Test Program

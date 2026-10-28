@@ -10,8 +10,8 @@
 - MiniGolf AST: `/home/strick/github.com/strickyak/minigolf/ast/ast.go`  
 - NP Code Generator: `/home/strick/github.com/strickyak/minigolf/np/codegen.go`  
 - NP Runtime Libraries: `/home/strick/github.com/strickyak/minigolf/np-lib/prelude.golf`, `slice.golf`, `smap.golf`, `regexp.golf`, `btree.golf`, `rbtree.golf`  
-- Bytecode ISA: `np-runtime/design.md`, `np-runtime/opcodes.py`  
-- Assembler / Disassembler / Emulator: `np-runtime/npasm.py`, `np-runtime/npdis.py`, `np-runtime/npvm.py`  
+- Bytecode ISA: `par3-runtime/design.md`, `par3-runtime/opcodes.py`  
+- Assembler / Disassembler / Emulator: `par3-runtime/par3asm.py`, `par3-runtime/par3dis.py`, `par3-runtime/par3vm.py`  
 
 ---
 

@@ -1,6 +1,6 @@
 """
-NPCode Opcode and Binary Format Definitions
-Shared between npasm.py, npdis.py, and VM runtimes.
+Par3 Opcode and Binary Format Definitions
+Shared between par3asm.py, par3dis.py, and VM runtimes.
 """
 
 # Binary Format Constants

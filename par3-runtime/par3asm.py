@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-npasm.py - Assembler for the NPCode Virtual Machine.
+par3asm.py - Assembler for the Par3 Virtual Machine.
 
-Assembles NP assembly source (.npasm) into NPCode bytecode binaries (.npc).
+Assembles Par3 assembly source (.p3a / .npasm) into Par3 bytecode binaries (.p3p / .npc).
 Features:
   - Expressions with arithmetic, bitwise operators, and multi-radix numbers ($hex, %bin, @oct, 0x, 0b).
   - Named labels, relative branch offset calculation (JUMP, JUMP_IF_TRUE, JUMP_IF_FALSE).
@@ -867,7 +867,7 @@ class Assembler:
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("Usage: npasm.py <input.npasm> [-o <output.npc>] [--listing] [-v]")
+        print("Usage: par3asm.py <input.p3a> [-o <output.p3p>] [--listing] [-v]")
         sys.exit(0)
 
     input_file = sys.argv[1]

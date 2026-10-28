@@ -50,7 +50,7 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 		{"build_img", "par3-apps/build_img.par3"},
 	}
 
-	npasmPy := filepath.Join("par3-runtime", "npasm.py")
+	par3asmPy := filepath.Join("par3-runtime", "par3asm.py")
 	for _, tool := range tools {
 		p3aPath := filepath.Join(tmpDir, tool.name+".p3a")
 		cmd := exec.Command(goCompilerBin, tool.src, "-o", p3aPath)
@@ -58,7 +58,7 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 			t.Fatalf("Failed to compile %s with Go-bootstrapped compiler: %v\nOutput: %s", tool.src, err, string(out))
 		}
 
-		// Convert CR -> LF for npasm.py and assemble to .p3p
+		// Convert CR -> LF for par3asm.py and assemble to .p3p
 		rawBytes, err := os.ReadFile(p3aPath)
 		if err != nil {
 			t.Fatalf("Failed to read %s: %v", p3aPath, err)
@@ -70,19 +70,19 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 		}
 
 		p3pPath := filepath.Join(tmpDir, tool.name+".p3p")
-		asmCmd := exec.Command("python3", npasmPy, lfPath, "-o", p3pPath)
+		asmCmd := exec.Command("python3", par3asmPy, lfPath, "-o", p3pPath)
 		if out, err := asmCmd.CombinedOutput(); err != nil {
-			t.Fatalf("Failed to assemble %s with npasm.py: %v\nOutput: %s", lfPath, err, string(out))
+			t.Fatalf("Failed to assemble %s with par3asm.py: %v\nOutput: %s", lfPath, err, string(out))
 		}
 	}
 
-	// 3. Run minigolf_par3.p3p under npvm.py to self-compile minigolf_par3.go
-	npvmPy := filepath.Join("par3-runtime", "npvm.py")
+	// 3. Run minigolf_par3.p3p under par3vm.py to self-compile minigolf_par3.go
+	par3vmPy := filepath.Join("par3-runtime", "par3vm.py")
 	compilerP3p := filepath.Join(tmpDir, "minigolf_par3.p3p")
 	selfP3a := filepath.Join(tmpDir, "self_minigolf_par3.p3a")
-	vmCmd := exec.Command("python3", npvmPy, compilerP3p, "--", "par3-apps/minigolf_par3.go", "-o", selfP3a)
+	vmCmd := exec.Command("python3", par3vmPy, compilerP3p, "--", "par3-apps/minigolf_par3.go", "-o", selfP3a)
 	if out, err := vmCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to self-compile minigolf_par3.go on npvm.py: %v\nOutput: %s", err, string(out))
+		t.Fatalf("Failed to self-compile minigolf_par3.go on par3vm.py: %v\nOutput: %s", err, string(out))
 	}
 
 	// 4. Verify byte-for-byte identity between Go-bootstrapped .p3a and VM self-compiled .p3a
@@ -98,12 +98,12 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 		t.Fatalf("Stage 1 (Go-bootstrapped) and Stage 2 (VM self-compiled) minigolf_par3.p3a differ! (%d vs %d bytes)", len(stage1Bytes), len(stage2Bytes))
 	}
 
-	// 5. Verify par3asm.p3p assembles minigolf_par3.p3a identically to npasm.py
+	// 5. Verify par3asm.p3p assembles minigolf_par3.p3a identically to par3asm.py
 	par3asmP3p := filepath.Join(tmpDir, "par3asm.p3p")
 	selfP3p := filepath.Join(tmpDir, "self_minigolf_par3.p3p")
-	asmVmCmd := exec.Command("python3", npvmPy, par3asmP3p, "--", selfP3a, "-o", selfP3p)
+	asmVmCmd := exec.Command("python3", par3vmPy, par3asmP3p, "--", selfP3a, "-o", selfP3p)
 	if out, err := asmVmCmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to assemble minigolf_par3.p3a with par3asm.p3p on npvm.py: %v\nOutput: %s", err, string(out))
+		t.Fatalf("Failed to assemble minigolf_par3.p3a with par3asm.p3p on par3vm.py: %v\nOutput: %s", err, string(out))
 	}
 	stage1P3pBytes, err := os.ReadFile(compilerP3p)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestPar3GoBootstrapAndSelfCompile(t *testing.T) {
 		t.Fatalf("Failed to read stage2 .p3p: %v", err)
 	}
 	if !bytes.Equal(stage1P3pBytes, stage2P3pBytes) {
-		t.Fatalf("npasm.py and par3asm.p3p produced different minigolf_par3.p3p binaries! (%d vs %d bytes)", len(stage1P3pBytes), len(stage2P3pBytes))
+		t.Fatalf("par3asm.py and par3asm.p3p produced different minigolf_par3.p3p binaries! (%d vs %d bytes)", len(stage1P3pBytes), len(stage2P3pBytes))
 	}
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-test_npvm.py - Verification test suite for npvm.py (NPCode VM Emulator).
+test_par3vm.py - Verification test suite for par3vm.py (Par3 VM Emulator).
 Tests execution of arithmetic, strings, slices, linear dicts, lists, buffers,
 recursion, file I/O, and verbose tracing.
 """
@@ -11,8 +11,8 @@ import tempfile
 import subprocess
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-NPASM = os.path.join(SCRIPT_DIR, "npasm.py")
-NPVM = os.path.join(SCRIPT_DIR, "npvm.py")
+NPASM = os.path.join(SCRIPT_DIR, "par3asm.py")
+NPVM = os.path.join(SCRIPT_DIR, "par3vm.py")
 
 
 def assemble_and_run(source: str, verbose: bool = False, cli_args: list = None) -> tuple[int, str, str]:
