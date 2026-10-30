@@ -1,0 +1,2357 @@
+package main
+
+import "os9"
+
+// =============================================================================
+// LNBASIC: Classic CoCo-Style Line-Numbered BASIC for NitrOS-9 & HatvanOS
+// =============================================================================
+// - Tokenizes numbered lines and immediate-mode statements on entry.
+// - Strictly mallocs & frees all strings, token slices, statements, program
+//   lines, DIM arrays, variable slots, and GOSUB/FOR frames.
+// - Never shares string contents: every string variable, array slot, token
+//   literal, and expression result owns its own heap allocation.
+// =============================================================================
+
+// Token Kinds
+const TOK_EOF = 0
+
+// Statement / Command Keywords
+const TOK_PRINT = 1
+const TOK_LET = 2
+const TOK_REM = 3
+const TOK_IF = 4
+const TOK_THEN = 5
+const TOK_ELSE = 6
+const TOK_GOTO = 7
+const TOK_GOSUB = 8
+const TOK_RETURN = 9
+const TOK_DIM = 10
+const TOK_FOR = 11
+const TOK_TO = 12
+const TOK_STEP = 13
+const TOK_NEXT = 14
+const TOK_INPUT = 15
+const TOK_END = 16
+const TOK_STOP = 17
+const TOK_RUN = 18
+const TOK_LIST = 19
+const TOK_SAVE = 20
+const TOK_LOAD = 21
+const TOK_NEW = 22
+const TOK_CLEAR = 23
+const TOK_BYE = 24
+
+// Built-in Function Keywords
+const TOK_LEN = 30
+const TOK_VAL = 31
+const TOK_ASC = 32
+const TOK_ABS = 33
+const TOK_MEM = 34
+const TOK_STRS = 35   // STR$
+const TOK_CHRS = 36   // CHR$
+const TOK_LEFTS = 37  // LEFT$
+const TOK_RIGHTS = 38 // RIGHT$
+const TOK_MIDS = 39   // MID$
+
+// Operators & Punctuation
+const TOK_PLUS = 50
+const TOK_MINUS = 51
+const TOK_STAR = 52
+const TOK_SLASH = 53
+const TOK_MOD = 54
+const TOK_EQ = 55
+const TOK_NE = 56
+const TOK_LT = 57
+const TOK_LE = 58
+const TOK_GT = 59
+const TOK_GE = 60
+const TOK_AND = 61
+const TOK_OR = 62
+const TOK_NOT = 63
+const TOK_LPAREN = 64
+const TOK_RPAREN = 65
+const TOK_COMMA = 66
+const TOK_SEMI = 67
+const TOK_COLON = 68
+
+// Value & Variable Tokens
+const TOK_INT = 80
+const TOK_STR = 81
+const TOK_VAR_INT = 82
+const TOK_VAR_STR = 83
+const TOK_REM_TEXT = 84
+
+// =============================================================================
+// Data Structures (All Dynamically Allocated via malloc/zalloc)
+// =============================================================================
+
+type Token struct {
+	Kind   byte
+	VarID  word
+	IntVal int
+	StrVal string
+}
+
+type Stmt struct {
+	Next   *Stmt
+	Tokens slice[Token]
+}
+
+type ProgLine struct {
+	LineNum   word
+	Next      *ProgLine
+	FirstStmt *Stmt
+}
+
+type VarSlot struct {
+	VarID  word
+	IntVal int
+	StrVal string
+	IntArr slice[int]
+	StrArr slice[string]
+	Next   *VarSlot
+}
+
+type GosubFrame struct {
+	RetLine *ProgLine
+	RetStmt *Stmt
+	Next    *GosubFrame
+}
+
+type ForFrame struct {
+	VarID    word
+	Limit    int
+	Step     int
+	LoopLine *ProgLine
+	LoopStmt *Stmt
+	Next     *ForFrame
+}
+
+var ProgHead *ProgLine
+var VarHead *VarSlot
+var GosubTop *GosubFrame
+var ForTop *ForFrame
+
+// Execution control state
+var CurLine *ProgLine
+var CurStmt *Stmt
+var NextLine *ProgLine
+var NextStmt *Stmt
+var Jumped byte
+var Halted byte
+var RuntimeErr byte
+var ExitRequested byte
+
+var InputBuf [256]byte
+var OutBuf [256]byte
+
+// =============================================================================
+// Strict Heap & String Ownership Helpers
+// =============================================================================
+
+func allocObj[T any]() *T {
+	return (*T)(zalloc(sizeof[T]()))
+}
+
+func freeObj[T any](p *T) {
+	if word(p) != 0 {
+		free((*byte)(word(p)))
+	}
+}
+
+// strCopy always allocates a fresh heap buffer via strdup so no two strings
+// ever share underlying storage.
+func strCopy(s string) string {
+	return strdup(s)
+}
+
+func strOwnFree(s *string) {
+	if s.Base != 0 {
+		strfree(*s)
+		s.Base = 0
+		s.Len = 0
+		s.Cap = 0
+	}
+}
+
+func strSetOwned(dst *string, ownedSrc string) {
+	strOwnFree(dst)
+	*dst = ownedSrc
+}
+
+func strConcatOwned(leftOwned string, rightOwned string) string {
+	n1 := leftOwned.Len
+	n2 := rightOwned.Len
+	total := n1 + n2
+	p := word(malloc(total + 1))
+	for i := word(0); i < n1; i++ {
+		pokeb(p+i, leftOwned.Get(i))
+	}
+	for i := word(0); i < n2; i++ {
+		pokeb(p+n1+i, rightOwned.Get(i))
+	}
+	pokeb(p+total, 0)
+	strfree(leftOwned)
+	strfree(rightOwned)
+
+	var z string
+	z.Base = p
+	z.Len = total
+	z.Cap = total + 1
+	return z
+}
+
+func intToOwnedStr(v int) string {
+	var tmp [16]byte
+	var pos word = 0
+	var u word
+	if v < 0 {
+		tmp[pos] = '-'
+		pos++
+		u = word(int(0) - v)
+	} else {
+		u = word(v)
+	}
+	if u == 0 {
+		tmp[pos] = '0'
+		pos++
+	} else {
+		var digits [10]byte
+		var nd word = 0
+		for u > 0 {
+			digits[nd] = byte('0' + mod_word(u, 10))
+			nd++
+			u = div_word(u, 10)
+		}
+		for nd > 0 {
+			nd--
+			tmp[pos] = digits[nd]
+			pos++
+		}
+	}
+	p := word(malloc(pos + 1))
+	for i := word(0); i < pos; i++ {
+		pokeb(p+i, tmp[i])
+	}
+	pokeb(p+pos, 0)
+	var z string
+	z.Base = p
+	z.Len = pos
+	z.Cap = pos + 1
+	return z
+}
+
+func parseOwnedInt(s string) int {
+	var i word = 0
+	n := s.Len
+	for i < n && (s.Get(i) == ' ' || s.Get(i) == '\t') {
+		i++
+	}
+	var neg byte = 0
+	if i < n {
+		if s.Get(i) == '-' {
+			neg = 1
+			i++
+		} else if s.Get(i) == '+' {
+			i++
+		}
+	}
+	var acc word = 0
+	for i < n {
+		c := s.Get(i)
+		if c >= '0' && c <= '9' {
+			acc = mul_word(acc, 10) + word(c-'0')
+			i++
+		} else {
+			break
+		}
+	}
+	if neg != 0 {
+		return int(0) - int(acc)
+	}
+	return int(acc)
+}
+
+// =============================================================================
+// Console & File I/O Helpers
+// =============================================================================
+
+func writeStrPath(path byte, s string) {
+	if s.Len == 0 {
+		return
+	}
+	var raw slice[byte]
+	raw.Base = s.Base
+	raw.Len = s.Len
+	raw.Cap = s.Len
+	nW, errW := os9.Write(path, raw)
+	if errW != 0 && nW == 0 {
+		return
+	}
+}
+
+func writeNewlinePath(path byte) {
+	OutBuf[0] = 13
+	var raw slice[byte]
+	raw.Base = word(&OutBuf[0])
+	raw.Len = 1
+	raw.Cap = 1
+	nW, errW := os9.WritLn(path, raw)
+	if errW != 0 && nW == 0 {
+		return
+	}
+}
+
+func outStr(s string) {
+	writeStrPath(os9.STDOUT, s)
+}
+
+func outLn(s string) {
+	writeStrPath(os9.STDOUT, s)
+	writeNewlinePath(os9.STDOUT)
+}
+
+func outInt(v int) {
+	s := intToOwnedStr(v)
+	outStr(s)
+	strfree(s)
+}
+
+func outWord(w word) {
+	outInt(int(w))
+}
+
+func readLineFromPath(path byte) (string, byte) {
+	var raw slice[byte]
+	raw.Base = word(&InputBuf[0])
+	raw.Len = 250
+	raw.Cap = 256
+	nRead, err := os9.ReadLn(path, raw)
+	if err != 0 {
+		var empty string
+		return empty, err
+	}
+	for nRead > 0 {
+		c := InputBuf[nRead-1]
+		if c == 13 || c == 10 {
+			nRead--
+		} else {
+			break
+		}
+	}
+	p := word(malloc(nRead + 1))
+	for i := word(0); i < nRead; i++ {
+		pokeb(p+i, InputBuf[i])
+	}
+	pokeb(p+nRead, 0)
+	var line string
+	line.Base = p
+	line.Len = nRead
+	line.Cap = nRead + 1
+	return line, 0
+}
+
+func raiseError(msg string) {
+	outStr("?ERROR: ")
+	outStr(msg)
+	if word(CurLine) != 0 && CurLine.LineNum > 0 {
+		outStr(" IN ")
+		outWord(CurLine.LineNum)
+	}
+	writeNewlinePath(os9.STDOUT)
+	RuntimeErr = 1
+	Halted = 1
+}
+
+// =============================================================================
+// Variable, Array, Stack, and Program Cleanup (malloc & free everything)
+// =============================================================================
+
+func freeGosubStack() {
+	for word(GosubTop) != 0 {
+		next := GosubTop.Next
+		freeObj[GosubFrame](GosubTop)
+		GosubTop = next
+	}
+}
+
+func freeForStack() {
+	for word(ForTop) != 0 {
+		next := ForTop.Next
+		freeObj[ForFrame](ForTop)
+		ForTop = next
+	}
+}
+
+func clearVars() {
+	freeGosubStack()
+	freeForStack()
+	curr := VarHead
+	for word(curr) != 0 {
+		next := curr.Next
+		strOwnFree(&curr.StrVal)
+		if curr.IntArr.Base != 0 {
+			freeslice[int](curr.IntArr)
+		}
+		if curr.StrArr.Base != 0 {
+			for i := word(0); i < curr.StrArr.Len; i++ {
+				elem := curr.StrArr.Get(i)
+				if elem.Base != 0 {
+					strfree(elem)
+				}
+			}
+			freeslice[string](curr.StrArr)
+		}
+		freeObj[VarSlot](curr)
+		curr = next
+	}
+	VarHead = (*VarSlot)(0)
+}
+
+func freeStmt(s *Stmt) {
+	if word(s) == 0 {
+		return
+	}
+	if s.Tokens.Base != 0 {
+		for i := word(0); i < s.Tokens.Len; i++ {
+			tok := s.Tokens.Get(i)
+			if (tok.Kind == TOK_STR || tok.Kind == TOK_REM_TEXT) && tok.StrVal.Base != 0 {
+				strfree(tok.StrVal)
+			}
+		}
+		freeslice[Token](s.Tokens)
+	}
+	freeObj[Stmt](s)
+}
+
+func freeStmtChain(first *Stmt) {
+	curr := first
+	for word(curr) != 0 {
+		next := curr.Next
+		freeStmt(curr)
+		curr = next
+	}
+}
+
+func freeProgLine(pl *ProgLine) {
+	if word(pl) == 0 {
+		return
+	}
+	freeStmtChain(pl.FirstStmt)
+	freeObj[ProgLine](pl)
+}
+
+func clearProgram() {
+	clearVars()
+	curr := ProgHead
+	for word(curr) != 0 {
+		next := curr.Next
+		freeProgLine(curr)
+		curr = next
+	}
+	ProgHead = (*ProgLine)(0)
+}
+
+// =============================================================================
+// Variable & Array Lookup / Allocation
+// =============================================================================
+
+func encodeVarID(c0 byte, c1 byte) word {
+	return (word(c0) << 8) | word(c1)
+}
+
+func getOrCreateVar(varID word) *VarSlot {
+	curr := VarHead
+	for word(curr) != 0 {
+		if curr.VarID == varID {
+			return curr
+		}
+		curr = curr.Next
+	}
+	v := allocObj[VarSlot]()
+	v.VarID = varID
+	v.StrVal = strCopy("")
+	v.Next = VarHead
+	VarHead = v
+	return v
+}
+
+func dimIntArray(varID word, maxIdx word) {
+	v := getOrCreateVar(varID)
+	if v.IntArr.Base != 0 {
+		freeslice[int](v.IntArr)
+		v.IntArr.Base = 0
+		v.IntArr.Len = 0
+		v.IntArr.Cap = 0
+	}
+	v.IntArr = makeslice[int](maxIdx + 1)
+}
+
+func dimStrArray(varID word, maxIdx word) {
+	v := getOrCreateVar(varID)
+	if v.StrArr.Base != 0 {
+		for i := word(0); i < v.StrArr.Len; i++ {
+			elem := v.StrArr.Get(i)
+			if elem.Base != 0 {
+				strfree(elem)
+			}
+		}
+		freeslice[string](v.StrArr)
+		v.StrArr.Base = 0
+		v.StrArr.Len = 0
+		v.StrArr.Cap = 0
+	}
+	v.StrArr = makeslice[string](maxIdx + 1)
+	for i := word(0); i <= maxIdx; i++ {
+		v.StrArr.Put(i, strCopy(""))
+	}
+}
+
+func ensureIntArray(v *VarSlot, idx int) bool {
+	if idx < 0 {
+		raiseError("BAD SUBSCRIPT")
+		return false
+	}
+	if v.IntArr.Base == 0 {
+		var defMax word = 10
+		if word(idx) > defMax {
+			defMax = word(idx)
+		}
+		v.IntArr = makeslice[int](defMax + 1)
+	}
+	if word(idx) >= v.IntArr.Len {
+		raiseError("SUBSCRIPT OUT OF RANGE")
+		return false
+	}
+	return true
+}
+
+func ensureStrArray(v *VarSlot, idx int) bool {
+	if idx < 0 {
+		raiseError("BAD SUBSCRIPT")
+		return false
+	}
+	if v.StrArr.Base == 0 {
+		var defMax word = 10
+		if word(idx) > defMax {
+			defMax = word(idx)
+		}
+		v.StrArr = makeslice[string](defMax + 1)
+		for i := word(0); i <= defMax; i++ {
+			v.StrArr.Put(i, strCopy(""))
+		}
+	}
+	if word(idx) >= v.StrArr.Len {
+		raiseError("SUBSCRIPT OUT OF RANGE")
+		return false
+	}
+	return true
+}
+
+// =============================================================================
+// Lexer / Tokenizer
+// =============================================================================
+
+func isSpaceCh(c byte) bool {
+	return c == ' ' || c == '\t'
+}
+
+func isDigitCh(c byte) bool {
+	return c >= '0' && c <= '9'
+}
+
+func toUpperCh(c byte) byte {
+	if c >= 'a' && c <= 'z' {
+		return c - 32
+	}
+	return c
+}
+
+func isAlphaCh(c byte) bool {
+	u := toUpperCh(c)
+	return u >= 'A' && u <= 'Z'
+}
+
+func isAlnumCh(c byte) bool {
+	return isAlphaCh(c) || isDigitCh(c)
+}
+
+func matchKeyword(wordBuf string) byte {
+	if wordBuf == "PRINT" || wordBuf == "?" {
+		return TOK_PRINT
+	}
+	if wordBuf == "LET" {
+		return TOK_LET
+	}
+	if wordBuf == "REM" {
+		return TOK_REM
+	}
+	if wordBuf == "IF" {
+		return TOK_IF
+	}
+	if wordBuf == "THEN" {
+		return TOK_THEN
+	}
+	if wordBuf == "ELSE" {
+		return TOK_ELSE
+	}
+	if wordBuf == "GOTO" {
+		return TOK_GOTO
+	}
+	if wordBuf == "GOSUB" {
+		return TOK_GOSUB
+	}
+	if wordBuf == "RETURN" {
+		return TOK_RETURN
+	}
+	if wordBuf == "DIM" {
+		return TOK_DIM
+	}
+	if wordBuf == "FOR" {
+		return TOK_FOR
+	}
+	if wordBuf == "TO" {
+		return TOK_TO
+	}
+	if wordBuf == "STEP" {
+		return TOK_STEP
+	}
+	if wordBuf == "NEXT" {
+		return TOK_NEXT
+	}
+	if wordBuf == "INPUT" {
+		return TOK_INPUT
+	}
+	if wordBuf == "END" {
+		return TOK_END
+	}
+	if wordBuf == "STOP" {
+		return TOK_STOP
+	}
+	if wordBuf == "RUN" {
+		return TOK_RUN
+	}
+	if wordBuf == "LIST" {
+		return TOK_LIST
+	}
+	if wordBuf == "SAVE" {
+		return TOK_SAVE
+	}
+	if wordBuf == "LOAD" {
+		return TOK_LOAD
+	}
+	if wordBuf == "NEW" {
+		return TOK_NEW
+	}
+	if wordBuf == "CLEAR" {
+		return TOK_CLEAR
+	}
+	if wordBuf == "BYE" || wordBuf == "SYSTEM" {
+		return TOK_BYE
+	}
+	if wordBuf == "MOD" {
+		return TOK_MOD
+	}
+	if wordBuf == "AND" {
+		return TOK_AND
+	}
+	if wordBuf == "OR" {
+		return TOK_OR
+	}
+	if wordBuf == "NOT" {
+		return TOK_NOT
+	}
+	if wordBuf == "LEN" {
+		return TOK_LEN
+	}
+	if wordBuf == "VAL" {
+		return TOK_VAL
+	}
+	if wordBuf == "ASC" {
+		return TOK_ASC
+	}
+	if wordBuf == "ABS" {
+		return TOK_ABS
+	}
+	if wordBuf == "MEM" {
+		return TOK_MEM
+	}
+	if wordBuf == "STR$" {
+		return TOK_STRS
+	}
+	if wordBuf == "CHR$" {
+		return TOK_CHRS
+	}
+	if wordBuf == "LEFT$" {
+		return TOK_LEFTS
+	}
+	if wordBuf == "RIGHT$" {
+		return TOK_RIGHTS
+	}
+	if wordBuf == "MID$" {
+		return TOK_MIDS
+	}
+	return 0
+}
+
+func makeExactTokenSlice(temp slice[Token]) slice[Token] {
+	n := temp.Len
+	exact := makeslice[Token](n)
+	for i := word(0); i < n; i++ {
+		exact.Put(i, temp.Get(i))
+	}
+	if temp.Base != 0 {
+		freeslice[Token](temp)
+	}
+	return exact
+}
+
+func appendFlushedStmt(head **Stmt, tail **Stmt, curTokens *slice[Token], inIf *byte) {
+	if curTokens.Len == 0 {
+		return
+	}
+	var eofTok Token
+	eofTok.Kind = TOK_EOF
+	curTokens.Append(eofTok)
+
+	st := allocObj[Stmt]()
+	st.Tokens = makeExactTokenSlice(*curTokens)
+	curTokens.Base = 0
+	curTokens.Len = 0
+	curTokens.Cap = 0
+	*inIf = 0
+
+	if word(*head) == 0 {
+		*head = st
+		*tail = st
+	} else {
+		(*tail).Next = st
+		*tail = st
+	}
+}
+
+// tokenizeStmts converts a line body (after any leading line number) into a
+// malloc'd chain of Stmt structs. Colon ':' splits statements unless the
+// current statement starts with IF or REM.
+func tokenizeStmts(src string, startPos word) *Stmt {
+	var head *Stmt
+	var tail *Stmt
+	var curTokens slice[Token]
+	var inIf byte = 0
+
+	n := src.Len
+	i := startPos
+
+	for i < n {
+		for i < n && isSpaceCh(src.Get(i)) {
+			i++
+		}
+		if i >= n {
+			break
+		}
+		ch := src.Get(i)
+
+		// Colon statement separator (splits statements outside IF)
+		if ch == ':' {
+			i++
+			if inIf != 0 {
+				var t Token
+				t.Kind = TOK_COLON
+				curTokens.Append(t)
+			} else {
+				appendFlushedStmt(&head, &tail, &curTokens, &inIf)
+			}
+			continue
+		}
+
+		// Apostrophe remark
+		if ch == '\'' {
+			i++
+			if i < n && src.Get(i) == ' ' {
+				i++
+			}
+			var remTok Token
+			remTok.Kind = TOK_REM
+			curTokens.Append(remTok)
+
+			var txtTok Token
+			txtTok.Kind = TOK_REM_TEXT
+			txtTok.StrVal = strCopy(src.Chop(i, n))
+			curTokens.Append(txtTok)
+			i = n
+			break
+		}
+
+		// '?' shorthand for PRINT
+		if ch == '?' {
+			i++
+			var t Token
+			t.Kind = TOK_PRINT
+			curTokens.Append(t)
+			continue
+		}
+
+		// Quoted string literal
+		if ch == '"' {
+			i++
+			startStr := i
+			for i < n && src.Get(i) != '"' {
+				i++
+			}
+			var t Token
+			t.Kind = TOK_STR
+			t.StrVal = strCopy(src.Chop(startStr, i))
+			if i < n && src.Get(i) == '"' {
+				i++
+			}
+			curTokens.Append(t)
+			continue
+		}
+
+		// Integer literal
+		if isDigitCh(ch) {
+			var acc word = 0
+			for i < n && isDigitCh(src.Get(i)) {
+				acc = mul_word(acc, 10) + word(src.Get(i)-'0')
+				i++
+			}
+			var t Token
+			t.Kind = TOK_INT
+			t.IntVal = int(acc)
+			curTokens.Append(t)
+			continue
+		}
+
+		// Identifier or Keyword
+		if isAlphaCh(ch) {
+			var wordBytes [16]byte
+			var wLen word = 0
+			for i < n && isAlnumCh(src.Get(i)) {
+				if wLen < 14 {
+					wordBytes[wLen] = toUpperCh(src.Get(i))
+					wLen++
+				}
+				i++
+			}
+			hasDollar := byte(0)
+			if i < n && src.Get(i) == '$' {
+				hasDollar = 1
+				if wLen < 15 {
+					wordBytes[wLen] = '$'
+					wLen++
+				}
+				i++
+			}
+			var wordSlice string
+			wordSlice.Base = word(&wordBytes[0])
+			wordSlice.Len = wLen
+			wordSlice.Cap = wLen
+
+			kw := matchKeyword(wordSlice)
+			if kw != 0 {
+				var t Token
+				t.Kind = kw
+				curTokens.Append(t)
+				if kw == TOK_IF {
+					inIf = 1
+				} else if kw == TOK_REM {
+					if i < n && src.Get(i) == ' ' {
+						i++
+					}
+					var txtTok Token
+					txtTok.Kind = TOK_REM_TEXT
+					txtTok.StrVal = strCopy(src.Chop(i, n))
+					curTokens.Append(txtTok)
+					i = n
+					break
+				}
+			} else {
+				c0 := wordBytes[0]
+				var c1 byte = 0
+				if (hasDollar == 0 && wLen >= 2) || (hasDollar != 0 && wLen >= 3) {
+					c1 = wordBytes[1]
+				}
+				var t Token
+				if hasDollar != 0 {
+					t.Kind = TOK_VAR_STR
+				} else {
+					t.Kind = TOK_VAR_INT
+				}
+				t.VarID = encodeVarID(c0, c1)
+				curTokens.Append(t)
+			}
+			continue
+		}
+
+		// Operators & Punctuation
+		var t Token
+		if ch == '+' {
+			t.Kind = TOK_PLUS
+			i++
+		} else if ch == '-' {
+			t.Kind = TOK_MINUS
+			i++
+		} else if ch == '*' {
+			t.Kind = TOK_STAR
+			i++
+		} else if ch == '/' {
+			t.Kind = TOK_SLASH
+			i++
+		} else if ch == '(' {
+			t.Kind = TOK_LPAREN
+			i++
+		} else if ch == ')' {
+			t.Kind = TOK_RPAREN
+			i++
+		} else if ch == ',' {
+			t.Kind = TOK_COMMA
+			i++
+		} else if ch == ';' {
+			t.Kind = TOK_SEMI
+			i++
+		} else if ch == '=' {
+			t.Kind = TOK_EQ
+			i++
+		} else if ch == '<' {
+			i++
+			if i < n && src.Get(i) == '>' {
+				t.Kind = TOK_NE
+				i++
+			} else if i < n && src.Get(i) == '=' {
+				t.Kind = TOK_LE
+				i++
+			} else {
+				t.Kind = TOK_LT
+			}
+		} else if ch == '>' {
+			i++
+			if i < n && src.Get(i) == '=' {
+				t.Kind = TOK_GE
+				i++
+			} else if i < n && src.Get(i) == '<' {
+				t.Kind = TOK_NE
+				i++
+			} else {
+				t.Kind = TOK_GT
+			}
+		} else {
+			// Skip unrecognized character
+			i++
+			continue
+		}
+		curTokens.Append(t)
+	}
+
+	appendFlushedStmt(&head, &tail, &curTokens, &inIf)
+	if curTokens.Base != 0 {
+		freeslice[Token](curTokens)
+	}
+	return head
+}
+
+// =============================================================================
+// Program Line Storage (Sorted Linked List of malloc'd ProgLine nodes)
+// =============================================================================
+
+func deleteLine(lineNum word) {
+	var prev *ProgLine
+	curr := ProgHead
+	for word(curr) != 0 {
+		if curr.LineNum == lineNum {
+			if word(prev) == 0 {
+				ProgHead = curr.Next
+			} else {
+				prev.Next = curr.Next
+			}
+			freeProgLine(curr)
+			return
+		}
+		if curr.LineNum > lineNum {
+			return
+		}
+		prev = curr
+		curr = curr.Next
+	}
+}
+
+func insertOrReplaceLine(lineNum word, firstStmt *Stmt) {
+	if word(firstStmt) == 0 {
+		deleteLine(lineNum)
+		return
+	}
+	var prev *ProgLine
+	curr := ProgHead
+	for word(curr) != 0 && curr.LineNum < lineNum {
+		prev = curr
+		curr = curr.Next
+	}
+	if word(curr) != 0 && curr.LineNum == lineNum {
+		freeStmtChain(curr.FirstStmt)
+		curr.FirstStmt = firstStmt
+		return
+	}
+	pl := allocObj[ProgLine]()
+	pl.LineNum = lineNum
+	pl.FirstStmt = firstStmt
+	pl.Next = curr
+	if word(prev) == 0 {
+		ProgHead = pl
+	} else {
+		prev.Next = pl
+	}
+}
+
+func findProgLine(lineNum word) *ProgLine {
+	curr := ProgHead
+	for word(curr) != 0 {
+		if curr.LineNum == lineNum {
+			return curr
+		}
+		curr = curr.Next
+	}
+	return (*ProgLine)(0)
+}
+
+// =============================================================================
+// Detokenizer (for LIST and SAVE)
+// =============================================================================
+
+func tokenName(kind byte) string {
+	if kind == TOK_PRINT {
+		return "PRINT"
+	}
+	if kind == TOK_LET {
+		return "LET"
+	}
+	if kind == TOK_REM {
+		return "REM"
+	}
+	if kind == TOK_IF {
+		return "IF"
+	}
+	if kind == TOK_THEN {
+		return "THEN"
+	}
+	if kind == TOK_ELSE {
+		return "ELSE"
+	}
+	if kind == TOK_GOTO {
+		return "GOTO"
+	}
+	if kind == TOK_GOSUB {
+		return "GOSUB"
+	}
+	if kind == TOK_RETURN {
+		return "RETURN"
+	}
+	if kind == TOK_DIM {
+		return "DIM"
+	}
+	if kind == TOK_FOR {
+		return "FOR"
+	}
+	if kind == TOK_TO {
+		return "TO"
+	}
+	if kind == TOK_STEP {
+		return "STEP"
+	}
+	if kind == TOK_NEXT {
+		return "NEXT"
+	}
+	if kind == TOK_INPUT {
+		return "INPUT"
+	}
+	if kind == TOK_END {
+		return "END"
+	}
+	if kind == TOK_STOP {
+		return "STOP"
+	}
+	if kind == TOK_RUN {
+		return "RUN"
+	}
+	if kind == TOK_LIST {
+		return "LIST"
+	}
+	if kind == TOK_SAVE {
+		return "SAVE"
+	}
+	if kind == TOK_LOAD {
+		return "LOAD"
+	}
+	if kind == TOK_NEW {
+		return "NEW"
+	}
+	if kind == TOK_CLEAR {
+		return "CLEAR"
+	}
+	if kind == TOK_BYE {
+		return "BYE"
+	}
+	if kind == TOK_LEN {
+		return "LEN"
+	}
+	if kind == TOK_VAL {
+		return "VAL"
+	}
+	if kind == TOK_ASC {
+		return "ASC"
+	}
+	if kind == TOK_ABS {
+		return "ABS"
+	}
+	if kind == TOK_MEM {
+		return "MEM"
+	}
+	if kind == TOK_STRS {
+		return "STR$"
+	}
+	if kind == TOK_CHRS {
+		return "CHR$"
+	}
+	if kind == TOK_LEFTS {
+		return "LEFT$"
+	}
+	if kind == TOK_RIGHTS {
+		return "RIGHT$"
+	}
+	if kind == TOK_MIDS {
+		return "MID$"
+	}
+	if kind == TOK_PLUS {
+		return "+"
+	}
+	if kind == TOK_MINUS {
+		return "-"
+	}
+	if kind == TOK_STAR {
+		return "*"
+	}
+	if kind == TOK_SLASH {
+		return "/"
+	}
+	if kind == TOK_MOD {
+		return "MOD"
+	}
+	if kind == TOK_EQ {
+		return "="
+	}
+	if kind == TOK_NE {
+		return "<>"
+	}
+	if kind == TOK_LT {
+		return "<"
+	}
+	if kind == TOK_LE {
+		return "<="
+	}
+	if kind == TOK_GT {
+		return ">"
+	}
+	if kind == TOK_GE {
+		return ">="
+	}
+	if kind == TOK_AND {
+		return "AND"
+	}
+	if kind == TOK_OR {
+		return "OR"
+	}
+	if kind == TOK_NOT {
+		return "NOT"
+	}
+	if kind == TOK_LPAREN {
+		return "("
+	}
+	if kind == TOK_RPAREN {
+		return ")"
+	}
+	if kind == TOK_COMMA {
+		return ","
+	}
+	if kind == TOK_SEMI {
+		return ";"
+	}
+	if kind == TOK_COLON {
+		return ":"
+	}
+	return ""
+}
+
+func isWordLikeToken(k byte) bool {
+	if k >= TOK_PRINT && k <= TOK_MIDS {
+		return true
+	}
+	if k == TOK_MOD || k == TOK_AND || k == TOK_OR || k == TOK_NOT {
+		return true
+	}
+	if k == TOK_INT || k == TOK_VAR_INT || k == TOK_VAR_STR {
+		return true
+	}
+	return false
+}
+
+func writeVarName(path byte, varID word, isStr bool) {
+	var buf [3]byte
+	var n word = 1
+	buf[0] = byte(varID >> 8)
+	c1 := byte(varID & 0xFF)
+	if c1 != 0 {
+		buf[n] = c1
+		n++
+	}
+	if isStr {
+		buf[n] = '$'
+		n++
+	}
+	var s string
+	s.Base = word(&buf[0])
+	s.Len = n
+	s.Cap = n
+	writeStrPath(path, s)
+}
+
+func writeProgLineToPath(path byte, pl *ProgLine) {
+	numStr := intToOwnedStr(int(pl.LineNum))
+	writeStrPath(path, numStr)
+	strfree(numStr)
+	writeStrPath(path, " ")
+
+	st := pl.FirstStmt
+	for word(st) != 0 {
+		var prevKind byte = 0
+		for i := word(0); i < st.Tokens.Len; i++ {
+			tok := st.Tokens.Get(i)
+			if tok.Kind == TOK_EOF {
+				break
+			}
+			if tok.Kind == TOK_REM_TEXT {
+				if tok.StrVal.Len > 0 {
+					writeStrPath(path, " ")
+					writeStrPath(path, tok.StrVal)
+				}
+				prevKind = tok.Kind
+				continue
+			}
+
+			needSpace := false
+			if prevKind != 0 {
+				if tok.Kind == TOK_COLON || tok.Kind == TOK_THEN || tok.Kind == TOK_ELSE ||
+					prevKind == TOK_COLON || prevKind == TOK_THEN || prevKind == TOK_ELSE {
+					needSpace = true
+				} else if isWordLikeToken(prevKind) && isWordLikeToken(tok.Kind) {
+					needSpace = true
+				} else if isWordLikeToken(prevKind) && tok.Kind == TOK_STR {
+					needSpace = true
+				} else if (prevKind >= TOK_PRINT && prevKind <= TOK_BYE) && tok.Kind != TOK_LPAREN {
+					needSpace = true
+				} else if prevKind == TOK_EQ || tok.Kind == TOK_EQ ||
+					prevKind == TOK_NE || tok.Kind == TOK_NE ||
+					prevKind == TOK_LT || tok.Kind == TOK_LT ||
+					prevKind == TOK_LE || tok.Kind == TOK_LE ||
+					prevKind == TOK_GT || tok.Kind == TOK_GT ||
+					prevKind == TOK_GE || tok.Kind == TOK_GE {
+					needSpace = true
+				}
+			}
+			if needSpace {
+				writeStrPath(path, " ")
+			}
+
+			if tok.Kind == TOK_INT {
+				s := intToOwnedStr(tok.IntVal)
+				writeStrPath(path, s)
+				strfree(s)
+			} else if tok.Kind == TOK_STR {
+				writeStrPath(path, "\"")
+				writeStrPath(path, tok.StrVal)
+				writeStrPath(path, "\"")
+			} else if tok.Kind == TOK_VAR_INT {
+				writeVarName(path, tok.VarID, false)
+			} else if tok.Kind == TOK_VAR_STR {
+				writeVarName(path, tok.VarID, true)
+			} else {
+				writeStrPath(path, tokenName(tok.Kind))
+			}
+			prevKind = tok.Kind
+		}
+		st = st.Next
+		if word(st) != 0 {
+			writeStrPath(path, " : ")
+		}
+	}
+	writeNewlinePath(path)
+}
+
+// =============================================================================
+// Expression Evaluator (Recursive Descent over Token Slice)
+// =============================================================================
+
+var ExprTokens slice[Token]
+var ExprPos word
+
+func peekTok() Token {
+	if ExprPos < ExprTokens.Len {
+		return ExprTokens.Get(ExprPos)
+	}
+	var eof Token
+	eof.Kind = TOK_EOF
+	return eof
+}
+
+func nextTok() Token {
+	t := peekTok()
+	if ExprPos < ExprTokens.Len {
+		ExprPos++
+	}
+	return t
+}
+
+func expectKind(k byte) bool {
+	if peekTok().Kind == k {
+		ExprPos++
+		return true
+	}
+	raiseError("SYNTAX ERROR")
+	return false
+}
+
+func isStringExprStart() bool {
+	k := peekTok().Kind
+	return k == TOK_STR || k == TOK_VAR_STR || k == TOK_STRS || k == TOK_CHRS ||
+		k == TOK_LEFTS || k == TOK_RIGHTS || k == TOK_MIDS
+}
+
+// evalStrAtom returns a newly malloc'd string owned by the caller.
+func evalStrAtom() string {
+	t := nextTok()
+	if t.Kind == TOK_STR {
+		return strCopy(t.StrVal)
+	}
+	if t.Kind == TOK_VAR_STR {
+		v := getOrCreateVar(t.VarID)
+		if peekTok().Kind == TOK_LPAREN {
+			ExprPos++
+			idx := evalIntExpr()
+			if !expectKind(TOK_RPAREN) {
+				return strCopy("")
+			}
+			if !ensureStrArray(v, idx) {
+				return strCopy("")
+			}
+			return strCopy(v.StrArr.Get(word(idx)))
+		}
+		return strCopy(v.StrVal)
+	}
+	if t.Kind == TOK_STRS {
+		if !expectKind(TOK_LPAREN) {
+			return strCopy("")
+		}
+		val := evalIntExpr()
+		if !expectKind(TOK_RPAREN) {
+			return strCopy("")
+		}
+		return intToOwnedStr(val)
+	}
+	if t.Kind == TOK_CHRS {
+		if !expectKind(TOK_LPAREN) {
+			return strCopy("")
+		}
+		val := evalIntExpr()
+		if !expectKind(TOK_RPAREN) {
+			return strCopy("")
+		}
+		p := word(malloc(2))
+		pokeb(p, byte(val&0xFF))
+		pokeb(p+1, 0)
+		var z string
+		z.Base = p
+		z.Len = 1
+		z.Cap = 2
+		return z
+	}
+	if t.Kind == TOK_LEFTS {
+		if !expectKind(TOK_LPAREN) {
+			return strCopy("")
+		}
+		s := evalStrExpr()
+		if !expectKind(TOK_COMMA) {
+			strfree(s)
+			return strCopy("")
+		}
+		count := evalIntExpr()
+		if !expectKind(TOK_RPAREN) {
+			strfree(s)
+			return strCopy("")
+		}
+		if count <= 0 {
+			strfree(s)
+			return strCopy("")
+		}
+		n := word(count)
+		if n > s.Len {
+			n = s.Len
+		}
+		res := strCopy(s.Chop(0, n))
+		strfree(s)
+		return res
+	}
+	if t.Kind == TOK_RIGHTS {
+		if !expectKind(TOK_LPAREN) {
+			return strCopy("")
+		}
+		s := evalStrExpr()
+		if !expectKind(TOK_COMMA) {
+			strfree(s)
+			return strCopy("")
+		}
+		count := evalIntExpr()
+		if !expectKind(TOK_RPAREN) {
+			strfree(s)
+			return strCopy("")
+		}
+		if count <= 0 {
+			strfree(s)
+			return strCopy("")
+		}
+		n := word(count)
+		if n > s.Len {
+			n = s.Len
+		}
+		res := strCopy(s.Chop(s.Len-n, s.Len))
+		strfree(s)
+		return res
+	}
+	if t.Kind == TOK_MIDS {
+		if !expectKind(TOK_LPAREN) {
+			return strCopy("")
+		}
+		s := evalStrExpr()
+		if !expectKind(TOK_COMMA) {
+			strfree(s)
+			return strCopy("")
+		}
+		start1 := evalIntExpr()
+		var length int = int(s.Len)
+		if peekTok().Kind == TOK_COMMA {
+			ExprPos++
+			length = evalIntExpr()
+		}
+		if !expectKind(TOK_RPAREN) {
+			strfree(s)
+			return strCopy("")
+		}
+		if start1 < 1 {
+			start1 = 1
+		}
+		start0 := word(start1 - 1)
+		if start0 >= s.Len || length <= 0 {
+			strfree(s)
+			return strCopy("")
+		}
+		end0 := start0 + word(length)
+		if end0 > s.Len {
+			end0 = s.Len
+		}
+		res := strCopy(s.Chop(start0, end0))
+		strfree(s)
+		return res
+	}
+	raiseError("TYPE MISMATCH")
+	return strCopy("")
+}
+
+// evalStrExpr returns a newly malloc'd string owned by the caller.
+func evalStrExpr() string {
+	left := evalStrAtom()
+	for RuntimeErr == 0 && peekTok().Kind == TOK_PLUS {
+		ExprPos++
+		right := evalStrAtom()
+		left = strConcatOwned(left, right)
+	}
+	return left
+}
+
+func evalIntPrimary() int {
+	t := nextTok()
+	if t.Kind == TOK_INT {
+		return t.IntVal
+	}
+	if t.Kind == TOK_VAR_INT {
+		v := getOrCreateVar(t.VarID)
+		if peekTok().Kind == TOK_LPAREN {
+			ExprPos++
+			idx := evalIntExpr()
+			if !expectKind(TOK_RPAREN) {
+				return 0
+			}
+			if !ensureIntArray(v, idx) {
+				return 0
+			}
+			return v.IntArr.Get(word(idx))
+		}
+		return v.IntVal
+	}
+	if t.Kind == TOK_LPAREN {
+		val := evalIntExpr()
+		expectKind(TOK_RPAREN)
+		return val
+	}
+	if t.Kind == TOK_LEN {
+		if !expectKind(TOK_LPAREN) {
+			return 0
+		}
+		s := evalStrExpr()
+		expectKind(TOK_RPAREN)
+		n := int(s.Len)
+		strfree(s)
+		return n
+	}
+	if t.Kind == TOK_VAL {
+		if !expectKind(TOK_LPAREN) {
+			return 0
+		}
+		s := evalStrExpr()
+		expectKind(TOK_RPAREN)
+		v := parseOwnedInt(s)
+		strfree(s)
+		return v
+	}
+	if t.Kind == TOK_ASC {
+		if !expectKind(TOK_LPAREN) {
+			return 0
+		}
+		s := evalStrExpr()
+		expectKind(TOK_RPAREN)
+		var ch int = 0
+		if s.Len > 0 {
+			ch = int(s.Get(0))
+		}
+		strfree(s)
+		return ch
+	}
+	if t.Kind == TOK_ABS {
+		if !expectKind(TOK_LPAREN) {
+			return 0
+		}
+		v := evalIntExpr()
+		expectKind(TOK_RPAREN)
+		if v < 0 {
+			return int(0) - v
+		}
+		return v
+	}
+	if t.Kind == TOK_MEM {
+		return int(BytesFree())
+	}
+	raiseError("SYNTAX ERROR")
+	return 0
+}
+
+func evalIntUnary() int {
+	k := peekTok().Kind
+	if k == TOK_MINUS {
+		ExprPos++
+		return int(0) - evalIntUnary()
+	}
+	if k == TOK_PLUS {
+		ExprPos++
+		return evalIntUnary()
+	}
+	if k == TOK_NOT {
+		ExprPos++
+		v := evalIntUnary()
+		if v == 0 {
+			return -1
+		}
+		return 0
+	}
+	return evalIntPrimary()
+}
+
+func evalIntMul() int {
+	left := evalIntUnary()
+	for RuntimeErr == 0 {
+		k := peekTok().Kind
+		if k == TOK_STAR {
+			ExprPos++
+			right := evalIntUnary()
+			left = mul_int(left, right)
+		} else if k == TOK_SLASH {
+			ExprPos++
+			right := evalIntUnary()
+			if right == 0 {
+				raiseError("DIVISION BY ZERO")
+				return 0
+			}
+			left = div_int(left, right)
+		} else if k == TOK_MOD {
+			ExprPos++
+			right := evalIntUnary()
+			if right == 0 {
+				raiseError("DIVISION BY ZERO")
+				return 0
+			}
+			left = mod_int(left, right)
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func evalIntAdd() int {
+	left := evalIntMul()
+	for RuntimeErr == 0 {
+		k := peekTok().Kind
+		if k == TOK_PLUS {
+			ExprPos++
+			right := evalIntMul()
+			left = left + right
+		} else if k == TOK_MINUS {
+			ExprPos++
+			right := evalIntMul()
+			left = left - right
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func boolToCoCoInt(cond bool) int {
+	if cond {
+		return -1
+	}
+	return 0
+}
+
+func evalIntRel() int {
+	if isStringExprStart() {
+		s1 := evalStrExpr()
+		op := peekTok().Kind
+		if op >= TOK_EQ && op <= TOK_GE {
+			ExprPos++
+			s2 := evalStrExpr()
+			cmp := strcmp(s1, s2)
+			strfree(s1)
+			strfree(s2)
+			if op == TOK_EQ {
+				return boolToCoCoInt(cmp == 0)
+			}
+			if op == TOK_NE {
+				return boolToCoCoInt(cmp != 0)
+			}
+			if op == TOK_LT {
+				return boolToCoCoInt(cmp < 0)
+			}
+			if op == TOK_LE {
+				return boolToCoCoInt(cmp <= 0)
+			}
+			if op == TOK_GT {
+				return boolToCoCoInt(cmp > 0)
+			}
+			if op == TOK_GE {
+				return boolToCoCoInt(cmp >= 0)
+			}
+		}
+		strfree(s1)
+		raiseError("TYPE MISMATCH")
+		return 0
+	}
+
+	left := evalIntAdd()
+	for RuntimeErr == 0 {
+		op := peekTok().Kind
+		if op >= TOK_EQ && op <= TOK_GE {
+			ExprPos++
+			right := evalIntAdd()
+			if op == TOK_EQ {
+				left = boolToCoCoInt(left == right)
+			} else if op == TOK_NE {
+				left = boolToCoCoInt(left != right)
+			} else if op == TOK_LT {
+				left = boolToCoCoInt(left < right)
+			} else if op == TOK_LE {
+				left = boolToCoCoInt(left <= right)
+			} else if op == TOK_GT {
+				left = boolToCoCoInt(left > right)
+			} else if op == TOK_GE {
+				left = boolToCoCoInt(left >= right)
+			}
+		} else {
+			break
+		}
+	}
+	return left
+}
+
+func evalIntAnd() int {
+	left := evalIntRel()
+	for RuntimeErr == 0 && peekTok().Kind == TOK_AND {
+		ExprPos++
+		right := evalIntRel()
+		left = left & right
+	}
+	return left
+}
+
+func evalIntExpr() int {
+	left := evalIntAnd()
+	for RuntimeErr == 0 && peekTok().Kind == TOK_OR {
+		ExprPos++
+		right := evalIntAnd()
+		left = left | right
+	}
+	return left
+}
+
+// =============================================================================
+// Statement Execution Engine
+// =============================================================================
+
+func jumpToLine(targetLineNum word) {
+	pl := findProgLine(targetLineNum)
+	if word(pl) == 0 {
+		raiseError("UNDEFINED LINE")
+		return
+	}
+	NextLine = pl
+	NextStmt = pl.FirstStmt
+	Jumped = 1
+}
+
+func execAssign() {
+	t := nextTok()
+	if t.Kind == TOK_VAR_INT {
+		v := getOrCreateVar(t.VarID)
+		if peekTok().Kind == TOK_LPAREN {
+			ExprPos++
+			idx := evalIntExpr()
+			if !expectKind(TOK_RPAREN) {
+				return
+			}
+			if !expectKind(TOK_EQ) {
+				return
+			}
+			val := evalIntExpr()
+			if RuntimeErr != 0 {
+				return
+			}
+			if !ensureIntArray(v, idx) {
+				return
+			}
+			v.IntArr.Put(word(idx), val)
+			return
+		}
+		if !expectKind(TOK_EQ) {
+			return
+		}
+		val := evalIntExpr()
+		if RuntimeErr == 0 {
+			v.IntVal = val
+		}
+		return
+	}
+	if t.Kind == TOK_VAR_STR {
+		v := getOrCreateVar(t.VarID)
+		if peekTok().Kind == TOK_LPAREN {
+			ExprPos++
+			idx := evalIntExpr()
+			if !expectKind(TOK_RPAREN) {
+				return
+			}
+			if !expectKind(TOK_EQ) {
+				return
+			}
+			s := evalStrExpr()
+			if RuntimeErr != 0 {
+				strfree(s)
+				return
+			}
+			if !ensureStrArray(v, idx) {
+				strfree(s)
+				return
+			}
+			old := v.StrArr.Get(word(idx))
+			if old.Base != 0 {
+				strfree(old)
+			}
+			v.StrArr.Put(word(idx), s)
+			return
+		}
+		if !expectKind(TOK_EQ) {
+			return
+		}
+		s := evalStrExpr()
+		if RuntimeErr != 0 {
+			strfree(s)
+			return
+		}
+		strSetOwned(&v.StrVal, s)
+		return
+	}
+	raiseError("SYNTAX ERROR")
+}
+
+func execPrint() {
+	var trailingSemi byte = 0
+	for RuntimeErr == 0 {
+		k := peekTok().Kind
+		if k == TOK_EOF || k == TOK_COLON || k == TOK_ELSE {
+			break
+		}
+		if k == TOK_SEMI {
+			ExprPos++
+			trailingSemi = 1
+			continue
+		}
+		if k == TOK_COMMA {
+			ExprPos++
+			outStr("\t")
+			trailingSemi = 1
+			continue
+		}
+		trailingSemi = 0
+		if isStringExprStart() {
+			s := evalStrExpr()
+			if RuntimeErr == 0 {
+				outStr(s)
+			}
+			strfree(s)
+		} else {
+			v := evalIntExpr()
+			if RuntimeErr == 0 {
+				outInt(v)
+			}
+		}
+	}
+	if RuntimeErr == 0 && trailingSemi == 0 {
+		writeNewlinePath(os9.STDOUT)
+	}
+}
+
+func execDim() {
+	for RuntimeErr == 0 {
+		t := nextTok()
+		if t.Kind != TOK_VAR_INT && t.Kind != TOK_VAR_STR {
+			raiseError("SYNTAX ERROR")
+			return
+		}
+		if !expectKind(TOK_LPAREN) {
+			return
+		}
+		sz := evalIntExpr()
+		if !expectKind(TOK_RPAREN) {
+			return
+		}
+		if sz < 0 {
+			raiseError("BAD SUBSCRIPT")
+			return
+		}
+		if t.Kind == TOK_VAR_INT {
+			dimIntArray(t.VarID, word(sz))
+		} else {
+			dimStrArray(t.VarID, word(sz))
+		}
+		if peekTok().Kind == TOK_COMMA {
+			ExprPos++
+		} else {
+			break
+		}
+	}
+}
+
+func execInput() {
+	if peekTok().Kind == TOK_STR {
+		promptTok := nextTok()
+		outStr(promptTok.StrVal)
+		if peekTok().Kind == TOK_SEMI || peekTok().Kind == TOK_COMMA {
+			ExprPos++
+		}
+	}
+	outStr("? ")
+	line, err := readLineFromPath(os9.STDIN)
+	if err != 0 {
+		Halted = 1
+		return
+	}
+	t := nextTok()
+	if t.Kind == TOK_VAR_INT {
+		v := getOrCreateVar(t.VarID)
+		v.IntVal = parseOwnedInt(line)
+		strfree(line)
+	} else if t.Kind == TOK_VAR_STR {
+		v := getOrCreateVar(t.VarID)
+		strSetOwned(&v.StrVal, line)
+	} else {
+		strfree(line)
+		raiseError("SYNTAX ERROR")
+	}
+}
+
+func execFor() {
+	t := nextTok()
+	if t.Kind != TOK_VAR_INT {
+		raiseError("SYNTAX ERROR")
+		return
+	}
+	if !expectKind(TOK_EQ) {
+		return
+	}
+	startVal := evalIntExpr()
+	if !expectKind(TOK_TO) {
+		return
+	}
+	limitVal := evalIntExpr()
+	var stepVal int = 1
+	if peekTok().Kind == TOK_STEP {
+		ExprPos++
+		stepVal = evalIntExpr()
+	}
+	if RuntimeErr != 0 {
+		return
+	}
+	v := getOrCreateVar(t.VarID)
+	v.IntVal = startVal
+
+	// Remove any existing FOR frame for the same variable
+	var prev *ForFrame
+	curr := ForTop
+	for word(curr) != 0 {
+		if curr.VarID == t.VarID {
+			if word(prev) == 0 {
+				ForTop = curr.Next
+			} else {
+				prev.Next = curr.Next
+			}
+			freeObj[ForFrame](curr)
+			break
+		}
+		prev = curr
+		curr = curr.Next
+	}
+
+	ff := allocObj[ForFrame]()
+	ff.VarID = t.VarID
+	ff.Limit = limitVal
+	ff.Step = stepVal
+	ff.LoopLine = NextLine
+	ff.LoopStmt = NextStmt
+	ff.Next = ForTop
+	ForTop = ff
+}
+
+func execNext() {
+	var targetVar word = 0
+	if peekTok().Kind == TOK_VAR_INT {
+		targetVar = nextTok().VarID
+	}
+	for word(ForTop) != 0 && targetVar != 0 && ForTop.VarID != targetVar {
+		old := ForTop
+		ForTop = ForTop.Next
+		freeObj[ForFrame](old)
+	}
+	if word(ForTop) == 0 {
+		raiseError("NEXT WITHOUT FOR")
+		return
+	}
+	v := getOrCreateVar(ForTop.VarID)
+	v.IntVal = v.IntVal + ForTop.Step
+	var keepGoing bool
+	if ForTop.Step >= 0 {
+		keepGoing = v.IntVal <= ForTop.Limit
+	} else {
+		keepGoing = v.IntVal >= ForTop.Limit
+	}
+	if keepGoing {
+		NextLine = ForTop.LoopLine
+		NextStmt = ForTop.LoopStmt
+		Jumped = 1
+	} else {
+		old := ForTop
+		ForTop = ForTop.Next
+		freeObj[ForFrame](old)
+	}
+}
+
+func execListCmd() {
+	var startNum word = 0
+	var endNum word = 65535
+	if peekTok().Kind == TOK_INT {
+		startNum = word(nextTok().IntVal)
+		endNum = startNum
+		if peekTok().Kind == TOK_MINUS {
+			ExprPos++
+			if peekTok().Kind == TOK_INT {
+				endNum = word(nextTok().IntVal)
+			} else {
+				endNum = 65535
+			}
+		}
+	} else if peekTok().Kind == TOK_MINUS {
+		ExprPos++
+		if peekTok().Kind == TOK_INT {
+			endNum = word(nextTok().IntVal)
+		}
+	}
+	pl := ProgHead
+	for word(pl) != 0 {
+		if pl.LineNum >= startNum && pl.LineNum <= endNum {
+			writeProgLineToPath(os9.STDOUT, pl)
+		}
+		pl = pl.Next
+	}
+}
+
+func execSaveCmd() {
+	fname := evalStrExpr()
+	if RuntimeErr != 0 {
+		strfree(fname)
+		return
+	}
+	path, err := os9.Create(fname, os9.MODE_WRITE, os9.ATTR_R|os9.ATTR_W)
+	strfree(fname)
+	if err != 0 {
+		raiseError("CANNOT SAVE FILE")
+		return
+	}
+	pl := ProgHead
+	for word(pl) != 0 {
+		writeProgLineToPath(path, pl)
+		pl = pl.Next
+	}
+	os9.Close(path)
+}
+
+func processInputLine(line string)
+
+func execLoadCmd() {
+	fname := evalStrExpr()
+	if RuntimeErr != 0 {
+		strfree(fname)
+		return
+	}
+	path, err := os9.Open(fname, os9.MODE_READ)
+	strfree(fname)
+	if err != 0 {
+		raiseError("CANNOT OPEN FILE")
+		return
+	}
+	clearProgram()
+	for {
+		line, rerr := readLineFromPath(path)
+		if rerr != 0 {
+			break
+		}
+		processInputLine(line)
+		strfree(line)
+	}
+	os9.Close(path)
+	Halted = 1
+}
+
+// execTokenAction executes a single statement starting at the current ExprPos
+// within ExprTokens.
+func execTokenAction() {
+	for peekTok().Kind == TOK_COLON {
+		ExprPos++
+	}
+	t := peekTok()
+	k := t.Kind
+	if k == TOK_EOF || k == TOK_REM {
+		return
+	}
+	if k == TOK_PRINT {
+		ExprPos++
+		execPrint()
+		return
+	}
+	if k == TOK_LET {
+		ExprPos++
+		execAssign()
+		return
+	}
+	if k == TOK_VAR_INT || k == TOK_VAR_STR {
+		execAssign()
+		return
+	}
+	if k == TOK_DIM {
+		ExprPos++
+		execDim()
+		return
+	}
+	if k == TOK_GOTO {
+		ExprPos++
+		target := evalIntExpr()
+		if RuntimeErr == 0 {
+			jumpToLine(word(target))
+		}
+		return
+	}
+	if k == TOK_GOSUB {
+		ExprPos++
+		target := evalIntExpr()
+		if RuntimeErr == 0 {
+			gf := allocObj[GosubFrame]()
+			gf.RetLine = NextLine
+			gf.RetStmt = NextStmt
+			gf.Next = GosubTop
+			GosubTop = gf
+			jumpToLine(word(target))
+		}
+		return
+	}
+	if k == TOK_RETURN {
+		ExprPos++
+		if word(GosubTop) == 0 {
+			raiseError("RETURN WITHOUT GOSUB")
+			return
+		}
+		gf := GosubTop
+		GosubTop = gf.Next
+		NextLine = gf.RetLine
+		NextStmt = gf.RetStmt
+		freeObj[GosubFrame](gf)
+		Jumped = 1
+		return
+	}
+	if k == TOK_FOR {
+		ExprPos++
+		execFor()
+		return
+	}
+	if k == TOK_NEXT {
+		ExprPos++
+		execNext()
+		return
+	}
+	if k == TOK_INPUT {
+		ExprPos++
+		execInput()
+		return
+	}
+	if k == TOK_IF {
+		ExprPos++
+		cond := evalIntExpr()
+		if RuntimeErr != 0 {
+			return
+		}
+		if peekTok().Kind == TOK_THEN {
+			ExprPos++
+		} else if peekTok().Kind != TOK_GOTO {
+			raiseError("EXPECTED THEN")
+			return
+		}
+		if cond != 0 {
+			// True branch: execute statements until ELSE or EOF
+			for RuntimeErr == 0 && Halted == 0 && Jumped == 0 {
+				if peekTok().Kind == TOK_EOF || peekTok().Kind == TOK_ELSE {
+					break
+				}
+				if peekTok().Kind == TOK_INT {
+					target := word(nextTok().IntVal)
+					jumpToLine(target)
+					return
+				}
+				execTokenAction()
+				if peekTok().Kind == TOK_COLON {
+					ExprPos++
+				} else {
+					break
+				}
+			}
+		} else {
+			// False branch: scan forward for matching ELSE
+			var depth int = 0
+			for peekTok().Kind != TOK_EOF {
+				tk := nextTok().Kind
+				if tk == TOK_IF {
+					depth++
+				} else if tk == TOK_ELSE {
+					if depth == 0 {
+						for RuntimeErr == 0 && Halted == 0 && Jumped == 0 {
+							if peekTok().Kind == TOK_EOF {
+								break
+							}
+							if peekTok().Kind == TOK_INT {
+								target := word(nextTok().IntVal)
+								jumpToLine(target)
+								return
+							}
+							execTokenAction()
+							if peekTok().Kind == TOK_COLON {
+								ExprPos++
+							} else {
+								break
+							}
+						}
+						return
+					}
+					depth--
+				}
+			}
+		}
+		return
+	}
+	if k == TOK_END || k == TOK_STOP {
+		ExprPos++
+		Halted = 1
+		return
+	}
+	if k == TOK_NEW {
+		ExprPos++
+		clearProgram()
+		Halted = 1
+		return
+	}
+	if k == TOK_CLEAR {
+		ExprPos++
+		clearVars()
+		return
+	}
+	if k == TOK_LIST {
+		ExprPos++
+		execListCmd()
+		return
+	}
+	if k == TOK_SAVE {
+		ExprPos++
+		execSaveCmd()
+		return
+	}
+	if k == TOK_LOAD {
+		ExprPos++
+		execLoadCmd()
+		return
+	}
+	if k == TOK_RUN {
+		ExprPos++
+		var startLine word = 0
+		if peekTok().Kind == TOK_INT {
+			startLine = word(nextTok().IntVal)
+		}
+		clearVars()
+		if startLine > 0 {
+			jumpToLine(startLine)
+		} else {
+			NextLine = ProgHead
+			if word(ProgHead) != 0 {
+				NextStmt = ProgHead.FirstStmt
+			} else {
+				NextStmt = (*Stmt)(0)
+			}
+			Jumped = 1
+		}
+		return
+	}
+	if k == TOK_BYE {
+		ExprPos++
+		Halted = 1
+		ExitRequested = 1
+		return
+	}
+	raiseError("SYNTAX ERROR")
+}
+
+func runFrom(startLine *ProgLine, startStmt *Stmt) {
+	CurLine = startLine
+	CurStmt = startStmt
+	Halted = 0
+	RuntimeErr = 0
+
+	for word(CurStmt) != 0 && Halted == 0 && RuntimeErr == 0 {
+		if word(CurStmt.Next) != 0 {
+			NextLine = CurLine
+			NextStmt = CurStmt.Next
+		} else if word(CurLine) != 0 && word(CurLine.Next) != 0 {
+			NextLine = CurLine.Next
+			NextStmt = NextLine.FirstStmt
+		} else {
+			NextLine = (*ProgLine)(0)
+			NextStmt = (*Stmt)(0)
+		}
+
+		Jumped = 0
+		ExprTokens = CurStmt.Tokens
+		ExprPos = 0
+		execTokenAction()
+
+		if Halted != 0 || RuntimeErr != 0 {
+			break
+		}
+		CurLine = NextLine
+		CurStmt = NextStmt
+	}
+}
+
+// =============================================================================
+// Interactive Line Entry & Immediate Mode Execution
+// =============================================================================
+
+func processInputLine(line string) {
+	n := line.Len
+	var i word = 0
+	for i < n && isSpaceCh(line.Get(i)) {
+		i++
+	}
+	if i >= n {
+		return
+	}
+
+	// If the line starts with a number, it is a numbered program line
+	if isDigitCh(line.Get(i)) {
+		var lineNum word = 0
+		for i < n && isDigitCh(line.Get(i)) {
+			lineNum = mul_word(lineNum, 10) + word(line.Get(i)-'0')
+			i++
+		}
+		for i < n && isSpaceCh(line.Get(i)) {
+			i++
+		}
+		if i >= n {
+			deleteLine(lineNum)
+			return
+		}
+		stmts := tokenizeStmts(line, i)
+		insertOrReplaceLine(lineNum, stmts)
+		return
+	}
+
+	// Immediate mode command / statement chain
+	immStmts := tokenizeStmts(line, i)
+	if word(immStmts) == 0 {
+		return
+	}
+	runFrom((*ProgLine)(0), immStmts)
+	freeStmtChain(immStmts)
+}
+
+func main() {
+	outLn("LNBASIC 0.1 (COCO STYLE)")
+	outInt(int(BytesFree()))
+	outLn(" BYTES FREE")
+
+	var needPrompt byte = 1
+	for ExitRequested == 0 {
+		if needPrompt != 0 {
+			outLn("OK")
+			needPrompt = 0
+		}
+		line, err := readLineFromPath(os9.STDIN)
+		if err != 0 {
+			break
+		}
+		if line.Len > 0 {
+			firstCh := line.Get(0)
+			isNumbered := isDigitCh(firstCh)
+			processInputLine(line)
+			if !isNumbered && ExitRequested == 0 {
+				needPrompt = 1
+			}
+		}
+		strfree(line)
+	}
+	clearProgram()
+}
