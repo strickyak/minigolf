@@ -52,14 +52,14 @@ func (f *repeatedFlag) Set(value string) error {
 
 var MatchValidImport = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`).FindStringSubmatch
 
-func ReadFileFromPath(base string, path []string) (content []byte, err error) {
+func ReadFileAndPath(base string, path []string) (content []byte, resolvedPath string, err error) {
 	log.Printf("RFFP: want %q with path %v", base, path)
 	for _, d := range path {
 		filename := filepath.Join(d, base)
 		content, err = os.ReadFile(filename)
 		log.Printf("RFFP: Looking for %q ... %v", filename, err)
 		if err == nil {
-			return
+			return content, filename, nil
 		}
 	}
 
@@ -69,13 +69,18 @@ func ReadFileFromPath(base string, path []string) (content []byte, err error) {
 			for _, name := range []string{"prelude.par4", "prelude.golf"} {
 				filename := filepath.Join(fallbackDir, name)
 				if c, err2 := os.ReadFile(filename); err2 == nil {
-					return c, nil
+					return c, filename, nil
 				}
 			}
 		}
 	}
 
-	return nil, fmt.Errorf("Cannot find filename %q in path %v", base, path)
+	return nil, "", fmt.Errorf("Cannot find filename %q in path %v", base, path)
+}
+
+func ReadFileFromPath(base string, path []string) (content []byte, err error) {
+	content, _, err = ReadFileAndPath(base, path)
+	return content, err
 }
 
 // topoSortModules returns modules in topological order based on import edges:
@@ -132,8 +137,9 @@ func topoSortModules(importEdges map[string][]string, initFuncsByModule map[stri
 	return result
 }
 
-func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch string, isEmbiggen bool, golfDefines map[string]string) *ast.Program {
+func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch string, isEmbiggen bool, golfDefines map[string]string) (*ast.Program, []string) {
 	var program *ast.Program
+	var importedFiles []string
 	imported := make(map[string]bool)
 
 	var initFuncsByModule = make(map[string][]string)
@@ -156,9 +162,9 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch st
 	}
 	var defaultLibDirs []string
 	if isEmbiggen {
-		defaultLibDirs = []string{"biggolflib", "../biggolflib", "golflib", "../golflib", "par4-lib", "../par4-lib"}
+		defaultLibDirs = []string{"biggolflib", "../biggolflib", "golflib", "../golflib", "par4-lib", "../par4-lib", "os9-lib", "../os9-lib"}
 	} else {
-		defaultLibDirs = []string{"par4-lib", "../par4-lib", "golflib", "../golflib"}
+		defaultLibDirs = []string{"par4-lib", "../par4-lib", "golflib", "../golflib", "os9-lib", "../os9-lib"}
 	}
 	for _, libDir := range defaultLibDirs {
 		if fi, err := os.Stat(libDir); err == nil && fi.IsDir() {
@@ -168,16 +174,22 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch st
 
 	slurp := func(filename string, overridePackage string, path []string) {
 		var content []byte
+		var resolvedPath string
 		var err error
 		if path == nil {
 			content, err = os.ReadFile(filename)
+			resolvedPath = filename
 		} else {
-			content, err = ReadFileFromPath(filename, path)
+			content, resolvedPath, err = ReadFileAndPath(filename, path)
 		}
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filename, err)
 			os.Exit(1)
+		}
+
+		if overridePackage != "main" {
+			importedFiles = append(importedFiles, fmt.Sprintf("%s (%s)", overridePackage, resolvedPath))
 		}
 
 		tokens := lexer.Lex(string(content), filename)
@@ -238,8 +250,15 @@ func ParseSourceFiles(mainSourceFile string, importDirPath repeatedFlag, arch st
 	slurp(mainSourceFile, "main", nil)
 
 MORE:
-	for key, done := range imported {
-		if !done {
+	{
+		var pendingKeys []string
+		for key, done := range imported {
+			if !done {
+				pendingKeys = append(pendingKeys, key)
+			}
+		}
+		sort.Strings(pendingKeys)
+		for _, key := range pendingKeys {
 			imported[key] = true
 			exts := []string{".golf", ".par4", ".par5"}
 			if isPar4Arch && !hasManagedHeap {
@@ -256,8 +275,7 @@ MORE:
 			if !found {
 				slurp(key+exts[0], key, path)
 			}
-			// We changed the iterated object, so restart the iteration.
-			// When everything is done, we fall through and return the program.
+			// We may have added new imports to `imported`, so restart the check.
 			goto MORE
 		}
 	}
@@ -323,12 +341,13 @@ MORE:
 		}
 	}
 
-	return program
+	return program, importedFiles
 }
 
 func main() {
 	// Define command-line flags
 	archFlag := flag.String("m", "", "Target architecture (e.g., 6809, 6309, amd64, m68k, z80, 6502, par4, p4, 1802, cdp1802, c, cosmac, big6809, bigir)")
+	formatFlag := flag.String("f", "", "Target binary format (e.g., decb, raw, os9)")
 	embiggenFlag := flag.Bool("membiggen", false, "Enable EMBIGGEN process mode (far functions & far data)")
 	outFlag := flag.String("o", "", "Output object file name")
 	framePointerFlag := flag.Bool("frame-pointer", false, "Use a dedicated hardware frame pointer (U register) instead of computing offsets from S")
@@ -569,6 +588,14 @@ func main() {
 			golfDefines["prelude.HEAP_SIZE"] = "2500"
 		}
 	}
+	if strings.EqualFold(*formatFlag, "os9") {
+		*picFlag = true
+		*globalsAtYFlag = true
+		if _, ok := golfDefines["prelude.HEAP_SIZE"]; !ok {
+			golfDefines["prelude.HEAP_SIZE"] = "2048"
+		}
+		importDirPath = append(repeatedFlag{"os9-lib"}, importDirPath...)
+	}
 
 	// =========================================================================
 	// -m=NEWCONFIG: spawn the host C compiler to harvest its predefined macros
@@ -678,6 +705,7 @@ func main() {
 
 	log.Printf("Starting whole-program compilation")
 	log.Printf("Target architecture: %s", *archFlag)
+	log.Printf("Format: %s", *formatFlag)
 	log.Printf("FramePointer: %v", *framePointerFlag)
 	log.Printf("Globals-at-Y: %v", *globalsAtYFlag)
 	log.Printf("Position-Independent Code: %v", *picFlag)
@@ -689,14 +717,75 @@ func main() {
 	// Compilation Pipeline
 	// =========================================================================
 	// 1 & 2. Parse all source files into a single flat namespace AST
-	program := ParseSourceFiles(mainSourceFile, importDirPath, *archFlag, *embiggenFlag, golfDefines)
+	program, importedFiles := ParseSourceFiles(mainSourceFile, importDirPath, *archFlag, *embiggenFlag, golfDefines)
+	for _, imp := range importedFiles {
+		log.Printf("Imports: %s", imp)
+	}
 
 	*archFlag = strings.ToUpper(*archFlag)
+
+	formatSemiHeader := func(backendName string, include6809Opts bool) string {
+		var sb strings.Builder
+		sb.WriteString(";\n")
+		if backendName != "" {
+			fmt.Fprintf(&sb, "; Starting whole-program compilation (%s)\n", backendName)
+		} else {
+			sb.WriteString("; Starting whole-program compilation\n")
+		}
+		fmt.Fprintf(&sb, "; Target architecture: %s\n", *archFlag)
+		fmt.Fprintf(&sb, "; Output object file: %s\n", *outFlag)
+		fmt.Fprintf(&sb, "; Source files: %v\n", sourceFiles)
+		for _, imp := range importedFiles {
+			fmt.Fprintf(&sb, "; Imports: %s\n", imp)
+		}
+		formatStr := *formatFlag
+		if formatStr == "" {
+			formatStr = "default"
+		}
+		fmt.Fprintf(&sb, "; Format: %s\n", formatStr)
+		if include6809Opts {
+			callConv := *callConventionFlag
+			if *noFastcall6809 {
+				callConv = "stack"
+			}
+			fmt.Fprintf(&sb, "; PIC: %v\n", *picFlag)
+			fmt.Fprintf(&sb, "; Globals-at-Y: %v\n", *globalsAtYFlag)
+			fmt.Fprintf(&sb, "; FramePointer: %v\n", *framePointerFlag)
+			fmt.Fprintf(&sb, "; Calling convention: %s\n", callConv)
+		}
+		fmt.Fprintf(&sb, "; Check bounds: %v, Check nil: %v\n", *checkBoundsFlag, *checkNilFlag)
+		fmt.Fprintf(&sb, "; Import path: %v\n", []string(importDirPath))
+		fmt.Fprintf(&sb, "; Defines: %v\n", golfDefines)
+		sb.WriteString(";\n\n")
+		return sb.String()
+	}
+
+	formatBlockHeader := func(backendName string) string {
+		var sb strings.Builder
+		sb.WriteString("/*\n")
+		fmt.Fprintf(&sb, " * Starting whole-program compilation (%s)\n", backendName)
+		fmt.Fprintf(&sb, " * Target architecture: %s\n", *archFlag)
+		fmt.Fprintf(&sb, " * Output object file: %s\n", *outFlag)
+		fmt.Fprintf(&sb, " * Source files: %v\n", sourceFiles)
+		for _, imp := range importedFiles {
+			fmt.Fprintf(&sb, " * Imports: %s\n", imp)
+		}
+		formatStr := *formatFlag
+		if formatStr == "" {
+			formatStr = "default"
+		}
+		fmt.Fprintf(&sb, " * Format: %s\n", formatStr)
+		fmt.Fprintf(&sb, " * Check bounds: %v, Check nil: %v\n", *checkBoundsFlag, *checkNilFlag)
+		fmt.Fprintf(&sb, " * Import path: %v\n", []string(importDirPath))
+		fmt.Fprintf(&sb, " * Defines: %v\n", golfDefines)
+		sb.WriteString(" */\n\n")
+		return sb.String()
+	}
 
 	// Flag -m=ast : print the AST and exit cleanly
 	if *archFlag == "AST" {
 		astOutput := ast.Print(program)
-		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("AST", false)
 		finalOutput := header + astOutput + "\n"
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -750,11 +839,18 @@ func main() {
 		}
 	}
 
+	if val, ok := analyzer.Pragmas["CHECK_BOUNDS"]; ok {
+		*checkBoundsFlag = (val == "1" || val == "true")
+	}
+	if val, ok := analyzer.Pragmas["CHECK_NIL"]; ok {
+		*checkNilFlag = (val == "1" || val == "true")
+	}
+
 	// Flag -m=par4 or -m=p4 : Generate Par4 assembly directly from AST and exit cleanly
 	if *archFlag == "PAR4" || *archFlag == "P4" {
 		backend := par4.New()
 		asmCode := backend.Generate(program)
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Par4 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("Par4 Backend", true)
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -764,13 +860,6 @@ func main() {
 		}
 		log.Printf("Successfully compiled via Par4 to: %s", *outFlag)
 		os.Exit(0)
-	}
-
-	if val, ok := analyzer.Pragmas["CHECK_BOUNDS"]; ok {
-		*checkBoundsFlag = (val == "1" || val == "true")
-	}
-	if val, ok := analyzer.Pragmas["CHECK_NIL"]; ok {
-		*checkNilFlag = (val == "1" || val == "true")
 	}
 
 	// Flag -m=ir : emit SSA IR and exit cleanly
@@ -807,7 +896,7 @@ func main() {
 		builder.AnnotateLeafLevels(*debugOpt)
 		irCode := ir.PrintProgram(irProg)
 
-		header := fmt.Sprintf("; Starting whole-program compilation\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("SSA IR", false)
 		finalOutput := header + irCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -828,7 +917,7 @@ func main() {
 			os.Exit(1)
 		}
 		irCode := bigir.PrintProgram(bigProg)
-		header := fmt.Sprintf("; Starting whole-program compilation (BIGIR)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("BIGIR", true)
 		finalOutput := header + irCode
 
 		err = writeOutput(*outFlag, finalOutput)
@@ -876,7 +965,7 @@ func main() {
 		backend := cbe.New()
 		cCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf("/*\n * Starting whole-program compilation (CBE Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatBlockHeader("CBE Backend")
 		finalOutput := header + cCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -924,7 +1013,7 @@ func main() {
 		backend := amd64.New()
 		asmCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf("/*\n * Starting whole-program compilation (AMD64 Backend)\n * Target architecture: %s\n * Output object file: %s\n * Source files: %v\n */\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatBlockHeader("AMD64 Backend")
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -934,6 +1023,10 @@ func main() {
 		}
 		log.Printf("Successfully compiled via AMD64 to: %s", *outFlag)
 		os.Exit(0)
+	}
+
+	format6809Header := func(backendName string) string {
+		return formatSemiHeader(backendName, true)
 	}
 
 	// Flag -m=big6809 or -membiggen : Generate EMBIGGEN 6809 assembly and exit cleanly
@@ -970,7 +1063,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (EMBIGGEN 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := format6809Header("EMBIGGEN 6809 Backend")
 		finalOutput := header + asmCode
 
 		err = writeOutput(*outFlag, finalOutput)
@@ -1060,7 +1153,24 @@ func main() {
 		}
 		asmCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 6809 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		if *cstartFlag != "" {
+			cstartData, err := os.ReadFile(*cstartFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading cstart file %s: %v\n", *cstartFlag, err)
+				os.Exit(1)
+			}
+			asmCode = asmCode + "\n" + string(cstartData)
+		} else if strings.EqualFold(*formatFlag, "os9") {
+			searchPath := []string{"os9-lib", "../os9-lib"}
+			for _, d := range importDirPath {
+				searchPath = append(searchPath, d)
+			}
+			if cstartData, err := ReadFileFromPath("cstart.asm", searchPath); err == nil {
+				asmCode = string(cstartData) + "\n" + asmCode
+			}
+		}
+
+		header := format6809Header("Motorola 6809 Backend")
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -1108,7 +1218,7 @@ func main() {
 		backend := m68k.New()
 		asmCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Motorola 68000 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("Motorola 68000 Backend", false)
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -1156,7 +1266,7 @@ func main() {
 		backend := z80.New()
 		asmCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Zilog Z80 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("Zilog Z80 Backend", false)
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -1204,7 +1314,7 @@ func main() {
 		backend := cdp1802.New()
 		asmCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (RCA COSMAC 1802 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("RCA COSMAC 1802 Backend", false)
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -1252,7 +1362,7 @@ func main() {
 		backend := m6502.New()
 		asmCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (MOS 6502 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("MOS 6502 Backend", false)
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)
@@ -1300,7 +1410,7 @@ func main() {
 		backend := i8086.New()
 		asmCode := backend.Generate(irProg)
 
-		header := fmt.Sprintf(";\n; Starting whole-program compilation (Intel 8086 Backend)\n; Target architecture: %s\n; Output object file: %s\n; Source files: %v\n;\n\n", *archFlag, *outFlag, sourceFiles)
+		header := formatSemiHeader("Intel 8086 Backend", false)
 		finalOutput := header + asmCode
 
 		err := writeOutput(*outFlag, finalOutput)

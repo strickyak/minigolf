@@ -304,7 +304,7 @@ func makeslice[T any](n word) slice[T] {
 	if n == 0 {
 		return z
 	}
-	z.Base := zalloc(n * sizeof[T]())
+	z.Base = zalloc(n * sizeof[T]())
 	z.Len = n
 	z.Cap = n
 	return z

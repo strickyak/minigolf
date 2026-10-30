@@ -68,10 +68,25 @@ var dpReg byte
 var cEscapes bool
 var enableRelax bool
 var hasExecAddr bool
+var hasCstart bool
 var execAddr word
 var lastGlobalLabel string
 var keepRawLines bool
 var asmErr string
+
+// OS-9 Module state
+var hasMod bool
+var modStartStmtIdx word
+var os9Mode bool
+var os9Name string
+var os9Mem word
+var os9Rev byte
+var os9Attr byte
+var os9Tylg byte
+var os9Edition byte
+var namTitle string
+var inDataOrg bool
+var dataPC word
 
 func setError(msg string) {
 	if asmErr.Len == 0 {
@@ -384,10 +399,75 @@ func initOpcodesAlu() {
 	addAlu16Op("leau", NO_OP, NO_OP, 0x33, NO_OP, 0)
 }
 
+func initOS9Symbols() {
+	symSet("Prgrm", 0x10)
+	symSet("Sbtrn", 0x20)
+	symSet("Multi", 0x30)
+	symSet("Data", 0x40)
+	symSet("Systm", 0xC0)
+	symSet("FlMgr", 0xD0)
+	symSet("Drvr", 0xE0)
+	symSet("Devic", 0xF0)
+	symSet("Objct", 0x01)
+	symSet("ICode", 0x02)
+	symSet("PCode", 0x03)
+	symSet("CCode", 0x04)
+	symSet("CblCd", 0x05)
+	symSet("FrtnCd", 0x06)
+
+	symSet("ReEnt", 0x80)
+	symSet("Ghost", 0x40)
+	symSet("ModNat", 0x20)
+
+	symSet("F$Link", 0x00)
+	symSet("F$Load", 0x01)
+	symSet("F$UnLink", 0x02)
+	symSet("F$Fork", 0x03)
+	symSet("F$Wait", 0x04)
+	symSet("F$Chain", 0x05)
+	symSet("F$Exit", 0x06)
+	symSet("F$Mem", 0x07)
+	symSet("F$Send", 0x08)
+	symSet("F$Icpt", 0x09)
+	symSet("F$Sleep", 0x0A)
+	symSet("F$SSpd", 0x0B)
+	symSet("F$ID", 0x0C)
+	symSet("F$SPrior", 0x0D)
+	symSet("F$SSWI", 0x0E)
+	symSet("F$PErr", 0x0F)
+	symSet("F$PrsNam", 0x10)
+	symSet("F$CmpNam", 0x11)
+	symSet("F$SchBit", 0x12)
+	symSet("F$AllBit", 0x13)
+	symSet("F$DelBit", 0x14)
+	symSet("F$Time", 0x15)
+	symSet("F$STime", 0x16)
+	symSet("F$CRC", 0x17)
+
+	symSet("I$Attach", 0x80)
+	symSet("I$Detach", 0x81)
+	symSet("I$Dup", 0x82)
+	symSet("I$Create", 0x83)
+	symSet("I$Open", 0x84)
+	symSet("I$MakDir", 0x85)
+	symSet("I$ChgDir", 0x86)
+	symSet("I$Delete", 0x87)
+	symSet("I$Seek", 0x88)
+	symSet("I$Read", 0x89)
+	symSet("I$Write", 0x8A)
+	symSet("I$ReadLn", 0x8B)
+	symSet("I$WritLn", 0x8C)
+	symSet("I$GetStt", 0x8D)
+	symSet("I$SetStt", 0x8E)
+	symSet("I$Close", 0x8F)
+	symSet("I$DeletX", 0x90)
+}
+
 func initOpcodes() {
 	initOpcodesInh()
 	initOpcodesBranches()
 	initOpcodesAlu()
+	initOS9Symbols()
 }
 
 // --- String Helpers ---
@@ -572,7 +652,10 @@ func isDirectiveOp(op string) bool {
 	if op == "section" || op == "sect" || op == "ends" || op == ".area" || op == ".globl" || op == ".module" {
 		return true
 	}
-	if op == "nam" || op == "ttl" || op == "page" || op == "spc" || op == "export" || op == "import" || op == "extern" {
+	if op == "nam" || op == "ttl" || op == "pag" || op == "page" || op == "spc" || op == "export" || op == "import" || op == "extern" {
+		return true
+	}
+	if op == "mod" || op == "emod" || op == "os9" {
 		return true
 	}
 	return false
@@ -661,6 +744,80 @@ func stripComment(line string) string {
 	return line
 }
 
+func isOpCharForComment(c byte) bool {
+	return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '&' || c == '|' || c == '^' || c == '~' || c == '<' || c == '>' || c == '('
+}
+
+func stripOperandComment(s string) string {
+	s = trimSpace(s)
+	if s.Len == 0 {
+		return s
+	}
+	inQuote := byte(0)
+	prevIsOpOrComma := true
+	for i := word(0); i < s.Len; i++ {
+		c := s.Get(i)
+		if inQuote != 0 {
+			if c == '\\' && i+1 < s.Len {
+				i++
+				continue
+			}
+			if c == inQuote {
+				inQuote = 0
+				prevIsOpOrComma = false
+			}
+			continue
+		}
+		if c == '"' {
+			inQuote = '"'
+			continue
+		}
+		if c == '\'' {
+			if i+1 < s.Len {
+				if i+2 < s.Len && s.Get(i+2) == '\'' {
+					i += 2
+				} else {
+					i++
+				}
+				prevIsOpOrComma = false
+				continue
+			}
+		}
+		if isSpace(c) {
+			j := i + 1
+			for j < s.Len && isSpace(s.Get(j)) {
+				j++
+			}
+			if j >= s.Len {
+				return trimSpace(substr(s, 0, i))
+			}
+			nextC := s.Get(j)
+			nextIsOpOrComma := isOpCharForComment(nextC) || nextC == ',' || nextC == ')'
+			if !prevIsOpOrComma && !nextIsOpOrComma {
+				return trimSpace(substr(s, 0, i))
+			}
+			i = j - 1
+			continue
+		}
+		if c == '+' && i >= 2 {
+			prev := s.Get(i-1) | 0x20
+			if (prev == 'x' || prev == 'y' || prev == 'u' || prev == 's') && s.Get(i-2) == ',' {
+				prevIsOpOrComma = false
+				continue
+			}
+			if s.Get(i-1) == '+' && i >= 3 {
+				prev2 := s.Get(i-2) | 0x20
+				if (prev2 == 'x' || prev2 == 'y' || prev2 == 'u' || prev2 == 's') && s.Get(i-3) == ',' {
+					prevIsOpOrComma = false
+					continue
+				}
+			}
+		}
+		prevIsOpOrComma = isOpCharForComment(c) || c == ',' || c == '#'
+	}
+	return s
+}
+
 func parseLine(lineNum word, rawLine string) Statement {
 	var stmt Statement
 	stmt.LineNum = lineNum
@@ -726,6 +883,16 @@ func parseLine(lineNum word, rawLine string) Statement {
 			if lowOp == "cescapes" {
 				cEscapes = true
 			}
+		}
+		if stmt.Op != "fcc" && stmt.Op != "fcs" && stmt.Op != "fcn" && stmt.Op != ".ascii" && stmt.Op != ".asciz" {
+			stmt.Operand = stripOperandComment(stmt.Operand)
+		}
+	} else {
+		info, ok := lookupOp(stmt.Op)
+		if ok && info.Mode == ModeInherent {
+			stmt.Operand = ""
+		} else {
+			stmt.Operand = stripOperandComment(stmt.Operand)
 		}
 	}
 
@@ -1101,6 +1268,9 @@ func parsePrimary() int {
 		if tok.Text == "*" {
 			nextTok()
 			curEvalHi = 0
+			if inDataOrg {
+				return int(dataPC)
+			}
 			return int(curEvalPC)
 		}
 		curEvalOk = false
@@ -1128,6 +1298,9 @@ func parsePrimary() int {
 		nextTok()
 		curEvalHi = 0
 		if tok.Text == "." || tok.Text == "$" {
+			if inDataOrg {
+				return int(dataPC)
+			}
 			return int(curEvalPC)
 		}
 		symName := scopeLocalLabel(tok.Text)
@@ -1440,6 +1613,9 @@ func evalExpr32(expr string, pc word, strict bool) (word, word, bool) {
 			}
 			return parseNumber32(expr)
 		} else if expr == "." {
+			if inDataOrg {
+				return 0, dataPC, true
+			}
 			return 0, pc, true
 		} else {
 			val, ok := symGet(expr)
@@ -1925,9 +2101,12 @@ func computeInstructionSize(stmt *Statement, info OpInfo, pc word) word {
 		}
 		if isIndexedOperand(op) {
 			opSz := opcodeSize(info.Idx)
-			_, extraSz, _, ok := assembleIndexed(op, pc, opSz, false)
+			_, extraSz, _, ok := assembleIndexed(op, pc, opSz, true)
 			if !ok {
-				return opSz + 3
+				_, extraSz, _, ok = assembleIndexed(op, pc, opSz, false)
+				if !ok {
+					return opSz + 3
+				}
 			}
 			return opSz + 1 + extraSz
 		}
@@ -2003,6 +2182,19 @@ func computeDirectiveSize(stmt *Statement, currPC word) {
 	} else if op == ".asciz" || op == "fcn" {
 		b := parseFCCBytes(stmt.Operand)
 		stmt.Size = b.Len + 1
+	} else if op == "mod" {
+		stmt.Size = 13
+		hasMod = true
+	} else if op == "emod" {
+		stmt.Size = 3
+	} else if op == "os9" {
+		stmt.Size = 3
+	} else if op == "nam" {
+		stmt.Size = 0
+		if namTitle.Len == 0 && stmt.Operand.Len > 0 {
+			first, _ := splitFirstField(stmt.Operand)
+			namTitle = first
+		}
 	} else if op == "end" {
 		stmt.Size = 0
 		if stmt.Operand.Len > 0 {
@@ -2019,9 +2211,54 @@ func computeDirectiveSize(stmt *Statement, currPC word) {
 	}
 }
 
+func recordEntryLabel(lbl string, pc word) {
+	if lbl == "cstart" {
+		execAddr = pc
+		hasExecAddr = true
+		hasCstart = true
+	} else if lbl == "_main" && !hasCstart {
+		execAddr = pc
+		hasExecAddr = true
+	}
+}
+
+func resolvedOS9Name() string {
+	if os9Name.Len > 0 {
+		return os9Name
+	}
+	if namTitle.Len > 0 {
+		return namTitle
+	}
+	return "program"
+}
+
+func initialModulePC() word {
+	if hasMod {
+		return 0
+	}
+	if os9Mode {
+		nm := resolvedOS9Name()
+		return 13 + nm.Len + 1
+	}
+	return 0
+}
+
 func computeLayoutAndSymbols() {
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.IsDirective != 0 && stmt.Op == "mod" {
+			hasMod = true
+		} else if stmt.IsDirective != 0 && stmt.Op == "nam" && namTitle.Len == 0 && stmt.Operand.Len > 0 {
+			first, _ := splitFirstField(stmt.Operand)
+			namTitle = first
+		}
+	}
+
 	currPCHi := word(0)
-	currPC := word(0)
+	currPC := initialModulePC()
+	inMod := false
+	inDataOrg = false
+	dataPC = 0
 
 	for i := word(0); i < numStmts; i++ {
 		stmt := getStmt(i)
@@ -2035,11 +2272,40 @@ func computeLayoutAndSymbols() {
 
 		if stmt.IsDirective != 0 {
 			op := stmt.Op
+			if op == "mod" {
+				inMod = true
+				inDataOrg = false
+				stmt.PC = currPC
+				if stmt.Label.Len > 0 {
+					symSet(stmt.Label, currPC)
+				}
+				stmt.Size = 13
+				currPC += 13
+				setStmt(i, stmt)
+				continue
+			}
+
 			if op == "org" {
 				hi, lo, ok := evalExpr32(stmt.Operand, currPC, false)
 				if !ok {
 					setError("invalid org expression")
 					return
+				}
+				if inMod {
+					inDataOrg = true
+					dataPC = lo
+					stmt.PC = dataPC
+					stmt.HasOrg = 1
+					stmt.OrgHi = hi
+					stmt.OrgAddr = lo
+					stmt.Size = 0
+					setStmt(i, stmt)
+					continue
+				}
+				if os9Mode && !hasMod {
+					stmt.Size = 0
+					setStmt(i, stmt)
+					continue
 				}
 				currPCHi = hi
 				currPC = lo
@@ -2071,6 +2337,25 @@ func computeLayoutAndSymbols() {
 				continue
 			}
 
+			isRmb := op == "rmb" || op == ".blkb" || op == ".ds" || op == ".space" || op == "zmb" || op == "bsz"
+			if isRmb && inMod && inDataOrg {
+				computeDirectiveSize(&stmt, dataPC)
+				if asmErr.Len > 0 {
+					return
+				}
+				stmt.PC = dataPC
+				if stmt.Label.Len > 0 {
+					symSet(stmt.Label, dataPC)
+				}
+				dataPC += stmt.Size
+				setStmt(i, stmt)
+				continue
+			}
+
+			if inMod && op != "end" && op != "pag" && op != "page" && op != "spc" && op != "nam" && op != "ttl" && op != "opt" && op != "pragma" && op != ".pragma" {
+				inDataOrg = false
+			}
+
 			if stmt.Label.Len > 0 {
 				symSet(stmt.Label, currPC)
 			}
@@ -2081,16 +2366,19 @@ func computeLayoutAndSymbols() {
 			}
 
 			currPC += stmt.Size
+			if op == "emod" {
+				inMod = false
+			}
 			setStmt(i, stmt)
 			continue
 		}
 
+		if inMod {
+			inDataOrg = false
+		}
 		if stmt.Label.Len > 0 {
 			symSet(stmt.Label, currPC)
-			if !hasExecAddr && (stmt.Label == "cstart" || stmt.Label == "_main") {
-				execAddr = currPC
-				hasExecAddr = true
-			}
+			recordEntryLabel(stmt.Label, currPC)
 		}
 
 		if stmt.Op.Len == 0 {
@@ -2109,29 +2397,101 @@ func computeLayoutAndSymbols() {
 		currPC += stmt.Size
 		setStmt(i, stmt)
 	}
+	inDataOrg = false
 }
 
 func recomputePCs() {
 	currPCHi := word(0)
-	currPC := word(0)
+	currPC := initialModulePC()
+	inMod := false
+	inDataOrg = false
+	dataPC = 0
+
 	for i := word(0); i < numStmts; i++ {
 		stmt := getStmt(i)
-		if stmt.HasOrg != 0 {
-			currPCHi = stmt.OrgHi
-			currPC = stmt.OrgAddr
+		if stmt.IsCommentOnly != 0 {
+			stmt.PCHi = currPCHi
+			stmt.PC = currPC
+			setStmt(i, stmt)
+			continue
+		}
+
+		if stmt.IsDirective != 0 {
+			op := stmt.Op
+			if op == "mod" {
+				inMod = true
+				inDataOrg = false
+				stmt.PCHi = currPCHi
+				stmt.PC = currPC
+				if stmt.Label.Len > 0 {
+					symSet(stmt.Label, currPC)
+				}
+				currPC += stmt.Size
+				setStmt(i, stmt)
+				continue
+			}
+			if stmt.HasOrg != 0 {
+				if inMod {
+					inDataOrg = true
+					dataPC = stmt.OrgAddr
+					stmt.PC = dataPC
+					setStmt(i, stmt)
+					continue
+				}
+				if !(os9Mode && !hasMod) {
+					currPCHi = stmt.OrgHi
+					currPC = stmt.OrgAddr
+				}
+			}
+			if op == "equ" || op == "=" || op == "set" {
+				stmt.PCHi = currPCHi
+				stmt.PC = currPC
+				val, ok := evalExpr(stmt.Operand, currPC, false)
+				if ok {
+					symSet(stmt.Label, word(val))
+				}
+				setStmt(i, stmt)
+				continue
+			}
+			isRmb := op == "rmb" || op == ".blkb" || op == ".ds" || op == ".space" || op == "zmb" || op == "bsz"
+			if isRmb && inMod && inDataOrg {
+				stmt.PC = dataPC
+				if stmt.Label.Len > 0 {
+					symSet(stmt.Label, dataPC)
+				}
+				dataPC += stmt.Size
+				setStmt(i, stmt)
+				continue
+			}
+			if inMod && op != "end" && op != "pag" && op != "page" && op != "spc" && op != "nam" && op != "ttl" && op != "opt" && op != "pragma" && op != ".pragma" {
+				inDataOrg = false
+			}
+			stmt.PCHi = currPCHi
+			stmt.PC = currPC
+			if stmt.Label.Len > 0 {
+				symSet(stmt.Label, currPC)
+			}
+			currPC += stmt.Size
+			if op == "emod" {
+				inMod = false
+			}
+			setStmt(i, stmt)
+			continue
+		}
+
+		if inMod {
+			inDataOrg = false
 		}
 		stmt.PCHi = currPCHi
 		stmt.PC = currPC
-		if stmt.Label.Len > 0 && (stmt.IsDirective == 0 || (stmt.Op != "equ" && stmt.Op != "=" && stmt.Op != "set")) {
+		if stmt.Label.Len > 0 {
 			symSet(stmt.Label, currPC)
-			if !hasExecAddr && (stmt.Label == "cstart" || stmt.Label == "_main") {
-				execAddr = currPC
-				hasExecAddr = true
-			}
+			recordEntryLabel(stmt.Label, currPC)
 		}
 		currPC += stmt.Size
 		setStmt(i, stmt)
 	}
+	inDataOrg = false
 }
 
 func relax() {
@@ -2157,7 +2517,7 @@ func relax() {
 		return
 	}
 
-	for iter := word(0); iter < 10; iter++ {
+	for iter := word(0); iter < 15; iter++ {
 		changed := false
 
 		for i := word(0); i < numStmts; i++ {
@@ -2198,19 +2558,127 @@ func relax() {
 						changed = true
 					}
 				}
+			} else if info.Mode == ModeGeneral && enableRelax {
+				newSz := computeInstructionSize(&stmt, info, stmt.PC)
+				if newSz != stmt.Size {
+					stmt.Size = newSz
+					setStmt(i, stmt)
+					changed = true
+				}
 			}
 		}
 
+		recomputePCs()
 		if !changed {
 			break
 		}
-
-		recomputePCs()
 	}
 }
 
-func emitDirectiveBytes(stmt *Statement) {
+var crc0 byte
+var crc1 byte
+var crc2 byte
+
+func resetOS9CRC() {
+	crc0 = 0xFF
+	crc1 = 0xFF
+	crc2 = 0xFF
+}
+
+func feedOS9CRC(b byte) {
+	a := crc0 ^ b
+	crc0 = crc1
+	crc1 = crc2 ^ (a >> 7) ^ (a >> 2)
+	crc2 = ((a << 1) & 0xFF) ^ ((a << 6) & 0xFF)
+	p := a ^ (a >> 4)
+	p = p ^ (p >> 2)
+	p = p ^ (p >> 1)
+	if (p & 1) != 0 {
+		crc0 = crc0 ^ 0x80
+		crc2 = crc2 ^ 0x21
+	}
+}
+
+func finishOS9CRC() {
+	crc0 = crc0 ^ 0xFF
+	crc1 = crc1 ^ 0xFF
+	crc2 = crc2 ^ 0xFF
+}
+
+func emitDirectiveBytes(stmt *Statement, stmtIdx word) {
 	op := stmt.Op
+	if op == "os9" {
+		val, ok := evalExpr(stmt.Operand, stmt.PC, true)
+		if !ok {
+			setError(concatStr("os9 expr error: ", stmt.Operand))
+			return
+		}
+		stmtAddByte(stmt, 0x10)
+		stmtAddByte(stmt, 0x3F)
+		stmtAddByte(stmt, byte(val))
+		return
+	}
+
+	if op == "mod" {
+		items := splitCommaRespectingQuotes(stmt.Operand)
+		if items.Len < 6 {
+			setError("mod requires 6 operands")
+			return
+		}
+		var vals [6]word
+		for k := word(0); k < 6; k++ {
+			v, ok := evalExpr(items.Get(k), stmt.PC, true)
+			if !ok {
+				setError(concatStr("mod operand error: ", items.Get(k)))
+				return
+			}
+			vals[k] = word(v)
+		}
+		h0 := byte(0x87)
+		h1 := byte(0xCD)
+		h2 := byte(vals[0] >> 8)
+		h3 := byte(vals[0])
+		h4 := byte(vals[1] >> 8)
+		h5 := byte(vals[1])
+		h6 := byte(vals[2])
+		h7 := byte(vals[3])
+		h8 := byte(0xFF) ^ h0 ^ h1 ^ h2 ^ h3 ^ h4 ^ h5 ^ h6 ^ h7
+		stmtAddByte(stmt, h0)
+		stmtAddByte(stmt, h1)
+		stmtAddByte(stmt, h2)
+		stmtAddByte(stmt, h3)
+		stmtAddByte(stmt, h4)
+		stmtAddByte(stmt, h5)
+		stmtAddByte(stmt, h6)
+		stmtAddByte(stmt, h7)
+		stmtAddByte(stmt, h8)
+		stmtAddWord(stmt, vals[4])
+		stmtAddWord(stmt, vals[5])
+		modStartStmtIdx = stmtIdx
+		return
+	}
+
+	if op == "emod" {
+		resetOS9CRC()
+		for k := modStartStmtIdx; k < stmtIdx; k++ {
+			s := getStmt(k)
+			if s.IsCommentOnly != 0 {
+				continue
+			}
+			isRmb := s.IsDirective != 0 && (s.Op == "rmb" || s.Op == ".blkb" || s.Op == ".ds" || s.Op == ".space" || s.Op == "zmb" || s.Op == "bsz")
+			if isRmb || s.Size == 0 {
+				continue
+			}
+			for bIdx := word(0); bIdx < s.Size; bIdx++ {
+				feedOS9CRC(stmtGetByte(&s, bIdx))
+			}
+		}
+		finishOS9CRC()
+		stmtAddByte(stmt, crc0)
+		stmtAddByte(stmt, crc1)
+		stmtAddByte(stmt, crc2)
+		return
+	}
 	if op == "fcb" || op == ".byte" || op == "db" {
 		items := splitCommaRespectingQuotes(stmt.Operand)
 		for i := word(0); i < items.Len; i++ {
@@ -2497,7 +2965,7 @@ func assemble() bool {
 		stmtClearBytes(&stmt)
 
 		if stmt.IsDirective != 0 {
-			emitDirectiveBytes(&stmt)
+			emitDirectiveBytes(&stmt, i)
 			if asmErr.Len > 0 {
 				return false
 			}
@@ -2673,6 +3141,127 @@ func emitRaw(fd int) {
 	flushOut(fd)
 }
 
+func writeAndCRCByte(fd int, b byte) {
+	writeOutByte(fd, b)
+	feedOS9CRC(b)
+}
+
+func emitOS9(fd int) {
+	if hasMod {
+		emitRaw(fd)
+		return
+	}
+	outBufLen = 0
+	name := resolvedOS9Name()
+	headerPrefix := word(13) + name.Len + 1
+
+	endPC := headerPrefix
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.IsCommentOnly != 0 {
+			continue
+		}
+		isRmb := stmt.IsDirective != 0 && (stmt.Op == "rmb" || stmt.Op == ".blkb" || stmt.Op == ".ds" || stmt.Op == ".space")
+		if isRmb || stmt.Size == 0 {
+			continue
+		}
+		if stmt.PC+stmt.Size > endPC {
+			endPC = stmt.PC + stmt.Size
+		}
+	}
+
+	modSize := endPC + 3
+	nameOff := word(13)
+	tylg := os9Tylg
+	atrv := (os9Attr & 0xF0) | (os9Rev & 0x0F)
+
+	execOff := headerPrefix
+	if hasExecAddr {
+		execOff = execAddr
+	} else {
+		csVal, hasCs := symGet("cstart")
+		if hasCs {
+			execOff = csVal
+		} else {
+			mVal, hasM := symGet("_main")
+			if hasM {
+				execOff = mVal
+			}
+		}
+	}
+
+	dataSize := os9Mem
+	if dataSize == 0 {
+		gSz, hasG := symGet("_globals_size")
+		if hasG && gSz > 0 {
+			dataSize = gSz + 512
+		} else {
+			dataSize = 2048
+		}
+	}
+
+	var hdr [13]byte
+	hdr[0] = 0x87
+	hdr[1] = 0xCD
+	hdr[2] = byte(modSize >> 8)
+	hdr[3] = byte(modSize)
+	hdr[4] = byte(nameOff >> 8)
+	hdr[5] = byte(nameOff)
+	hdr[6] = tylg
+	hdr[7] = atrv
+	parity := byte(0xFF)
+	for k := word(0); k < 8; k++ {
+		parity = parity ^ hdr[k]
+	}
+	hdr[8] = parity
+	hdr[9] = byte(execOff >> 8)
+	hdr[10] = byte(execOff)
+	hdr[11] = byte(dataSize >> 8)
+	hdr[12] = byte(dataSize)
+
+	resetOS9CRC()
+
+	for k := word(0); k < 13; k++ {
+		writeAndCRCByte(fd, hdr[k])
+	}
+	for k := word(0); k < name.Len; k++ {
+		ch := name.Get(k)
+		if k == name.Len-1 {
+			ch = ch | 0x80
+		}
+		writeAndCRCByte(fd, ch)
+	}
+	writeAndCRCByte(fd, os9Edition)
+
+	expectedPC := headerPrefix
+	for i := word(0); i < numStmts; i++ {
+		stmt := getStmt(i)
+		if stmt.IsCommentOnly != 0 {
+			continue
+		}
+		isRmb := stmt.IsDirective != 0 && (stmt.Op == "rmb" || stmt.Op == ".blkb" || stmt.Op == ".ds" || stmt.Op == ".space")
+		if isRmb || stmt.Size == 0 {
+			continue
+		}
+		if stmt.PC > expectedPC {
+			gap := stmt.PC - expectedPC
+			for g := word(0); g < gap; g++ {
+				writeAndCRCByte(fd, 0)
+			}
+		}
+		for bIdx := word(0); bIdx < stmt.Size; bIdx++ {
+			writeAndCRCByte(fd, stmtGetByte(&stmt, bIdx))
+		}
+		expectedPC = stmt.PC + stmt.Size
+	}
+
+	finishOS9CRC()
+	writeOutByte(fd, crc0)
+	writeOutByte(fd, crc1)
+	writeOutByte(fd, crc2)
+	flushOut(fd)
+}
+
 func hexDigitChar(v byte) byte {
 	v = v & 0x0F
 	if v < 10 {
@@ -2804,6 +3393,22 @@ var listPath string
 var inputFile string
 var outFormat string
 
+func basenameWithoutExt(p string) string {
+	start := word(0)
+	for i := word(0); i < p.Len; i++ {
+		if p.Get(i) == '/' {
+			start = i + 1
+		}
+	}
+	base := substr(p, start, p.Len)
+	for i := word(0); i < base.Len; i++ {
+		if base.Get(i) == '.' {
+			return substr(base, 0, i)
+		}
+	}
+	return base
+}
+
 func main() {
 	initOpcodes()
 	enableRelax = true
@@ -2811,6 +3416,15 @@ func main() {
 	cEscapes = false
 	hasExecAddr = false
 	keepRawLines = false
+	os9Mode = false
+	hasMod = false
+	inDataOrg = false
+	dataPC = 0
+	os9Mem = 0
+	os9Rev = 1
+	os9Attr = 0x80
+	os9Tylg = 0x11
+	os9Edition = 1
 
 	outFormat = "decb"
 
@@ -2844,6 +3458,80 @@ func main() {
 			outFormat = "raw"
 		} else if arg == "--srec" {
 			outFormat = "srec"
+		} else if arg == "-os9" || arg == "--os9" {
+			outFormat = "os9"
+		} else if arg == "-name" || arg == "--name" {
+			i++
+			if i < args.Len {
+				os9Name = args.Get(i)
+			}
+		} else if hasPrefix(arg, "-name=") {
+			os9Name = substr(arg, 6, arg.Len)
+		} else if arg == "-mem" || arg == "--mem" {
+			i++
+			if i < args.Len {
+				_, lo, ok := parseNumber32(args.Get(i))
+				if ok {
+					os9Mem = lo
+				}
+			}
+		} else if hasPrefix(arg, "-mem=") {
+			_, lo, ok := parseNumber32(substr(arg, 5, arg.Len))
+			if ok {
+				os9Mem = lo
+			}
+		} else if arg == "-rev" || arg == "--rev" {
+			i++
+			if i < args.Len {
+				_, lo, ok := parseNumber32(args.Get(i))
+				if ok {
+					os9Rev = byte(lo)
+				}
+			}
+		} else if hasPrefix(arg, "-rev=") {
+			_, lo, ok := parseNumber32(substr(arg, 5, arg.Len))
+			if ok {
+				os9Rev = byte(lo)
+			}
+		} else if arg == "-attr" || arg == "--attr" {
+			i++
+			if i < args.Len {
+				_, lo, ok := parseNumber32(args.Get(i))
+				if ok {
+					os9Attr = byte(lo)
+				}
+			}
+		} else if hasPrefix(arg, "-attr=") {
+			_, lo, ok := parseNumber32(substr(arg, 6, arg.Len))
+			if ok {
+				os9Attr = byte(lo)
+			}
+		} else if arg == "-tylg" || arg == "--tylg" {
+			i++
+			if i < args.Len {
+				_, lo, ok := parseNumber32(args.Get(i))
+				if ok {
+					os9Tylg = byte(lo)
+				}
+			}
+		} else if hasPrefix(arg, "-tylg=") {
+			_, lo, ok := parseNumber32(substr(arg, 6, arg.Len))
+			if ok {
+				os9Tylg = byte(lo)
+			}
+		} else if arg == "-edition" || arg == "--edition" {
+			i++
+			if i < args.Len {
+				_, lo, ok := parseNumber32(args.Get(i))
+				if ok {
+					os9Edition = byte(lo)
+				}
+			}
+		} else if hasPrefix(arg, "-edition=") {
+			_, lo, ok := parseNumber32(substr(arg, 9, arg.Len))
+			if ok {
+				os9Edition = byte(lo)
+			}
 		} else if arg == "--no-relax" || arg == "-no-relax" {
 			enableRelax = false
 		} else if arg == "--relax" || arg == "-relax" {
@@ -2858,6 +3546,10 @@ func main() {
 			inputFile = arg
 		}
 		i++
+	}
+
+	if outFormat == "os9" {
+		os9Mode = true
 	}
 
 	inFd := os.STDIN
@@ -2888,6 +3580,14 @@ func main() {
 		os.Close(inFd)
 	}
 
+	if os9Mode && os9Name.Len == 0 && namTitle.Len == 0 {
+		if outPath.Len > 0 {
+			os9Name = basenameWithoutExt(outPath)
+		} else if inputFile.Len > 0 {
+			os9Name = basenameWithoutExt(inputFile)
+		}
+	}
+
 	if !assemble() {
 		println("Assembly error:", asmErr)
 		os.Exit(1)
@@ -2905,6 +3605,8 @@ func main() {
 			emitRaw(outFd)
 		} else if outFormat == "srec" {
 			emitSRecords(outFd)
+		} else if outFormat == "os9" {
+			emitOS9(outFd)
 		} else {
 			println("Unknown format:", outFormat)
 			os.Close(outFd)

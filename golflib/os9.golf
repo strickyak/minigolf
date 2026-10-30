@@ -1,0 +1,341 @@
+package os9
+
+// Standard OS-9 I/O Paths
+const STDIN = 0
+const STDOUT = 1
+const STDERR = 2
+
+// OS-9 Access Modes
+const MODE_READ = 1
+const MODE_WRITE = 2
+const MODE_UPDATE = 3
+const MODE_RDWR = 3
+const MODE_EXEC = 4
+const MODE_DIR = 0x80
+
+// OS-9 File Attributes
+const ATTR_R = 0x01
+const ATTR_W = 0x02
+const ATTR_E = 0x04
+const ATTR_PR = 0x08
+const ATTR_PW = 0x10
+const ATTR_PE = 0x20
+const ATTR_SHARE = 0x40
+const ATTR_DIR = 0x80
+
+// OS-9 GetStt / SetStt Status Codes
+const SS_Opt = 0x00
+const SS_Ready = 0x01
+const SS_Size = 0x02
+const SS_Reset = 0x03
+const SS_WTrk = 0x04
+const SS_Pos = 0x05
+const SS_EOF = 0x06
+const SS_Link = 0x07
+const SS_ULink = 0x08
+const SS_Feed = 0x09
+const SS_Frz = 0x0A
+const SS_SPT = 0x0B
+const SS_SQD = 0x0C
+const SS_DCmd = 0x0D
+const SS_DevNm = 0x0E
+const SS_FD = 0x0F
+const SS_Ticks = 0x10
+const SS_Lock = 0x11
+const SS_DStat = 0x12
+const SS_Joy = 0x13
+const SS_BlkRd = 0x14
+const SS_BlkWr = 0x15
+const SS_Reten = 0x16
+const SS_WFM = 0x17
+const SS_RFM = 0x18
+const SS_ELog = 0x19
+const SS_SSig = 0x1A
+const SS_Relea = 0x1B
+const SS_Attr = 0x1C
+
+// Low-level assembly subroutines provided by cstart.asm:
+func SysArgsPtr() *byte
+func SysArgsLen() word
+func SysMemEnd() word
+func SysOpen(path *byte, mode word, outPath *byte) byte
+func SysCreate(path *byte, mode word, attrs word, outPath *byte) byte
+func SysRead(path word, buf *byte, maxLen word, outRead *word) byte
+func SysReadLn(path word, buf *byte, maxLen word, outRead *word) byte
+func SysWrite(path word, buf *byte, count word, outWritten *word) byte
+func SysWritLn(path word, buf *byte, count word, outWritten *word) byte
+func SysClose(path word) byte
+func SysDup(path word, outPath *byte) byte
+func SysDelete(path *byte) byte
+func SysDeletX(path *byte, mode word) byte
+func SysMakDir(path *byte, attrs word) byte
+func SysChgDir(path *byte, mode word) byte
+func SysSeek(path word, posHi word, posLo word) byte
+func SysGetStt(path word, code word, outX *word, outU *word) byte
+func SysSetStt(path word, code word, regX word, regU word) byte
+func SysFork(modName *byte, params *byte, paramSize word, langType word, memPages word, outChildID *byte) byte
+func SysWait(outChildID *byte, outStatus *byte) byte
+func SysChain(modName *byte, params *byte, paramSize word, langType word, memPages word) byte
+func SysMem(requested word, outSize *word, outUpper *word) byte
+func SysSend(procID word, signal word) byte
+func SysSleep(ticks word, outRemaining *word) byte
+func SysID(outProcID *byte, outUserID *word) byte
+func SysTime(buf *byte) byte
+func SysExit(status word)
+
+var PathBuffer [128]byte
+var ParamBuffer [128]byte
+
+func copyStrToPathBuf(s string) {
+	n := s.Len
+	if n > 127 {
+		n = 127
+	}
+	for i := word(0); i < n; i++ {
+		PathBuffer[i] = s.Get(i)
+	}
+	PathBuffer[n] = 0
+}
+
+func copyStrToParamBuf(s string) word {
+	n := s.Len
+	if n > 126 {
+		n = 126
+	}
+	for i := word(0); i < n; i++ {
+		ParamBuffer[i] = s.Get(i)
+	}
+	if n == 0 || (ParamBuffer[n-1] != 13 && ParamBuffer[n-1] != 10) {
+		ParamBuffer[n] = 13
+		n++
+	}
+	ParamBuffer[n] = 0
+	return n
+}
+
+// Open opens an existing file or device on OS-9 (I$Open, $84).
+// Returns (path, errnum) where errnum is 0 on success or the OS-9 error code on failure.
+func Open(path string, mode byte) (byte, byte) {
+	copyStrToPathBuf(path)
+	var outPath byte
+	err := SysOpen(&PathBuffer[0], word(mode), &outPath)
+	return outPath, err
+}
+
+// Create creates and opens a new file on OS-9 (I$Create, $83).
+// Returns (path, errnum) where errnum is 0 on success or the OS-9 error code on failure.
+func Create(path string, mode byte, attrs byte) (byte, byte) {
+	copyStrToPathBuf(path)
+	var outPath byte
+	err := SysCreate(&PathBuffer[0], word(mode), word(attrs), &outPath)
+	return outPath, err
+}
+
+// Read reads up to buf.Len bytes from path into buf (I$Read, $89).
+// Returns (bytesRead, errnum).
+func Read(path byte, buf slice[byte]) (word, byte) {
+	var nRead word
+	err := SysRead(word(path), (*byte)(buf.Base), buf.Len, &nRead)
+	return nRead, err
+}
+
+// ReadLn reads a line (up to buf.Len bytes) from path into buf (I$ReadLn, $8B).
+// Returns (bytesRead, errnum).
+func ReadLn(path byte, buf slice[byte]) (word, byte) {
+	var nRead word
+	err := SysReadLn(word(path), (*byte)(buf.Base), buf.Len, &nRead)
+	return nRead, err
+}
+
+// Write writes buf.Len bytes from buf to path (I$Write, $8A).
+// Returns (bytesWritten, errnum).
+func Write(path byte, buf slice[byte]) (word, byte) {
+	var nWritten word
+	err := SysWrite(word(path), (*byte)(buf.Base), buf.Len, &nWritten)
+	return nWritten, err
+}
+
+// WritLn writes up to buf.Len bytes (through CR) from buf to path (I$WritLn, $8C).
+// Returns (bytesWritten, errnum).
+func WritLn(path byte, buf slice[byte]) (word, byte) {
+	var nWritten word
+	err := SysWritLn(word(path), (*byte)(buf.Base), buf.Len, &nWritten)
+	return nWritten, err
+}
+
+// Close closes an open path (I$Close, $8F).
+// Returns errnum (0 on success).
+func Close(path byte) byte {
+	return SysClose(word(path))
+}
+
+// Dup duplicates an open path number (I$Dup, $82).
+// Returns (newPath, errnum).
+func Dup(path byte) (byte, byte) {
+	var newPath byte
+	err := SysDup(word(path), &newPath)
+	return newPath, err
+}
+
+// Delete deletes a file by pathname (I$Delete, $87).
+// Returns errnum (0 on success).
+func Delete(path string) byte {
+	copyStrToPathBuf(path)
+	return SysDelete(&PathBuffer[0])
+}
+
+// DeletX deletes a file using the specified execution/data directory mode (I$DeletX, $90).
+// Returns errnum (0 on success).
+func DeletX(path string, mode byte) byte {
+	copyStrToPathBuf(path)
+	return SysDeletX(&PathBuffer[0], word(mode))
+}
+
+// MakDir creates a directory (I$MakDir, $85).
+// Returns errnum (0 on success).
+func MakDir(path string, attrs byte) byte {
+	copyStrToPathBuf(path)
+	return SysMakDir(&PathBuffer[0], word(attrs))
+}
+
+// ChgDir changes the current data or execution directory (I$ChgDir, $86).
+// Returns errnum (0 on success).
+func ChgDir(path string, mode byte) byte {
+	copyStrToPathBuf(path)
+	return SysChgDir(&PathBuffer[0], word(mode))
+}
+
+// Seek repositions a file pointer to the 32-bit offset (posHi << 16) | posLo (I$Seek, $88).
+// Returns errnum (0 on success).
+func Seek(path byte, posHi word, posLo word) byte {
+	return SysSeek(word(path), posHi, posLo)
+}
+
+// GetStt performs a get-status call on path (I$GetStt, $8D).
+// Returns (regX, regU, errnum).
+func GetStt(path byte, code byte) (word, word, byte) {
+	var outX word
+	var outU word
+	err := SysGetStt(word(path), word(code), &outX, &outU)
+	return outX, outU, err
+}
+
+// SetStt performs a set-status call on path (I$SetStt, $8E).
+// Returns errnum (0 on success).
+func SetStt(path byte, code byte, regX word, regU word) byte {
+	return SysSetStt(word(path), word(code), regX, regU)
+}
+
+// Fork spawns a child process (F$Fork, $03).
+// Returns (childProcID, errnum).
+func Fork(modName string, params string, langType byte, memPages byte) (byte, byte) {
+	copyStrToPathBuf(modName)
+	pLen := copyStrToParamBuf(params)
+	var childID byte
+	err := SysFork(&PathBuffer[0], &ParamBuffer[0], pLen, word(langType), word(memPages), &childID)
+	return childID, err
+}
+
+// Wait waits for a child process to exit (F$Wait, $04).
+// Returns (childProcID, childExitStatus, errnum).
+func Wait() (byte, byte, byte) {
+	var childID byte
+	var status byte
+	err := SysWait(&childID, &status)
+	return childID, status, err
+}
+
+// Chain replaces the current process with a new module (F$Chain, $05).
+// Only returns if an error occurs; returns errnum.
+func Chain(modName string, params string, langType byte, memPages byte) byte {
+	copyStrToPathBuf(modName)
+	pLen := copyStrToParamBuf(params)
+	return SysChain(&PathBuffer[0], &ParamBuffer[0], pLen, word(langType), word(memPages))
+}
+
+// Mem requests a change to the process data area size, or queries it when requested == 0 (F$Mem, $07).
+// Returns (newSize, upperBound, errnum).
+func Mem(requested word) (word, word, byte) {
+	var newSize word
+	var upperBound word
+	err := SysMem(requested, &newSize, &upperBound)
+	return newSize, upperBound, err
+}
+
+// Send sends a signal to a process (F$Send, $08).
+// Returns errnum (0 on success).
+func Send(procID byte, signal byte) byte {
+	return SysSend(word(procID), word(signal))
+}
+
+// Sleep puts the calling process to sleep for the specified number of ticks (F$Sleep, $0A).
+// Returns (remainingTicks, errnum).
+func Sleep(ticks word) (word, byte) {
+	var remaining word
+	err := SysSleep(ticks, &remaining)
+	return remaining, err
+}
+
+// ID returns the current process ID and user ID (F$ID, $0C).
+// Returns (procID, userID, errnum).
+func ID() (byte, word, byte) {
+	var procID byte
+	var userID word
+	err := SysID(&procID, &userID)
+	return procID, userID, err
+}
+
+// Time reads the 6-byte system date/time packet [year, month, day, hour, minute, second] (F$Time, $15).
+// Returns errnum (0 on success).
+func Time(buf *[6]byte) byte {
+	return SysTime((*byte)(word(buf)))
+}
+
+// Exit terminates the calling process with the given status byte (F$Exit, $06).
+func Exit(status byte) {
+	SysExit(word(status))
+}
+
+// Args parses the OS-9 command-line parameter area into a slice of strings.
+func Args() slice[string] {
+	var args slice[string]
+	addr := word(SysArgsPtr())
+	maxLen := SysArgsLen()
+	if addr == 0 || maxLen == 0 {
+		return args
+	}
+	limit := addr + maxLen
+	for addr < limit {
+		for addr < limit && (peekb(addr) == ' ' || peekb(addr) == 9) {
+			addr++
+		}
+		if addr >= limit {
+			break
+		}
+		c := peekb(addr)
+		if c == 0 || c == 13 || c == 10 {
+			break
+		}
+		start := addr
+		length := word(0)
+		for addr < limit {
+			c = peekb(addr)
+			if c == 0 || c == 13 || c == 10 || c == ' ' || c == 9 {
+				break
+			}
+			length++
+			addr++
+		}
+		p := zalloc(length + 1)
+		for i := word(0); i < length; i++ {
+			pokeb(p+i, peekb(start+i))
+		}
+		pokeb(p+length, 0)
+		var arg string
+		arg.Base = p
+		arg.Len = length
+		arg.Cap = length + 1
+		args.Append(arg)
+	}
+	return args
+}

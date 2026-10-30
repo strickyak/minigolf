@@ -344,6 +344,308 @@ f_os__SysExit:
 .hv_exit_stuck:
     bra   .hv_exit_stuck
 
+; --- Low-Level Subroutines for os9.golf (Hatvan OS / OS-9) ---
+
+f_os9__SysArgsPtr:
+    ldd   <hatvan_args_ptr
+    rts
+
+f_os9__SysArgsLen:
+    ldd   #256
+    rts
+
+f_os9__SysMemEnd:
+    ldd   #$3FFE
+    rts
+
+f_os9__SysOpen:
+    pshs  y,u
+    ldx   6,s          ; path pointer
+    lda   9,s          ; mode
+    os9   I$Open
+    bcs   .hv_os9_ret_err
+    ldx   10,s         ; outPath
+    sta   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysCreate:
+    pshs  y,u
+    ldx   6,s          ; path pointer
+    lda   9,s          ; mode
+    ldb   11,s         ; attrs
+    os9   I$Create
+    bcs   .hv_os9_ret_err
+    ldx   12,s         ; outPath
+    sta   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysRead:
+    pshs  y,u
+    lda   7,s          ; path
+    ldx   8,s          ; buf
+    ldy   10,s         ; maxLen
+    os9   I$Read
+    bcs   .hv_os9_io_err
+    ldx   12,s         ; outRead
+    sty   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysReadLn:
+    pshs  y,u
+    lda   7,s          ; path
+    ldx   8,s          ; buf
+    ldy   10,s         ; maxLen
+    os9   I$ReadLn
+    bcs   .hv_os9_io_err
+    ldx   12,s         ; outRead
+    sty   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysWrite:
+    pshs  y,u
+    lda   7,s          ; path
+    ldx   8,s          ; buf
+    ldy   10,s         ; count
+    os9   I$Write
+    bcs   .hv_os9_io_err
+    ldx   12,s         ; outWritten
+    sty   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysWritLn:
+    pshs  y,u
+    lda   7,s          ; path
+    ldx   8,s          ; buf
+    ldy   10,s         ; count
+    os9   I$WritLn
+    bcs   .hv_os9_io_err
+    ldx   12,s         ; outWritten
+    sty   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+.hv_os9_io_err:
+    ldx   12,s
+    clr   ,x
+    clr   1,x
+.hv_os9_ret_err:
+    clra
+    puls  y,u,pc
+
+f_os9__SysClose:
+    pshs  y,u
+    lda   7,s          ; path
+    os9   I$Close
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysDup:
+    pshs  y,u
+    lda   7,s          ; path
+    os9   I$Dup
+    bcs   .hv_os9_ret_err
+    ldx   8,s          ; outPath
+    sta   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysDelete:
+    pshs  y,u
+    ldx   6,s          ; path
+    os9   I$Delete
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysDeletX:
+    pshs  y,u
+    ldx   6,s          ; path
+    lda   9,s          ; mode
+    os9   I$DeletX
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysMakDir:
+    pshs  y,u
+    ldx   6,s          ; path
+    ldb   9,s          ; attrs
+    os9   I$MakDir
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysChgDir:
+    pshs  y,u
+    ldx   6,s          ; path
+    lda   9,s          ; mode
+    os9   I$ChgDir
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysSeek:
+    pshs  y,u
+    lda   7,s          ; path
+    ldx   8,s          ; posHi
+    ldu   10,s         ; posLo
+    os9   I$Seek
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysGetStt:
+    pshs  y,u
+    lda   7,s          ; path
+    ldb   9,s          ; code
+    ldx   12,s         ; outU ptr
+    ldu   ,x
+    ldx   10,s         ; outX ptr
+    ldx   ,x
+    os9   I$GetStt
+    bcs   .hv_os9_ret_err
+    pshs  u
+    ldu   12,s
+    stx   ,u
+    ldu   14,s
+    puls  x
+    stx   ,u
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysSetStt:
+    pshs  y,u
+    lda   7,s          ; path
+    ldb   9,s          ; code
+    ldx   10,s         ; regX
+    ldu   12,s         ; regU
+    os9   I$SetStt
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysFork:
+    pshs  y,u
+    ldx   6,s          ; modName
+    ldu   8,s          ; params
+    ldy   10,s         ; paramSize
+    lda   13,s         ; langType
+    ldb   15,s         ; memPages
+    os9   F$Fork
+    bcs   .hv_os9_ret_err
+    ldx   16,s         ; outChildID
+    sta   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysWait:
+    pshs  y,u
+    os9   F$Wait
+    bcs   .hv_os9_ret_err
+    ldx   6,s          ; outChildID
+    sta   ,x
+    ldx   8,s          ; outStatus
+    stb   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysChain:
+    pshs  y,u
+    ldx   6,s          ; modName
+    ldu   8,s          ; params
+    ldy   10,s         ; paramSize
+    lda   13,s         ; langType
+    ldb   15,s         ; memPages
+    os9   F$Chain
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysMem:
+    pshs  y,u
+    ldd   6,s          ; requested size
+    os9   F$Mem
+    bcs   .hv_os9_ret_err
+    ldx   8,s          ; outSize
+    std   ,x
+    ldx   10,s         ; outUpper
+    sty   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysSend:
+    pshs  y,u
+    lda   7,s          ; procID
+    ldb   9,s          ; signal
+    os9   F$Send
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysSleep:
+    pshs  y,u
+    ldx   6,s          ; ticks
+    os9   F$Sleep
+    bcs   .hv_os9_ret_err
+    tfr   x,d
+    ldx   8,s          ; outRemaining
+    std   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysID:
+    pshs  y,u
+    os9   F$ID
+    bcs   .hv_os9_ret_err
+    ldx   6,s          ; outProcID
+    sta   ,x
+    ldx   8,s          ; outUserID
+    sty   ,x
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysTime:
+    pshs  y,u
+    ldx   6,s          ; buf
+    os9   F$Time
+    bcs   .hv_os9_ret_err
+    clra
+    clrb
+    puls  y,u,pc
+
+f_os9__SysExit:
+    ldb   3,s          ; status
+    os9   F$Exit
+    bra   .hv_exit_stuck
+
 _printf:
     pshs  d,x,y,u
     ldx   10,s          ; format string pointer

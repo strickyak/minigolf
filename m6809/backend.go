@@ -457,10 +457,14 @@ func (b *Backend) retBufAddr() string {
 
 func (b *Backend) jmpChainAddr() string {
 	if b.globalsAtY {
-		if off, ok := b.globalOffsets["prelude._jmp_chain_"]; ok {
-			return fmt.Sprintf("%d,y", off)
+		off := 16
+		if o, ok := b.globalOffsets["prelude._jmp_chain_"]; ok {
+			off = o
 		}
-		return "16,y"
+		if off >= 0 && off < 255 {
+			return fmt.Sprintf("<%d", off)
+		}
+		return fmt.Sprintf("%d,y", off)
 	}
 	if b.picMode {
 		return "v_prelude._jmp_chain_,pcr"
@@ -470,10 +474,14 @@ func (b *Backend) jmpChainAddr() string {
 
 func (b *Backend) panicAddr() string {
 	if b.globalsAtY {
-		if off, ok := b.globalOffsets["prelude._panic_"]; ok {
-			return fmt.Sprintf("%d,y", off)
+		off := 18
+		if o, ok := b.globalOffsets["prelude._panic_"]; ok {
+			off = o
 		}
-		return "18,y"
+		if off >= 0 && off < 255 {
+			return fmt.Sprintf("<%d", off)
+		}
+		return fmt.Sprintf("%d,y", off)
 	}
 	if b.picMode {
 		return "v_prelude._panic_,pcr"
@@ -490,7 +498,12 @@ func (b *Backend) getAddrStr(val ir.Value) string {
 		return b.localAddr(v.GetID())
 	case *ir.Global:
 		if b.globalsAtY {
-			return fmt.Sprintf("%d,y", b.globalOffsets[v.Name])
+			if off, ok := b.globalOffsets[v.Name]; ok {
+				if off >= 0 && off < 255 {
+					return fmt.Sprintf("<%d", off)
+				}
+				return fmt.Sprintf("%d,y", off)
+			}
 		}
 		if b.picMode {
 			return fmt.Sprintf("v_%s,pcr", v.Name)
@@ -692,6 +705,16 @@ func (b *Backend) emitFunctionHeader(f *ir.Function) {
 func offsetAddrStr(valStr string, offset int) string {
 	if offset == 0 {
 		return valStr
+	}
+	if strings.HasPrefix(valStr, "<") {
+		var baseNum int
+		if _, err := fmt.Sscanf(valStr[1:], "%d", &baseNum); err == nil {
+			newOff := baseNum + offset
+			if newOff >= 0 && newOff < 255 {
+				return fmt.Sprintf("<%d", newOff)
+			}
+			return fmt.Sprintf("%d,y", newOff)
+		}
 	}
 	if strings.HasPrefix(valStr, "$") && !strings.Contains(valStr, ",") {
 		var hexVal uint32
@@ -1086,6 +1109,9 @@ func (b *Backend) countUses(f *ir.Function) map[int]int {
 }
 
 func (b *Backend) emitLoadAddr(reg string, addrStr string) {
+	if strings.HasPrefix(addrStr, "<") {
+		addrStr = addrStr[1:] + ",y"
+	}
 	if reg == "d" {
 		if strings.HasPrefix(addrStr, "v_") && !strings.Contains(addrStr, ",") {
 			b.buf.WriteString(fmt.Sprintf("\tldd #%s\n", addrStr))
@@ -1213,13 +1239,16 @@ func (b *Backend) loadVal(val ir.Value) {
 		b.buf.WriteString("\ttfr x,d\n")
 	case *ir.AddressOfGlobal:
 		if b.globalsAtY {
-			offset := b.globalOffsets[v.Global.Name]
-			if offset == 0 {
-				b.buf.WriteString(fmt.Sprintf("\ttfr y,d\t; &global '%s'\n", v.Global.Name))
-			} else {
-				b.buf.WriteString(fmt.Sprintf("\ttfr y,d\n\taddd #%d\t; &global '%s'\n", offset, v.Global.Name))
+			if offset, ok := b.globalOffsets[v.Global.Name]; ok {
+				if offset == 0 {
+					b.buf.WriteString(fmt.Sprintf("\ttfr y,d\t; &global '%s'\n", v.Global.Name))
+				} else {
+					b.buf.WriteString(fmt.Sprintf("\ttfr y,d\n\taddd #%d\t; &global '%s'\n", offset, v.Global.Name))
+				}
+				break
 			}
-		} else if b.picMode {
+		}
+		if b.picMode {
 			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\t; &global '%s'\n", v.Global.Name, v.Global.Name))
 		} else {
 			b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\t; &global '%s'\n", v.Global.Name, v.Global.Name))
@@ -1406,13 +1435,17 @@ func (b *Backend) storeResult(id int) {
 	}
 }
 
+func (b *Backend) emitRestoreY() {
+	b.buf.WriteString("\ttfr dp,a\n\tclrb\n\ttfr d,y\n")
+}
+
 func (b *Backend) emitCopy(destReg string, srcReg string, size int) {
 	if size <= 0 {
 		return
 	}
 	defer func() {
 		if b.globalsAtY {
-			b.buf.WriteString("\tldy #0\n")
+			b.emitRestoreY()
 		}
 	}()
 	b.clobberAllRegs()
@@ -2363,7 +2396,11 @@ func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
 		b.emitPrint(i.Name == "println", i.Args)
 	case "exit":
 		b.loadVal(i.Args[0])
-		b.buf.WriteString("\ttfr d,x\n\tjmp __exit\n")
+		if b.picMode {
+			b.buf.WriteString("\ttfr d,x\n\tlbra __exit\n")
+		} else {
+			b.buf.WriteString("\ttfr d,x\n\tjmp __exit\n")
+		}
 	case "panic":
 		if len(i.Args) > 0 {
 			if strLit, ok := i.Args[0].(*ir.StringLiteral); ok {
@@ -2418,7 +2455,11 @@ func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
 		}
 		b.buf.WriteString("\tpshs x\n")
 		b.emitCall("_printf")
-		b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
+		if b.picMode {
+			b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tlbra __exit\n")
+		} else {
+			b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
+		}
 
 	case "_unlink_jmp_":
 		b.buf.WriteString(fmt.Sprintf("\tldx %s\n", b.jmpChainAddr()))
@@ -2454,7 +2495,11 @@ func (b *Backend) emitBuiltinCall(i *ir.BuiltinCall) {
 		}
 		b.buf.WriteString("\tpshs x\n")
 		b.emitCall("_printf")
-		b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
+		if b.picMode {
+			b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tlbra __exit\n")
+		} else {
+			b.buf.WriteString("\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
+		}
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext3))
 	}
 }
@@ -2619,13 +2664,7 @@ func (b *Backend) getPhiSrcLoc(val ir.Value) string {
 	case *ir.Parameter:
 		return b.paramAddr(v.Name)
 	case *ir.Global:
-		if b.globalsAtY {
-			return fmt.Sprintf("%d,y", b.globalOffsets[v.Name])
-		}
-		if b.picMode {
-			return fmt.Sprintf("v_%s,pcr", v.Name)
-		}
-		return fmt.Sprintf("v_%s", v.Name)
+		return b.getAddrStr(v)
 	case ir.Instruction:
 		if len(b.globalRegs) > 0 {
 			if reg, ok := b.globalRegs[v.GetID()]; ok {
@@ -3375,19 +3414,16 @@ func (b *Backend) emitInstr(instr ir.Instruction) {
 		}
 
 	case *ir.AddressOfGlobal:
-		if _, inReg := b.globalRegs[id]; inReg {
+		_, inReg := b.globalRegs[id]
+		if inReg || b.localAddressTaken[id] {
 			if b.globalsAtY {
-				b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
-			} else if b.picMode {
-				b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
-			} else {
-				b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
+				if off, ok := b.globalOffsets[i.Global.Name]; ok {
+					b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", off))
+					b.storeResult(id)
+					break
+				}
 			}
-			b.storeResult(id)
-		} else if b.localAddressTaken[id] {
-			if b.globalsAtY {
-				b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\ttfr x,d\n", b.globalOffsets[i.Global.Name]))
-			} else if b.picMode {
+			if b.picMode {
 				b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\ttfr x,d\n", i.Global.Name))
 			} else {
 				b.buf.WriteString(fmt.Sprintf("\tldd #v_%s\n", i.Global.Name))
@@ -4098,9 +4134,13 @@ func (b *Backend) emitInlineDivMod16(isDiv bool) {
 	lblLoop := b.nextLabel()
 	lblNoSub := b.nextLabel()
 	lblNonZero := b.nextLabel()
+	jmpDiv0 := "\tjmp __div0_error\n"
+	if b.picMode {
+		jmpDiv0 = "\tlbra __div0_error\n"
+	}
 	b.buf.WriteString(fmt.Sprintf("\tcmpd #0\n"+
 		"\tbne %s\n"+
-		"\tjmp __div0_error\n"+
+		jmpDiv0+
 		"%s:\n"+
 		"\tpshs u,d\n"+
 		"\tldu #16\n"+
@@ -4180,8 +4220,10 @@ __mul16:
 		}
 
 		callPrintf := "\tjsr _printf\n"
+		jmpExit := "\tjmp __exit\n"
 		if b.picMode {
 			callPrintf = "\tlbsr _printf\n"
+			jmpExit = "\tlbra __exit\n"
 		}
 
 		b.helpersBuf.WriteString(fmt.Sprintf(`
@@ -4226,7 +4268,8 @@ __div0_error:
 			loadAbortMsg+
 			"\tpshs x\n"+
 			callPrintf+
-			"\tleas 2,s\n\tldd #1\n\ttfr d,x\n\tjmp __exit\n"+
+			"\tleas 2,s\n\tldd #1\n\ttfr d,x\n"+
+			jmpExit+
 			`
 __div16:
 	lbsr __divmod16
@@ -4270,10 +4313,86 @@ __memset0:
 	}
 }
 
+func hasAddressOfGlobal(val ir.Value) bool {
+	switch v := val.(type) {
+	case *ir.AddressOfGlobal:
+		return true
+	case *ir.ConstStruct:
+		for _, f := range v.Fields {
+			if hasAddressOfGlobal(f) {
+				return true
+			}
+		}
+	case *ir.ConstArray:
+		for _, el := range v.Elements {
+			if hasAddressOfGlobal(el) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (b *Backend) isReadOnlyGlobal(g *ir.Global) bool {
+	if !g.IsInit {
+		return false
+	}
+	if strings.HasPrefix(g.Name, "str_const_") {
+		return true
+	}
+	if strings.HasPrefix(g.Name, ".const_struct_") && !hasAddressOfGlobal(g.InitVal) {
+		return true
+	}
+	return false
+}
+
+func (b *Backend) emitRuntimeInitVal(val ir.Value, byteOff int) int {
+	addrStr := fmt.Sprintf("%d,y", byteOff)
+	if byteOff >= 0 && byteOff < 255 {
+		addrStr = fmt.Sprintf("<%d", byteOff)
+	}
+	switch v := val.(type) {
+	case *ir.ConstByte:
+		b.buf.WriteString(fmt.Sprintf("\tldb #%d\n\tstb %s\n", v.Val, addrStr))
+		return byteOff + 1
+	case *ir.ConstWord:
+		b.buf.WriteString(fmt.Sprintf("\tldd #%d\n\tstd %s\n", v.Val, addrStr))
+		return byteOff + 2
+	case *ir.AddressOfGlobal:
+		if targetOff, ok := b.globalOffsets[v.Global.Name]; ok {
+			b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\tstx %s\n", targetOff, addrStr))
+		} else {
+			b.buf.WriteString(fmt.Sprintf("\tleax v_%s,pcr\n\tstx %s\n", v.Global.Name, addrStr))
+		}
+		return byteOff + 2
+	case *ir.ConstStruct:
+		for _, f := range v.Fields {
+			byteOff = b.emitRuntimeInitVal(f, byteOff)
+		}
+		return byteOff
+	case *ir.ConstArray:
+		for _, el := range v.Elements {
+			byteOff = b.emitRuntimeInitVal(el, byteOff)
+		}
+		return byteOff
+	default:
+		log.Panicf("unsupported runtime init value type %T", val)
+		return byteOff
+	}
+}
+
 func (b *Backend) Generate(program *ir.Program) string {
 	b.program = program
 	b.clobberAnalysis = b.AnalyzeProgramClobbers(program)
 	b.buf.WriteString("\tpragma cescapes\n")
+
+	type picGlobalInit struct {
+		g      *ir.Global
+		offset int
+		size   int
+		label  string
+	}
+	var picInits []picGlobalInit
 
 	b.globalOffsets = make(map[string]int)
 	if !b.globalsAtY && len(program.Globals) > 0 {
@@ -4283,16 +4402,9 @@ func (b *Backend) Generate(program *ir.Program) string {
 				b.dataBuf.WriteString(fmt.Sprintf("*** global var init: name=%q type=%q init=%#v\n", g.Name, g.Typ.Name, g.InitString))
 				b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
 				if g.InitVal != nil {
-					b.emitData(g.InitVal)
+					b.emitDataTo(&b.dataBuf, g.InitVal)
 				} else {
-					for i := 0; i < len(g.InitString); i++ {
-						x := g.InitString[i]
-						c := byte('~')
-						if ' ' <= x && x < '~' {
-							c = x
-						}
-						b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d ; [%d] <%c>\n", g.InitString[i], i, c))
-					}
+					b.emitInitStringTo(&b.dataBuf, g.InitString)
 				}
 			} else {
 				size := b.getTypeSizeByType(g.Typ)
@@ -4303,30 +4415,63 @@ func (b *Backend) Generate(program *ir.Program) string {
 	} else if b.globalsAtY {
 		offset := *GLOBAL_VAR_OFFSET
 		for _, g := range program.Globals {
+			if b.picMode && b.isReadOnlyGlobal(g) {
+				b.rodataBuf.WriteString(fmt.Sprintf("*** rodata global: name=%q type=%q\n", g.Name, g.Typ.Name))
+				b.rodataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
+				if g.InitVal != nil {
+					b.emitDataTo(&b.rodataBuf, g.InitVal)
+				} else {
+					b.emitInitStringTo(&b.rodataBuf, g.InitString)
+				}
+				continue
+			}
+
 			b.globalOffsets[g.Name] = offset
 			if g.IsInit {
-				b.dataBuf.WriteString(fmt.Sprintf("\torg %d\n", offset))
-				b.dataBuf.WriteString(fmt.Sprintf("*** global var init: name=%q type=%q init=%#v\n", g.Name, g.Typ.Name, g.InitString))
-				b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
-				if g.InitVal != nil {
-					b.emitData(g.InitVal)
-					offset += b.getTypeSizeByType(g.Typ)
-				} else {
-					for i := 0; i < len(g.InitString); i++ {
-						x := g.InitString[i]
-						c := byte('~')
-						if ' ' <= x && x < '~' {
-							c = x
-						}
-						b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d ; [%d] <%c>\n", g.InitString[i], i, c))
+				if b.picMode {
+					b.dataBuf.WriteString(fmt.Sprintf("v_%s\tequ\t%d\n", g.Name, offset))
+					var size int
+					if g.InitVal != nil {
+						size = b.getTypeSizeByType(g.Typ)
+					} else {
+						size = len(g.InitString)
 					}
-					offset += len(g.InitString)
+					initLabel := fmt.Sprintf("v_init_%s", g.Name)
+					if g.InitVal == nil || !hasAddressOfGlobal(g.InitVal) {
+						b.rodataBuf.WriteString(fmt.Sprintf("*** global var init image: name=%q type=%q\n", g.Name, g.Typ.Name))
+						b.rodataBuf.WriteString(fmt.Sprintf("%s:\n", initLabel))
+						if g.InitVal != nil {
+							b.emitDataTo(&b.rodataBuf, g.InitVal)
+						} else {
+							b.emitInitStringTo(&b.rodataBuf, g.InitString)
+						}
+					}
+					picInits = append(picInits, picGlobalInit{
+						g:      g,
+						offset: offset,
+						size:   size,
+						label:  initLabel,
+					})
+					offset += size
+				} else {
+					b.dataBuf.WriteString(fmt.Sprintf("\torg %d\n", offset))
+					b.dataBuf.WriteString(fmt.Sprintf("*** global var init: name=%q type=%q init=%#v\n", g.Name, g.Typ.Name, g.InitString))
+					b.dataBuf.WriteString(fmt.Sprintf("v_%s:\n", g.Name))
+					if g.InitVal != nil {
+						b.emitDataTo(&b.dataBuf, g.InitVal)
+						offset += b.getTypeSizeByType(g.Typ)
+					} else {
+						b.emitInitStringTo(&b.dataBuf, g.InitString)
+						offset += len(g.InitString)
+					}
 				}
 			} else {
 				size := b.getTypeSizeByType(g.Typ)
+				b.dataBuf.WriteString(fmt.Sprintf("v_%s\tequ\t%d\t; size=%d type=%q [no init]\n", g.Name, offset, size, g.Typ.Name))
 				offset += size
 			}
 		}
+		b.dataBuf.WriteString(fmt.Sprintf("\n_globals_size\tequ\t%d\n", offset))
 	}
 
 	usesPanic := false
@@ -4347,7 +4492,15 @@ func (b *Backend) Generate(program *ir.Program) string {
 
 	b.buf.WriteString("_main:\n")
 	if b.globalsAtY {
-		b.buf.WriteString("\tldy #0\n")
+		b.emitRestoreY()
+		for _, pi := range picInits {
+			if pi.g.InitVal != nil && hasAddressOfGlobal(pi.g.InitVal) {
+				b.emitRuntimeInitVal(pi.g.InitVal, pi.offset)
+			} else if pi.size > 0 {
+				b.buf.WriteString(fmt.Sprintf("\tleax %d,y\n\tleay %s,pcr\n", pi.offset, pi.label))
+				b.emitCopy("x", "y", pi.size)
+			}
+		}
 	}
 
 	if usesPanic {
@@ -4369,7 +4522,9 @@ func (b *Backend) Generate(program *ir.Program) string {
 		b.buf.WriteString("\tclra\n\tclrb\n")
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblNext))
 		if b.globalsAtY {
-			b.buf.WriteString("\tldy #0\n")
+			b.buf.WriteString("\tpshs d\n")
+			b.emitRestoreY()
+			b.buf.WriteString("\tpuls d\n")
 		}
 		b.buf.WriteString("\tcmpd #0\n")
 		lblCallMain := b.nextLabel()
@@ -4407,7 +4562,11 @@ func (b *Backend) Generate(program *ir.Program) string {
 		b.buf.WriteString("\tleas 4,s\n")
 
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblAbort))
-		b.buf.WriteString("\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
+		if b.picMode {
+			b.buf.WriteString("\tldd #1\n\ttfr d,x\n\tlbra __exit\n")
+		} else {
+			b.buf.WriteString("\tldd #1\n\ttfr d,x\n\tjmp __exit\n")
+		}
 
 		b.buf.WriteString(fmt.Sprintf("%s:\n", lblCallMain))
 	}
@@ -4431,25 +4590,40 @@ func (b *Backend) Generate(program *ir.Program) string {
 	return peepholeOptimize(rawCode)
 }
 
-func (b *Backend) emitData(val ir.Value) {
+func (b *Backend) emitInitStringTo(buf *bytes.Buffer, s string) {
+	for i := 0; i < len(s); i++ {
+		x := s[i]
+		c := byte('~')
+		if ' ' <= x && x < '~' {
+			c = x
+		}
+		buf.WriteString(fmt.Sprintf("\tfcb %d ; [%d] <%c>\n", s[i], i, c))
+	}
+}
+
+func (b *Backend) emitDataTo(buf *bytes.Buffer, val ir.Value) {
 	switch v := val.(type) {
 	case *ir.ConstByte:
-		b.dataBuf.WriteString(fmt.Sprintf("\tfcb %d\n", v.Val))
+		buf.WriteString(fmt.Sprintf("\tfcb %d\n", v.Val))
 	case *ir.ConstWord:
-		b.dataBuf.WriteString(fmt.Sprintf("\tfdb %d\n", v.Val))
+		buf.WriteString(fmt.Sprintf("\tfdb %d\n", v.Val))
 	case *ir.AddressOfGlobal:
-		b.dataBuf.WriteString(fmt.Sprintf("\tfdb v_%s\n", v.Global.Name))
+		buf.WriteString(fmt.Sprintf("\tfdb v_%s\n", v.Global.Name))
 	case *ir.ConstStruct:
 		for _, f := range v.Fields {
-			b.emitData(f)
+			b.emitDataTo(buf, f)
 		}
 	case *ir.ConstArray:
 		for _, el := range v.Elements {
-			b.emitData(el)
+			b.emitDataTo(buf, el)
 		}
 	default:
 		log.Panicf("unsupported init value type %T", val)
 	}
+}
+
+func (b *Backend) emitData(val ir.Value) {
+	b.emitDataTo(&b.dataBuf, val)
 }
 
 func Assert(pred bool) {

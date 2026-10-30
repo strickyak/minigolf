@@ -63,6 +63,9 @@ const (
 	StmtString
 	StmtEnd
 	StmtComment
+	StmtMod
+	StmtEmod
+	StmtOS9
 )
 
 type Statement struct {
@@ -108,6 +111,8 @@ type Statement struct {
 	TargetSym     string
 	TargetDisp    int64
 	Postbyte      byte
+	RegCode       byte
+	ForceBits     int // 0, 8, or 16
 	IndexDisp     int64
 	IndexDispSize int // 0 (5-bit), 1 (8-bit), 2 (16-bit)
 	IsPCRel       bool
@@ -289,19 +294,105 @@ type Assembler struct {
 	statements  []*Statement
 	sourceLines []*SourceLine
 	currPC      uint32
+	dataPC      uint32
+	inDataOrg   bool
 	entryPoint  uint32
 	hasEntry    bool
+	hasCstart   bool
 	dp          uint8
 	enableRelax bool
+
+	// OS-9 Module support
+	hasMod     bool
+	modStart   uint32
+	os9Mode    bool
+	os9Name    string
+	os9Mem     int
+	os9Rev     int
+	os9Attr    int
+	os9Tylg    int
+	os9Edition int
+	namTitle   string
 }
 
 func NewAssembler() *Assembler {
+	syms := map[string]int64{
+		// OS-9 Module Type/Language constants
+		"Prgrm":  0x10,
+		"Sbtrn":  0x20,
+		"Multi":  0x30,
+		"Data":   0x40,
+		"Systm":  0xC0,
+		"FlMgr":  0xD0,
+		"Drvr":   0xE0,
+		"Devic":  0xF0,
+		"Objct":  0x01,
+		"ICode":  0x02,
+		"PCode":  0x03,
+		"CCode":  0x04,
+		"CblCd":  0x05,
+		"FrtnCd": 0x06,
+
+		// OS-9 Module Attribute constants
+		"ReEnt":  0x80,
+		"Ghost":  0x40,
+		"ModNat": 0x20,
+
+		// OS-9 System Call numbers
+		"F$Link":   0x00,
+		"F$Load":   0x01,
+		"F$UnLink": 0x02,
+		"F$Fork":   0x03,
+		"F$Wait":   0x04,
+		"F$Chain":  0x05,
+		"F$Exit":   0x06,
+		"F$Mem":    0x07,
+		"F$Send":   0x08,
+		"F$Icpt":   0x09,
+		"F$Sleep":  0x0A,
+		"F$SSpd":   0x0B,
+		"F$ID":     0x0C,
+		"F$SPrior": 0x0D,
+		"F$SSWI":   0x0E,
+		"F$PErr":   0x0F,
+		"F$PrsNam": 0x10,
+		"F$CmpNam": 0x11,
+		"F$SchBit": 0x12,
+		"F$AllBit": 0x13,
+		"F$DelBit": 0x14,
+		"F$Time":   0x15,
+		"F$STime":  0x16,
+		"F$CRC":    0x17,
+
+		// OS-9 I/O Call numbers
+		"I$Attach": 0x80,
+		"I$Detach": 0x81,
+		"I$Dup":    0x82,
+		"I$Create": 0x83,
+		"I$Open":   0x84,
+		"I$MakDir": 0x85,
+		"I$ChgDir": 0x86,
+		"I$Delete": 0x87,
+		"I$Seek":   0x88,
+		"I$Read":   0x89,
+		"I$Write":  0x8A,
+		"I$ReadLn": 0x8B,
+		"I$WritLn": 0x8C,
+		"I$GetStt": 0x8D,
+		"I$SetStt": 0x8E,
+		"I$Close":  0x8F,
+		"I$DeletX": 0x90,
+	}
 	return &Assembler{
-		symbols:     make(map[string]int64),
+		symbols:     syms,
 		currPC:      0x8000,
 		entryPoint:  0x8000,
 		dp:          0x00,
 		enableRelax: true,
+		os9Rev:      1,
+		os9Attr:     0x80,
+		os9Tylg:     0x11,
+		os9Edition:  1,
 	}
 }
 
@@ -311,6 +402,15 @@ func (a *Assembler) evalSimple(token string) (int64, error) {
 		return 0, fmt.Errorf("empty operand")
 	}
 	if token == "*" {
+		if a.inDataOrg {
+			return int64(a.dataPC), nil
+		}
+		return int64(a.currPC), nil
+	}
+	if token == "." {
+		if a.inDataOrg {
+			return int64(a.dataPC), nil
+		}
 		return int64(a.currPC), nil
 	}
 	neg := false
@@ -402,20 +502,104 @@ func (a *Assembler) evalSimple(token string) (int64, error) {
 	return 0, fmt.Errorf("unresolved symbol: %s", token)
 }
 
+func isOperatorChar(c byte) bool {
+	switch c {
+	case '+', '-', '*', '/', '&', '|', '^', '<', '>', '(':
+		return true
+	}
+	return false
+}
+
 func (a *Assembler) evalExpr(expr string) (int64, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return 0, fmt.Errorf("empty expression")
 	}
 
-	// Handle addition and subtraction: sym + N or sym - N
-	// Scan from right to left to find operator outside quotes/parens
+	// 1. Bitwise OR / XOR (lowest precedence)
 	for i := len(expr) - 1; i > 0; i-- {
+		if i >= 1 && expr[i-1] == '\'' {
+			continue
+		}
+		ch := expr[i]
+		if ch == '|' || ch == '^' {
+			left := strings.TrimSpace(expr[:i])
+			right := strings.TrimSpace(expr[i+1:])
+			if left != "" && right != "" && !isOperatorChar(left[len(left)-1]) {
+				lVal, errL := a.evalExpr(left)
+				if errL != nil {
+					return 0, errL
+				}
+				rVal, errR := a.evalExpr(right)
+				if errR != nil {
+					return 0, errR
+				}
+				if ch == '|' {
+					return lVal | rVal, nil
+				}
+				return lVal ^ rVal, nil
+			}
+		}
+	}
+
+	// 2. Bitwise AND
+	for i := len(expr) - 1; i > 0; i-- {
+		if i >= 1 && expr[i-1] == '\'' {
+			continue
+		}
+		if expr[i] == '&' {
+			left := strings.TrimSpace(expr[:i])
+			right := strings.TrimSpace(expr[i+1:])
+			if left != "" && right != "" && !isOperatorChar(left[len(left)-1]) {
+				lVal, errL := a.evalExpr(left)
+				if errL != nil {
+					return 0, errL
+				}
+				rVal, errR := a.evalExpr(right)
+				if errR != nil {
+					return 0, errR
+				}
+				return lVal & rVal, nil
+			}
+		}
+	}
+
+	// 3. Bitwise shifts << and >>
+	for i := len(expr) - 1; i > 1; i-- {
+		if (expr[i] == '<' && expr[i-1] == '<') || (expr[i] == '>' && expr[i-1] == '>') {
+			left := strings.TrimSpace(expr[:i-1])
+			right := strings.TrimSpace(expr[i+1:])
+			if left != "" && right != "" && !isOperatorChar(left[len(left)-1]) {
+				lVal, errL := a.evalExpr(left)
+				if errL != nil {
+					return 0, errL
+				}
+				rVal, errR := a.evalExpr(right)
+				if errR != nil {
+					return 0, errR
+				}
+				if expr[i] == '<' {
+					return lVal << uint(rVal), nil
+				}
+				return lVal >> uint(rVal), nil
+			}
+		}
+	}
+
+	// 4. Addition and subtraction: sym + N or sym - N
+	// Scan from right to left to find binary operator outside char literals
+	for i := len(expr) - 1; i > 0; i-- {
+		if i >= 1 && expr[i-1] == '\'' {
+			continue
+		}
+		if i >= 2 && expr[i-2] == '\'' && expr[i] == '\'' {
+			continue
+		}
 		ch := expr[i]
 		if ch == '+' || ch == '-' {
 			left := strings.TrimSpace(expr[:i])
 			right := strings.TrimSpace(expr[i+1:])
-			if left != "" && right != "" {
+			if left != "" && right != "" && !isOperatorChar(left[len(left)-1]) {
 				lVal, errL := a.evalExpr(left)
 				if errL != nil {
 					return 0, errL
@@ -432,7 +616,130 @@ func (a *Assembler) evalExpr(expr string) (int64, error) {
 		}
 	}
 
+	// 5. Multiplication and division: a * b or a / b
+	for i := len(expr) - 1; i > 0; i-- {
+		if i >= 1 && expr[i-1] == '\'' {
+			continue
+		}
+		ch := expr[i]
+		if ch == '*' || ch == '/' {
+			left := strings.TrimSpace(expr[:i])
+			right := strings.TrimSpace(expr[i+1:])
+			if left != "" && right != "" && !isOperatorChar(left[len(left)-1]) {
+				lVal, errL := a.evalExpr(left)
+				if errL != nil {
+					return 0, errL
+				}
+				rVal, errR := a.evalExpr(right)
+				if errR != nil {
+					return 0, errR
+				}
+				if ch == '*' {
+					return lVal * rVal, nil
+				}
+				if rVal == 0 {
+					return 0, fmt.Errorf("division by zero")
+				}
+				return lVal / rVal, nil
+			}
+		}
+	}
+
 	return a.evalSimple(expr)
+}
+
+func isKnownDirectiveOrMnemonic(tok string) bool {
+	low := strings.ToLower(tok)
+	if _, ok := opcodes[low]; ok {
+		return true
+	}
+	switch low {
+	case "tfr", "exg", "pshs", "puls", "pshu", "pulu", "andcc", "orcc", "cwai":
+		return true
+	case "org", "equ", ".equ", "=", "set",
+		"fcb", ".byte", "byte", "db",
+		"fdb", ".word", "word", "dw",
+		"fqb", ".quad", "quad",
+		"rmb", "zmb", ".space", ".blkb", ".ds", "bsz", "fill",
+		".asciz", "asciz", "fcn", "fcc", ".ascii", "ascii", "fcs",
+		"pragma", ".pragma", "opt", ".globl", ".global", "nam", "ttl", "pag", "page", "spc",
+		"mod", "emod", "os9", "end",
+		"section", "sect", "ends", "export", "import", "extern":
+		return true
+	}
+	return false
+}
+
+func stripOperandComment(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	prevIsOpOrComma := true
+	inQuote := byte(0)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inQuote != 0 {
+			if c == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if c == inQuote {
+				inQuote = 0
+				prevIsOpOrComma = false
+			}
+			continue
+		}
+		if c == '"' {
+			inQuote = '"'
+			continue
+		}
+		if c == '\'' {
+			// Character literal 'c or 'c'
+			if i+1 < len(s) {
+				if i+2 < len(s) && s[i+2] == '\'' {
+					i += 2
+				} else {
+					i++
+				}
+				prevIsOpOrComma = false
+				continue
+			}
+		}
+		if c == ' ' || c == '\t' {
+			// Look ahead to next non-space
+			j := i + 1
+			for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+				j++
+			}
+			if j >= len(s) {
+				return strings.TrimSpace(s[:i])
+			}
+			nextC := s[j]
+			nextIsOpOrComma := isOperatorChar(nextC) || nextC == ',' || nextC == ')'
+			if !prevIsOpOrComma && !nextIsOpOrComma {
+				return strings.TrimSpace(s[:i])
+			}
+			i = j - 1
+			continue
+		}
+		if c == '+' && i >= 2 {
+			prev := s[i-1] | 0x20
+			if (prev == 'x' || prev == 'y' || prev == 'u' || prev == 's') && s[i-2] == ',' {
+				prevIsOpOrComma = false
+				continue
+			}
+			if s[i-1] == '+' && i >= 3 {
+				prev2 := s[i-2] | 0x20
+				if (prev2 == 'x' || prev2 == 'y' || prev2 == 'u' || prev2 == 's') && s[i-3] == ',' {
+					prevIsOpOrComma = false
+					continue
+				}
+			}
+		}
+		prevIsOpOrComma = isOperatorChar(c) || c == ',' || c == '#'
+	}
+	return s
 }
 
 func (a *Assembler) LoadSource(filename string, r io.Reader) error {
@@ -485,6 +792,13 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 		} else {
 			if c == '"' {
 				inQuote = true
+			} else if c == '\'' && i+1 < len(line) {
+				// Skip character constant so ';' inside '; doesn't strip comment
+				if i+2 < len(line) && line[i+2] == '\'' {
+					i += 2
+				} else {
+					i++
+				}
 			} else if c == ';' {
 				commentIdx = i
 				break
@@ -512,27 +826,51 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 
 	// If column 0 is not whitespace
 	if line[0] != ' ' && line[0] != '\t' {
-		// Label present
 		idx := strings.IndexAny(line, " \t:")
 		if idx >= 0 {
-			label = line[:idx]
+			cand := line[:idx]
 			if line[idx] == ':' {
+				label = cand
 				rest = line[idx+1:]
 			} else {
-				rest = line[idx:]
+				afterLbl := strings.TrimSpace(line[idx:])
+				afterFields := strings.Fields(afterLbl)
+				nextLow := ""
+				if len(afterFields) > 0 {
+					nextLow = strings.ToLower(afterFields[0])
+				}
+				if nextLow == "equ" || nextLow == ".equ" || nextLow == "=" || nextLow == "set" {
+					label = cand
+					rest = afterLbl
+				} else if isKnownDirectiveOrMnemonic(cand) {
+					label = ""
+					rest = line
+				} else {
+					label = cand
+					rest = afterLbl
+				}
 			}
 		} else {
-			label = line
-			rest = ""
+			if isKnownDirectiveOrMnemonic(line) {
+				label = ""
+				rest = line
+			} else {
+				label = line
+				rest = ""
+			}
 		}
 	} else {
-		// Might have label followed by ':'
+		// Might have label followed by ':' or followed by equ/=/set
 		trimmedRest := strings.TrimSpace(line)
-		if colonIdx := strings.Index(trimmedRest, ":"); colonIdx >= 0 {
-			candidate := trimmedRest[:colonIdx]
-			if !strings.ContainsAny(candidate, " \t") {
-				label = candidate
-				rest = trimmedRest[colonIdx+1:]
+		fields := strings.Fields(trimmedRest)
+		if len(fields) > 0 && strings.HasSuffix(fields[0], ":") {
+			label = strings.TrimSuffix(fields[0], ":")
+			rest = strings.TrimSpace(trimmedRest[len(fields[0]):])
+		} else if len(fields) >= 2 {
+			opLow := strings.ToLower(fields[1])
+			if opLow == "equ" || opLow == ".equ" || opLow == "=" || opLow == "set" {
+				label = fields[0]
+				rest = strings.TrimSpace(trimmedRest[len(fields[0]):])
 			}
 		}
 	}
@@ -555,19 +893,27 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 		opsStr = strings.TrimSpace(rest[len(parts[0]):])
 	}
 
+	switch mnemonic {
+	case "fcc", ".ascii", "ascii", ".asciz", "asciz", "fcn", "fcs", "nam", "ttl", "pragma", ".pragma", "opt":
+		// Keep raw opsStr for string/name directives
+	default:
+		opsStr = stripOperandComment(opsStr)
+	}
+
 	stmt.Mnemonic = mnemonic
 	stmt.RawOp = opsStr
 
 	switch mnemonic {
 	case "org":
 		stmt.Type = StmtOrg
+		stmt.EquExpr = opsStr
 		val, err := a.evalExpr(opsStr)
 		if err == nil {
 			stmt.OrgAddr = uint32(val)
 		}
 		return stmt, nil
 
-	case "equ", ".equ", "=":
+	case "equ", ".equ", "=", "set":
 		stmt.Type = StmtEqu
 		stmt.EquExpr = opsStr
 		return stmt, nil
@@ -590,8 +936,9 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 		stmt.Size = len(stmt.DataExprs) * 4
 		return stmt, nil
 
-	case "rmb", "zmb", ".space":
+	case "rmb", "zmb", ".space", ".blkb", ".ds", "bsz":
 		stmt.Type = StmtReserve
+		stmt.EquExpr = opsStr
 		val, err := a.evalExpr(opsStr)
 		if err == nil {
 			stmt.ReserveBytes = int(val)
@@ -609,7 +956,7 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 		}
 		return stmt, nil
 
-	case ".asciz", "asciz":
+	case ".asciz", "asciz", "fcn":
 		stmt.Type = StmtString
 		str := parseStringLiteral(opsStr)
 		stmt.StrData = str + "\x00"
@@ -622,7 +969,46 @@ func (a *Assembler) parseLine(raw string, lineNum int, filename string, srcLine 
 		stmt.Size = len(stmt.StrData)
 		return stmt, nil
 
-	case "pragma", ".globl", ".global", "nam", "ttl":
+	case "fcs":
+		stmt.Type = StmtString
+		str := parseStringLiteral(opsStr)
+		if len(str) > 0 {
+			b := []byte(str)
+			b[len(b)-1] |= 0x80
+			stmt.StrData = string(b)
+		}
+		stmt.Size = len(stmt.StrData)
+		return stmt, nil
+
+	case "mod":
+		stmt.Type = StmtMod
+		stmt.DataExprs = splitOperands(opsStr)
+		stmt.Size = 13
+		a.hasMod = true
+		return stmt, nil
+
+	case "emod":
+		stmt.Type = StmtEmod
+		stmt.Size = 3
+		return stmt, nil
+
+	case "os9":
+		stmt.Type = StmtOS9
+		stmt.EquExpr = opsStr
+		stmt.Size = 3
+		return stmt, nil
+
+	case "nam":
+		if a.namTitle == "" && opsStr != "" {
+			fields := strings.Fields(opsStr)
+			if len(fields) > 0 {
+				a.namTitle = fields[0]
+			}
+		}
+		stmt.Type = StmtComment
+		return stmt, nil
+
+	case "pragma", ".pragma", "opt", ".globl", ".global", "ttl", "pag", "page", "spc", "section", "sect", "ends", "export", "import", "extern":
 		// Ignored directives
 		stmt.Type = StmtComment
 		return stmt, nil
@@ -669,34 +1055,43 @@ func splitOperands(s string) []string {
 
 func parseStringLiteral(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) >= 2 && ((s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '/' && s[len(s)-1] == '/')) {
-		inner := s[1 : len(s)-1]
-		// Unescape standard C escapes
-		var b strings.Builder
-		for i := 0; i < len(inner); i++ {
-			if inner[i] == '\\' && i+1 < len(inner) {
-				i++
-				switch inner[i] {
-				case 'n':
-					b.WriteByte('\n')
-				case 'r':
-					b.WriteByte('\r')
-				case 't':
-					b.WriteByte('\t')
-				case '0':
-					b.WriteByte(0)
-				case '\\':
-					b.WriteByte('\\')
-				case '"':
-					b.WriteByte('"')
-				default:
-					b.WriteByte(inner[i])
+	if len(s) >= 2 {
+		delim := s[0]
+		if delim == '"' || delim == '/' || delim == '\'' {
+			endIdx := -1
+			var b strings.Builder
+			for i := 1; i < len(s); i++ {
+				if s[i] == '\\' && i+1 < len(s) {
+					i++
+					switch s[i] {
+					case 'n':
+						b.WriteByte('\n')
+					case 'r':
+						b.WriteByte('\r')
+					case 't':
+						b.WriteByte('\t')
+					case '0':
+						b.WriteByte(0)
+					case '\\':
+						b.WriteByte('\\')
+					case '"':
+						b.WriteByte('"')
+					case '\'':
+						b.WriteByte('\'')
+					default:
+						b.WriteByte(s[i])
+					}
+				} else if s[i] == delim {
+					endIdx = i
+					break
+				} else {
+					b.WriteByte(s[i])
 				}
-			} else {
-				b.WriteByte(inner[i])
+			}
+			if endIdx != -1 {
+				return b.String()
 			}
 		}
-		return b.String()
 	}
 	return s
 }
@@ -707,7 +1102,7 @@ func (a *Assembler) setupInstruction(stmt *Statement) error {
 
 	info, ok := opcodes[m]
 	if !ok {
-		// Check for pseudo-ops: tfr, exg, pshs, puls, pshu, pulu, andcc, orcc
+		// Check for pseudo-ops: tfr, exg, pshs, puls, pshu, pulu, andcc, orcc, cwai
 		if m == "tfr" || m == "exg" {
 			stmt.Size = 2
 			return nil
@@ -716,7 +1111,7 @@ func (a *Assembler) setupInstruction(stmt *Statement) error {
 			stmt.Size = 2
 			return nil
 		}
-		if m == "andcc" || m == "orcc" {
+		if m == "andcc" || m == "orcc" || m == "cwai" {
 			stmt.Size = 2
 			return nil
 		}
@@ -724,13 +1119,13 @@ func (a *Assembler) setupInstruction(stmt *Statement) error {
 	}
 
 	// 1. Inherent (no operand)
+	if len(info.Inherent) > 0 {
+		stmt.Mode = ModeInherent
+		stmt.Opcode = info.Inherent
+		stmt.Size = len(info.Inherent)
+		return nil
+	}
 	if op == "" {
-		if len(info.Inherent) > 0 {
-			stmt.Mode = ModeInherent
-			stmt.Opcode = info.Inherent
-			stmt.Size = len(info.Inherent)
-			return nil
-		}
 		return fmt.Errorf("instruction %s requires operand", m)
 	}
 
@@ -878,6 +1273,16 @@ func (a *Assembler) setupIndexed(stmt *Statement, op string) error {
 	offsetStr := strings.TrimSpace(parts[0])
 	regStr := strings.ToLower(strings.TrimSpace(parts[1]))
 
+	forceBits := 0
+	if strings.HasPrefix(offsetStr, "<") {
+		forceBits = 8
+		offsetStr = strings.TrimSpace(offsetStr[1:])
+	} else if strings.HasPrefix(offsetStr, ">") {
+		forceBits = 16
+		offsetStr = strings.TrimSpace(offsetStr[1:])
+	}
+	stmt.ForceBits = forceBits
+
 	// Determine base register (X, Y, U, S, PCR)
 	var regCode byte
 	isPCR := false
@@ -1001,11 +1406,22 @@ func (a *Assembler) setupIndexed(stmt *Statement, op string) error {
 		}
 		return fmt.Errorf("unknown index register: %s", regStr)
 	}
+	stmt.RegCode = regCode
 
 	// PCR indexed: offset,pcr
 	if isPCR {
 		stmt.IsPCRel = true
 		stmt.TargetSym = offsetStr
+		if forceBits == 8 {
+			if isIndirect {
+				stmt.Postbyte = 0x9C
+			} else {
+				stmt.Postbyte = 0x8C
+			}
+			stmt.IndexDispSize = 1
+			stmt.Size = len(stmt.Opcode) + 1 + 1
+			return nil
+		}
 		// Conservative default: 16-bit offset ($8D / $9D)
 		if isIndirect {
 			stmt.Postbyte = 0x9D
@@ -1018,28 +1434,30 @@ func (a *Assembler) setupIndexed(stmt *Statement, op string) error {
 	}
 
 	// Accumulator offset: A, B, D
-	switch strings.ToLower(offsetStr) {
-	case "a":
-		stmt.Postbyte = 0x86 | regCode
-		if isIndirect {
-			stmt.Postbyte |= 0x10
+	if forceBits == 0 {
+		switch strings.ToLower(offsetStr) {
+		case "a":
+			stmt.Postbyte = 0x86 | regCode
+			if isIndirect {
+				stmt.Postbyte |= 0x10
+			}
+			stmt.Size = len(stmt.Opcode) + 1
+			return nil
+		case "b":
+			stmt.Postbyte = 0x85 | regCode
+			if isIndirect {
+				stmt.Postbyte |= 0x10
+			}
+			stmt.Size = len(stmt.Opcode) + 1
+			return nil
+		case "d":
+			stmt.Postbyte = 0x8B | regCode
+			if isIndirect {
+				stmt.Postbyte |= 0x10
+			}
+			stmt.Size = len(stmt.Opcode) + 1
+			return nil
 		}
-		stmt.Size = len(stmt.Opcode) + 1
-		return nil
-	case "b":
-		stmt.Postbyte = 0x85 | regCode
-		if isIndirect {
-			stmt.Postbyte |= 0x10
-		}
-		stmt.Size = len(stmt.Opcode) + 1
-		return nil
-	case "d":
-		stmt.Postbyte = 0x8B | regCode
-		if isIndirect {
-			stmt.Postbyte |= 0x10
-		}
-		stmt.Size = len(stmt.Opcode) + 1
-		return nil
 	}
 
 	// Zero offset: ,R
@@ -1050,6 +1468,27 @@ func (a *Assembler) setupIndexed(stmt *Statement, op string) error {
 			stmt.Postbyte = 0x84 | regCode
 		}
 		stmt.Size = len(stmt.Opcode) + 1
+		return nil
+	}
+
+	if forceBits == 8 {
+		stmt.TargetSym = offsetStr
+		stmt.Postbyte = 0x88 | regCode
+		if isIndirect {
+			stmt.Postbyte |= 0x10
+		}
+		stmt.IndexDispSize = 1
+		stmt.Size = len(stmt.Opcode) + 1 + 1
+		return nil
+	}
+	if forceBits == 16 {
+		stmt.TargetSym = offsetStr
+		stmt.Postbyte = 0x89 | regCode
+		if isIndirect {
+			stmt.Postbyte |= 0x10
+		}
+		stmt.IndexDispSize = 2
+		stmt.Size = len(stmt.Opcode) + 1 + 2
 		return nil
 	}
 
@@ -1161,37 +1600,161 @@ func parseStackRegMask(regsStr string, isUserStack bool) (byte, error) {
 	return mask, nil
 }
 
-func (a *Assembler) Assemble() error {
-	// First pass: resolve EQU directives and collect all labels with initial layout
-	var currPC uint32 = a.currPC
+func (a *Assembler) recordEntryLabel(label string, pc uint32) {
+	if label == "cstart" {
+		a.entryPoint = pc
+		a.hasEntry = true
+		a.hasCstart = true
+	} else if label == "_main" && !a.hasCstart {
+		a.entryPoint = pc
+		a.hasEntry = true
+	}
+}
+
+func (a *Assembler) resolvedOS9Name() string {
+	if a.os9Name != "" {
+		return a.os9Name
+	}
+	if a.namTitle != "" {
+		return a.namTitle
+	}
+	return "program"
+}
+
+func (a *Assembler) layoutPass(initialPC uint32, strictEqu bool) error {
+	var currPC uint32 = initialPC
+	a.inDataOrg = false
+	a.dataPC = 0
+	inMod := false
+
 	for _, stmt := range a.statements {
-		if stmt.Type == StmtOrg {
-			currPC = stmt.OrgAddr
+		switch stmt.Type {
+		case StmtMod:
+			inMod = true
+			a.inDataOrg = false
 			stmt.PC = currPC
-		} else if stmt.Type == StmtEqu {
-			val, err := a.evalExpr(stmt.EquExpr)
-			if err != nil {
-				return fmt.Errorf("%s:%d: failed to evaluate equ: %v", stmt.File, stmt.LineNum, err)
-			}
-			a.symbols[stmt.Label] = val
-		} else {
-			stmt.PC = currPC
+			a.currPC = currPC
 			if stmt.Label != "" {
 				a.symbols[stmt.Label] = int64(currPC)
-				if stmt.Label == "cstart" || stmt.Label == "_main" {
-					a.entryPoint = currPC
-					a.hasEntry = true
-				}
 			}
 			currPC += uint32(stmt.Size)
+
+		case StmtOrg:
+			a.currPC = currPC
+			if stmt.EquExpr != "" {
+				if v, err := a.evalExpr(stmt.EquExpr); err == nil {
+					stmt.OrgAddr = uint32(v)
+				}
+			}
+			if inMod {
+				a.inDataOrg = true
+				a.dataPC = stmt.OrgAddr
+				stmt.PC = a.dataPC
+			} else if a.os9Mode && !a.hasMod {
+				stmt.PC = currPC
+			} else {
+				currPC = stmt.OrgAddr
+				stmt.PC = currPC
+			}
+
+		case StmtReserve:
+			a.currPC = currPC
+			if stmt.Mnemonic != "fill" && stmt.EquExpr != "" {
+				if v, err := a.evalExpr(stmt.EquExpr); err == nil {
+					stmt.ReserveBytes = int(v)
+					stmt.Size = stmt.ReserveBytes
+				}
+			}
+			if inMod && a.inDataOrg {
+				stmt.PC = a.dataPC
+				if stmt.Label != "" {
+					a.symbols[stmt.Label] = int64(a.dataPC)
+				}
+				a.dataPC += uint32(stmt.ReserveBytes)
+			} else if a.os9Mode && !a.hasMod && stmt.Mnemonic != "fill" {
+				stmt.PC = currPC
+				if stmt.Label != "" {
+					a.symbols[stmt.Label] = int64(currPC)
+				}
+			} else {
+				stmt.PC = currPC
+				if stmt.Label != "" {
+					a.symbols[stmt.Label] = int64(currPC)
+				}
+				currPC += uint32(stmt.Size)
+			}
+
+		case StmtEqu:
+			stmt.PC = currPC
+			a.currPC = currPC
+			val, err := a.evalExpr(stmt.EquExpr)
+			if err != nil {
+				if strictEqu {
+					return fmt.Errorf("%s:%d: failed to evaluate equ: %v", stmt.File, stmt.LineNum, err)
+				}
+			} else {
+				a.symbols[stmt.Label] = val
+			}
+
+		case StmtComment:
+			if stmt.Label != "" {
+				if inMod {
+					a.inDataOrg = false
+				}
+				stmt.PC = currPC
+				a.symbols[stmt.Label] = int64(currPC)
+				a.recordEntryLabel(stmt.Label, currPC)
+			} else {
+				stmt.PC = currPC
+			}
+
+		default:
+			if inMod && stmt.Type != StmtEnd {
+				a.inDataOrg = false
+			}
+			stmt.PC = currPC
+			a.currPC = currPC
+			if stmt.Label != "" {
+				a.symbols[stmt.Label] = int64(currPC)
+				a.recordEntryLabel(stmt.Label, currPC)
+			}
+			currPC += uint32(stmt.Size)
+			if stmt.Type == StmtEmod {
+				inMod = false
+			}
 		}
+	}
+	a.inDataOrg = false
+	return nil
+}
+
+func (a *Assembler) Assemble() error {
+	if a.hasMod {
+		a.currPC = 0
+		a.entryPoint = 0
+	} else if a.os9Mode {
+		name := a.resolvedOS9Name()
+		headerPrefix := uint32(13 + len(name) + 1)
+		a.currPC = headerPrefix
+		a.entryPoint = headerPrefix
+	}
+	initialPC := a.currPC
+
+	// First pass: resolve EQU directives and collect all labels with initial layout
+	if err := a.layoutPass(initialPC, false); err != nil {
+		return err
 	}
 
 	// Whole-Program Relaxation Pass
 	if a.enableRelax {
-		if err := a.Relax(); err != nil {
+		if err := a.Relax(initialPC); err != nil {
 			return err
 		}
+	}
+
+	// Final layout pass to ensure all EQU/SET expressions (such as eom equ *) are up to date
+	if err := a.layoutPass(initialPC, true); err != nil {
+		return err
 	}
 
 	// Final code generation pass: encode all statements
@@ -1201,7 +1764,7 @@ func (a *Assembler) Assemble() error {
 		}
 		if stmt.SrcLine != nil {
 			stmt.SrcLine.PC = stmt.PC
-			stmt.SrcLine.HasPC = (stmt.Type == StmtInstruction || stmt.Type == StmtDataByte || stmt.Type == StmtDataWord || stmt.Type == StmtString || stmt.Type == StmtReserve)
+			stmt.SrcLine.HasPC = (stmt.Type == StmtInstruction || stmt.Type == StmtDataByte || stmt.Type == StmtDataWord || stmt.Type == StmtString || stmt.Type == StmtReserve || stmt.Type == StmtMod || stmt.Type == StmtEmod || stmt.Type == StmtOS9)
 			stmt.SrcLine.Encoded = stmt.Encoded
 		}
 	}
@@ -1209,40 +1772,36 @@ func (a *Assembler) Assemble() error {
 	return nil
 }
 
-func (a *Assembler) Relax() error {
+func (a *Assembler) Relax(initialPC uint32) error {
 	for pass := 0; pass < 30; pass++ {
 		changed := false
 
-		// 1. Recompute PC for all statements and update symbol table
-		var currPC uint32 = a.currPC
-		for _, stmt := range a.statements {
-			if stmt.Type == StmtOrg {
-				currPC = stmt.OrgAddr
-			}
-			stmt.PC = currPC
-			if stmt.Label != "" && stmt.Type != StmtEqu {
-				a.symbols[stmt.Label] = int64(currPC)
-				if stmt.Label == "cstart" || stmt.Label == "_main" {
-					a.entryPoint = currPC
-					a.hasEntry = true
-				}
-			}
-			currPC += uint32(stmt.Size)
+		// 1. Recompute PC for all statements and re-evaluate EQU/SET symbols
+		if err := a.layoutPass(initialPC, false); err != nil {
+			return err
 		}
 
 		// 2. Evaluate relaxation candidates
 		for _, stmt := range a.statements {
-			// Branch relaxation: LBRA/LBSR/LBcc -> BRA/BSR/Bcc
-			if stmt.IsBranch && stmt.Size > 2 {
-				targetAddr, ok := a.symbols[stmt.BranchTarget]
-				if ok {
+			a.currPC = stmt.PC
+			a.inDataOrg = false
+
+			// Branch relaxation: LBRA/LBSR/LBcc <-> BRA/BSR/Bcc
+			if stmt.IsBranch {
+				targetAddr, err := a.evalExpr(stmt.BranchTarget)
+				if err == nil {
 					// Short branch is 2 bytes: opcode (1) + offset (1)
 					// Target is relative to next instruction PC = stmt.PC + 2
 					offset := targetAddr - int64(stmt.PC+2)
-					if offset >= -128 && offset <= 127 {
+					if stmt.Size > 2 && offset >= -128 && offset <= 127 && len(stmt.ShortBranchOpcode) > 0 {
 						stmt.IsLongBranch = false
 						stmt.Opcode = stmt.ShortBranchOpcode
 						stmt.Size = 2
+						changed = true
+					} else if stmt.Size == 2 && (offset < -128 || offset > 127) && len(stmt.LongBranchOpcode) > 0 {
+						stmt.IsLongBranch = true
+						stmt.Opcode = stmt.LongBranchOpcode
+						stmt.Size = len(stmt.LongBranchOpcode) + 2
 						changed = true
 					}
 				}
@@ -1264,15 +1823,14 @@ func (a *Assembler) Relax() error {
 				}
 			}
 
-			// PCR relaxation: 16-bit PCR -> 8-bit PCR
-			if stmt.IsPCRel && stmt.IndexDispSize == 2 {
-				targetAddr, ok := a.symbols[stmt.TargetSym]
-				if ok {
+			// PCR relaxation: 16-bit PCR <-> 8-bit PCR
+			if stmt.IsPCRel && stmt.ForceBits == 0 {
+				targetAddr, err := a.evalExpr(stmt.TargetSym)
+				if err == nil {
 					// 8-bit PCR is: opcode len + 1 (postbyte 8C/9C) + 1 byte offset = len + 2
-					// Next PC is stmt.PC + uint32(len(stmt.Opcode) + 2)
-					nextPC := int64(stmt.PC) + int64(len(stmt.Opcode)+2)
-					offset := targetAddr - nextPC
-					if offset >= -128 && offset <= 127 {
+					nextPC8 := int64(stmt.PC) + int64(len(stmt.Opcode)+2)
+					offset8 := targetAddr - nextPC8
+					if stmt.IndexDispSize == 2 && offset8 >= -128 && offset8 <= 127 {
 						if stmt.IsIndirect {
 							stmt.Postbyte = 0x9C
 						} else {
@@ -1280,6 +1838,51 @@ func (a *Assembler) Relax() error {
 						}
 						stmt.IndexDispSize = 1
 						stmt.Size = len(stmt.Opcode) + 1 + 1
+						changed = true
+					} else if stmt.IndexDispSize == 1 && (offset8 < -128 || offset8 > 127) {
+						if stmt.IsIndirect {
+							stmt.Postbyte = 0x9D
+						} else {
+							stmt.Postbyte = 0x8D
+						}
+						stmt.IndexDispSize = 2
+						stmt.Size = len(stmt.Opcode) + 1 + 2
+						changed = true
+					}
+				}
+			}
+
+			// Indexed constant/symbolic offset relaxation (when not PCR and not forced)
+			if stmt.Mode == ModeIndexed && !stmt.IsPCRel && stmt.TargetSym != "" && stmt.ForceBits == 0 && stmt.Postbyte != 0x9F {
+				val, err := a.evalExpr(stmt.TargetSym)
+				if err == nil {
+					var newPost byte
+					var newDispSize int
+					if !stmt.IsIndirect && val == 0 {
+						newPost = 0x84 | stmt.RegCode
+						newDispSize = 0
+					} else if !stmt.IsIndirect && val >= -16 && val <= 15 {
+						newPost = byte(val&0x1F) | stmt.RegCode
+						newDispSize = 0
+					} else if val >= -128 && val <= 127 {
+						newPost = 0x88 | stmt.RegCode
+						if stmt.IsIndirect {
+							newPost |= 0x10
+						}
+						newDispSize = 1
+					} else {
+						newPost = 0x89 | stmt.RegCode
+						if stmt.IsIndirect {
+							newPost |= 0x10
+						}
+						newDispSize = 2
+					}
+					newSize := len(stmt.Opcode) + 1 + newDispSize
+					if newSize != stmt.Size || newPost != stmt.Postbyte {
+						stmt.Postbyte = newPost
+						stmt.IndexDisp = val
+						stmt.IndexDispSize = newDispSize
+						stmt.Size = newSize
 						changed = true
 					}
 				}
@@ -1294,14 +1897,105 @@ func (a *Assembler) Relax() error {
 	return nil
 }
 
+func computeOS9CRC(data []byte) [3]byte {
+	var crc uint32 = 0xFFFFFF
+	for _, b := range data {
+		a := byte(crc>>16) ^ b
+		crc = (crc << 8) & 0xFFFF00
+		crc ^= uint32(a) << 1
+		crc ^= uint32(a) << 6
+		p := a
+		p ^= p >> 4
+		p ^= p >> 2
+		p ^= p >> 1
+		if (p & 1) != 0 {
+			crc ^= 0x800021
+		}
+	}
+	crc ^= 0xFFFFFF
+	return [3]byte{byte(crc >> 16), byte(crc >> 8), byte(crc)}
+}
+
+func buildOS9Header(mSize, mName uint16, tylg, atrv byte, mExec, mMem uint16) [13]byte {
+	var h [13]byte
+	h[0] = 0x87
+	h[1] = 0xCD
+	h[2] = byte(mSize >> 8)
+	h[3] = byte(mSize)
+	h[4] = byte(mName >> 8)
+	h[5] = byte(mName)
+	h[6] = tylg
+	h[7] = atrv
+	h[8] = 0xFF ^ h[0] ^ h[1] ^ h[2] ^ h[3] ^ h[4] ^ h[5] ^ h[6] ^ h[7]
+	h[9] = byte(mExec >> 8)
+	h[10] = byte(mExec)
+	h[11] = byte(mMem >> 8)
+	h[12] = byte(mMem)
+	return h
+}
+
 func (a *Assembler) encodeStatement(stmt *Statement) error {
+	a.currPC = stmt.PC
+	a.inDataOrg = false
+	stmt.Encoded = nil
+
 	switch stmt.Type {
 	case StmtOrg, StmtEqu, StmtComment:
 		return nil
 
+	case StmtMod:
+		if len(stmt.DataExprs) < 6 {
+			return fmt.Errorf("mod directive requires 6 operands (size,name,tylg,atrv,exec,mem)")
+		}
+		var vals [6]int64
+		for i := 0; i < 6; i++ {
+			v, err := a.evalExpr(stmt.DataExprs[i])
+			if err != nil {
+				return fmt.Errorf("mod operand %d (%s): %v", i+1, stmt.DataExprs[i], err)
+			}
+			vals[i] = v
+		}
+		hdr := buildOS9Header(
+			uint16(vals[0]),
+			uint16(vals[1]),
+			byte(vals[2]),
+			byte(vals[3]),
+			uint16(vals[4]),
+			uint16(vals[5]),
+		)
+		stmt.Encoded = append(stmt.Encoded, hdr[:]...)
+		a.modStart = stmt.PC
+		return nil
+
+	case StmtEmod:
+		var modBytes []byte
+		inMod := false
+		for _, s := range a.statements {
+			if s == stmt {
+				break
+			}
+			if s.Type == StmtMod && s.PC == a.modStart {
+				inMod = true
+			}
+			if inMod && len(s.Encoded) > 0 {
+				modBytes = append(modBytes, s.Encoded...)
+			}
+		}
+		crc := computeOS9CRC(modBytes)
+		stmt.Encoded = append(stmt.Encoded, crc[:]...)
+		return nil
+
+	case StmtOS9:
+		v, err := a.evalExpr(stmt.EquExpr)
+		if err != nil {
+			return err
+		}
+		stmt.Encoded = []byte{0x10, 0x3F, byte(v & 0xFF)}
+		return nil
+
 	case StmtEnd:
 		if stmt.BranchTarget != "" {
-			if val, ok := a.symbols[stmt.BranchTarget]; ok {
+			if val, err := a.evalExpr(stmt.BranchTarget); err == nil {
 				a.entryPoint = uint32(val)
 				a.hasEntry = true
 			}
@@ -1347,6 +2041,9 @@ func (a *Assembler) encodeStatement(stmt *Statement) error {
 		return nil
 
 	case StmtReserve:
+		if (a.hasMod || a.os9Mode) && stmt.Mnemonic != "fill" {
+			return nil
+		}
 		stmt.Encoded = make([]byte, stmt.ReserveBytes)
 		return nil
 
@@ -1396,7 +2093,7 @@ func (a *Assembler) encodeStatement(stmt *Statement) error {
 			return nil
 		}
 
-		if m == "andcc" || m == "orcc" {
+		if m == "andcc" || m == "orcc" || m == "cwai" {
 			val, err := a.evalExpr(strings.TrimPrefix(stmt.RawOp, "#"))
 			if err != nil {
 				return err
@@ -1404,6 +2101,8 @@ func (a *Assembler) encodeStatement(stmt *Statement) error {
 			opByte := byte(0x1C)
 			if m == "orcc" {
 				opByte = 0x1A
+			} else if m == "cwai" {
+				opByte = 0x3C
 			}
 			stmt.Encoded = []byte{opByte, byte(val & 0xFF)}
 			return nil
@@ -1549,6 +2248,74 @@ func (a *Assembler) CollectChunks() []Chunk {
 	}
 
 	return chunks
+}
+
+func (a *Assembler) EmitOS9(w io.Writer) error {
+	if a.hasMod {
+		return a.EmitRaw(w)
+	}
+
+	name := a.resolvedOS9Name()
+	if name == "" {
+		name = "program"
+	}
+	nameBytes := []byte(name)
+	nameBytes[len(nameBytes)-1] |= 0x80
+
+	headerPrefix := uint16(13 + len(nameBytes) + 1)
+
+	var body []byte
+	expectedPC := uint32(headerPrefix)
+	started := false
+	for _, stmt := range a.statements {
+		if len(stmt.Encoded) == 0 {
+			continue
+		}
+		if started && stmt.PC > expectedPC {
+			gap := stmt.PC - expectedPC
+			body = append(body, make([]byte, gap)...)
+		}
+		body = append(body, stmt.Encoded...)
+		expectedPC = stmt.PC + uint32(len(stmt.Encoded))
+		started = true
+	}
+
+	mSize := headerPrefix + uint16(len(body)) + 3
+	mName := uint16(0x000D)
+	mExec := headerPrefix
+	if a.hasEntry {
+		mExec = uint16(a.entryPoint)
+	}
+
+	var mMem uint16
+	if a.os9Mem > 0 {
+		mMem = uint16(a.os9Mem)
+	} else if gs, ok := a.symbols["_globals_size"]; ok {
+		mem := gs + 1024
+		if mem < 1024 {
+			mem = 1024
+		}
+		mMem = uint16(mem)
+	} else {
+		mMem = 4096
+	}
+
+	tylg := byte(a.os9Tylg)
+	atrv := byte((a.os9Attr & 0xF0) | (a.os9Rev & 0x0F))
+
+	hdr := buildOS9Header(mSize, mName, tylg, atrv, mExec, mMem)
+
+	var modBuf []byte
+	modBuf = append(modBuf, hdr[:]...)
+	modBuf = append(modBuf, nameBytes...)
+	modBuf = append(modBuf, byte(a.os9Edition))
+	modBuf = append(modBuf, body...)
+
+	crc := computeOS9CRC(modBuf)
+	modBuf = append(modBuf, crc[:]...)
+
+	_, err := w.Write(modBuf)
+	return err
 }
 
 func (a *Assembler) EmitDECB(w io.Writer) error {
@@ -1726,13 +2493,20 @@ func (a *Assembler) EmitListing(w io.Writer) error {
 
 func main() {
 	outPath := flag.String("o", "", "Output binary file")
-	format := flag.String("f", "decb", "Output format: decb, raw, srec")
+	format := flag.String("f", "decb", "Output format: decb, raw, srec, os9")
 	listPath := flag.String("l", "", "Generate listing file")
 	flag.StringVar(listPath, "list", "", "Generate listing file")
 	decbFlag := flag.Bool("b", false, "Generate DECB format (equivalent to -f decb)")
 	flag.BoolVar(decbFlag, "decb", false, "Generate DECB format (equivalent to -f decb)")
 	rawFlag := flag.Bool("r", false, "Generate raw format (equivalent to -f raw)")
 	flag.BoolVar(rawFlag, "raw", false, "Generate raw format (equivalent to -f raw)")
+	os9Flag := flag.Bool("os9", false, "Generate OS-9 module format (equivalent to -f os9)")
+	os9Name := flag.String("name", "", "OS-9 module name")
+	os9Mem := flag.Int("mem", 0, "OS-9 permanent storage size in bytes")
+	os9Rev := flag.Int("rev", 1, "OS-9 module revision (0..15)")
+	os9Attr := flag.Int("attr", 0x80, "OS-9 module attributes ($80 = ReEnt)")
+	os9Tylg := flag.Int("tylg", 0x11, "OS-9 module type/language ($11 = Prgrm+Objct)")
+	os9Edition := flag.Int("edition", 1, "OS-9 module edition byte")
 	relaxFlag := flag.Bool("relax", true, "Enable whole-program branch & direct page relaxation")
 	noRelaxFlag := flag.Bool("no-relax", false, "Disable relaxation")
 	dpAddr := flag.Int("dp", 0, "Direct Page base address (default: 0)")
@@ -1757,6 +2531,8 @@ func main() {
 		*format = "decb"
 	} else if *rawFlag {
 		*format = "raw"
+	} else if *os9Flag {
+		*format = "os9"
 	}
 
 	if *noRelaxFlag {
@@ -1766,6 +2542,27 @@ func main() {
 	asm := NewAssembler()
 	asm.enableRelax = *relaxFlag
 	asm.dp = uint8(*dpAddr & 0xFF)
+	asm.os9Mode = strings.ToLower(*format) == "os9"
+	asm.os9Name = *os9Name
+	asm.os9Mem = *os9Mem
+	asm.os9Rev = *os9Rev
+	asm.os9Attr = *os9Attr
+	asm.os9Tylg = *os9Tylg
+	asm.os9Edition = *os9Edition
+	if asm.os9Name == "" {
+		base := *outPath
+		if base == "" {
+			base = inputFile
+		}
+		base = filepath.Base(base)
+		ext := filepath.Ext(base)
+		if ext != "" {
+			base = strings.TrimSuffix(base, ext)
+		}
+		if base != "" {
+			asm.os9Name = base
+		}
+	}
 
 	f, err := os.Open(inputFile)
 	if err != nil {
@@ -1800,6 +2597,8 @@ func main() {
 			err = asm.EmitRaw(outFile)
 		case "srec":
 			err = asm.EmitSRecords(outFile)
+		case "os9":
+			err = asm.EmitOS9(outFile)
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown format: %s\n", *format)
 			os.Exit(1)
